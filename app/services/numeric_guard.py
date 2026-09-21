@@ -20,8 +20,11 @@ commerce arithmetic, which belongs to services that read real prices
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+
+from app.schemas.response import BundleGroundingView
 
 ResponseNumericAllowance = frozenset[str]
 """Canonical numeric tokens generated prose may contain.
@@ -88,8 +91,35 @@ def numbers_in(text: str) -> frozenset[str]:
     return frozenset(found)
 
 
+def bundle_counts(bundle: BundleGroundingView) -> tuple[int, ...]:
+    """The counts a whole-room reply may state, named one by one.
+
+    Extracted field by field on purpose. "Every integer on the view" would mean
+    that adding a numeric field later silently widened what the model is
+    allowed to assert, and the next such field might be a price.
+
+    Per-product quantities are **not** here. The model never learns which piece
+    a quantity belongs to, so an isolated "four" would be a factual claim with
+    no subject. Quantities are rendered beside the prose, against the product
+    they describe.
+    """
+    return (
+        bundle.bundle_line_count,
+        bundle.locked_line_count,
+        bundle.already_owned_line_count,
+        bundle.required_unmet_count,
+        bundle.recommended_unmet_count,
+        bundle.optional_unmet_count,
+        bundle.relaxed_line_count,
+    )
+
+
 def build_allowance(
-    message: str, *, presented_count: int = 0, compared_count: int = 0
+    message: str,
+    *,
+    presented_count: int = 0,
+    compared_count: int = 0,
+    counts: Sequence[int] = (),
 ) -> ResponseNumericAllowance:
     """What this turn's prose is permitted to say in figures.
 
@@ -104,14 +134,23 @@ def build_allowance(
     * ordinal positions within whatever is on screen, so "the second option"
       is sayable and "the fourth" of three is not.
 
+    * approved counts from a whole-room outcome, listed explicitly by
+      :func:`bundle_counts` rather than swept from the view.
+
     No product price, dimension, capacity, comparison cell, relaxation
-    threshold or id is ever admitted here.
+    threshold, budget figure, total or id is ever admitted here. A budget the
+    customer stated is sayable only because *they* said it, through the first
+    source - never because a bundle was computed against it.
     """
     allowed = set(numbers_in(message))
     for count in (presented_count, compared_count):
         if count > 0:
             allowed.add(canonical_number(str(count)) or str(count))
             allowed.update(str(position) for position in range(1, count + 1))
+    # Approved counts admit the figure itself and no ordinals: there is no
+    # numbered list of bundle items for prose to count into.
+    for count in counts:
+        allowed.add(canonical_number(str(count)) or str(count))
     return frozenset(allowed)
 
 

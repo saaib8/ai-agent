@@ -66,6 +66,7 @@ SELECTOR_SITES = (
     "#/properties/comparison_references/items",
     "#/$defs/ProductInteractionIntent/properties/reference",
     "#/$defs/RelativePriceRefinement/properties/reference",
+    "#/$defs/DesignAnchorIntent/properties/reference",
 )
 
 _selector: TypeAdapter[ProductReferenceSelector] = TypeAdapter(ProductReferenceSelector)
@@ -179,12 +180,7 @@ def test_no_selector_site_was_missed() -> None:
         if isinstance(node, dict) and _member_names(node) == set(SELECTOR_MEMBERS)
     }
 
-    assert found == {
-        "#/properties/reference",
-        "#/properties/comparison_references/items",
-        "#/$defs/ProductInteractionIntent/properties/reference",
-        "#/$defs/RelativePriceRefinement/properties/reference",
-    }
+    assert found == set(SELECTOR_SITES)
 
 
 def test_the_strict_schema_exposes_no_product_or_retailer_identity() -> None:

@@ -21,6 +21,15 @@ Two things a careless composition would get wrong, and are structural here:
   lists describe the same products - building them together is the guarantee.
 * **A stale row is dropped, never replaced.** Nothing re-enters selection after
   hydration, so the products rendered are exactly the products committed.
+
+Two ways out, sharing one way in. `execute` is the customer path and ends at a
+page with ordinals and grounding; `execute_candidate_pool` is the internal path
+and ends at the whole ranked pool, for deterministic services that choose
+across products rather than display them. Both run the same controlled search,
+the same ranking and the same conservation check, so the set an optimiser
+reasons over can never be a different set from the one a customer could have
+been shown. Only the last two steps differ - what is selected, and what is
+built from it - and the presentation limit belongs to exactly one of them.
 """
 
 from __future__ import annotations
@@ -45,8 +54,13 @@ from app.schemas.relaxation import (
     DimensionRelaxationChange,
     RelaxableField,
 )
-from app.schemas.resolution import ProductSearchExecutionResult
+from app.schemas.resolution import (
+    CandidatePoolResult,
+    ProductSearchExecutionResult,
+    RankedProductCandidate,
+)
 from app.schemas.retailer import RetailerContext
+from app.schemas.semantic import SemanticRankingResult
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
@@ -62,7 +76,11 @@ _NO_NAMESPACE = ""
 
 
 class ProductSearchPipeline:
-    """A resolved search in, verified products and their ids out."""
+    """A resolved search in, verified products out.
+
+    The only search facade. Everything that needs products goes through one of
+    its two methods, so no caller reconstructs M6, M8 or M9 for itself.
+    """
 
     def __init__(
         self,
@@ -101,14 +119,7 @@ class ProductSearchPipeline:
         """
         started = time.perf_counter()
 
-        searched = await self._relaxation.search(resolved, context)
-        eligible_ids = tuple(c.product.product_id for c in searched.candidates)
-        ranked = await self._ranking.rank(
-            resolved, searched.candidates, context, namespace=self._namespace(context)
-        )
-        # Checked before anything is chosen or read, so a violated contract
-        # cannot reach the customer as a plausible-looking page of products.
-        _require_conserved(eligible_ids, ranked.product_ids, context)
+        searched, ranked = await self._search_and_rank(resolved, context)
 
         selected = select_for_presentation(
             ranked.product_ids, limit=self._presentation_limit
@@ -172,6 +183,86 @@ class ProductSearchPipeline:
         return ProductSearchExecutionResult(
             presented_product_ids=tuple(presented_ids), grounding=grounding
         )
+
+    async def _search_and_rank(
+        self, resolved: ResolvedSearch, context: RetailerContext
+    ) -> tuple[ControlledSearchResult, SemanticRankingResult]:
+        """Eligibility, then order, then the proof that they are the same set.
+
+        The whole of the search path both public methods share, and the reason
+        neither can drift from the other: there is one controlled search, one
+        ranking and one conservation check, not a customer copy and an internal
+        copy that could answer differently.
+
+        What it deliberately does not do is select or hydrate. Those are the
+        two steps where the customer path and the optimiser path genuinely
+        differ, so they stay with the callers rather than being hidden behind a
+        flag here.
+        """
+        searched = await self._relaxation.search(resolved, context)
+        eligible_ids = tuple(c.product.product_id for c in searched.candidates)
+        ranked = await self._ranking.rank(
+            resolved, searched.candidates, context, namespace=self._namespace(context)
+        )
+        # Checked before anything is chosen or read, so a violated contract
+        # cannot reach the customer as a plausible-looking page of products,
+        # nor an optimiser as a room built from products nothing qualified.
+        _require_conserved(eligible_ids, ranked.product_ids, context)
+        return searched, ranked
+
+    async def execute_candidate_pool(
+        self, resolved: ResolvedSearch, context: RetailerContext
+    ) -> CandidatePoolResult:
+        """One search, and every eligible product it found, ranked and verified.
+
+        The internal counterpart to :meth:`execute`, for deterministic services
+        that reason over a whole pool rather than showing a page of it - a
+        room optimiser choosing a sofa has to see the sofas, not the three
+        cards a customer would have been shown.
+
+        **Unbounded, deliberately.** M8 and M9 already produce and order the
+        complete eligible pool; truncating here would be a new selection
+        policy choosing a room's options before anything had judged them.
+        `presentation_limit` is customer display policy and is never read on
+        this path.
+
+        Nothing customer-facing is produced: no ordinal, no grounding, no
+        presented ids, and no state is written. A stale row is dropped by the
+        same hydration path `execute` uses, never substituted or backfilled.
+        """
+        started = time.perf_counter()
+
+        searched, ranked = await self._search_and_rank(resolved, context)
+        hydrated = await self._hydration.hydrate_ids(ranked.product_ids, context)
+
+        depth_by_id = {c.product_id: c.relaxation_depth for c in ranked.candidates}
+        pool = CandidatePoolResult(
+            candidates=tuple(
+                RankedProductCandidate(
+                    product=product,
+                    relaxation_depth=depth_by_id[product.product_id],
+                )
+                for product in hydrated
+            ),
+            eligible_count=len(searched.candidates),
+            was_relaxed=searched.was_relaxed,
+            stop_reason=searched.stop_reason,
+            semantic_used=ranked.semantic_used,
+        )
+        logger.info(
+            "candidate_pool_completed",
+            store_id=context.store_id,
+            commerce_category=resolved.request.commerce_category,
+            commerce_subcategory=resolved.request.commerce_subcategory,
+            eligible_count=pool.eligible_count,
+            candidate_count=len(pool.candidates),
+            stale_dropped_count=pool.stale_dropped_count,
+            was_relaxed=pool.was_relaxed,
+            stop_reason=str(pool.stop_reason),
+            semantic_used=pool.semantic_used,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+        return pool
 
     def _namespace(self, context: RetailerContext) -> str:
         """Derived from the request's scope, never from anything a caller said."""

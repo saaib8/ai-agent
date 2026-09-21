@@ -32,20 +32,31 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, replace
+from decimal import Decimal
 
 from app.core.exceptions import (
     IntegrationUnavailableError,
     LLMResponseInvalidError,
+    TaxonomyValidationError,
 )
 from app.core.logging import get_logger
+from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
     AgentAction,
     BlockingClarificationReason,
+    BundleInteractionIntent,
+    BundleInteractionOp,
+    BundleReplacementMode,
     CustomerAgentDecision,
     FollowUpPolicy,
     ProductInteractionOp,
 )
-from app.schemas.agent_state import AgentStateV1
+from app.schemas.agent_state import (
+    AgentStateV1,
+    BundleItemState,
+    BundleItemStatus,
+    RoomProjectState,
+)
 from app.schemas.agent_turn import (
     CustomerTurnInput,
     CustomerTurnResult,
@@ -54,13 +65,34 @@ from app.schemas.agent_turn import (
 )
 from app.schemas.agent_updates import (
     ActiveSearchUpdate,
+    AddBundleLine,
     AddItems,
     AgentStateUpdate,
+    BundleLineSpec,
+    BundleOperation,
     ClearSemanticIntent,
+    DesignNeedRefinement,
+    DesignNeedSpec,
+    PlannedBundleLineSpec,
+    PreservedBundleLine,
     ProductInteractionUpdate,
+    RefineBundle,
     RemoveItems,
+    ReplaceDesignPlan,
     ReplaceItems,
+    RoomProjectUpdate,
+    SetBundleLineAcquisition,
+    SetBundleLineQuantity,
+    SetBundleLineStatus,
     SetSemanticIntent,
+)
+from app.schemas.bundle import (
+    BundleOptimizationOutcome,
+    BundleOptimizationRequest,
+    BundleStatus,
+    LockedBundleProduct,
+    RoomBundle,
+    UnmetReason,
 )
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.composition import (
@@ -70,12 +102,25 @@ from app.schemas.composition import (
     CompositionOutcome,
     NewTaskRequired,
 )
+from app.schemas.design import (
+    MAX_DESIGN_BRIEF_CHARS,
+    DesignCategoryNeed,
+    DesignRevisionContext,
+    DesignTask,
+    ExcludedDesignRole,
+    InteriorDesignRequest,
+    InteriorDesignResult,
+)
+from app.schemas.design_discovery import DesignDiscoveryResult
+from app.schemas.design_override import DesignNeedSearchOverride
+from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS, PriceConstraint
 from app.schemas.grounding import (
     GroundedProduct,
     SearchExecutionGrounding,
     TurnFailure,
     TurnFailureCode,
 )
+from app.schemas.product import ProductCandidate
 from app.schemas.product_reference import ProductReferenceSelector
 from app.schemas.query import (
     ClarificationReason,
@@ -86,30 +131,46 @@ from app.schemas.query import (
     UnsupportedDimensionRequirement,
     UnsupportedRequirement,
 )
-from app.schemas.refinement import PriceRefinementOp, SearchRefinementDelta
+from app.schemas.refinement import (
+    PriceRefinementOp,
+    SearchRefinementDelta,
+    SemanticIntentOp,
+)
 from app.schemas.resolution import (
     _UNAVAILABILITY_REASONS,
+    BundleReferenceFailureReason,
+    BundleReferenceUnresolved,
     ComparisonFailureReason,
     ComparisonUnavailable,
+    DesignNeedFailureReason,
+    DesignNeedUnresolved,
     DeterministicClarification,
     ReferenceFailureReason,
     ReferenceUnresolved,
     RelativePriceFailureReason,
     RelativePriceUnresolved,
+    ResolvedBundleReference,
     SearchRequirementClarificationReason,
     SimilarSearchUnavailable,
 )
-from app.schemas.retailer import RetailerContext
+from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
     commit_search_results,
 )
 from app.services.agent_view import project_state
+from app.services.bundle_optimizer import BundleOptimizer
+from app.services.bundle_reference import BundleReferenceResolver
+from app.services.catalog_capability import CatalogCapabilityService
 from app.services.comparison import ProductComparisonService
 from app.services.customer_decision import CustomerAgentDecisionService
+from app.services.design_discovery import DesignDiscoveryService
+from app.services.design_facts import project_anchors
+from app.services.design_revision import conflicting_role, project_current_plan
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
+from app.services.interior_design import InteriorDesignAgent
 from app.services.proposal_mapping import map_proposals
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
@@ -117,8 +178,38 @@ from app.services.refinement_composer import SearchRefinementComposer
 from app.services.relative_price import RelativePriceResolver
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.similar_search import SimilarSearchBuilder
+from app.taxonomy.dimensions import DimensionSemantics
 
 logger = get_logger(__name__)
+
+_HANDLED_DESIGN_FAILURES = (
+    IntegrationUnavailableError,
+    LLMResponseInvalidError,
+    TaxonomyValidationError,
+)
+"""Failures that stop a room plan without ending the turn.
+
+An unreachable capability query or design provider, an answer that does not
+satisfy its schema, and a plan naming a product type the vocabulary does not
+contain. Every one means no authoritative plan exists *now* - which is a fact
+about us, never about what the retailer stocks.
+"""
+
+
+def _design_brief(message: str) -> str | None:
+    """The customer's own words about this room, or nothing.
+
+    Their current message, trimmed, and only when it fits. Not truncated: a
+    brief cut mid-phrase can invert what it said, and "no TV unit" clipped to
+    "no TV" is worse than silence. Not summarised and not concatenated with
+    history either - both would need a second model, and the room type, budget,
+    measurements and preferences already travel as their own structured fields.
+    """
+    trimmed = message.strip()
+    if not trimmed or len(trimmed) > MAX_DESIGN_BRIEF_CHARS:
+        return None
+    return trimmed
+
 
 _HANDLED_SEARCH_FAILURES = (IntegrationUnavailableError, LLMResponseInvalidError)
 """Operational failures a turn reports and survives.
@@ -200,6 +291,273 @@ class _Primary:
     failure: TurnFailure | None = None
     clarification: DeterministicClarification | None = None
     design_handoff: bool = False
+    bundle_outcome: BundleOptimizationOutcome | None = None
+    bundle_change: BundleInteractionOp | None = None
+    """The room edit this turn made, for the deterministic acknowledgement.
+
+    Set only when lines actually changed: an operation that asked for a state a
+    piece was already in is a legal no-op, and saying "that will stay in the
+    room" about something nobody changed would be reporting work that did not
+    happen."""
+
+    proposals_applied: bool = False
+    """Whether this branch already folded the turn's customer facts in.
+
+    Only the whole-room branch does. It has to: a room is planned around the
+    budget and the room type stated in the very message that asked for it, and
+    applying them afterwards would plan the room without them. Every other
+    branch leaves them to `run`, where applying them after execution is what
+    stops a successful search being undone.
+    """
+
+
+_BUNDLE_REFERENCE_FAILURES: dict[BundleReferenceFailureReason, TurnFailureCode] = {
+    BundleReferenceFailureReason.TARGET_PRODUCT_UNAVAILABLE: (
+        TurnFailureCode.PRODUCT_UNAVAILABLE
+    ),
+    BundleReferenceFailureReason.BUNDLE_NOT_VERIFIABLE: (
+        TurnFailureCode.BUNDLE_NOT_VERIFIABLE
+    ),
+}
+"""Which unresolved references are facts rather than questions.
+
+The same line M11 already draws for products a search presented: "which one did
+you mean?" is answerable and "that one is gone" is not. A customer cannot
+resolve a piece the catalog stopped returning, nor a room we could not finish
+reading, so neither becomes a question.
+"""
+
+
+def _unresolved_bundle(
+    reason: BundleReferenceFailureReason, state: AgentStateV1
+) -> _Primary:
+    """What a failed bundle reference produces: a question, or a fact.
+
+    Either way the room is untouched - a reference that did not resolve cannot
+    have been acted on.
+    """
+    code = _BUNDLE_REFERENCE_FAILURES.get(reason)
+    if code is not None:
+        return _Primary(state=state, failure=TurnFailure(code=code))
+    return _Primary(
+        state=state,
+        clarification=DeterministicClarification(
+            reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+            bundle_reason=reason,
+        ),
+    )
+
+
+
+@dataclass(frozen=True, slots=True)
+class _Reoptimised:
+    """A room chosen again, and the state it was committed into."""
+
+    state: AgentStateV1
+    outcome: BundleOptimizationOutcome
+
+
+_UNUSABLE_PRICE = PriceConstraint(currency="\x00", max_amount=Decimal(1))
+"""Sentinel for "this product has no price a bound can be built from".
+
+A distinct object rather than None, because None already means "no bound
+wanted" - which is what an alternative asks for, and is a different thing from
+a bound that could not be derived.
+"""
+
+
+def _stale_reference(state: AgentStateV1, resolved_revision: int) -> _Primary | None:
+    """Whether the room moved between resolving a reference and acting on it."""
+    room = state.room_project
+    if room is not None and room.bundle_revision == resolved_revision:
+        return None
+    return _Primary(
+        state=state,
+        clarification=DeterministicClarification(
+            reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+            bundle_reason=BundleReferenceFailureReason.STALE_BUNDLE_REFERENCE,
+        ),
+    )
+
+
+def _revision_context(
+    room: RoomProjectState | None, excluded: tuple[ExcludedDesignRole, ...]
+) -> DesignRevisionContext | None:
+    """The plan being revised, or None when there is nothing to revise.
+
+    An empty durable plan is treated exactly as no plan at all. A committed
+    empty plan is reachable - a specialist plan whose every role this retailer
+    turned out not to stock commits as a complete room with no lines - and it
+    leaves nothing to preserve, so replanning it from scratch is what a
+    revision of it would do anyway (M12E-4D 8).
+    """
+    current = project_current_plan(room)
+    if not current:
+        return None
+    return DesignRevisionContext(current_needs=current, excluded=excluded)
+
+
+def _single_need(target: ResolvedBundleReference) -> int | None:
+    """The one role this card fills, or None if that is not a single answer.
+
+    A card filling two roles, or none, cannot be replaced without deciding
+    which role the customer meant - and product identity cannot decide it.
+    """
+    return target.need_ids[0] if len(target.need_ids) == 1 else None
+
+
+def _replacement_price(
+    mode: BundleReplacementMode, product: ProductCandidate
+) -> PriceConstraint | None:
+    """A bound derived from the product being replaced, never from a model.
+
+    Both bounds are **exclusive**: something cheaper than this one costs less
+    than it, not the same. No percentage is invented and no epsilon is
+    subtracted - the figure is the catalog's own.
+
+    `MORE_EXPENSIVE` means exactly higher-priced. It is never a claim about
+    quality, which is why no "premium" mode exists to derive it from.
+    """
+    if mode not in (BundleReplacementMode.CHEAPER, BundleReplacementMode.MORE_EXPENSIVE):
+        return None
+    if product.price_amount <= 0 or not product.price_unit.strip():
+        return _UNUSABLE_PRICE
+    if mode is BundleReplacementMode.CHEAPER:
+        return PriceConstraint.below(product.price_amount, product.price_unit)
+    return PriceConstraint.above(product.price_amount, product.price_unit)
+
+
+def _with_rejection(
+    room: RoomProjectState, need_id: int, product_id: int
+) -> tuple[int, ...]:
+    """This role's rejections plus the product being replaced now.
+
+    Insertion order, deduplicated, and bounded by the ceiling a search already
+    applies - one answer to "how many", not two. Staged only: it becomes true
+    of the plan when a replacement is actually found.
+    """
+    current = next(
+        (need.rejected_product_ids for need in room.design_needs if need.need_id == need_id),
+        (),
+    )
+    merged = tuple(dict.fromkeys((*current, product_id)))
+    return merged[-MAX_EXCLUDED_PRODUCT_IDS:]
+
+
+def _staged_refinements(
+    override: DesignNeedSearchOverride | None,
+) -> tuple[DesignNeedRefinement, ...]:
+    """The role changes that go with a successful refinement, and only those.
+
+    A price bound is not among them: it described one search, not the room.
+    """
+    if override is None:
+        return ()
+    wording = override.semantic_intent
+    return (
+        DesignNeedRefinement(
+            need_id=override.need_id,
+            rejected_product_ids=override.exclude_product_ids,
+            semantic_intent=(
+                wording.value
+                if wording is not None and wording.op is SemanticIntentOp.SET
+                else None
+            ),
+            clear_semantic_intent=(
+                wording is not None and wording.op is SemanticIntentOp.CLEAR
+            ),
+        ),
+    )
+
+
+def _plan_from(room: RoomProjectState) -> InteriorDesignResult:
+    """The customer's existing plan, in the shape discovery already consumes.
+
+    No specialist is consulted: substituting a product does not change what the
+    room needs, and rebuilding the plan through a model would risk a different
+    room coming back.
+    """
+    return InteriorDesignResult(
+        needs=tuple(
+            DesignCategoryNeed(
+                commerce_category=need.commerce_category,
+                commerce_subcategory=need.commerce_subcategory,
+                priority=need.priority,
+                quantity=need.quantity,
+                seating_capacity=need.seating_capacity,
+                semantic_intent=need.semantic_intent,
+            )
+            for need in room.design_needs
+        )
+    )
+
+
+def _replaced(
+    outcome: BundleOptimizationOutcome,
+    need_id: int,
+    rejected_product_id: int,
+    state: AgentStateV1,
+) -> bool:
+    """Whether the customer actually got another product for that role.
+
+    A complete room is not enough. If the role ended up unmet, or an unrelated
+    lock happened to cover it, they asked for another sofa and did not get one
+    - and reporting that as success would be describing a room they did not ask
+    for.
+    """
+    if not isinstance(outcome, RoomBundle) or outcome.status is BundleStatus.INFEASIBLE:
+        return False
+    room = state.room_project
+    if room is None:
+        return False
+    return any(
+        line.need_id == need_id
+        and line.status is BundleItemStatus.SUGGESTED
+        and line.product_id != rejected_product_id
+        for line in room.bundle_items
+    )
+
+
+def _no_replacement_reason(outcome: BundleOptimizationOutcome) -> TurnFailureCode:
+    """Why no replacement happened: nothing to offer, or nothing that fits.
+
+    Kept apart because they are different things to tell a customer, and a
+    budget that would not stretch must never be reported as a catalog with
+    nothing in it.
+    """
+    if isinstance(outcome, RoomBundle) and any(
+        entry.reason is not UnmetReason.NO_CANDIDATES for entry in outcome.unmet
+    ):
+        return TurnFailureCode.REPLACEMENT_NOT_FEASIBLE
+    return TurnFailureCode.NO_REPLACEMENT_CANDIDATE
+
+
+
+@dataclass(frozen=True, slots=True)
+class _Anchored:
+    """The state after recording a design anchor, or the reason to stop.
+
+    `stop` carries the primary result to return as-is. The state travels beside
+    it because a stop still has to hand back whatever was already established.
+    """
+
+    state: AgentStateV1
+    stop: _Primary | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Revision:
+    """The hard constraints on recomposing a room, once all of them hold.
+
+    `stop` carries the primary result to return as-is. Nothing has been locked
+    when it is set: every reference is resolved and every contradiction found
+    before the first preservation lands, so one bad reference among several
+    never leaves half the customer's pieces preserved (M12E-4D 17).
+    """
+
+    state: AgentStateV1
+    excluded: tuple[ExcludedDesignRole, ...] = ()
+    stop: _Primary | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +584,12 @@ class CustomerTurnCoordinator:
         pipeline: ProductSearchPipeline,
         hydration: ProductHydrationService,
         similar_search: SimilarSearchBuilder,
+        capabilities: CatalogCapabilityService,
+        design: InteriorDesignAgent | None,
+        design_discovery: DesignDiscoveryService,
+        bundle_references: BundleReferenceResolver,
+        optimizer: BundleOptimizer,
+        dimensions: DimensionSemantics,
     ) -> None:
         self._decisions = decisions
         self._query_understanding = query_understanding
@@ -236,6 +600,17 @@ class CustomerTurnCoordinator:
         self._pipeline = pipeline
         self._hydration = hydration
         self._similar_search = similar_search
+        self._capabilities = capabilities
+        self._design = design
+        """The specialist, or None where the capability is not configured.
+
+        Optional because a retailer that has not set up room planning still
+        sells furniture: every other action works, and only a request for a
+        whole room finds it missing (M12B)."""
+        self._design_discovery = design_discovery
+        self._bundle_references = bundle_references
+        self._optimizer = optimizer
+        self._dimensions = dimensions
 
     async def run(self, turn: CustomerTurnInput) -> CustomerTurnResult:
         """One turn in, the next state and what happened out.
@@ -254,19 +629,31 @@ class CustomerTurnCoordinator:
             )
         )
 
-        interaction = await self._apply_interaction(decision, pre_turn, turn.context)
-        primary = await self._execute(decision, interaction.state, pre_turn, turn)
-
         proposals = map_proposals(decision.state_proposal, decision.commerce_proposal)
+        interaction = await self._apply_interaction(decision, pre_turn, turn.context)
+        primary = await self._execute(
+            decision, interaction.state, pre_turn, turn, proposals.update
+        )
+
         # Applied to what the primary action produced, not to the pre-turn
         # state: rebuilding from the start here would silently undo a
-        # successful search or a resolved selection.
-        final_state = apply_update(primary.state, proposals.update)
+        # successful search or a resolved selection. A branch that already
+        # applied them says so, because applying an add twice would duplicate
+        # every preference in it.
+        final_state = (
+            primary.state
+            if primary.proposals_applied
+            else apply_update(primary.state, proposals.update)
+        )
 
         grounding = self._ground(decision, primary, interaction, proposals.clarification)
         self._log(decision, pre_turn, final_state, primary, interaction, started)
         return CustomerTurnResult(
-            state=final_state, decision=decision, grounding=grounding
+            state=final_state,
+            decision=decision,
+            grounding=grounding,
+            bundle_outcome=primary.bundle_outcome,
+            bundle_change=primary.bundle_change,
         )
 
     # ── the optional interaction ────────────────────────────────────────────
@@ -314,14 +701,17 @@ class CustomerTurnCoordinator:
         working: AgentStateV1,
         pre_turn: AgentStateV1,
         turn: CustomerTurnInput,
+        proposals: AgentStateUpdate,
     ) -> _Primary:
         match decision.action:
             case AgentAction.ANSWER | AgentAction.CLARIFY:
                 return _Primary(state=working)
+            case AgentAction.BUNDLE_REFINE:
+                return await self._bundle_refine(decision, working, pre_turn, turn)
             case AgentAction.DESIGN_HANDOFF:
-                # A marker only. M12 owns execution, and building half an
-                # InteriorDesignRequest would invent that boundary early.
-                return _Primary(state=working, design_handoff=True)
+                return await self._design_handoff(
+                    decision, working, pre_turn, turn, proposals
+                )
             case AgentAction.SEARCH:
                 if decision.reference is None:
                     return await self._new_search(decision, working, turn)
@@ -334,6 +724,1041 @@ class CustomerTurnCoordinator:
                 return await self._product_detail(decision, working, pre_turn, turn)
             case AgentAction.COMPARE:
                 return await self._compare(decision, working, pre_turn, turn)
+
+
+
+    # ── refining the room ───────────────────────────────────────────────────
+
+    async def _bundle_refine(
+        self,
+        decision: CustomerAgentDecision,
+        working: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """Change one piece of the room, or one role in its plan.
+
+        The order matters twice, whatever the operation. The room's products
+        are re-read **before** anything is resolved, because a reference must
+        be settled against what the catalog says now rather than what state
+        remembers. And the reference is resolved against the **pre-turn** room,
+        then checked against the working one before any edit lands, so a
+        reference settled against one room cannot be applied to another.
+
+        What differs afterwards is how far the change reaches. Keeping a piece
+        changes nothing about what the room contains or costs, so nothing is
+        searched. Replacing one changes both, so the whole room is discovered
+        and optimised again: a cheaper sofa may afford a better rug, and a
+        dearer one may push an optional piece out.
+        """
+        intent = decision.bundle_interaction
+        assert intent is not None, "the contract requires one"
+
+        room = pre_turn.room_project
+        verified = await self._verify_bundle_products(room, turn.context)
+        if verified is None:
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+
+        if intent.op is BundleInteractionOp.REMOVE_NEED:
+            return await self._remove_need(intent, working, room, verified, turn)
+
+        assert intent.selector is not None, "every other operation names a card"
+        outcome = self._bundle_references.resolve(intent.selector, room, verified)
+        if isinstance(outcome, BundleReferenceUnresolved):
+            return _unresolved_bundle(outcome.reason, working)
+
+        stale = _stale_reference(working, outcome.bundle_revision)
+        if stale is not None:
+            return stale
+
+        match intent.op:
+            case BundleInteractionOp.LOCK | BundleInteractionOp.UNLOCK:
+                return self._set_status(intent.op, outcome, working, turn)
+            case BundleInteractionOp.SET_ACQUISITION:
+                return await self._set_acquisition(intent, outcome, working, turn)
+            case BundleInteractionOp.REPLACE_PRODUCT:
+                return await self._replace_product(
+                    intent, outcome, working, verified, turn
+                )
+
+    # ── keeping and releasing ───────────────────────────────────────────────
+
+    def _set_status(
+        self,
+        op: BundleInteractionOp,
+        target: ResolvedBundleReference,
+        working: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """Local by construction: nothing about the room's contents changed.
+
+        "You can change it later" is permission, not an instruction, so no
+        search runs and no product moves.
+        """
+        status = (
+            BundleItemStatus.LOCKED
+            if op is BundleInteractionOp.LOCK
+            else BundleItemStatus.SUGGESTED
+        )
+        updated = apply_update(
+            working,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    bundle_operations=tuple(
+                        SetBundleLineStatus(line_id=line_id, status=status)
+                        for line_id in target.line_ids
+                    )
+                )
+            ),
+        )
+        self._log_refinement(turn, op, working, updated)
+        return _Primary(state=updated, bundle_change=op)
+
+    # ── who is paying ───────────────────────────────────────────────────────
+
+    async def _set_acquisition(
+        self,
+        intent: BundleInteractionIntent,
+        target: ResolvedBundleReference,
+        working: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """Record what the customer said about owning it, then re-cost the room.
+
+        The statement is theirs and is applied first, unconditionally: someone
+        who says they already own a piece has told us something true whatever
+        happens to the room afterwards, and discarding it because a later search
+        failed would be answering a fact with an unrelated error.
+
+        With a budget, what they own changes what the room costs, so the whole
+        room is optimised again. Without one there is nothing for it to change,
+        and re-running the pipeline because a flag moved would replace products
+        nobody asked about.
+        """
+        assert intent.acquisition is not None, "the contract requires one"
+        updated = apply_update(
+            working,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    bundle_operations=tuple(
+                        SetBundleLineAcquisition(
+                            line_id=line_id, acquisition=intent.acquisition
+                        )
+                        for line_id in target.line_ids
+                    )
+                )
+            ),
+        )
+        self._log_refinement(turn, intent.op, working, updated)
+
+        room = updated.room_project
+        if room is None or room.budget is None:
+            return _Primary(state=updated, bundle_change=intent.op)
+
+        refreshed = await self._reoptimise(updated, turn)
+        if isinstance(refreshed, _Primary):
+            # The fact stands; only the refresh failed, and saying the change
+            # did not happen would be false.
+            return replace(refreshed, state=updated, bundle_change=intent.op)
+        return _Primary(
+            state=refreshed.state,
+            bundle_outcome=refreshed.outcome,
+            bundle_change=intent.op,
+        )
+
+    # ── a different product for the same role ───────────────────────────────
+
+    async def _replace_product(
+        self,
+        intent: BundleInteractionIntent,
+        target: ResolvedBundleReference,
+        working: AgentStateV1,
+        verified: list[ProductCandidate],
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """Find another product for this role, or change nothing at all.
+
+        Everything is staged. The rejection, the new wording and the room they
+        produce commit together or not at all, because a rejection is only true
+        of a room chosen while excluding it - persisting one beside the old
+        sofa would make state claim that sofa was picked for a reason it never
+        satisfied.
+
+        The target's own lock is released for this replacement, since asking
+        for another one is permission to change that piece. Every other lock
+        stays hard.
+        """
+        assert intent.replacement is not None, "the contract requires one"
+        need_id = _single_need(target)
+        if need_id is None:
+            return _Primary(
+                state=working,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                    need_reason=DesignNeedFailureReason.CARD_SPANS_SEVERAL_NEEDS,
+                ),
+            )
+
+        product = next(
+            (p for p in verified if p.product_id == target.product_id), None
+        )
+        assert product is not None, "resolution already required it"
+        price = _replacement_price(intent.replacement.mode, product)
+        if price is _UNUSABLE_PRICE:
+            # "Cheaper than this" cannot be expressed against a price commerce
+            # cannot act on, and guessing a bound would answer a different
+            # question.
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE),
+            )
+
+        room = working.room_project
+        assert room is not None, "resolution already required a room"
+        rejected = _with_rejection(room, need_id, target.product_id)
+        override = DesignNeedSearchOverride(
+            need_id=need_id,
+            exclude_product_ids=rejected,
+            price=price,
+            semantic_intent=intent.replacement.semantic_intent,
+        )
+
+        refreshed = await self._reoptimise(
+            working, turn, override=override, released_need_id=need_id
+        )
+        if isinstance(refreshed, _Primary):
+            return refreshed
+        if not _replaced(refreshed.outcome, need_id, target.product_id, refreshed.state):
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=_no_replacement_reason(refreshed.outcome)),
+            )
+        self._log_refinement(turn, intent.op, working, refreshed.state)
+        return _Primary(
+            state=refreshed.state,
+            bundle_outcome=refreshed.outcome,
+            bundle_change=intent.op,
+        )
+
+    # ── taking a role out of the plan ───────────────────────────────────────
+
+    async def _remove_need(
+        self,
+        intent: BundleInteractionIntent,
+        working: AgentStateV1,
+        room: RoomProjectState | None,
+        verified: list[ProductCandidate],
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """Drop a furnishing role, and whatever was filling it.
+
+        An explicit removal supersedes an earlier instruction to keep the piece
+        in that role: they asked for the sofa to stay, and now they have asked
+        for no sofa at all.
+
+        The removal is independently valid, so it survives a later refresh
+        failure. Resurrecting the role because a search could not run would put
+        back something they took out.
+        """
+        need_id = self._removal_target(intent, working, room, verified)
+        if isinstance(need_id, _Primary):
+            return need_id
+
+        staged = apply_update(
+            working,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    bundle_operations=(RefineBundle(removed_need_ids=(need_id,)),)
+                )
+            ),
+        )
+        self._log_refinement(turn, intent.op, working, staged)
+
+        refreshed = await self._reoptimise(staged, turn)
+        if isinstance(refreshed, _Primary):
+            return replace(refreshed, state=staged, bundle_change=intent.op)
+        return _Primary(
+            state=refreshed.state,
+            bundle_outcome=refreshed.outcome,
+            bundle_change=intent.op,
+        )
+
+    def _removal_target(
+        self,
+        intent: BundleInteractionIntent,
+        working: AgentStateV1,
+        room: RoomProjectState | None,
+        verified: list[ProductCandidate],
+    ) -> int | _Primary:
+        """Which role to remove, named by a card or directly by its kind.
+
+        A `_Primary` means stop, and it carries the working state: a question
+        about which role they meant must not cost them the room they have.
+        """
+        if intent.need_selector is not None:
+            outcome = self._bundle_references.resolve_need(intent.need_selector, room)
+            if isinstance(outcome, DesignNeedUnresolved):
+                return _Primary(
+                    state=working,
+                    clarification=DeterministicClarification(
+                        reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                        need_reason=outcome.reason,
+                    ),
+                )
+            return outcome.need_id
+
+        assert intent.selector is not None, "the contract requires one of the two"
+        card = self._bundle_references.resolve(intent.selector, room, verified)
+        if isinstance(card, BundleReferenceUnresolved):
+            return _unresolved_bundle(card.reason, working)
+        need_id = _single_need(card)
+        if need_id is None:
+            return _Primary(
+                state=working,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                    need_reason=DesignNeedFailureReason.CARD_SPANS_SEVERAL_NEEDS,
+                ),
+            )
+        return need_id
+
+
+    # ── the whole room, chosen again ────────────────────────────────────────
+
+    async def _reoptimise(
+        self,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+        *,
+        override: DesignNeedSearchOverride | None = None,
+        released_need_id: int | None = None,
+    ) -> _Reoptimised | _Primary:
+        """Discover every current role afresh and choose the whole room again.
+
+        **Every** role, not just the one that changed. Candidate pools are not
+        persisted, and one product moving changes what the rest can cost: a
+        cheaper sofa may afford a better rug, a dearer one may push an optional
+        piece out. Optimising the changed need alone would produce a room that
+        no longer adds up.
+
+        The plan is the customer's existing one - no specialist is consulted,
+        because substituting a product does not change what the room needs.
+
+        Returns a `_Primary` when the turn should stop there: an unreachable
+        catalog or an unverifiable lock is reported, not worked around.
+        """
+        room = state.room_project
+        if room is None or not room.design_needs:
+            return _Primary(
+                state=state, failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+            )
+
+        locks = await self._verify_locks(state, turn.context, released_need_id)
+        if locks is None:
+            return _Primary(
+                state=state,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+            plan = _plan_from(room)
+            request = InteriorDesignRequest(
+                task=DesignTask.ROOM_PLAN,
+                room_type=room.room_type,
+                geometry=room.geometry,
+                budget=room.budget,
+                design_preferences=room.design_preferences,
+                catalog_capabilities=capabilities,
+            )
+            overrides = (
+                {}
+                if override is None
+                else {
+                    position: override
+                    for position, need in enumerate(room.design_needs)
+                    if need.need_id == override.need_id
+                }
+            )
+            discovery = await self._design_discovery.discover(
+                request, plan, turn.context, overrides=overrides
+            )
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("room_refresh_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state, failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+            )
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("room_refresh_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state, failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+            )
+
+        outcome = self._optimizer.optimize(
+            BundleOptimizationRequest(
+                discovery=discovery,
+                budget=room.budget,
+                locked=tuple(product for _, product in locks),
+            )
+        )
+        return _Reoptimised(
+            state=self._commit_refinement(state, outcome, override),
+            outcome=outcome,
+        )
+
+    def _commit_refinement(
+        self,
+        state: AgentStateV1,
+        outcome: BundleOptimizationOutcome,
+        override: DesignNeedSearchOverride | None,
+    ) -> AgentStateV1:
+        """The refined room and the role changes that produced it, in one step.
+
+        Nothing commits unless a real room did: an infeasible package or a
+        refusal leaves the previous room, its rejections and its wording
+        exactly as they were.
+
+        The plan keeps its identity - the same roles, in the same order, under
+        the same allocator - because refining a room is not replanning one.
+        """
+        if not isinstance(outcome, RoomBundle):
+            return state
+        if outcome.status is BundleStatus.INFEASIBLE:
+            return state
+
+        room = state.room_project
+        assert room is not None, "a refinement has a room"
+        by_position = {
+            position: need.need_id
+            for position, need in enumerate(room.design_needs)
+        }
+        return apply_update(
+            state,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    bundle_operations=(
+                        RefineBundle(
+                            refinements=_staged_refinements(override),
+                            preserved=tuple(
+                                PreservedBundleLine(line_id=line.line_id)
+                                for line in room.bundle_items
+                                if line.status is BundleItemStatus.LOCKED
+                                and (
+                                    override is None
+                                    or line.need_id != override.need_id
+                                )
+                            ),
+                            added=tuple(
+                                BundleLineSpec(
+                                    product_id=line.product.product_id,
+                                    quantity=line.quantity,
+                                    acquisition=BundleAcquisition.TO_BUY,
+                                    status=BundleItemStatus.SUGGESTED,
+                                    need_id=(
+                                        None
+                                        if line.need_index is None
+                                        else by_position.get(line.need_index)
+                                    ),
+                                )
+                                for line in outcome.lines
+                                if not line.locked
+                            ),
+                        ),
+                    )
+                )
+            ),
+        )
+
+    async def _verify_locks(
+        self,
+        state: AgentStateV1,
+        context: RetailerContext,
+        released_need_id: int | None = None,
+    ) -> list[tuple[BundleItemState, LockedBundleProduct]] | None:
+        """Every locked line, with its product re-read, or None if one is gone.
+
+        Ids are deduplicated for the read and expanded again afterwards: two
+        lines holding the same product are one row to fetch and two lines to
+        preserve, and losing that distinction would lose a quantity.
+
+        `released_need_id` is the one role the customer has just asked to
+        change. Its lines do not enter as hard locks - asking for another sofa
+        is permission to move that sofa - while every other lock stays
+        untouchable.
+
+        A lock that no longer resolves stops the whole room. It cannot be
+        dropped, substituted or unlocked, and answering from what we remember
+        about it would be asserting a price nobody checked (CLAUDE.md 10).
+        """
+        room = state.room_project
+        lines = [
+            line
+            for line in (room.bundle_items if room else ())
+            if line.status is BundleItemStatus.LOCKED
+            and (released_need_id is None or line.need_id != released_need_id)
+        ]
+        if not lines:
+            return []
+
+        wanted = tuple(dict.fromkeys(line.product_id for line in lines))
+        products = await self._hydration.hydrate_ids(wanted, context)
+        by_id = {product.product_id: product for product in products}
+        if len(by_id) != len(wanted):
+            logger.warning(
+                "whole_room_locked_product_unavailable",
+                store_id=context.store_id,
+                expected=len(wanted),
+                verified=len(by_id),
+            )
+            return None
+
+        return [
+            (
+                line,
+                LockedBundleProduct(
+                    product=by_id[line.product_id],
+                    acquisition=line.acquisition,
+                    quantity=line.quantity,
+                ),
+            )
+            for line in lines
+        ]
+
+    @staticmethod
+    def _log_refinement(
+        turn: CustomerTurnInput,
+        op: BundleInteractionOp,
+        before: AgentStateV1,
+        after: AgentStateV1,
+    ) -> None:
+        """Shape only: no product, no line id, no price, no customer text."""
+        old, new = before.room_project, after.room_project
+        logger.info(
+            "bundle_refined",
+            store_id=turn.context.store_id,
+            op=str(op),
+            line_count=len(new.bundle_items) if new else 0,
+            need_count=len(new.design_needs) if new else 0,
+            changed=(
+                new is not None
+                and old is not None
+                and new.bundle_items != old.bundle_items
+            ),
+        )
+
+    async def _verify_bundle_products(
+        self, room: RoomProjectState | None, context: RetailerContext
+    ) -> list[ProductCandidate] | None:
+        """Fresh facts for everything currently in the room, or a refusal.
+
+        Ids are deduplicated for the read and the products returned as they
+        come: a card's identity is a product, and two lines holding one product
+        are one row to fetch.
+
+        A missing product behind a **locked** line stops the turn, exactly as a
+        room plan does: the customer asked to keep it, and neither dropping it
+        nor answering from what we remember about it is allowed. A missing
+        product behind a suggestion is not fatal here - nothing is being chosen
+        - but it cannot back a reference either, because a card that cannot be
+        described is not one the customer can have named.
+        """
+        if room is None or not room.bundle_items:
+            return []
+
+        wanted = tuple(dict.fromkeys(line.product_id for line in room.bundle_items))
+        products = await self._hydration.hydrate_ids(wanted, context)
+        found = {product.product_id for product in products}
+        missing_locked = [
+            line.product_id
+            for line in room.bundle_items
+            if line.status is BundleItemStatus.LOCKED and line.product_id not in found
+        ]
+        if missing_locked:
+            logger.warning(
+                "bundle_locked_product_unavailable",
+                store_id=context.store_id,
+                missing_count=len(set(missing_locked)),
+            )
+            return None
+        return list(products)
+
+    # ── the whole room ──────────────────────────────────────────────────────
+
+    async def _design_handoff(
+        self,
+        decision: CustomerAgentDecision,
+        working: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+        proposals: AgentStateUpdate,
+    ) -> _Primary:
+        """Plan the room, find products for it, and choose one combination.
+
+        The order is the point. Customer facts land first and unconditionally,
+        so a provider failure three steps later cannot take the budget they just
+        stated with it. Then the piece they asked to keep is verified and
+        recorded, because that too is something they said rather than something
+        we computed. Only after both is anything executed, and only a real
+        bundle is committed.
+        """
+        started = time.perf_counter()
+        state = apply_update(working, proposals)
+
+        if self._design is None:
+            # Not configured here. Checked before anything is read or written,
+            # so an unconfigured deployment leaves the customer's existing room
+            # exactly as it was rather than half-rebuilt.
+            logger.info("whole_room_not_configured", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+
+        revision = await self._revision_constraints(decision, state, pre_turn, turn)
+        if revision.stop is not None:
+            return replace(revision.stop, state=revision.state)
+        state = revision.state
+
+        anchored = await self._record_anchor(decision, state, pre_turn, turn)
+        if anchored.stop is not None:
+            return replace(anchored.stop, state=anchored.state, proposals_applied=True)
+        state = anchored.state
+
+        locks = await self._verify_locks(state, turn.context)
+        if locks is None:
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+            plan = await self._design.plan(
+                self._design_request(
+                    state, turn, capabilities, locks, revision.excluded
+                )
+            )
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("whole_room_design_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+
+        try:
+            discovery = await self._design_discovery.discover(
+                self._design_request(state, turn, capabilities, locks, revision.excluded),
+                plan,
+                turn.context,
+            )
+        except _HANDLED_SEARCH_FAILURES:
+            # A catalog or index that could not be reached. Never reported as
+            # the retailer having nothing suitable: that is a fact about the
+            # catalog, and we did not establish it.
+            logger.warning("whole_room_discovery_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE),
+            )
+
+        outcome = self._optimizer.optimize(
+            BundleOptimizationRequest(
+                discovery=discovery,
+                budget=state.room_project.budget if state.room_project else None,
+                locked=tuple(product for _, product in locks),
+            )
+        )
+        committed = self._commit(state, plan, outcome)
+        self._log_whole_room(turn, state, plan, discovery, outcome, committed, started)
+        return _Primary(
+            state=committed,
+            design_handoff=True,
+            proposals_applied=True,
+            bundle_outcome=outcome,
+        )
+
+    async def _revision_constraints(
+        self,
+        decision: CustomerAgentDecision,
+        state: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Revision:
+        """Everything the customer ruled out, and everything they ruled in.
+
+        Resolution before mutation, without exception. Exclusions are settled
+        against the plan being revised, preserved cards against the room they
+        were looking at, and both against the **pre-turn** universe - what "the
+        second one" meant was fixed before this turn changed anything.
+
+        Only when every reference resolves and no two contradict does anything
+        lock, and then all of it locks in one state transition.
+        """
+        intent = decision.design_revision
+        if intent is None:
+            return _Revision(state=state)
+
+        room = pre_turn.room_project
+        excluded = self._bundle_references.resolve_exclusions(
+            intent.removed_needs, room
+        )
+        if isinstance(excluded, DesignNeedUnresolved):
+            return _Revision(
+                state=state,
+                stop=_Primary(
+                    state=state,
+                    design_handoff=True,
+                    proposals_applied=True,
+                    clarification=DeterministicClarification(
+                        reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                        need_reason=excluded.reason,
+                    ),
+                ),
+            )
+
+        verified = await self._verify_bundle_products(room, turn.context)
+        if verified is None:
+            return _Revision(
+                state=state,
+                stop=_Primary(
+                    state=state,
+                    design_handoff=True,
+                    proposals_applied=True,
+                    failure=TurnFailure(
+                        code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE
+                    ),
+                ),
+            )
+
+        by_id = {product.product_id: product for product in verified}
+        line_ids: list[int] = []
+        preserved: list[ProductCandidate] = []
+        for selector in intent.preserved_items:
+            outcome = self._bundle_references.resolve(selector, room, verified)
+            if isinstance(outcome, BundleReferenceUnresolved):
+                stop = _unresolved_bundle(outcome.reason, state)
+                return _Revision(
+                    state=state,
+                    stop=replace(stop, design_handoff=True, proposals_applied=True),
+                )
+            line_ids.extend(outcome.line_ids)
+            preserved.append(by_id[outcome.product_id])
+
+        conflict = conflicting_role(excluded, preserved)
+        if conflict is not None:
+            # Both instructions are clear and cannot both hold. Honouring
+            # either would silently discard the other, so neither is applied
+            # and the customer settles it (M12E-4D 16).
+            logger.info(
+                "design_revision_conflict",
+                store_id=turn.context.store_id,
+                commerce_category=conflict.commerce_category,
+            )
+            return _Revision(
+                state=state,
+                stop=_Primary(
+                    state=state,
+                    design_handoff=True,
+                    proposals_applied=True,
+                    clarification=DeterministicClarification(
+                        reason=BlockingClarificationReason.CONTRADICTORY_ROOM_INSTRUCTIONS,
+                        need_reason=DesignNeedFailureReason.PRESERVED_ROLE_EXCLUDED,
+                    ),
+                ),
+            )
+
+        return _Revision(
+            state=self._preserve(state, line_ids), excluded=excluded
+        )
+
+    @staticmethod
+    def _preserve(state: AgentStateV1, line_ids: list[int]) -> AgentStateV1:
+        """Lock every preserved line in one transition.
+
+        One update rather than one per card, so the room is never observed
+        half-preserved and the revision advances exactly once - or not at all,
+        when every named card was already locked (M12E-4D 18).
+        """
+        if not line_ids:
+            return state
+        return apply_update(
+            state,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    bundle_operations=tuple(
+                        SetBundleLineStatus(
+                            line_id=line_id, status=BundleItemStatus.LOCKED
+                        )
+                        for line_id in dict.fromkeys(line_ids)
+                    )
+                )
+            ),
+        )
+
+    async def _record_anchor(
+        self,
+        decision: CustomerAgentDecision,
+        state: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Anchored:
+        """Turn "design around this one" into a locked line, or stop.
+
+        Resolved against the **pre-turn** universe, like every other reference:
+        what "the second one" meant was fixed before this turn changed
+        anything, and resolving it afterwards could point at a different
+        product.
+
+        The product is re-read before anything is recorded, so a line is never
+        created from a remembered fact. Once verified, the lock is a customer
+        statement and survives whatever the rest of the turn does to it.
+        """
+        anchor = decision.design_anchor
+        if anchor is None:
+            return _Anchored(state=state)
+
+        outcome = await self._references.resolve(anchor.reference, pre_turn, turn.context)
+        if isinstance(outcome, ReferenceUnresolved):
+            clarification, failure = _reference_outcome(
+                outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            )
+            return _Anchored(
+                state=state,
+                stop=_Primary(
+                    state=state,
+                    design_handoff=True,
+                    clarification=clarification,
+                    failure=failure,
+                ),
+            )
+
+        products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
+        if not products:
+            return _Anchored(
+                state=state,
+                stop=_Primary(
+                    state=state,
+                    design_handoff=True,
+                    failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE),
+                ),
+            )
+
+        room = state.room_project
+        existing = [
+            line
+            for line in (room.bundle_items if room else ())
+            if line.product_id == outcome.product_id
+        ]
+        if len(existing) > 1:
+            # Two lines already carry this product, and a reference to "this
+            # sofa" names a product rather than a line. Guessing which physical
+            # line they meant is exactly what bundle-card references settle -
+            # and those are a different surface: an anchor points at a product
+            # that was presented, a preserved item at a card in the room.
+            return _Anchored(
+                state=state,
+                stop=_Primary(
+                    state=state,
+                    design_handoff=True,
+                    clarification=DeterministicClarification(
+                        reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+                    ),
+                ),
+            )
+
+        acquisition = anchor.acquisition or BundleAcquisition.TO_BUY
+        if existing:
+            line = existing[0]
+            operations: tuple[BundleOperation, ...] = (
+                SetBundleLineStatus(line_id=line.line_id, status=BundleItemStatus.LOCKED),
+                SetBundleLineQuantity(line_id=line.line_id, quantity=anchor.quantity),
+                SetBundleLineAcquisition(line_id=line.line_id, acquisition=acquisition),
+            )
+        else:
+            operations = (
+                AddBundleLine(
+                    line=BundleLineSpec(
+                        product_id=outcome.product_id,
+                        quantity=anchor.quantity,
+                        acquisition=acquisition,
+                        status=BundleItemStatus.LOCKED,
+                    )
+                ),
+            )
+        return _Anchored(
+            state=apply_update(
+                state,
+                AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=operations)),
+            )
+        )
+
+    def _design_request(
+        self,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+        capabilities: RetailerCatalogCapabilities,
+        locks: list[tuple[BundleItemState, LockedBundleProduct]],
+        excluded: tuple[ExcludedDesignRole, ...] = (),
+    ) -> InteriorDesignRequest:
+        """What the specialist is told: the room, and what is already in it.
+
+        No retailer, no state, no identity, no price. The anchors are built
+        from the same freshly verified products the optimiser will use, with
+        quantities summed per product so the specialist learns there are two of
+        something without learning which records said so.
+
+        A plan already in state makes this a **revision**, whether or not the
+        customer named any constraint: "add a reading corner" to an existing
+        room is a recomposition, and planning it from nothing would silently
+        discard everything they already have. The application decides this from
+        durable state; the model authors no marker (M12E-4D 7).
+
+        The current needs come from the durable plan rather than anything this
+        turn computed. Room type, budget and preferences may already have moved
+        - those are independent customer facts and land unconditionally - but
+        the composition being revised is the last valid one (M12E-4D 20).
+        """
+        room = state.room_project
+        quantities: dict[int, int] = {}
+        for line, _ in locks:
+            quantities[line.product_id] = quantities.get(line.product_id, 0) + line.quantity
+        unique = list(dict.fromkeys(product.product.product_id for _, product in locks))
+        products = [
+            next(p.product for _, p in locks if p.product.product_id == product_id)
+            for product_id in unique
+        ]
+        return InteriorDesignRequest(
+            task=DesignTask.ROOM_PLAN,
+            design_brief=_design_brief(turn.message),
+            room_type=room.room_type if room else None,
+            geometry=room.geometry if room else None,
+            budget=room.budget if room else None,
+            design_preferences=room.design_preferences if room else (),
+            catalog_capabilities=capabilities,
+            anchors=project_anchors(
+                products,
+                dimensions=self._dimensions,
+                locked_product_ids=[p.product.product_id for _, p in locks],
+                quantities=quantities,
+            ),
+            revision=_revision_context(room, excluded),
+        )
+
+    def _commit(
+        self,
+        state: AgentStateV1,
+        plan: InteriorDesignResult,
+        outcome: BundleOptimizationOutcome,
+    ) -> AgentStateV1:
+        """A real room replaces the plan and the bundle; anything else leaves both.
+
+        A partial room is still a proposal worth keeping. An infeasible one and
+        a refusal are not: replacing a bundle the customer can buy with one they
+        cannot would lose something for nothing - and replacing the plan beside
+        it would leave needs describing a room that was never chosen.
+
+        The plan and the bundle land in **one** operation, because they are one
+        proposal: there is no ordering in which new needs could be observed
+        beside a bundle picked from different ones.
+
+        Locked lines are named by id and preserved; every newly selected product
+        is a fresh suggestion carrying the plan position it filled, which the
+        reducer maps to the id it has just allocated. The optimiser has no
+        state-line provenance, so nothing tries to match its locked output back
+        to the lines it came from.
+        """
+        if not isinstance(outcome, RoomBundle):
+            return state
+        if outcome.status is BundleStatus.INFEASIBLE:
+            return state
+
+        room = state.room_project
+        locked_ids = [
+            line.line_id
+            for line in (room.bundle_items if room else ())
+            if line.status is BundleItemStatus.LOCKED
+        ]
+        return apply_update(
+            state,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    bundle_operations=(
+                        ReplaceDesignPlan(
+                            needs=tuple(
+                                DesignNeedSpec(
+                                    commerce_category=need.commerce_category,
+                                    commerce_subcategory=need.commerce_subcategory,
+                                    priority=need.priority,
+                                    quantity=need.quantity,
+                                    seating_capacity=need.seating_capacity,
+                                    semantic_intent=need.semantic_intent,
+                                )
+                                for need in plan.needs
+                            ),
+                            preserved=tuple(
+                                PreservedBundleLine(line_id=line_id)
+                                for line_id in locked_ids
+                            ),
+                            added=tuple(
+                                PlannedBundleLineSpec(
+                                    product_id=line.product.product_id,
+                                    quantity=line.quantity,
+                                    acquisition=BundleAcquisition.TO_BUY,
+                                    status=BundleItemStatus.SUGGESTED,
+                                    need_index=line.need_index,
+                                )
+                                for line in outcome.lines
+                                if not line.locked
+                            ),
+                        ),
+                    )
+                )
+            ),
+        )
+
+    @staticmethod
+    def _log_whole_room(
+        turn: CustomerTurnInput,
+        state: AgentStateV1,
+        plan: InteriorDesignResult,
+        discovery: DesignDiscoveryResult,
+        outcome: BundleOptimizationOutcome,
+        committed: AgentStateV1,
+        started: float,
+    ) -> None:
+        """Shape and counts only: no message, no product, no line id."""
+        room = committed.room_project
+        bundle = outcome if isinstance(outcome, RoomBundle) else None
+        logger.info(
+            "whole_room_completed",
+            store_id=turn.context.store_id,
+            locked_line_count=sum(
+                1
+                for line in ((state.room_project.bundle_items) if state.room_project else ())
+                if line.status is BundleItemStatus.LOCKED
+            ),
+            need_count=len(plan.needs),
+            guidance_count=len(plan.guidance),
+            searched_need_count=discovery.searched_count,
+            bundle_status=str(bundle.status) if bundle else None,
+            unavailable_reason=(None if bundle else str(outcome.reason)),  # type: ignore[union-attr]
+            bundle_line_count=len(bundle.lines) if bundle else 0,
+            unmet_count=len(bundle.unmet) if bundle else 0,
+            committed=committed is not state,
+            bundle_revision=room.bundle_revision if room else 0,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
 
     # ── search ──────────────────────────────────────────────────────────────
 

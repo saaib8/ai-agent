@@ -12,9 +12,11 @@ from decimal import Decimal
 
 import pytest
 from app.core.exceptions import InvalidRequestError
+from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import (
     ActiveSearchState,
     AgentStateV1,
+    BundleItemStatus,
     CustomerPreferenceState,
     DerivedCommerceState,
     ProductInteractionState,
@@ -23,13 +25,16 @@ from app.schemas.agent_state import (
 )
 from app.schemas.agent_updates import (
     ActiveSearchUpdate,
+    AddBundleLine,
     AddItems,
     AgentStateUpdate,
+    BundleLineSpec,
     ClearSemanticIntent,
     CustomerPreferenceUpdate,
     DerivedCommerceUpdate,
     ProductInteractionUpdate,
     RemoveItems,
+    ReplaceBundle,
     ReplaceItems,
     RoomProjectUpdate,
     SetSemanticIntent,
@@ -65,6 +70,36 @@ def _with_search(**kwargs: object) -> AgentStateV1:
 
 
 # ── omission is untouched ───────────────────────────────────────────────────
+
+
+
+def _spec(
+    product_id: int,
+    *,
+    quantity: int = 1,
+    acquisition: BundleAcquisition = BundleAcquisition.TO_BUY,
+    status: BundleItemStatus = BundleItemStatus.SUGGESTED,
+    need_id: int | None = None,
+) -> BundleLineSpec:
+    return BundleLineSpec(
+        product_id=product_id,
+        quantity=quantity,
+        acquisition=acquisition,
+        status=status,
+        need_id=need_id,
+    )
+
+
+def _bundle(*operations: object) -> AgentStateUpdate:
+    return AgentStateUpdate(
+        room_project=RoomProjectUpdate(bundle_operations=tuple(operations))
+    )
+
+
+def _with_bundle(*specs: BundleLineSpec) -> AgentStateV1:
+    """A state whose bundle was committed once, as M12E-2 will commit it."""
+    return apply_update(AgentStateV1(), _bundle(ReplaceBundle(added=specs)))
+
 
 
 def test_an_empty_update_changes_nothing() -> None:
@@ -193,19 +228,29 @@ def test_replace_swaps_the_whole_list() -> None:
 
 def test_an_omitted_tuple_is_not_cleared() -> None:
     """The failure this whole architecture exists to prevent."""
-    state = AgentStateV1(
-        room_project=RoomProjectState(
-            bundle_product_ids=(1, 2), locked_product_ids=(1,)
-        )
-    )
+    state = _with_bundle(_spec(10, status=BundleItemStatus.LOCKED), _spec(11))
 
     after = apply_update(
         state, AgentStateUpdate(room_project=RoomProjectUpdate(room_type="bedroom"))
     )
 
     assert after.room_project is not None
-    assert after.room_project.bundle_product_ids == (1, 2)
-    assert after.room_project.locked_product_ids == (1,)
+    assert [i.product_id for i in after.room_project.bundle_items] == [10, 11]
+    assert after.room_project.locked_product_ids == (10,)
+
+
+def test_an_unrelated_update_does_not_touch_the_bundle_counters() -> None:
+    """The revision tracks bundle content, not turn activity."""
+    state = _with_bundle(_spec(10))
+    before = state.room_project
+
+    after = apply_update(
+        state, AgentStateUpdate(room_project=RoomProjectUpdate(room_type="bedroom"))
+    )
+
+    assert before is not None and after.room_project is not None
+    assert after.room_project.bundle_revision == before.bundle_revision
+    assert after.room_project.next_bundle_line_id == before.next_bundle_line_id
 
 
 # ── semantic intent continuity ──────────────────────────────────────────────
@@ -435,14 +480,23 @@ def test_committing_results_without_a_search_is_refused() -> None:
 
 
 def test_an_update_producing_an_invalid_state_is_rejected() -> None:
-    """Locked outside the bundle must fail at the transition, not later."""
-    state = AgentStateV1(room_project=RoomProjectState(bundle_product_ids=(1,)))
+    """A malformed line must fail at the transition, not later."""
+    state = AgentStateV1()
 
     with pytest.raises(ValidationError):
         apply_update(
             state,
             AgentStateUpdate(
-                room_project=RoomProjectUpdate(locked_product_ids=AddItems(items=(99,)))
+                room_project=RoomProjectUpdate(
+                    bundle_operations=(
+                        AddBundleLine(
+                            line=BundleLineSpec(
+                                product_id=0,
+                                acquisition=BundleAcquisition.TO_BUY,
+                            )
+                        ),
+                    )
+                )
             ),
         )
 
@@ -464,7 +518,7 @@ def test_the_result_is_a_fully_revalidated_state() -> None:
     )
 
     assert isinstance(state, AgentStateV1)
-    assert state.schema_version == "agent_state_v1"
+    assert state.schema_version == "agent_state_v3"
 
 
 def test_a_first_search_without_a_request_is_refused() -> None:

@@ -23,6 +23,7 @@ from app.schemas.agent_decision import (
     BlockingClarification,
     BlockingClarificationReason,
     CustomerAgentDecision,
+    DesignAnchorIntent,
     FollowUpPolicy,
     NewSearchProposal,
     ProductInteractionIntent,
@@ -232,7 +233,8 @@ REPRESENTATIVE_DECISIONS = {
         ),
     ),
     "design_handoff": CustomerAgentDecision(
-        action=AgentAction.DESIGN_HANDOFF, reference=SoleSelectedProduct()
+        action=AgentAction.DESIGN_HANDOFF,
+        design_anchor=DesignAnchorIntent(reference=SoleSelectedProduct()),
     ),
     "select": CustomerAgentDecision(
         action=AgentAction.ANSWER,

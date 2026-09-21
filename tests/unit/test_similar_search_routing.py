@@ -132,7 +132,12 @@ def test_semantic_intent_does_not_route() -> None:
 
 
 def test_no_similar_action_was_added() -> None:
-    """The seven locked actions, unchanged."""
+    """Alternatives still route by a search's reference, not by an action.
+
+    The action set has grown since - M12E-4B added `bundle_refine`, which is a
+    room edit rather than a search - but nothing was added for "something like
+    this one", which is what this guard is about.
+    """
     assert {a.value for a in AgentAction} == {
         "answer",
         "clarify",
@@ -140,8 +145,10 @@ def test_no_similar_action_was_added() -> None:
         "refine_search",
         "product_detail",
         "compare",
+        "bundle_refine",
         "design_handoff",
     }
+    assert "similar" not in {a.value for a in AgentAction}
 
 
 def test_a_reference_still_cannot_accompany_the_other_actions() -> None:

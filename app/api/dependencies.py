@@ -20,12 +20,17 @@ from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
 from app.repositories.products import ProductRepository
 from app.repositories.stores import StoreRepository
+from app.services.bundle_optimizer import BundleOptimizer
+from app.services.bundle_reference import BundleReferenceResolver
+from app.services.catalog_capability import CatalogCapabilityService
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.customer_decision import CustomerAgentDecisionService
+from app.services.design_discovery import DesignDiscoveryService
 from app.services.discovery import ProductDiscoveryService
 from app.services.health import HealthService
 from app.services.hydration import ProductHydrationService
+from app.services.interior_design import InteriorDesignAgent
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
@@ -253,6 +258,10 @@ def customer_turn_coordinator(
     # collaborator is built rather than part-way through constructing one.
     decisions = customer_agent_decision_service(app_resources)
     pipeline = product_search_pipeline(session, app_resources)
+    # Optional on purpose. A deployment that has not configured the design
+    # specialist still sells furniture: searching, comparing and answering all
+    # work, and only a request for a whole room finds the capability missing.
+    design = optional_interior_design_agent(app_resources)
 
     repository = ProductRepository(session)
     resolver = ProductReferenceResolver(repository, app_resources.attributes)
@@ -273,7 +282,84 @@ def customer_turn_coordinator(
         pipeline,
         product_hydration_service(session),
         SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
+        catalog_capability_service(session, app_resources),
+        design,
+        design_discovery_service(session, app_resources),
+        BundleReferenceResolver(app_resources.taxonomy),
+        BundleOptimizer(),
+        app_resources.dimensions,
     )
+
+
+def optional_interior_design_agent(
+    app_resources: ResourcesDep,
+) -> InteriorDesignAgent | None:
+    """The design specialist if it is configured, and None if it is not.
+
+    `interior_design.model` has no default and never borrows another agent's:
+    four agents, four prompts, four identifiers. An absent one means the
+    capability does not exist here, which is an ordinary deployment rather than
+    a misconfiguration - so a caller that can do without it gets None instead
+    of an exception.
+    """
+    client = app_resources.design_llm
+    if client is None:
+        return None
+    return InteriorDesignAgent(client, app_resources.taxonomy)
+
+
+def interior_design_agent(app_resources: ResourcesDep) -> InteriorDesignAgent:
+    """The design specialist, or a refusal to build one.
+
+    For callers that *are* the design capability. Asking for it by name when it
+    is unconfigured is a configuration error; a commerce turn that merely might
+    reach it asks through :func:`optional_interior_design_agent` instead.
+    """
+    agent = optional_interior_design_agent(app_resources)
+    if agent is None:
+        raise ConfigurationError(
+            detail="interior_design.model must be set to use the design specialist",
+            public_message="Design guidance is not configured.",
+        )
+    return agent
+
+
+InteriorDesignAgentDep = Annotated[
+    InteriorDesignAgent, Depends(interior_design_agent)
+]
+
+
+def catalog_capability_service(
+    session: SessionDep, app_resources: ResourcesDep
+) -> CatalogCapabilityService:
+    """What the active retailer stocks. Deterministic, no configuration."""
+    return CatalogCapabilityService(ProductRepository(session), app_resources.taxonomy)
+
+
+CatalogCapabilityServiceDep = Annotated[
+    CatalogCapabilityService, Depends(catalog_capability_service)
+]
+
+
+def design_discovery_service(
+    session: SessionDep, app_resources: ResourcesDep
+) -> DesignDiscoveryService:
+    """A room plan's needs turned into verified products.
+
+    Deterministic, and configured only by what the search pipeline already
+    needs. It reads no limit of its own: the internal candidate pool is
+    unbounded, because M8 and M9 already produce the complete eligible pool
+    and truncating it would decide a room's options before the optimiser saw
+    them.
+    """
+    return DesignDiscoveryService(
+        product_search_pipeline(session, app_resources), app_resources.taxonomy
+    )
+
+
+DesignDiscoveryServiceDep = Annotated[
+    DesignDiscoveryService, Depends(design_discovery_service)
+]
 
 
 def customer_response_generator(

@@ -295,6 +295,7 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         "zero_results",
         "product_detail",
         "comparison",
+        "room_bundle",
         "deterministic_clarification",
     }
     for absent in ("clarify", "failure", "design_handoff", "handled_failure"):
@@ -1116,6 +1117,7 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "dropped_roles",
         "compared_count",
         "comparison_differs_on",
+        "bundle",
         "clarification_reason",
         "reference_reason",
         "relative_price_reason",

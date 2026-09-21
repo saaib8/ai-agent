@@ -52,6 +52,42 @@ class TurnFailureCode(StrEnum):
     REFERENCE_UNRESOLVED = "reference_unresolved"
     RESPONSE_UNAVAILABLE = "response_unavailable"
 
+    LOCKED_PRODUCT_UNAVAILABLE = "locked_product_unavailable"
+    """A piece the customer asked to keep could not be verified.
+
+    Deliberately not `PRODUCT_UNAVAILABLE`: that one means a product someone
+    referred to could not be read, and the turn continues around it. This means
+    a room cannot be planned at all without either dropping a lock or inventing
+    facts about it, and neither is allowed (CLAUDE.md 10).
+    """
+
+    BUNDLE_NOT_VERIFIABLE = "bundle_not_verifiable"
+    """The room's current contents could not all be confirmed.
+
+    Deliberately not `PRODUCT_UNAVAILABLE`: that one says the piece they meant
+    is gone, and saying it here would be false - their piece may be perfectly
+    fine, and it is something else in the room we could not read.
+    """
+
+    NO_REPLACEMENT_CANDIDATE = "no_replacement_candidate"
+    """Nothing else of that kind, once what they turned down is excluded."""
+
+    REPLACEMENT_NOT_FEASIBLE = "replacement_not_feasible"
+    """Something exists; it does not fit alongside the rest of the room.
+
+    Deliberately distinct from the above: a budget that would not stretch must
+    never be reported as a catalog with nothing in it.
+    """
+
+    DESIGN_UNAVAILABLE = "design_unavailable"
+    """No authoritative room plan could be produced.
+
+    Infrastructure, not inventory: the capability lookup, the design provider
+    or the design output itself failed. It must never be reported as the
+    retailer having nothing suitable, which is a fact about the catalog rather
+    than about us.
+    """
+
 
 class TurnFailure(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")

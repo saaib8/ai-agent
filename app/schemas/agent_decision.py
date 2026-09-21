@@ -25,7 +25,13 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import MAX_SEMANTIC_INTENT_CHARS, PurchaseStage
+from app.schemas.bundle_reference import (
+    BundleReferenceSelector,
+    DesignNeedCategoryMatch,
+)
+from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.product_reference import (
     ExtremumDirection,
     FocusedProduct,
@@ -58,8 +64,22 @@ class AgentAction(StrEnum):
     """A current fact about one product. Requires fresh hydration."""
 
     COMPARE = "compare"
+    BUNDLE_REFINE = "bundle_refine"
+    """Change whether a piece already in the room is preserved.
+
+    A room edit, not a search and not a design question, which is why it is its
+    own action: the coordinator dispatches on one action per turn, and hiding a
+    room mutation inside `ANSWER` would make a state change invisible at the
+    branch that decides what a turn does.
+    """
+
     DESIGN_HANDOFF = "design_handoff"
-    """A typed intent only. Nothing executes it in V1."""
+    """Interior-design reasoning: composing a room, or recomposing one.
+
+    Executed since M12E-2. Whether it plans a room or revises an existing one
+    is the application's decision, read from durable state - the model asks for
+    design work and never says which kind.
+    """
 
 
 class CommercialReason(StrEnum):
@@ -116,6 +136,205 @@ class ProductInteractionIntent(BaseModel):
     reference: ProductReferenceSelector
 
 
+class BundleInteractionOp(StrEnum):
+    """What a bundle refinement does to the piece it names.
+
+    Every member is the customer's intent, never our storage vocabulary. The
+    reducer keeps a generic status operation, but `LOCK` and `UNLOCK` are what
+    a person actually asks for; the application maps them. A model naming a
+    status would be authoring the shape of our state (CLAUDE.md 3.3).
+    """
+
+    LOCK = "lock"
+    """Keep this piece. Later optimisation may not replace it."""
+
+    UNLOCK = "unlock"
+    """This piece may change later. **Permission, not an instruction**: it does
+    not replace anything now."""
+
+    SET_ACQUISITION = "set_acquisition"
+    """Say whether this piece is being bought or is already theirs.
+
+    Reversible on purpose - "actually I do need to buy that" is an ordinary
+    correction, and a one-way "mark as owned" could not express it.
+    """
+
+    REPLACE_PRODUCT = "replace_product"
+    """Find a different product for this piece's role.
+
+    The role stays; the product changes. Whether the replacement should be
+    cheaper, dearer or simply different is on the replacement payload.
+    """
+
+    REMOVE_NEED = "remove_need"
+    """Take a kind of thing out of the room's plan entirely.
+
+    Deliberately not the same as replacing a product: one says "not this sofa",
+    the other says "no sofa". Reading the second as the first would put a sofa
+    back in a room they asked to have none in.
+    """
+
+
+class BundleReplacementMode(StrEnum):
+    """What kind of different product they are asking for."""
+
+    ALTERNATIVE = "alternative"
+    """Just a different one. Implies nothing about price, kind or looseness."""
+
+    CHEAPER = "cheaper"
+    """Less than this one costs. The figure is the catalog's, read fresh."""
+
+    MORE_EXPENSIVE = "more_expensive"
+    """More than this one costs, and **only** that.
+
+    Never "premium", "better" or "higher quality": price is not quality, and a
+    customer asking for something better has not told us what better means.
+    """
+
+    SEMANTIC = "semantic"
+    """A different character - lighter, more minimal, softer. Ranking, never a
+    filter."""
+
+
+class BundleReplacementIntent(BaseModel):
+    """What sort of replacement to look for.
+
+    No amount, no percentage, no bound. "Cheaper" names a direction; what it
+    costs is read from the product itself, because the model has never been
+    told a price and must not invent one.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: BundleReplacementMode
+    semantic_intent: SemanticIntentRefinement | None = None
+    """The new character to look for, for `SEMANTIC` and nothing else.
+
+    `SET` replaces this role's wording outright and `CLEAR` removes it -
+    deliberately not appended, or a role refined three times would carry three
+    generations of contradictory language.
+    """
+
+    @model_validator(mode="after")
+    def _wording_belongs_to_the_semantic_mode(self) -> Self:
+        if (self.mode is BundleReplacementMode.SEMANTIC) != (
+            self.semantic_intent is not None
+        ):
+            raise ValueError("only a semantic replacement carries new wording")
+        return self
+
+
+class BundleInteractionIntent(BaseModel):
+    """One change to one piece of the room, or to one role in its plan.
+
+    Carries no identity of any kind - no product, no line, no need, no revision
+    - and no price. The model names a card or a kind of thing; the application
+    works out which lines that is and what anything costs.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    op: BundleInteractionOp
+    selector: BundleReferenceSelector | None = None
+    """The visible card this is about. Absent only when a role is named
+    directly, which removal may do because a role need not be filled."""
+
+    need_selector: DesignNeedCategoryMatch | None = None
+    acquisition: BundleAcquisition | None = None
+    replacement: BundleReplacementIntent | None = None
+
+    @model_validator(mode="after")
+    def _each_operation_carries_what_it_needs(self) -> Self:
+        """Payloads are refused rather than ignored.
+
+        An operation carrying something it cannot act on means the model meant
+        something other than what it said, and quietly dropping the extra would
+        execute the half we happened to understand.
+        """
+        if self.op is BundleInteractionOp.REMOVE_NEED:
+            if (self.selector is None) == (self.need_selector is None):
+                raise ValueError("a removal names a card or a role, and one of them")
+        elif self.selector is None:
+            raise ValueError(f"{self.op} names the piece it changes")
+        elif self.need_selector is not None:
+            raise ValueError("only a removal may name a role directly")
+
+        wants_acquisition = self.op is BundleInteractionOp.SET_ACQUISITION
+        if wants_acquisition != (self.acquisition is not None):
+            raise ValueError("an acquisition change states the acquisition, and only it does")
+
+        wants_replacement = self.op is BundleInteractionOp.REPLACE_PRODUCT
+        if wants_replacement != (self.replacement is not None):
+            raise ValueError("a replacement states what sort, and only it does")
+        return self
+
+
+class DesignAnchorIntent(BaseModel):
+    """A piece the room is to be designed around, as the customer described it.
+
+    Three facts, and the model may state all three because all three are things
+    the customer said: which piece they mean, whether they already have it, and
+    how many.
+
+    It carries no product id. The selector is resolved by application code
+    against the products this conversation actually presented, exactly as every
+    other reference is (CLAUDE.md 20.2).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reference: ProductReferenceSelector
+
+    acquisition: BundleAcquisition | None = None
+    """Only when they said so outright - "I already own this one".
+
+    `None` means they did not say, and the application supplies its own
+    default. It must not be filled in from "keep it", "design around it", a
+    lock, a category or a price: those say the piece stays in the room, which
+    is a different fact from who paid for it (CLAUDE.md 3.3).
+    """
+
+    quantity: int = Field(default=1, ge=1)
+    """How many of this piece the room has. Only from what they said - "I
+    already own two of these" - never from the kind of thing it is."""
+
+
+class DesignRevisionIntent(BaseModel):
+    """The hard constraints on recomposing a room the customer already has.
+
+    Only what the customer said outright and the application can resolve
+    deterministically. Everything else about the new room - which roles it
+    needs, how many, how important, what character - is the design specialist's
+    reasoning, and this contract deliberately cannot express any of it.
+
+    Both members reuse reference surfaces that already exist, and they are not
+    interchangeable: a role lives in the plan and may have nothing filling it,
+    while a card is a piece the customer can see. They are resolved against
+    different surfaces and neither can name the other.
+
+    No identity, no figure: no need id, line id, product id, revision or price.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    removed_needs: tuple[DesignNeedCategoryMatch, ...] = ()
+    """Roles the customer explicitly wants gone from the revised room.
+
+    A hard negative constraint on the new plan, not a deletion performed now:
+    "replace the dining area with a reading corner" is one revision, and
+    removing the dining first would leave them with neither if the redesign
+    failed.
+    """
+
+    preserved_items: tuple[BundleReferenceSelector, ...] = ()
+    """Pieces already in the room that must survive the recomposition.
+
+    "Keep this sofa, but turn the dining area into a reading corner" is one
+    sentence and one intent. The selector names a visible card; the application
+    resolves it, verifies it and locks every line behind it.
+    """
+
+
 # ── proposals ───────────────────────────────────────────────────────────────
 
 
@@ -165,6 +384,31 @@ class PriceProposal(BaseModel):
         return self
 
 
+class RoomMeasurementProposal(BaseModel):
+    """One room measurement the customer stated, before validation.
+
+    Strings and a unit, exactly like `PriceProposal`: the figure never passes
+    through a binary float, and the unit is theirs to state. Nothing is assumed
+    to be centimetres - "my room is 5 by 4" with no unit is a question, not a
+    guess (CLAUDE.md 15.1).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role: RoomMeasurementRole
+    value: str = Field(min_length=1)
+    unit: str | None = None
+    label: str | None = Field(default=None, max_length=80)
+
+
+class RoomGeometryProposal(BaseModel):
+    """Room measurements from this turn. Only what they actually said."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    measurements: tuple[RoomMeasurementProposal, ...] = Field(min_length=1)
+
+
 class CustomerStateProposal(BaseModel):
     """Facts the customer stated about themselves or their room.
 
@@ -184,6 +428,8 @@ class CustomerStateProposal(BaseModel):
     customer_preferences: PreferenceProposal | None = None
     room_type: str | None = None
     clear_room_type: bool = False
+    room_geometry: RoomGeometryProposal | None = None
+    clear_room_geometry: bool = False
     room_budget: PriceProposal | None = None
     clear_room_budget: bool = False
     design_preferences: PreferenceProposal | None = None
@@ -194,6 +440,8 @@ class CustomerStateProposal(BaseModel):
             raise ValueError("room_type cannot be set and cleared in one turn")
         if self.clear_room_budget and self.room_budget is not None:
             raise ValueError("room_budget cannot be set and cleared in one turn")
+        if self.clear_room_geometry and self.room_geometry is not None:
+            raise ValueError("room_geometry cannot be set and cleared in one turn")
         return self
 
 
@@ -262,6 +510,14 @@ class BlockingClarificationReason(StrEnum):
 
     COMPARISON_TARGETS = "comparison_targets"
 
+    CONTRADICTORY_ROOM_INSTRUCTIONS = "contradictory_room_instructions"
+    """Two things they asked for in one turn cannot both hold.
+
+    Model-facing, which this enum requires: "keep this sofa but get rid of all
+    the seating" contradicts itself in the customer's own words, so a model can
+    recognise it from language alone. The application also raises it when
+    resolving revision constraints turns up the same contradiction."""
+
 
 class BlockingClarification(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -308,7 +564,10 @@ class CustomerAgentDecision(BaseModel):
       "Something like the beige one" is a new search seeded from a product
       rather than from their words, so the reference is what distinguishes it
       from an ordinary new search, which carries none.
-    * `DESIGN_HANDOFF` - the anchor piece a room is to be designed around.
+    A design handoff's anchor is deliberately **not** here: it carries an
+    acquisition and a quantity alongside the selector, and two places able to
+    name the anchor would be two answers to the same question. It lives on
+    `design_anchor`.
 
     A search's reference is the *only* deterministic signal for the alternatives
     route. `commercial_reason` describes motive and never routes: an upsell and
@@ -320,6 +579,31 @@ class CustomerAgentDecision(BaseModel):
     clarification: BlockingClarification | None = None
 
     interaction: ProductInteractionIntent | None = None
+    bundle_interaction: BundleInteractionIntent | None = None
+    """The one room change this turn makes, for `BUNDLE_REFINE` only.
+
+    One per turn: two identity-changing edits from a single decision would need
+    an order, and nothing establishes one.
+    """
+
+    design_anchor: DesignAnchorIntent | None = None
+    """The piece a room is to be designed around, for `DESIGN_HANDOFF` only.
+
+    Optional: a room may be planned from the project's own context with no
+    anchor at all. It is the single source of anchor truth - the top-level
+    `reference` no longer carries one - so there are never two answers to
+    "which piece".
+    """
+
+    design_revision: DesignRevisionIntent | None = None
+    """Hard constraints on recomposing an existing room, for `DESIGN_HANDOFF`.
+
+    Optional, and absent for an ordinary room plan. Its absence never means
+    "this is an initial plan": whether a plan exists is read from durable
+    state, so "add a reading corner" carries no revision intent and is still
+    executed as a revision.
+    """
+
     state_proposal: CustomerStateProposal | None = None
     commerce_proposal: DerivedCommerceProposal | None = None
     follow_up_policy: FollowUpPolicy = FollowUpPolicy.OPTIONAL
@@ -375,13 +659,36 @@ class CustomerAgentDecision(BaseModel):
                 raise ValueError("a comparison must not repeat a reference")
         elif self.comparison_references:
             raise ValueError("only a comparison may carry comparison references")
-        references_allowed = (
-            AgentAction.PRODUCT_DETAIL,
-            AgentAction.SEARCH,
-            AgentAction.DESIGN_HANDOFF,
-        )
+        references_allowed = (AgentAction.PRODUCT_DETAIL, AgentAction.SEARCH)
         if self.reference is not None and self.action not in references_allowed:
             raise ValueError(f"{self.action} may not carry a product reference")
+        if (
+            self.design_anchor is not None
+            and self.action is not AgentAction.DESIGN_HANDOFF
+        ):
+            raise ValueError("only a design handoff carries a design anchor")
+        if (
+            self.design_revision is not None
+            and self.action is not AgentAction.DESIGN_HANDOFF
+        ):
+            raise ValueError("only a design handoff carries revision constraints")
+        self._check_bundle_interaction()
+
+    def _check_bundle_interaction(self) -> None:
+        """A room edit names exactly one piece and does nothing else.
+
+        Every other payload is refused rather than ignored: a turn that both
+        locked a piece and ran a search would be two identity-changing effects
+        from one decision, and the reply could only describe one of them.
+        """
+        if self.action is not AgentAction.BUNDLE_REFINE:
+            if self.bundle_interaction is not None:
+                raise ValueError("only a bundle refinement carries a bundle change")
+            return
+        if self.bundle_interaction is None:
+            raise ValueError("a bundle refinement needs the change it makes")
+        if self.interaction is not None:
+            raise ValueError("a bundle refinement makes one change, not two")
 
     def _check_clarification(self) -> None:
         if self.action is AgentAction.CLARIFY:
@@ -443,5 +750,7 @@ __all__ = [
     "ProductInteractionIntent",
     "ProductInteractionOp",
     "ProductReferenceSelector",
+    "RoomGeometryProposal",
+    "RoomMeasurementProposal",
     "SoleSelectedProduct",
 ]

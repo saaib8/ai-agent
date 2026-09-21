@@ -21,11 +21,18 @@ the same view.
 
 from __future__ import annotations
 
-from app.schemas.agent_state import ActiveSearchState, AgentStateV1, RoomProjectState
+from app.schemas.acquisition import BundleAcquisition
+from app.schemas.agent_state import (
+    ActiveSearchState,
+    AgentStateV1,
+    BundleItemStatus,
+    RoomProjectState,
+)
 from app.schemas.agent_view import (
     ActiveSearchView,
     AgentStateView,
     CapacityView,
+    DesignNeedReferenceView,
     DimensionView,
     PlanarView,
     PreferenceView,
@@ -35,6 +42,7 @@ from app.schemas.agent_view import (
 )
 from app.schemas.discovery import PriceConstraint
 from app.schemas.query import ConstraintSemantics, SemanticPreference
+from app.services.bundle_cards import group_bundle_cards
 
 
 def project_state(state: AgentStateV1) -> AgentStateView:
@@ -174,6 +182,17 @@ def _room_project(room: RoomProjectState | None) -> RoomProjectView | None:
         room_type=room.room_type,
         budget=_price(room.budget, ConstraintSemantics()),
         design_preferences=_preferences(room.design_preferences),
-        bundle_item_count=len(room.bundle_product_ids),
-        locked_item_count=len(room.locked_product_ids),
+        design_needs=tuple(
+            DesignNeedReferenceView(
+                commerce_category=need.commerce_category,
+                commerce_subcategory=need.commerce_subcategory,
+            )
+            for need in room.design_needs
+        ),
+        bundle_line_count=len(room.bundle_items),
+        bundle_card_count=len(group_bundle_cards(room.bundle_items)),
+        locked_line_count=room.count(BundleItemStatus.LOCKED),
+        already_owned_line_count=room.count_acquisition(
+            BundleAcquisition.ALREADY_OWNED
+        ),
     )

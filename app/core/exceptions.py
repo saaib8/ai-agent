@@ -207,6 +207,16 @@ class RankingIntegrityError(ZoryError):
 # ── Startup / programming errors ────────────────────────────────────────────
 
 
+class BundlePresentationError(ZoryError):
+    """A committed room could not be rendered from the outcome that made it.
+
+    An invariant violation rather than a shortfall: every committed line came
+    from that same outcome, so a card with no verified facts behind it means
+    the two describe different rooms. Surfaced rather than papered over,
+    because rendering a room with a piece missing would be quietly wrong.
+    """
+
+
 class ConfigurationError(ZoryError):
     """Raised at startup when the service is misconfigured.
 

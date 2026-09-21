@@ -20,11 +20,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.schemas.agent_decision import (
     BlockingClarification,
+    BundleInteractionOp,
     CustomerAgentDecision,
     FollowUpPolicy,
 )
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_view import AgentStateView
+from app.schemas.bundle import BundleOptimizationOutcome
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.conversation import ConversationContext
 from app.schemas.grounding import (
@@ -103,13 +105,16 @@ class TurnGrounding(BaseModel):
     """
 
     failure: TurnFailure | None = None
-    design_handoff_requested: bool = False
-    """The turn asked for interior-design reasoning.
 
-    A marker, not a request object: `InteriorDesignRequest` requires catalog
-    capabilities that do not exist yet, and constructing a half-built one would
-    be inventing the M12 boundary early. Execution is M12's.
+    design_handoff_requested: bool = False
+    """The turn **asked** for interior-design reasoning.
+
+    Request metadata, and only that. It says what the customer wanted, never
+    what came of it: a handoff that executed and one that failed before the
+    optimiser both set it. What happened is `bundle_outcome`, and a reader
+    deciding how to answer must look there rather than here (M12E-2).
     """
+
 
     follow_up_policy: FollowUpPolicy = FollowUpPolicy.NONE
 
@@ -171,6 +176,31 @@ class CustomerTurnResult(BaseModel):
     state: AgentStateV1
     decision: CustomerAgentDecision
     grounding: TurnGrounding
+
+    bundle_change: BundleInteractionOp | None = None
+    """The local room edit this turn made, if any.
+
+    Application-only, beside `bundle_outcome` rather than inside it: locking a
+    piece produces no `RoomBundle`, and manufacturing one would invent a status
+    and a feasibility claim nobody established.
+    """
+
+    bundle_outcome: BundleOptimizationOutcome | None = None
+    """What the whole-room execution produced, if it got that far.
+
+    Here rather than on `TurnGrounding` for one concrete reason: it carries
+    `ProductCandidate`, and a grounded product deliberately holds no product id
+    so that prose can only cite a turn-local handle. Putting an id-bearing shape
+    inside the grounding would break that, and a guard says so. This object
+    already holds the whole state, ids included, and is never serialised
+    anywhere near a model.
+
+    Present for a bundle, a partial bundle, an infeasible one and a typed
+    refusal alike: each is a different thing to say, and collapsing them would
+    lose the distinction before anyone could use it. `None` alongside
+    `grounding.design_handoff_requested` means execution stopped earlier, and
+    `grounding.failure` says why. M12E-3 owns the model-safe projection.
+    """
 
 
 class CustomerResponse(BaseModel):

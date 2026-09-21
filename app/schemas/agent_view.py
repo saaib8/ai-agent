@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.agent_state import PurchaseStage
 from app.schemas.discovery import DimensionConstraintKind, ProductSort
+from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.query import ConstraintStrength
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole
@@ -149,6 +150,43 @@ class PresentedProductsView(BaseModel):
         return self
 
 
+class RoomMeasurementView(BaseModel):
+    """One room measurement the customer gave, as they gave it.
+
+    Their own number, so the decision model may see it for the same reason it
+    may see their budget: it is what they said, and asking again for something
+    already stated is the failure this prevents.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    role: RoomMeasurementRole
+    centimetres: Decimal
+    label: str | None = None
+
+
+class DesignNeedReferenceView(BaseModel):
+    """One furnishing role the current plan holds, by what kind of thing it is.
+
+    The model sees these for exactly one purpose: resolving a customer's
+    explicit reference to composition that already exists - "the dining area",
+    "the lamp" - into approved taxonomy it could not otherwise name. Without
+    it, a removal constraint would be a guess about a plan the model cannot
+    see.
+
+    **Two fields, and deliberately not a third.** Priority, quantity, capacity
+    and design wording are what the room *should be*, and supplying them would
+    invite the model to reason about composition - which is the design
+    specialist's job (CLAUDE.md 17.2). Identity is absent for the usual reason:
+    a model that can see a `need_id` can emit one.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_category: str = Field(min_length=1)
+    commerce_subcategory: str | None = Field(default=None, min_length=1)
+
+
 class RoomProjectView(BaseModel):
     """A whole-room task's customer-supplied requirements.
 
@@ -159,15 +197,46 @@ class RoomProjectView(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     room_type: str | None = None
+    room_measurements: tuple[RoomMeasurementView, ...] = ()
     budget: PriceView | None = None
     design_preferences: tuple[PreferenceView, ...] = ()
-    bundle_item_count: int = Field(default=0, ge=0)
-    locked_item_count: int = Field(default=0, ge=0)
+    bundle_line_count: int = Field(default=0, ge=0)
+    """Lines, not units. Four of one product is one line, and the name says so:
+    calling it an item count would invite the model to read it as four."""
+
+    locked_line_count: int = Field(default=0, ge=0)
+    bundle_card_count: int = Field(default=0, ge=0)
+    """How many pieces the customer can actually see.
+
+    Lines merge into cards, so four lines may show as three - and "the second
+    one" counts cards. Without this the model cannot tell whether an ordinal it
+    is about to accept refers to anything. It names no product and no type.
+    """
+
+    design_needs: tuple[DesignNeedReferenceView, ...] = ()
+    """The roles the current plan calls for, in durable plan order.
+
+    Empty when nothing has been planned, which reads correctly either way:
+    there is no composition to refer back to.
+    """
+
+    already_owned_line_count: int = Field(default=0, ge=0)
+    """Lines the customer already has.
+
+    Worth knowing and safe to know: without it the agent could offer to sell
+    someone a piece they told us they own. It is a count, so it names no
+    product.
+    """
 
     @model_validator(mode="after")
-    def _locked_within_bundle(self) -> Self:
-        if self.locked_item_count > self.bundle_item_count:
-            raise ValueError("locked_item_count cannot exceed bundle_item_count")
+    def _counts_fit_inside_the_bundle(self) -> Self:
+        for name, count in (
+            ("locked_line_count", self.locked_line_count),
+            ("already_owned_line_count", self.already_owned_line_count),
+            ("bundle_card_count", self.bundle_card_count),
+        ):
+            if count > self.bundle_line_count:
+                raise ValueError(f"{name} cannot exceed bundle_line_count")
         return self
 
 

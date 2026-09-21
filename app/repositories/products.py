@@ -426,6 +426,41 @@ class ProductRepository:
             for row in result
         ]
 
+    async def supported_commerce_pairs(
+        self, context: RetailerContext
+    ) -> tuple[tuple[str, str | None], ...]:
+        """Distinct commerce classifications this retailer actually stocks.
+
+        Scoped and active-only, like every other read here: capability is a
+        statement about *this* store's live catalog, never about the global
+        vocabulary and never about a dataset someone happened to load
+        (CLAUDE.md 9.1).
+
+        Unclassified rows are excluded rather than reported as a gap. A product
+        whose commerce fields were never reviewed says nothing about what the
+        retailer sells, and reporting it as a capability would be guessing.
+
+        Deterministically ordered, so a capability summary is stable between
+        calls and diffable in a log.
+        """
+        statement = (
+            select(
+                core_product.c.commerce_category,
+                core_product.c.commerce_subcategory,
+            )
+            .where(
+                *self._scope_clauses(context),
+                core_product.c.commerce_category.isnot(None),
+            )
+            .distinct()
+            .order_by(
+                core_product.c.commerce_category,
+                core_product.c.commerce_subcategory,
+            )
+        )
+        result = await self._session.execute(statement)
+        return tuple((row[0], row[1]) for row in result.all())
+
     async def count_active(self, context: RetailerContext) -> int:
         """How many active products the store has. Backs health and capability checks."""
         statement = (

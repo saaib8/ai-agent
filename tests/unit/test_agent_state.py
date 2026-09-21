@@ -11,17 +11,22 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import (
     AGENT_STATE_VERSION,
     MAX_SEMANTIC_INTENT_CHARS,
     ActiveSearchState,
     AgentStateV1,
+    BundleItemState,
+    BundleItemStatus,
     CustomerPreferenceState,
     DerivedCommerceState,
     ProductInteractionState,
     PurchaseStage,
+    RoomDesignNeedState,
     RoomProjectState,
 )
+from app.schemas.design import DesignPriority
 from app.schemas.discovery import (
     DimensionConstraint,
     DimensionConstraintKind,
@@ -64,6 +69,27 @@ def _preference(value: str = "warm neutral") -> SemanticPreference:
 # ── the root ────────────────────────────────────────────────────────────────
 
 
+
+def _line(
+    line_id: int,
+    *,
+    product_id: int,
+    quantity: int = 1,
+    acquisition: BundleAcquisition = BundleAcquisition.TO_BUY,
+    status: BundleItemStatus = BundleItemStatus.SUGGESTED,
+    need_id: int | None = None,
+) -> BundleItemState:
+    return BundleItemState(
+        line_id=line_id,
+        product_id=product_id,
+        quantity=quantity,
+        acquisition=acquisition,
+        status=status,
+        need_id=need_id,
+    )
+
+
+
 def test_a_default_state_is_valid_and_empty() -> None:
     state = AgentStateV1()
 
@@ -75,9 +101,13 @@ def test_a_default_state_is_valid_and_empty() -> None:
 
 
 def test_an_unknown_schema_version_is_rejected() -> None:
-    """A V1 blob must not be silently misread by V2 code."""
+    """A V1 blob must not be silently misread by V2 code.
+
+    V1 named `bundle_product_ids`, which this shape no longer has, so reading
+    one as V2 would drop a customer's bundle without saying so.
+    """
     with pytest.raises(ValidationError):
-        AgentStateV1(schema_version="agent_state_v2")
+        AgentStateV1(schema_version="agent_state_v1")
 
 
 @pytest.mark.parametrize(
@@ -303,24 +333,141 @@ def test_room_product_ids_are_unique(field: str) -> None:
         RoomProjectState(**{field: (1, 1)})
 
 
-def test_locked_products_must_be_in_the_bundle() -> None:
-    ok = RoomProjectState(bundle_product_ids=(1, 2, 3), locked_product_ids=(1, 3))
-    assert ok.locked_product_ids == (1, 3)
+def test_locked_products_are_derived_from_the_lines_that_hold_them() -> None:
+    """V1's "locked must be inside the bundle" invariant is now structural: a
+    lock is a status on a line, so an unreachable lock cannot be expressed."""
+    room = RoomProjectState(
+        bundle_items=(
+            _line(1, product_id=10, status=BundleItemStatus.LOCKED),
+            _line(2, product_id=11),
+            _line(3, product_id=12, status=BundleItemStatus.LOCKED),
+        ),
+        next_bundle_line_id=4,
+    )
 
+    assert room.locked_product_ids == (10, 12)
+    assert "locked_product_ids" not in RoomProjectState.model_fields
+
+
+def test_a_product_locked_on_two_lines_is_named_once() -> None:
+    """Callers want the products to preserve, not a count of units."""
+    room = RoomProjectState(
+        bundle_items=(
+            _line(1, product_id=10, status=BundleItemStatus.LOCKED),
+            _line(2, product_id=10, status=BundleItemStatus.LOCKED),
+        ),
+        next_bundle_line_id=3,
+    )
+
+    assert room.locked_product_ids == (10,)
+
+
+def test_a_line_id_identifies_exactly_one_line() -> None:
     with pytest.raises(ValidationError):
-        RoomProjectState(bundle_product_ids=(1, 2), locked_product_ids=(9,))
+        RoomProjectState(
+            bundle_items=(_line(1, product_id=10), _line(1, product_id=11)),
+            next_bundle_line_id=2,
+        )
+
+
+def test_the_allocator_can_never_hand_back_an_issued_id() -> None:
+    with pytest.raises(ValidationError):
+        RoomProjectState(bundle_items=(_line(5, product_id=10),), next_bundle_line_id=5)
 
 
 def test_the_bundle_and_the_browsing_shortlist_are_independent() -> None:
     """Different concepts; the rename exists so they cannot be confused."""
     state = AgentStateV1(
         product_interaction=ProductInteractionState(selected_product_ids=(7, 8)),
-        room_project=RoomProjectState(bundle_product_ids=(1, 2)),
+        room_project=RoomProjectState(
+            bundle_items=(_line(1, product_id=1), _line(2, product_id=2)),
+            next_bundle_line_id=3,
+        ),
     )
 
     assert state.product_interaction.selected_product_ids == (7, 8)
     assert state.room_project is not None
-    assert state.room_project.bundle_product_ids == (1, 2)
+    assert [i.product_id for i in state.room_project.bundle_items] == [1, 2]
+
+
+def _need(need_id: int = 1) -> RoomDesignNeedState:
+    return RoomDesignNeedState(
+        need_id=need_id,
+        commerce_category="seating",
+        commerce_subcategory="sofa",
+        priority=DesignPriority.REQUIRED,
+        quantity=1,
+    )
+
+
+def test_one_product_may_fill_two_roles() -> None:
+    """M12D permits the same SKU on several lines, so state must too."""
+    room = RoomProjectState(
+        design_needs=(_need(1), _need(2)),
+        next_design_need_id=3,
+        bundle_items=(
+            _line(1, product_id=10, need_id=1),
+            _line(2, product_id=10, need_id=2),
+        ),
+        next_bundle_line_id=3,
+    )
+
+    assert len(room.bundle_items) == 2
+
+
+def test_two_lines_may_fill_one_need() -> None:
+    room = RoomProjectState(
+        design_needs=(_need(1),),
+        next_design_need_id=2,
+        bundle_items=(
+            _line(1, product_id=10, need_id=1),
+            _line(2, product_id=11, need_id=1),
+        ),
+        next_bundle_line_id=3,
+    )
+
+    assert [i.need_id for i in room.bundle_items] == [1, 1]
+
+
+def test_a_line_cannot_name_a_need_that_is_gone() -> None:
+    """It would resolve to nothing on the turn that tried to refine it."""
+    with pytest.raises(ValidationError):
+        RoomProjectState(
+            bundle_items=(_line(1, product_id=10, need_id=9),),
+            next_bundle_line_id=2,
+        )
+
+
+def test_a_need_may_have_no_line_at_all() -> None:
+    """Precisely what an unmet need is."""
+    room = RoomProjectState(design_needs=(_need(1),), next_design_need_id=2)
+
+    assert room.bundle_items == ()
+
+
+@pytest.mark.parametrize(
+    "forbidden",
+    [
+        "name",
+        "price",
+        "currency",
+        "url",
+        "image",
+        "dimension",
+        "color",
+        "colour",
+        "style",
+        "category",
+        "rank",
+        "relaxation",
+        "store",
+        "semantic",
+    ],
+)
+def test_a_bundle_line_stores_no_catalog_fact(forbidden: str) -> None:
+    """References, never facts. A remembered price is a wrong price."""
+    for field in BundleItemState.model_fields:
+        assert forbidden not in field, field
 
 
 def test_the_room_budget_reuses_the_price_contract() -> None:

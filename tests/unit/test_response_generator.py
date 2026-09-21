@@ -36,6 +36,7 @@ from app.schemas.agent_turn import (
     CustomerTurnResult,
     TurnGrounding,
 )
+from app.schemas.bundle import BundleStatus
 from app.schemas.comparison import (
     ComparisonCell,
     ComparisonField,
@@ -67,6 +68,7 @@ from app.services.response_wording import (
     FAILURE_WORDING,
     FALLBACK_WORDING,
     SIDE_NOTICE_WORDING,
+    fallback_for,
 )
 
 APP = Path(__file__).parents[2] / "app"
@@ -580,6 +582,18 @@ async def test_an_unexpected_error_still_propagates() -> None:
 def test_every_generated_branch_has_fallback_wording(
     kind: ResponseOutcomeKind,
 ) -> None:
+    """Total over the outcomes, so a new branch cannot fall through to silence.
+
+    A room bundle reads a second table, because one sentence cannot serve a
+    complete package, a partial one and an infeasible one.
+    """
+    if kind is ResponseOutcomeKind.ROOM_BUNDLE:
+        for status in BundleStatus:
+            wording = fallback_for(kind, status)
+            assert wording
+            assert not any(character.isdigit() for character in wording)
+        return
+
     assert FALLBACK_WORDING[kind]
     assert not any(character.isdigit() for character in FALLBACK_WORDING[kind])
 

@@ -30,14 +30,23 @@ BUILT_IN_5 = {
     "app/services/proposal_mapping.py": "def map_proposals",
 }
 
-NOT_YET_BUILT = (
-    "InteriorDesignAgent",
-    "CatalogCapabilityService",
-    "BundleOptimizer",
+NOT_YET_REACHABLE = (
+    "REJECT_PRODUCT",
+    "INTENTIONALLY_UNFILLED",
+    "FocusedBundleItem",
 )
-"""Still ahead: the design specialist, its capability lookup and the bundle
-optimiser all belong to M12. Every customer-agent symbol this list once held
-now exists."""
+"""What M12E-4C deliberately did not build.
+
+E4C completed iterative refinement - replacing, re-costing, removing a role -
+all without a specialist call. What is left is composition: changing what the
+room is *for*, which needs the design agent to revise a plan it can currently
+only create. That is E4D.
+
+`REJECT_PRODUCT` stays out for a concrete reason rather than for scope. "Remove
+this and leave the gap" needs a durable `INTENTIONALLY_UNFILLED` state; without
+one, the next optimisation would quietly refill the role, or the room would
+report it as a catalog gap. `FocusedBundleItem` stays out because nothing
+tracks a focused card."""
 
 
 # ── what must now exist ─────────────────────────────────────────────────────
@@ -71,6 +80,14 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "pipeline",
         "hydration",
         "similar_search",
+        # M12E-2: the whole-room path. Each is a deterministic service or the
+        # one design agent; none of them is a second search system.
+        "capabilities",
+        "design",
+        "design_discovery",
+        "bundle_references",
+        "optimizer",
+        "dimensions",
     ]
 
 
@@ -125,8 +142,8 @@ def test_startup_settings_still_build_with_nothing_configured() -> None:
 # ── what must still not exist ───────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("symbol", NOT_YET_BUILT)
-def test_no_later_phase_capability_exists(symbol: str) -> None:
+@pytest.mark.parametrize("symbol", NOT_YET_REACHABLE)
+def test_bundle_refinement_does_not_exist_yet(symbol: str) -> None:
     for module in APP.rglob("*.py"):
         assert symbol not in module.read_text(), f"{module.name} defines {symbol}"
 

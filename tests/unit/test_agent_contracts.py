@@ -294,10 +294,14 @@ def test_no_execution_action_exists_for_a_sales_concept() -> None:
 
 
 def test_customer_state_carries_only_stated_facts() -> None:
+    """Everything here is something the customer said about themselves or their
+    room - including the measurements, which are theirs and never inferred."""
     assert set(CustomerStateProposal.model_fields) == {
         "customer_preferences",
         "room_type",
         "clear_room_type",
+        "room_geometry",
+        "clear_room_geometry",
         "room_budget",
         "clear_room_budget",
         "design_preferences",

@@ -120,6 +120,33 @@ def _resolved(sort: ProductSort = ProductSort.DEFAULT) -> ResolvedSearch:
     )
 
 
+def _build(
+    session: Any, *, limit: int, index: FakeIndex | None
+) -> ProductSearchPipeline:
+    taxonomy = load_taxonomy()
+    policy = RelaxationSettings()
+    repository = ProductRepository(session)
+    return ProductSearchPipeline(
+        ControlledRelaxationService(
+            ProductDiscoveryService(
+                repository,
+                taxonomy,
+                DiscoverySettings(),
+                load_catalog_attributes(),
+                load_dimension_semantics(taxonomy=taxonomy),
+            ),
+            RelaxationPlanner(policy),
+            policy,
+        ),
+        SemanticRankingService(
+            cast(Any, FakeEmbedder()) if index else None,
+            cast(Any, index) if index else None,
+        ),
+        ProductHydrationService(repository),
+        presentation_limit=limit,
+    )
+
+
 async def _run(
     database: Database,
     *,
@@ -127,29 +154,8 @@ async def _run(
     index: FakeIndex | None = None,
     sort: ProductSort = ProductSort.DEFAULT,
 ) -> Any:
-    taxonomy = load_taxonomy()
     async with database.session() as session:
-        policy = RelaxationSettings()
-        repository = ProductRepository(session)
-        pipeline = ProductSearchPipeline(
-            ControlledRelaxationService(
-                ProductDiscoveryService(
-                    repository,
-                    taxonomy,
-                    DiscoverySettings(),
-                    load_catalog_attributes(),
-                    load_dimension_semantics(taxonomy=taxonomy),
-                ),
-                RelaxationPlanner(policy),
-                policy,
-            ),
-            SemanticRankingService(
-                cast(Any, FakeEmbedder()) if index else None,
-                cast(Any, index) if index else None,
-            ),
-            ProductHydrationService(repository),
-            presentation_limit=limit,
-        )
+        pipeline = _build(session, limit=limit, index=index)
         return await pipeline.execute(_resolved(sort), CONTEXT)
 
 
@@ -268,3 +274,90 @@ async def test_a_search_that_matches_nothing_presents_nothing(
     assert result.grounding.eligible_count == 0
     assert result.grounding.stale_dropped_count == 0
     assert result.grounding.truncated_for_presentation is False
+
+
+# ── the internal candidate pool ═════════════════════════════════════════════
+
+
+async def _pool(
+    database: Database, *, limit: int = 3, index: FakeIndex | None = None
+) -> Any:
+    async with database.session() as session:
+        pipeline = _build(session, limit=limit, index=index)
+        return await pipeline.execute_candidate_pool(_resolved(), CONTEXT)
+
+
+async def test_the_optimiser_sees_the_whole_catalog_not_the_three_cards(
+    database: Database, catalog: None
+) -> None:
+    """The same 173 sofas, against a presentation limit of three."""
+    pool = await _pool(database, limit=3)
+
+    assert pool.eligible_count == SOFA_COUNT
+    assert len(pool.candidates) == SOFA_COUNT
+    assert pool.stale_dropped_count == 0
+
+
+async def test_every_candidate_is_fully_hydrated_from_postgresql(
+    database: Database, catalog: None
+) -> None:
+    """Names, prices and commerce fields come from the database, never from an
+    index or a plan (CLAUDE.md 16)."""
+    pool = await _pool(database)
+
+    first = pool.candidates[0].product
+    assert first.name_english.startswith("Sofa ")
+    assert first.price_unit == "SAR"
+    assert first.commerce.category == "seating"
+    assert first.commerce.subcategory == "sofa"
+
+
+async def test_the_pool_is_scoped_to_the_context_store(
+    database: Database, catalog: None
+) -> None:
+    async with database.session() as session:
+        pipeline = _build(session, limit=3, index=None)
+        elsewhere = await pipeline.execute_candidate_pool(
+            _resolved(), RetailerContext(store_id=STORE + 1)
+        )
+
+    assert elsewhere.candidates == ()
+    assert elsewhere.eligible_count == 0
+
+
+async def test_a_semantic_favourite_leads_the_pool(
+    database: Database, catalog: None
+) -> None:
+    """Ranking orders the complete pool, so a buried product leads it."""
+    index = FakeIndex(BURIED)
+
+    pool = await _pool(database, limit=3, index=index)
+
+    assert pool.candidates[0].product.product_id == BURIED
+    assert len(index.scored) == SOFA_COUNT
+    assert pool.semantic_used is True
+
+
+async def test_the_page_is_the_head_of_the_pool(
+    database: Database, catalog: None
+) -> None:
+    """Both paths, one search: what the customer would see is the pool's front."""
+    index = FakeIndex(BURIED)
+    page = await _run(database, limit=3, index=index)
+    pool = await _pool(database, limit=3, index=FakeIndex(BURIED))
+
+    assert page.presented_product_ids == tuple(
+        c.product.product_id for c in pool.candidates[:3]
+    )
+
+
+async def test_the_customer_page_is_unchanged_by_the_pool_path(
+    database: Database, catalog: None
+) -> None:
+    """M11 regression: three products, ordinals from one, grounding intact."""
+    result = await _run(database, limit=3, index=FakeIndex(BURIED))
+
+    assert result.grounding.outcome is SearchOutcome.RESULTS
+    assert len(result.presented_product_ids) == 3
+    assert [p.presented_ordinal for p in result.grounding.products] == [1, 2, 3]
+    assert result.grounding.eligible_count == SOFA_COUNT

@@ -267,7 +267,7 @@ def test_a_search_for_alternatives_with_a_proposal_is_rejected() -> None:
 def test_no_new_action_and_no_motive_routing_were_introduced() -> None:
     from app.schemas.agent_decision import CommercialReason
 
-    assert len(AgentAction) == 7
+    assert len(AgentAction) == 8
     for reason in CommercialReason:
         decision = CustomerAgentDecision(
             action=AgentAction.SEARCH, commercial_reason=reason

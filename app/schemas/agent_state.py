@@ -26,15 +26,35 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.schemas.discovery import PriceConstraint, ProductSearchRequest
+from app.schemas.acquisition import BundleAcquisition
+from app.schemas.design import DesignPriority
+from app.schemas.design_intent import (
+    MAX_DESIGN_INTENT_CHARS,
+    normalise_design_intent,
+)
+from app.schemas.discovery import (
+    MAX_EXCLUDED_PRODUCT_IDS,
+    PriceConstraint,
+    ProductSearchRequest,
+    SeatingCapacityConstraint,
+)
+from app.schemas.geometry import RoomGeometry
 from app.schemas.query import (
     ConstraintSemantics,
     SemanticPreference,
     validate_dimension_correspondence,
 )
 
-AGENT_STATE_VERSION: Literal["agent_state_v1"] = "agent_state_v1"
-"""The state contract. Change the shape, change this."""
+AGENT_STATE_VERSION: Literal["agent_state_v3"] = "agent_state_v3"
+"""The state contract. Change the shape, change this.
+
+V2 replaced the room bundle's two id tuples with typed lines. V3 makes the
+furnishing plan itself durable and renames a bundle line's `need_index` to
+`need_id` - an execution-local position becoming a lasting identity. Both are
+shape changes a reader could get wrong, so the version moves with them.
+
+Nothing persists state yet, so each bump costs no migration - which is exactly
+why they are worth taking now rather than when they would."""
 
 MAX_SEMANTIC_INTENT_CHARS = 200
 """A quality phrase is a few words. This bound is the only thing standing
@@ -161,11 +181,154 @@ class ProductInteractionState(BaseModel):
         return self
 
 
+class BundleItemStatus(StrEnum):
+    """What a bundle line's presence means for the next optimisation.
+
+    Two states, because a third would behave like one of these. "Accepted"
+    either survives re-optimisation - in which case it is `LOCKED` under
+    another name - or it does not, in which case it is `SUGGESTED`. "Rejected"
+    is not a state of an active line at all: a rejected product leaves the
+    bundle. "Replaced" is event history, and V1 stores current state.
+    """
+
+    SUGGESTED = "suggested"
+    """The application proposed it. A later optimisation may replace it."""
+
+    LOCKED = "locked"
+    """The customer asked to keep it. Preserved until they say otherwise, and
+    never unlocked automatically (CLAUDE.md 10)."""
+
+
+class BundleItemState(BaseModel):
+    """One line of the room bundle: a reference, and what it means.
+
+    **References, never facts.** No name, price, currency, url, image,
+    dimension, colour, style, category, rank or relaxation depth. PostgreSQL
+    is product truth and a remembered price is a wrong price; everything here
+    is either an identifier or something the customer decided.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    line_id: int = Field(ge=1)
+    """Stable application identity for this line.
+
+    Needed because a product id is not unique here: the same product may fill
+    two roles, and a lock covering no current need has no need to name it by.
+    Application-assigned, never model-authored, and never catalog identity.
+    """
+
+    product_id: int = Field(ge=1)
+    quantity: int = Field(ge=1)
+    """Units of this product. Multiplies price and asserts nothing about stock."""
+
+    acquisition: BundleAcquisition
+    status: BundleItemStatus
+
+    need_id: int | None = Field(default=None, ge=1)
+    """The durable design need this line fills, or None.
+
+    An identity, not a position. `BundleLine.need_index` and
+    `UnmetNeed.need_index` remain execution-local plan-order indexes that mean
+    nothing once their `InteriorDesignResult` is gone; this is what the
+    application allocated so a later turn can still say which role a piece
+    plays.
+
+    `None` is ordinary and has two causes: a piece the customer asked to keep
+    that the current plan has no place for, and a lock carried across a plan
+    replacement, whose old role no longer exists.
+
+    Not unique: a plan may want several of one kind, and two lines may fill one
+    need.
+    """
+
+
+class RoomDesignNeedState(BaseModel):
+    """One product type the current furnishing plan calls for.
+
+    The durable half of a `DesignCategoryNeed`. It exists because a bundle line
+    pointing at plan position 2 means nothing once that plan has been discarded,
+    and every later refinement - replacing a piece, remembering a rejection,
+    naming a missing role - has to know which need is being talked about.
+
+    Plan-owned, never customer-owned. Nothing here is attributed to the
+    customer: `design_preferences` on the room is what *they* said, and this is
+    what the specialist concluded about one role.
+
+    No product fact of any kind. `rejected_product_ids` is the single exception
+    and is an application-only exclusion list, not a catalog value.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    need_id: int = Field(ge=1)
+    commerce_category: str = Field(min_length=1)
+    commerce_subcategory: str | None = Field(default=None, min_length=1)
+    priority: DesignPriority
+    quantity: int = Field(ge=1)
+    seating_capacity: SeatingCapacityConstraint | None = None
+
+    semantic_intent: str | None = Field(
+        default=None, max_length=MAX_DESIGN_INTENT_CHARS
+    )
+    """This role's qualitative character, as the specialist described it.
+
+    **A deliberate amendment to M12C.1**, which kept this transient. The rule
+    it protected was that a ranking hint must not become durable *customer
+    preference* state, indistinguishable from something they said. Kept here it
+    is plan-owned, cleared when the plan is replaced, and absent from
+    `CustomerPreferenceState` and `RoomProjectState.design_preferences` - so
+    that rule still holds.
+
+    It is persisted because replacing "the visually light reading chair" on a
+    later turn would otherwise fall back to the bare product type plus the
+    room's preferences, losing precisely the per-need ranking M12C.1 was
+    created to add - and re-running the specialist to recover it is what
+    ordinary substitution must not do.
+    """
+
+    rejected_product_ids: tuple[int, ...] = ()
+    """Products the customer turned down **for this role**.
+
+    Application-only and never model-visible. Scoped to the need rather than
+    kept globally, so refusing one sofa says nothing about lamps and nothing
+    about the next room. It dies with the need: a replaced plan starts clean
+    rather than carrying a dislike forward into an unrelated design.
+
+    Bounded by the same ceiling a search already applies to exclusions, so
+    there is one answer to "how many" rather than two.
+    """
+
+    @field_validator("semantic_intent")
+    @classmethod
+    def _intent_is_ranking_prose_only(cls, value: str | None) -> str | None:
+        """The same rule the specialist's own field applies."""
+        return normalise_design_intent(value)
+
+    @field_validator("rejected_product_ids")
+    @classmethod
+    def _exclusions_are_bounded_and_distinct(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if any(product_id < 1 for product_id in value):
+            raise ValueError("a product id is 1 or greater")
+        if len(value) != len(set(value)):
+            raise ValueError("a product is rejected at most once for a need")
+        if len(value) > MAX_EXCLUDED_PRODUCT_IDS:
+            raise ValueError(
+                f"a need may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products"
+            )
+        return value
+
+
 class RoomProjectState(BaseModel):
     """A whole-room task's customer-supplied requirements.
 
-    Minimal on purpose. Dimensions, slots, layouts and scores belong to M12,
-    which will define them against real requirements rather than guesses.
+    Everything here is something the customer said, including the room
+    measurements: `geometry` holds figures they stated, never one inferred from
+    a photograph, a room type or a design model's guess.
+
+    Still deliberately short of a floor plan. Slots, layouts, coordinates and
+    scores are not here, and a room described only as "my living room" is a
+    perfectly ordinary state - partial knowledge, not missing data.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -175,27 +338,118 @@ class RoomProjectState(BaseModel):
     approved room-type vocabulary, so letting this reach SQL would be an
     invented taxonomy value (CLAUDE.md 14.3)."""
 
+    geometry: RoomGeometry | None = None
+    """Room measurements the customer stated, in centimetres.
+
+    Durable because the conversation is: someone gives their room size in one
+    turn and asks whether a sofa fits three turns later. Only ever what they
+    said - nothing inferred, nothing a design model proposed - so an absent
+    measurement means they have not given it, not that it is unknown to us.
+    """
+
     budget: PriceConstraint | None = None
     design_preferences: tuple[SemanticPreference, ...] = ()
 
-    bundle_product_ids: tuple[int, ...] = ()
-    """Products in the room bundle. Distinct from
-    `ProductInteractionState.selected_product_ids`, which is a browsing
-    shortlist - two different ideas that must not share a name."""
+    design_needs: tuple[RoomDesignNeedState, ...] = ()
+    """The furnishing plan currently being worked on, in the specialist's own
+    order. Empty until a room has been planned."""
 
-    locked_product_ids: tuple[int, ...] = ()
+    next_design_need_id: int = Field(default=1, ge=1)
+    """The id the next design need will receive.
 
-    @field_validator("bundle_product_ids", "locked_product_ids")
-    @classmethod
-    def _unique(cls, value: tuple[int, ...]) -> tuple[int, ...]:
-        return _no_duplicates(value, "product id list")
+    A counter, like `next_bundle_line_id` and for the same reason: a reused id
+    would let a stale reference to a discarded role quietly bind to a new one.
+    A plan replacement therefore issues entirely fresh ids and old references
+    fail closed.
+    """
+
+    bundle_items: tuple[BundleItemState, ...] = ()
+    """The room bundle, one line per selection.
+
+    Distinct from `ProductInteractionState.selected_product_ids`, which is a
+    browsing shortlist - two different ideas that must not share a name.
+
+    Lines rather than ids because an id cannot say how many, whether it is
+    being bought, or whether the customer asked to keep it. Order is the
+    bundle's own and carries no ranking.
+    """
+
+    next_bundle_line_id: int = Field(default=1, ge=1)
+    """The id the next line will receive.
+
+    A counter rather than `max(line_id) + 1`, because the latter reuses an id
+    after the highest line is removed - and a reused id makes a stale reference
+    silently resolve to a different product.
+    """
+
+    bundle_revision: int = Field(default=0, ge=0)
+    """How many times the bundle's content has changed.
+
+    Zero means nothing has ever been committed. Application-owned, exactly like
+    `ActiveSearchState.revision`: no update contract can set it, and it moves
+    only when the lines actually differ.
+    """
 
     @model_validator(mode="after")
-    def _locked_within_bundle(self) -> Self:
-        """A locked product outside the bundle is unreachable."""
-        if not set(self.locked_product_ids) <= set(self.bundle_product_ids):
-            raise ValueError("locked_product_ids must be a subset of bundle_product_ids")
+    def _need_ids_are_unique_and_never_reused(self) -> Self:
+        ids = [need.need_id for need in self.design_needs]
+        if len(ids) != len(set(ids)):
+            raise ValueError("a design need id identifies exactly one need")
+        if ids and self.next_design_need_id <= max(ids):
+            raise ValueError(
+                "next_design_need_id must exceed every need id already issued"
+            )
         return self
+
+    @model_validator(mode="after")
+    def _every_line_names_a_need_that_exists(self) -> Self:
+        """A line may name no need; it may not name one that is not there.
+
+        `None` is ordinary - an anchor the plan has no place for, or a lock
+        carried across a replacement. A dangling id is not: it would resolve to
+        nothing on the turn that tried to refine it.
+        """
+        known = {need.need_id for need in self.design_needs}
+        for line in self.bundle_items:
+            if line.need_id is not None and line.need_id not in known:
+                raise ValueError("a bundle line cannot name a design need that is gone")
+        return self
+
+    @model_validator(mode="after")
+    def _line_ids_are_unique_and_never_reused(self) -> Self:
+        ids = [item.line_id for item in self.bundle_items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("a bundle line id identifies exactly one line")
+        if ids and self.next_bundle_line_id <= max(ids):
+            raise ValueError(
+                "next_bundle_line_id must exceed every line id already issued"
+            )
+        return self
+
+    @property
+    def locked_product_ids(self) -> tuple[int, ...]:
+        """Products the customer asked to keep, in bundle order.
+
+        Derived, never stored: a second tuple could disagree with the lines it
+        summarises. Deliberately a property rather than a computed field, so it
+        cannot serialise as a rival source of truth.
+
+        A product locked on two lines appears once - callers want the set of
+        products to preserve, not a count of units.
+        """
+        return tuple(
+            dict.fromkeys(
+                item.product_id
+                for item in self.bundle_items
+                if item.status is BundleItemStatus.LOCKED
+            )
+        )
+
+    def count(self, status: BundleItemStatus) -> int:
+        return sum(1 for item in self.bundle_items if item.status is status)
+
+    def count_acquisition(self, acquisition: BundleAcquisition) -> int:
+        return sum(1 for item in self.bundle_items if item.acquisition is acquisition)
 
 
 class PurchaseStage(StrEnum):
@@ -221,7 +475,7 @@ class AgentStateV1(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal["agent_state_v1"] = AGENT_STATE_VERSION
+    schema_version: Literal["agent_state_v3"] = AGENT_STATE_VERSION
     customer_preferences: CustomerPreferenceState = CustomerPreferenceState()
     active_search: ActiveSearchState | None = None
     product_interaction: ProductInteractionState = ProductInteractionState()

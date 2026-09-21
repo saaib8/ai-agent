@@ -13,7 +13,9 @@ carries no id to compare.
 
 from __future__ import annotations
 
+import ast
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -30,7 +32,11 @@ from app.schemas.relaxation import (
     RelaxedCandidate,
     StopReason,
 )
-from app.schemas.resolution import ProductSearchExecutionResult
+from app.schemas.resolution import (
+    CandidatePoolResult,
+    ProductSearchExecutionResult,
+    RankedProductCandidate,
+)
 from app.schemas.retailer import RetailerContext
 from app.schemas.semantic import (
     SemanticRankedCandidate,
@@ -42,7 +48,7 @@ from app.services.hydration import ProductHydrationService
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.semantic_ranking import SemanticRankingService
 from app.taxonomy.dimensions import DimensionRole, UnsupportedDimensionReason
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 CONTEXT = RetailerContext(store_id=50)
 
@@ -138,11 +144,13 @@ class FakeHydration:
     def __init__(self, missing: set[int] | None = None) -> None:
         self.missing = missing or set()
         self.asked: list[int] = []
+        self.contexts: list[RetailerContext] = []
 
     async def hydrate_ids(
         self, product_ids: Any, context: RetailerContext
     ) -> tuple[ProductCandidate, ...]:
         self.asked = list(product_ids)
+        self.contexts.append(context)
         return tuple(_candidate(i) for i in product_ids if i not in self.missing)
 
 
@@ -638,3 +646,176 @@ async def test_a_legitimate_zero_result_is_never_an_integrity_failure() -> None:
 
     assert result.grounding.outcome is SearchOutcome.ZERO_RESULTS
     assert result.grounding.eligible_count == result.grounding.ranked_count == 0
+
+
+# ── the internal candidate pool ═════════════════════════════════════════════
+#
+# The second way out of the same facade. A room optimiser has to see the sofas,
+# not the three cards a customer would have been shown, so this path ends at
+# the whole ranked pool — and the presentation limit must be unreachable from
+# it, or the optimiser would silently inherit a display decision.
+
+
+async def _pool(
+    depths: dict[int, int],
+    *,
+    order: list[int] | None = None,
+    missing: set[int] | None = None,
+    limit: int = 3,
+    used: bool = True,
+) -> tuple[CandidatePoolResult, FakeRanking, FakeHydration]:
+    ranking = FakeRanking(order, used=used)
+    hydration = FakeHydration(missing)
+    pipeline = _pipeline(FakeRelaxation(depths), ranking, hydration, limit=limit)
+    return (
+        await pipeline.execute_candidate_pool(_resolved(), CONTEXT),
+        ranking,
+        hydration,
+    )
+
+
+async def test_the_whole_pool_survives_a_small_presentation_limit() -> None:
+    """The defect this path exists to prevent, stated as a test."""
+    pool, _, hydration = await _pool(dict.fromkeys(range(1, 174), 0), limit=3)
+
+    assert len(pool.candidates) == 173
+    assert len(hydration.asked) == 173
+    assert pool.eligible_count == 173
+
+
+async def test_every_ranked_product_is_hydrated_in_ranked_order() -> None:
+    pool, _, hydration = await _pool({1: 0, 2: 0, 3: 0}, order=[3, 1, 2])
+
+    assert hydration.asked == [3, 1, 2]
+    assert [c.product.product_id for c in pool.candidates] == [3, 1, 2]
+
+
+async def test_a_stale_product_is_dropped_and_never_substituted() -> None:
+    pool, _, _ = await _pool({1: 0, 2: 0, 3: 0}, order=[3, 1, 2], missing={1})
+
+    assert [c.product.product_id for c in pool.candidates] == [3, 2]
+    assert pool.eligible_count == 3
+    assert pool.stale_dropped_count == 1
+
+
+async def test_relaxation_depth_travels_with_each_candidate() -> None:
+    pool, _, _ = await _pool({1: 0, 2: 2}, order=[2, 1])
+
+    assert [c.relaxation_depth for c in pool.candidates] == [2, 0]
+
+
+async def test_an_empty_pool_is_an_ordinary_result() -> None:
+    pool, _, _ = await _pool({})
+
+    assert pool.candidates == ()
+    assert pool.eligible_count == 0
+    assert pool.stale_dropped_count == 0
+
+
+async def test_the_pool_path_also_refuses_a_changed_population() -> None:
+    """The conservation check is in the shared path, so neither method skips it."""
+    _, pipeline = await _conserve([1, 2, 3], [1, 2, 999])
+
+    with pytest.raises(RankingIntegrityError):
+        await pipeline.execute_candidate_pool(_resolved(), CONTEXT)
+
+
+async def test_the_pool_scope_comes_from_the_context() -> None:
+    hydration = FakeHydration()
+    ranking = FakeRanking()
+    pipeline = _pipeline(FakeRelaxation({1: 0}), ranking, hydration)
+
+    await pipeline.execute_candidate_pool(_resolved(), RetailerContext(store_id=99))
+
+    assert hydration.contexts == [RetailerContext(store_id=99)]
+
+
+async def test_the_two_paths_agree_on_what_the_customer_would_have_seen() -> None:
+    """One search, one ranking: the page is a prefix of the pool.
+
+    The strongest available statement that the extension did not create a
+    second search path — an optimiser cannot be reasoning over a different set
+    from the one the customer could have been shown.
+    """
+    depths = dict.fromkeys(range(1, 21), 0)
+    order = list(range(20, 0, -1))
+
+    page, _, _ = await _run(depths, order=order, limit=3)
+    pool, _, _ = await _pool(depths, order=order, limit=3)
+
+    assert page.presented_product_ids == tuple(
+        c.product.product_id for c in pool.candidates[:3]
+    )
+
+
+# ── the pool carries nothing customer-facing ────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "forbidden",
+    ["ordinal", "grounding", "presented", "similarity", "score", "rank"],
+)
+def test_the_pool_contract_holds_no_presentation_concept(forbidden: str) -> None:
+    for model in (CandidatePoolResult, RankedProductCandidate):
+        for name in model.model_fields:
+            assert forbidden not in name, f"{model.__name__}.{name}"
+
+
+def test_the_pool_contract_reaches_no_similarity() -> None:
+    """Ranking's numbers stop at ranking. Carrying them forward is how a
+    blended relevance score gets invented later (CLAUDE.md 16.1)."""
+    definitions = CandidatePoolResult.model_json_schema().get("$defs", {})
+
+    assert "SemanticRankedCandidate" not in definitions
+    for definition in definitions.values():
+        for name in definition.get("properties", {}):
+            assert "similarity" not in name
+
+
+def test_a_hydrated_pool_cannot_exceed_the_pool_that_was_ranked() -> None:
+    with pytest.raises(ValidationError):
+        CandidatePoolResult(
+            candidates=(
+                RankedProductCandidate(product=_candidate(1), relaxation_depth=0),
+                RankedProductCandidate(product=_candidate(2), relaxation_depth=0),
+            ),
+            eligible_count=1,
+            was_relaxed=False,
+            stop_reason=StopReason.EXACT_SUFFICIENT,
+            semantic_used=False,
+        )
+
+
+def test_the_candidate_pool_method_cannot_read_the_presentation_limit() -> None:
+    """Structural, not behavioural: the bound must be unreachable from this
+    path rather than merely unused by today's implementation."""
+    source = (Path(__file__).parents[2] / "app/services/search_pipeline.py").read_text()
+    tree = ast.parse(source)
+
+    method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "execute_candidate_pool"
+    )
+    body = ast.dump(method)
+
+    assert "_presentation_limit" not in body
+    assert "select_for_presentation" not in body
+
+
+def test_both_public_methods_run_the_one_shared_search_path() -> None:
+    """Neither may call the relaxation or ranking services for itself."""
+    source = (Path(__file__).parents[2] / "app/services/search_pipeline.py").read_text()
+    tree = ast.parse(source)
+
+    for name in ("execute", "execute_candidate_pool"):
+        method = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == name
+        )
+        body = ast.dump(method)
+        assert "_search_and_rank" in body, name
+        assert "_relaxation" not in body, name
+        assert "_ranking" not in body, name

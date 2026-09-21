@@ -94,8 +94,18 @@ def test_a_turn_result_carries_no_prose_or_session(forbidden: str) -> None:
     assert forbidden not in CustomerTurnResult.model_fields
 
 
-def test_a_turn_result_holds_exactly_three_things() -> None:
-    assert set(CustomerTurnResult.model_fields) == {"state", "decision", "grounding"}
+def test_a_turn_result_holds_exactly_these_things() -> None:
+    """`bundle_outcome` lives here rather than on the grounding because it
+    carries `ProductCandidate`, and a grounded product deliberately holds no
+    product id. This object already holds the whole state and never goes near a
+    model."""
+    assert set(CustomerTurnResult.model_fields) == {
+        "state",
+        "decision",
+        "grounding",
+        "bundle_outcome",
+        "bundle_change",
+    }
 
 
 # ── TurnGrounding additions ─────────────────────────────────────────────────
@@ -156,7 +166,13 @@ def test_a_deterministic_clarification_has_nowhere_to_put_wording() -> None:
     fields = set(DeterministicClarification.model_fields)
 
     assert "question" not in fields
-    assert fields == {"reason", "reference_reason", "relative_price_reason"}
+    assert fields == {
+        "reason",
+        "reference_reason",
+        "bundle_reason",
+        "need_reason",
+        "relative_price_reason",
+    }
 
 
 def test_it_is_frozen_and_closed() -> None:
@@ -387,6 +403,11 @@ def test_the_model_facing_enum_holds_only_its_original_vocabulary() -> None:
         "ambiguous_comparative_reference",
         "undefined_quality_criterion",
         "comparison_targets",
+        # M12E-4D. Model-facing because a model can know it from language
+        # alone: "keep this sofa but get rid of all the seating" contradicts
+        # itself in the customer's own words. The application raises the same
+        # reason when resolving revision constraints finds the contradiction.
+        "contradictory_room_instructions",
     }
 
 
@@ -437,14 +458,25 @@ def test_the_provider_schema_does_not_offer_the_three(value: str) -> None:
     assert value not in json.dumps(to_strict_json_schema(CustomerAgentDecision))
 
 
-def test_narrowing_the_enum_left_the_provider_structure_intact() -> None:
-    """Only the vocabulary changed. The union that the provider once rejected
-    must still render as `anyOf`."""
+def test_the_provider_structure_stays_intact_as_the_schema_grows() -> None:
+    """The union the provider once rejected must still render as `anyOf`.
+
+    Asserted on the selector itself rather than on a global `anyOf` tally: the
+    contract legitimately gains optional fields over time, and a count would
+    fail on every one of them while proving nothing about the union.
+    """
     import json
 
     from app.schemas.agent_decision import CustomerAgentDecision
     from openai.lib._pydantic import to_strict_json_schema
 
+    members = {
+        "PresentedOrdinal",
+        "FocusedProduct",
+        "SoleSelectedProduct",
+        "PresentedAttributeMatch",
+        "PresentedExtremum",
+    }
     for schema in (
         CustomerAgentDecision.model_json_schema(),
         to_strict_json_schema(CustomerAgentDecision),
@@ -452,7 +484,10 @@ def test_narrowing_the_enum_left_the_provider_structure_intact() -> None:
         rendered = json.dumps(schema)
         assert rendered.count('"oneOf"') == 0
         assert rendered.count('"discriminator"') == 0
-        assert rendered.count('"anyOf"') == 50
+        selector = schema["$defs"]["ProductInteractionIntent"]["properties"]["reference"]
+        assert {
+            branch["$ref"].rsplit("/", 1)[-1] for branch in selector["anyOf"]
+        } == members
 
 
 def test_a_model_clarification_still_uses_its_own_vocabulary() -> None:

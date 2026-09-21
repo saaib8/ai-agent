@@ -26,14 +26,23 @@ BUILT_IN_4 = {
     "app/prompts/customer_commerce/v1.py": "INSTRUCTIONS",
 }
 
-NOT_YET_BUILT = (
-    "InteriorDesignAgent",
-    "CatalogCapabilityService",
-    "BundleOptimizer",
+NOT_YET_REACHABLE = (
+    "REJECT_PRODUCT",
+    "INTENTIONALLY_UNFILLED",
+    "FocusedBundleItem",
 )
-"""Still ahead: the design specialist, its capability lookup and the bundle
-optimiser all belong to M12. Every customer-agent symbol this list once held
-now exists."""
+"""What M12E-4C deliberately did not build.
+
+E4C completed iterative refinement - replacing, re-costing, removing a role -
+all without a specialist call. What is left is composition: changing what the
+room is *for*, which needs the design agent to revise a plan it can currently
+only create. That is E4D.
+
+`REJECT_PRODUCT` stays out for a concrete reason rather than for scope. "Remove
+this and leave the gap" needs a durable `INTENTIONALLY_UNFILLED` state; without
+one, the next optimisation would quietly refill the role, or the room would
+report it as a catalog gap. `FocusedBundleItem` stays out because nothing
+tracks a focused card."""
 
 
 # ── what must now exist ─────────────────────────────────────────────────────
@@ -58,8 +67,8 @@ def test_the_decision_service_is_wired_through_dependency_injection() -> None:
 # ── what must still not exist ───────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("symbol", NOT_YET_BUILT)
-def test_no_later_phase_capability_exists(symbol: str) -> None:
+@pytest.mark.parametrize("symbol", NOT_YET_REACHABLE)
+def test_bundle_refinement_does_not_exist_yet(symbol: str) -> None:
     for module in APP.rglob("*.py"):
         assert symbol not in module.read_text(), f"{module.name} defines {symbol}"
 
@@ -144,7 +153,7 @@ def test_the_unconfigured_failure_says_nothing_internal() -> None:
     assert "openai" not in caught.value.public_message.lower()
 
 
-def test_lifespan_builds_the_decision_client_only_when_configured() -> None:
+def test_lifespan_builds_each_agent_client_only_when_configured() -> None:
     """Conditional, like the embedder - so an unconfigured process opens no
     extra client, and a configured one opens exactly one (CLAUDE.md 24)."""
     source = (APP / "core/lifespan.py").read_text()
@@ -157,9 +166,12 @@ def test_lifespan_builds_the_decision_client_only_when_configured() -> None:
         and node.func.id == "OpenAIStructuredClient"
     ]
 
-    assert len(constructions) == 3, "query understanding, decision, response"
+    assert len(constructions) == 4, (
+        "query understanding, decision, response, interior design"
+    )
     assert "if decision_model:" in source
     assert "if response_model:" in source
+    assert "if design_model:" in source
 
 
 def test_the_decision_client_is_closed_on_shutdown() -> None:

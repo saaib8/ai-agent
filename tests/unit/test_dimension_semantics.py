@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -119,14 +120,52 @@ def test_the_registry_names_only_approved_subcategories() -> None:
     assert SEMANTICS.subcategories <= known
 
 
+def _data_strings(module: Path) -> set[str]:
+    """String literals a module uses as data, excluding all documentation.
+
+    Excludes bare string expressions - module, class and function docstrings,
+    and the attribute docstrings this codebase writes under constants. Those
+    explain *why* a rule exists and legitimately name roles and product types;
+    a mapping is what would be a duplicated registry.
+    """
+    tree = ast.parse(module.read_text())
+    prose = {
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value not in prose
+    }
+
+
 def test_no_module_hardcodes_a_role_to_axis_mapping() -> None:
-    """The registry is the only place the correspondence is written."""
+    """The registry is the only place the correspondence is written.
+
+    Checked on data rather than prose. A module that *calls*
+    `semantics.source_axis(role)` is asking the registry, which is the correct
+    use; a module that writes a role name beside an axis as data would be a
+    second copy of the mapping.
+    """
     app = Path(__file__).parents[2] / "app"
+    roles = {role.value for role in DimensionRole}
     for module in app.rglob("*.py"):
         if module.name == "dimensions.py" and module.parent.name == "taxonomy":
             continue
-        source = module.read_text()
-        assert "overall_width" not in source or "source_axis" not in source, module.name
+        data = _data_strings(module)
+        # Naming a role as data is ordinary - `ComparisonField` names them all,
+        # by customer-facing role rather than by column, which is the point.
+        # Writing one *beside* `source_axis` is the duplication this forbids.
+        if "source_axis" not in data:
+            continue
+        named = sorted(roles & data)
+        assert named == [], f"{module.name} pairs {named} with source_axis"
 
 
 def _yaml(body: str) -> str:

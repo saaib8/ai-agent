@@ -13,16 +13,21 @@ the same way.
 
 from __future__ import annotations
 
+from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
     AgentAction,
+    BundleInteractionOp,
     FollowUpPolicy,
     ProductInteractionOp,
 )
 from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
+from app.schemas.bundle import BundleStatus, BundleUnavailable, RoomBundle
 from app.schemas.comparison import ComparisonStatus
+from app.schemas.design import DesignPriority
 from app.schemas.grounding import SearchOutcome
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
+    BundleGroundingView,
     DeterministicResponse,
     DeterministicResponseKind,
     ResponseGroundingView,
@@ -106,13 +111,19 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
     selection beside it must not be reported as though the answer itself had
     failed. The action says which job was being done; nothing about the
     decision reaches the model.
+
+    A design handoff used to count here, back when asking *was* the whole
+    outcome. Since M12E-2 it executes, so a handoff with a failure and no
+    bundle is a room that did not get built - and the failure owns that turn
+    rather than being hidden behind an acknowledgement.
     """
     grounding = result.grounding
     return (
         grounding.search is not None
         or grounding.product_detail is not None
         or grounding.comparison is not None
-        or grounding.design_handoff_requested
+        or result.bundle_outcome is not None
+        or result.bundle_change is not None
         or result.decision.action is AgentAction.ANSWER
     )
 
@@ -167,14 +178,104 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         )
     if grounding.search is not None:
         return _search(grounding, clarification)
+    if result.bundle_change is not None and grounding.failure is not None:
+        # The change happened and the refresh did not. Saying the change failed
+        # would be false, and rolling it back to simplify the wording would
+        # discard something the customer actually told us.
+        return DeterministicResponse(
+            kind=DeterministicResponseKind.BUNDLE_CHANGED_NOT_REFRESHED
+        )
+    if result.bundle_change is not None and result.bundle_outcome is None:
+        # A local change: no room was chosen, so there is no package to frame
+        # and nothing for a model to add that a fixed sentence does not say.
+        return DeterministicResponse(
+            kind=(
+                DeterministicResponseKind.BUNDLE_KEPT
+                if result.bundle_change is BundleInteractionOp.LOCK
+                else DeterministicResponseKind.BUNDLE_UNLOCKED
+            )
+        )
+    if isinstance(result.bundle_outcome, RoomBundle):
+        # A room was selected - complete, partial or infeasible alike. Checked
+        # before the handoff marker, which says only what was *asked for*:
+        # letting request metadata answer for a finished room would tell the
+        # customer nothing ran when something did.
+        return _room_bundle(result, result.bundle_outcome, clarification)
+    if isinstance(result.bundle_outcome, BundleUnavailable):
+        # A deterministic refusal with its own reason. Not a failure, not a
+        # catalog verdict, and not something to ask a model to explain.
+        return DeterministicResponse(
+            kind=DeterministicResponseKind.BUNDLE_UNAVAILABLE,
+            bundle_reason=result.bundle_outcome.reason,
+        )
     if grounding.design_handoff_requested:
-        # Nothing ran, so there is nothing to frame. A clarification beside it
-        # is worded on its own, from the route's `required_clarification`.
+        # Asked for, and nothing came of it. A clarification beside it is
+        # worded on its own, from the route's `required_clarification`.
         return DeterministicResponse(kind=DeterministicResponseKind.DESIGN_HANDOFF)
     if clarification is not None and result.decision.action is not AgentAction.ANSWER:
         # No positive outcome to report: the question is the whole job.
         return _view(ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION, clarification)
     return _view(ResponseOutcomeKind.ANSWER, clarification)
+
+
+def _room_bundle(
+    result: CustomerTurnResult,
+    bundle: RoomBundle,
+    clarification: DeterministicClarification | None,
+) -> ResponseGroundingView:
+    """One selected room, as the response model may see it.
+
+    Counts, enums and two bools. Everything the customer will actually read -
+    the pieces, their prices, the total, the budget - is rendered by the
+    application from the same verified bundle, so none of it passes through
+    here (CLAUDE.md 20.4).
+
+    `within_budget` reads the customer's own budget from state rather than from
+    the bundle, which carries a spend and not a limit. An infeasible package is
+    by definition outside it; anything else that was computed against a budget
+    obeyed it, because the optimiser treats the ceiling as a hard constraint.
+    """
+    room = result.state.room_project
+    budget = room.budget if room else None
+    unmet = dict.fromkeys(DesignPriority, 0)
+    for entry in bundle.unmet:
+        unmet[entry.priority] += 1
+
+    return ResponseGroundingView(
+        kind=ResponseOutcomeKind.ROOM_BUNDLE,
+        bundle=BundleGroundingView(
+            status=bundle.status,
+            bundle_line_count=len(bundle.lines),
+            locked_line_count=sum(1 for line in bundle.lines if line.locked),
+            already_owned_line_count=sum(
+                1
+                for line in bundle.lines
+                if line.acquisition is BundleAcquisition.ALREADY_OWNED
+            ),
+            required_unmet_count=unmet[DesignPriority.REQUIRED],
+            recommended_unmet_count=unmet[DesignPriority.RECOMMENDED],
+            optional_unmet_count=unmet[DesignPriority.OPTIONAL],
+            unmet_reasons=tuple(
+                dict.fromkeys(entry.reason for entry in bundle.unmet)
+            ),
+            budget_supplied=budget is not None,
+            within_budget=(
+                None
+                if budget is None
+                else bundle.status is not BundleStatus.INFEASIBLE
+            ),
+            relaxed_line_count=sum(
+                1
+                for line in bundle.lines
+                if line.relaxation_depth is not None and line.relaxation_depth > 0
+            ),
+        ),
+        clarification_reason=clarification.reason if clarification else None,
+        reference_reason=clarification.reference_reason if clarification else None,
+        relative_price_reason=(
+            clarification.relative_price_reason if clarification else None
+        ),
+    )
 
 
 def _view(

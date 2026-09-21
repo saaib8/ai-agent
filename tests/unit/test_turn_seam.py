@@ -57,6 +57,7 @@ from app.schemas.response import (
     ResponseOutcomeKind,
 )
 from app.schemas.retailer import RetailerContext
+from app.services.bundle_reference import BundleReferenceResolver
 from app.services.grounding_builder import to_grounded_product
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.response_generator import CustomerResponseGenerator
@@ -181,6 +182,93 @@ class _Unusable:
         raise AssertionError(f"this branch must not call {name}")
 
 
+
+class FakeCapabilities:
+    """The retailer's stocked types, or an unreachable catalog."""
+
+    def __init__(
+        self,
+        pairs: tuple[tuple[str, str | None], ...] = (("seating", "sofa"),),
+        error: Exception | None = None,
+    ) -> None:
+        self.pairs = pairs
+        self.error = error
+        self.calls: list[Any] = []
+
+    async def capabilities(self, context: Any) -> Any:
+        self.calls.append(context)
+        if self.error is not None:
+            raise self.error
+        from app.schemas.retailer import (
+            RetailerCatalogCapabilities,
+            RetailerCatalogCapability,
+        )
+
+        return RetailerCatalogCapabilities(
+            capabilities=tuple(
+                RetailerCatalogCapability(
+                    commerce_category=category, commerce_subcategory=subcategory
+                )
+                for category, subcategory in self.pairs
+            )
+        )
+
+
+class FakeDesign:
+    """The specialist, recording exactly what it was told."""
+
+    def __init__(self, result: Any = None, error: Exception | None = None) -> None:
+        from app.schemas.design import InteriorDesignResult
+
+        self.result = result if result is not None else InteriorDesignResult()
+        self.error = error
+        self.requests: list[Any] = []
+
+    async def plan(self, request: Any) -> Any:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class FakeDesignDiscovery:
+    def __init__(self, result: Any = None, error: Exception | None = None) -> None:
+        from app.schemas.design_discovery import DesignDiscoveryResult
+
+        self.result = result if result is not None else DesignDiscoveryResult()
+        self.error = error
+        self.calls: list[Any] = []
+        self.overrides: dict[int, Any] = {}
+
+    async def discover(
+        self, request: Any, plan: Any, context: Any, *, overrides: Any = None
+    ) -> Any:
+        self.calls.append((request, plan, context))
+        self.overrides = dict(overrides or {})
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class FakeOptimizer:
+    def __init__(self, outcome: Any = None) -> None:
+        from app.schemas.bundle import (
+            BundleStatus,
+            RoomBundle,
+            TotalUnavailableReason,
+        )
+
+        self.outcome = outcome if outcome is not None else RoomBundle(
+            status=BundleStatus.COMPLETE,
+            total_unavailable=TotalUnavailableReason.NO_PRICED_LINES,
+        )
+        self.requests: list[Any] = []
+
+    def optimize(self, request: Any) -> Any:
+        self.requests.append(request)
+        return self.outcome
+
+
 def _coordinator(
     decision: CustomerAgentDecision,
     *,
@@ -203,6 +291,12 @@ def _coordinator(
         pipeline or FakePipeline(ids=(10, 11)),  # type: ignore[arg-type]
         FakeHydration(),  # type: ignore[arg-type]
         SimilarSearchBuilder(taxonomy, attributes),
+        FakeCapabilities(),  # type: ignore[arg-type]
+        FakeDesign(),  # type: ignore[arg-type]
+        FakeDesignDiscovery(),  # type: ignore[arg-type]
+        BundleReferenceResolver(taxonomy),
+        FakeOptimizer(),  # type: ignore[arg-type]
+        dimensions,
     )
 
 

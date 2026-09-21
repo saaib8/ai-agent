@@ -49,6 +49,9 @@ class _FakeResult:
     def scalar_one(self) -> Any:
         return self._rows[0] if self._rows else 0
 
+    def all(self) -> list[Any]:
+        return list(self._rows)
+
 
 class RecordingSession:
     """Captures the statements a repository issues without touching a database."""
@@ -84,6 +87,7 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "search_eligible_pool": lambda repo: repo.search_eligible_pool(
         ProductSearchRequest(commerce_category="seating"), CONTEXT
     ),
+    "supported_commerce_pairs": lambda repo: repo.supported_commerce_pairs(CONTEXT),
 }
 
 

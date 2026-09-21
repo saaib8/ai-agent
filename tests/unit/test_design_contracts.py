@@ -18,6 +18,7 @@ from app.schemas.agent_state import AgentStateV1
 from app.schemas.design import (
     DesignCategoryNeed,
     DesignPriority,
+    DesignTask,
     InteriorDesignRequest,
     InteriorDesignResult,
 )
@@ -126,7 +127,7 @@ def test_a_design_request_requires_capabilities() -> None:
         InteriorDesignRequest(room_type="living room")  # type: ignore[call-arg]
 
 
-def test_a_complete_design_request_is_accepted() -> None:
+def test_a_room_plan_request_is_accepted() -> None:
     request = InteriorDesignRequest(
         room_type="living room",
         budget=PriceConstraint.at_most(Decimal("12000"), SAR),
@@ -137,16 +138,18 @@ def test_a_complete_design_request_is_accepted() -> None:
                 strength=ConstraintStrength.PREFERRED,
             ),
         ),
+        task=DesignTask.ROOM_PLAN,
         catalog_capabilities=_capabilities(("seating", "sofa")),
     )
 
+    assert request.catalog_capabilities is not None
     assert request.catalog_capabilities.supports("seating", "sofa")
     assert request.budget is not None
 
 
-def test_a_design_result_carries_needs_only() -> None:
+def test_a_design_result_carries_guidance_and_needs() -> None:
     """No design_preferences: the customer's preferences have one home."""
-    assert set(InteriorDesignResult.model_fields) == {"needs"}
+    assert set(InteriorDesignResult.model_fields) == {"guidance", "needs"}
     assert "design_preferences" not in InteriorDesignResult.model_fields
 
 
@@ -207,13 +210,20 @@ def test_capabilities_are_not_part_of_agent_state() -> None:
     assert "capabilities" not in AgentStateV1.model_fields
 
 
-def test_no_capability_service_was_implemented() -> None:
-    from pathlib import Path
+def test_the_capability_service_exists_and_owns_no_vocabulary() -> None:
+    """M12A built it. It reports what the retailer stocks, and the registry
+    still decides what any of those names mean."""
+    import inspect
 
-    services = Path(__file__).parents[2] / "app/services"
-    assert not (services / "catalog_capability.py").exists()
-    for module in services.rglob("*.py"):
-        assert "CatalogCapabilityService" not in module.read_text(), module.name
+    from app.services.catalog_capability import CatalogCapabilityService
+
+    parameters = [
+        name
+        for name in inspect.signature(CatalogCapabilityService.__init__).parameters
+        if name != "self"
+    ]
+
+    assert parameters == ["repository", "taxonomy"]
 
 
 def test_capabilities_carry_no_products_or_prices() -> None:
@@ -222,3 +232,104 @@ def test_capabilities_carry_no_products_or_prices() -> None:
     )
     for forbidden in ("price", "product", "count", "vector", "embedding"):
         assert not any(forbidden in name for name in names), forbidden
+
+
+# ── per-need design intent ──────────────────────────────────────────────────
+#
+# The gap M12C.1 closed: cross-sell knew which *kinds* of thing a room needed
+# and nothing about which of them to put first. This field carries that, and
+# only that — it reaches the query embedding and no filter, no bound and no
+# widening policy.
+
+
+def _need(intent: str | None = None) -> DesignCategoryNeed:
+    return DesignCategoryNeed(
+        commerce_category="seating",
+        commerce_subcategory="lounge-chair",
+        priority=DesignPriority.REQUIRED,
+        semantic_intent=intent,
+    )
+
+
+def test_a_need_may_carry_its_own_design_character() -> None:
+    assert _need("visually light and comfortable for prolonged reading").semantic_intent
+
+
+def test_design_intent_is_optional() -> None:
+    """Most needs have nothing particular to say, and that is not a gap."""
+    assert _need().semantic_intent is None
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\n\t "])
+def test_blank_design_intent_becomes_absent(blank: str) -> None:
+    assert _need(blank).semantic_intent is None
+
+
+def test_design_intent_is_trimmed() -> None:
+    assert _need("  low-profile and understated  ").semantic_intent == (
+        "low-profile and understated"
+    )
+
+
+@pytest.mark.parametrize(
+    ("hostile", "why"),
+    [
+        ("under 2000 SAR", "a price"),
+        ("no wider than 220 cm", "a measurement"),
+        ("seats 4 people", "a seat count"),
+        ("product 164846", "an identifier"),
+        ("store 50 only", "a retailer"),
+        ("2 of these", "a quantity"),
+    ],
+)
+def test_a_figure_in_a_design_intent_is_refused_not_stripped(
+    hostile: str, why: str
+) -> None:
+    """Every prohibited structured fact is a number, and each already has a
+    typed home. Removing the digits would leave wording the design never asked
+    for; keeping them would put an unprovenanced figure into rankable text."""
+    with pytest.raises(ValidationError):
+        _need(hostile)
+
+    assert why
+
+
+def test_design_intent_is_bounded() -> None:
+    """A phrase, not a transcript."""
+    with pytest.raises(ValidationError):
+        _need("light " * 200)
+
+
+def test_the_need_carries_exactly_these_fields() -> None:
+    assert set(DesignCategoryNeed.model_fields) == {
+        "commerce_category",
+        "commerce_subcategory",
+        "priority",
+        "seating_capacity",
+        "semantic_intent",
+        "quantity",
+    }
+
+
+def test_design_intent_is_not_a_semantic_preference() -> None:
+    """Colour and style keep their own typed home. This field is prose about
+    character, and the two must not become interchangeable (CLAUDE.md 12.4)."""
+    assert "SemanticPreference" not in str(
+        DesignCategoryNeed.model_fields["semantic_intent"].annotation
+    )
+
+
+# ── it is execution context, never durable state ────────────────────────────
+
+
+def test_no_state_domain_holds_a_design_intent() -> None:
+    """Per-plan, per-need context. The M11 conversational `semantic_intent` is
+    a different thing with a different lifetime, and reusing it as room-design
+    state would make a transient ranking hint durable."""
+    from app.schemas.agent_state import RoomProjectState
+
+    assert "semantic_intent" not in RoomProjectState.model_fields
+    assert "design_intent" not in str(AgentStateV1.model_fields)
+    assert "DesignCategoryNeed" not in set(
+        AgentStateV1.model_json_schema().get("$defs", {})
+    )

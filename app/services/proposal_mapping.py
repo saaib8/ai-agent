@@ -23,6 +23,8 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import NamedTuple
 
+from pydantic import ValidationError
+
 from app.core.exceptions import LLMResponseInvalidError
 from app.schemas.agent_decision import (
     BlockingClarificationReason,
@@ -31,6 +33,7 @@ from app.schemas.agent_decision import (
     PreferenceProposal,
     PreferenceProposalOp,
     PriceProposal,
+    RoomGeometryProposal,
 )
 from app.schemas.agent_updates import (
     AddItems,
@@ -42,7 +45,9 @@ from app.schemas.agent_updates import (
     ReplaceItems,
     RoomProjectUpdate,
 )
+from app.schemas.dimensions import parse_unit, to_centimetres
 from app.schemas.discovery import PriceConstraint
+from app.schemas.geometry import RoomGeometry, RoomMeasurement
 from app.schemas.resolution import DeterministicClarification
 
 
@@ -93,17 +98,26 @@ def _customer_state(
     )
 
     budget, clarification = _budget(proposal.room_budget)
+    geometry, geometry_clarification = _geometry(proposal.room_geometry)
+    # One question per turn, and the currency outranks the unit only because
+    # something has to: both are the same kind of gap, and the coordinator
+    # surfaces whichever it is given.
+    clarification = clarification or geometry_clarification
     touches_room = (
         proposal.room_type is not None
         or proposal.clear_room_type
         or budget is not None
         or proposal.clear_room_budget
+        or geometry is not None
+        or proposal.clear_room_geometry
         or proposal.design_preferences is not None
     )
     room = (
         RoomProjectUpdate(
             room_type=proposal.room_type,
             clear_room_type=proposal.clear_room_type,
+            geometry=geometry,
+            clear_geometry=proposal.clear_room_geometry,
             budget=budget,
             clear_budget=proposal.clear_room_budget,
             design_preferences=_preferences(proposal.design_preferences),
@@ -150,6 +164,41 @@ def _budget(
         ),
         None,
     )
+
+
+def _geometry(
+    proposal: RoomGeometryProposal | None,
+) -> tuple[RoomGeometry | None, DeterministicClarification | None]:
+    """Stated measurements in centimetres, or the reason they were not recorded.
+
+    A measurement with no usable unit is held back whole, not converted on an
+    assumption: five could be metres or feet, and recording the wrong room is
+    worse than recording none. The customer is asked which they meant.
+    """
+    if proposal is None:
+        return None, None
+    measurements: list[RoomMeasurement] = []
+    for stated in proposal.measurements:
+        unit = parse_unit(stated.unit)
+        if unit is None:
+            return None, DeterministicClarification(
+                reason=BlockingClarificationReason.MISSING_DIMENSION_UNIT
+            )
+        value = _amount(stated.value, field="room measurement")
+        assert value is not None
+        measurements.append(
+            RoomMeasurement(
+                role=stated.role,
+                centimetres=to_centimetres(value, unit),
+                label=stated.label,
+            )
+        )
+    try:
+        return RoomGeometry(measurements=tuple(measurements)), None
+    except ValidationError as exc:
+        # Two different lengths for one room. The model contradicted itself,
+        # which is not something the customer can settle.
+        raise LLMResponseInvalidError(reason="room geometry invalid") from exc
 
 
 def _amount(raw: str | None, *, field: str) -> Decimal | None:

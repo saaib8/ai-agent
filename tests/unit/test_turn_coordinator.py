@@ -94,6 +94,7 @@ from app.schemas.resolution import (
     SearchRequirementClarificationReason,
 )
 from app.schemas.retailer import RetailerContext
+from app.services.bundle_reference import BundleReferenceResolver
 from app.services.grounding_builder import to_grounded_product
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.similar_search import SimilarSearchBuilder
@@ -207,21 +208,30 @@ class FakePipeline:
 
 
 class FakeHydration:
-    def __init__(self, available: tuple[int, ...] = (OFF_SCREEN,)):
+    def __init__(
+        self, available: tuple[int, ...] = (OFF_SCREEN,), price: str | None = None
+    ):
         self.available = available
+        self.price = price
         self.calls: list[list[int]] = []
 
     async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
         self.calls.append(list(product_ids))
-        return tuple(_product(p) for p in product_ids if p in self.available)
+        return tuple(
+            _product(p, price=self.price)
+            for p in product_ids
+            if p in self.available
+        )
 
 
-def _product(product_id: int, *, subcategory: str | None = "sofa") -> ProductCandidate:
+def _product(
+    product_id: int, *, subcategory: str | None = "sofa", price: str | None = None
+) -> ProductCandidate:
     return ProductCandidate(
         product_id=product_id,
         name_english=f"Sofa {product_id}",
         name_arabic="كنبة",
-        price_amount=Decimal("1000"),
+        price_amount=Decimal(price or "1000"),
         price_unit="SAR",
         image_url=f"https://example.test/{product_id}.jpg",
         product_url=f"https://example.test/{product_id}",
@@ -230,6 +240,97 @@ def _product(product_id: int, *, subcategory: str | None = "sofa") -> ProductCan
         main_color="Beige",
         styles=("Modern",),
     )
+
+
+
+_UNSET = object()
+"""Distinguishes an unspecified collaborator from one deliberately absent."""
+
+
+class FakeCapabilities:
+    """The retailer's stocked types, or an unreachable catalog."""
+
+    def __init__(
+        self,
+        pairs: tuple[tuple[str, str | None], ...] = (("seating", "sofa"),),
+        error: Exception | None = None,
+    ) -> None:
+        self.pairs = pairs
+        self.error = error
+        self.calls: list[Any] = []
+
+    async def capabilities(self, context: Any) -> Any:
+        self.calls.append(context)
+        if self.error is not None:
+            raise self.error
+        from app.schemas.retailer import (
+            RetailerCatalogCapabilities,
+            RetailerCatalogCapability,
+        )
+
+        return RetailerCatalogCapabilities(
+            capabilities=tuple(
+                RetailerCatalogCapability(
+                    commerce_category=category, commerce_subcategory=subcategory
+                )
+                for category, subcategory in self.pairs
+            )
+        )
+
+
+class FakeDesign:
+    """The specialist, recording exactly what it was told."""
+
+    def __init__(self, result: Any = None, error: Exception | None = None) -> None:
+        from app.schemas.design import InteriorDesignResult
+
+        self.result = result if result is not None else InteriorDesignResult()
+        self.error = error
+        self.requests: list[Any] = []
+
+    async def plan(self, request: Any) -> Any:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class FakeDesignDiscovery:
+    def __init__(self, result: Any = None, error: Exception | None = None) -> None:
+        from app.schemas.design_discovery import DesignDiscoveryResult
+
+        self.result = result if result is not None else DesignDiscoveryResult()
+        self.error = error
+        self.calls: list[Any] = []
+        self.overrides: dict[int, Any] = {}
+
+    async def discover(
+        self, request: Any, plan: Any, context: Any, *, overrides: Any = None
+    ) -> Any:
+        self.calls.append((request, plan, context))
+        self.overrides = dict(overrides or {})
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class FakeOptimizer:
+    def __init__(self, outcome: Any = None) -> None:
+        from app.schemas.bundle import (
+            BundleStatus,
+            RoomBundle,
+            TotalUnavailableReason,
+        )
+
+        self.outcome = outcome if outcome is not None else RoomBundle(
+            status=BundleStatus.COMPLETE,
+            total_unavailable=TotalUnavailableReason.NO_PRICED_LINES,
+        )
+        self.requests: list[Any] = []
+
+    def optimize(self, request: Any) -> Any:
+        self.requests.append(request)
+        return self.outcome
 
 
 def _coordinator(
@@ -243,6 +344,10 @@ def _coordinator(
     comparison: Any = None,
     pipeline: FakePipeline | None = None,
     hydration: FakeHydration | None = None,
+    capabilities: Any = None,
+    design: Any = _UNSET,
+    design_discovery: Any = None,
+    optimizer: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -255,6 +360,12 @@ def _coordinator(
         "comparison": comparison or FakeComparison(None),
         "pipeline": pipeline or FakePipeline(ids=(20, 21)),
         "hydration": hydration or FakeHydration(),
+        "capabilities": capabilities or FakeCapabilities(),
+        # Explicit None means the capability is unconfigured, which is a
+        # different thing from "the caller did not care".
+        "design": FakeDesign() if design is _UNSET else design,
+        "design_discovery": design_discovery or FakeDesignDiscovery(),
+        "optimizer": optimizer or FakeOptimizer(),
     }
     coordinator = CustomerTurnCoordinator(
         parts["decisions"],  # type: ignore[arg-type]
@@ -266,6 +377,12 @@ def _coordinator(
         parts["pipeline"],  # type: ignore[arg-type]
         parts["hydration"],  # type: ignore[arg-type]
         SimilarSearchBuilder(taxonomy, attributes),
+        parts["capabilities"],  # type: ignore[arg-type]
+        parts["design"],  # type: ignore[arg-type]
+        parts["design_discovery"],  # type: ignore[arg-type]
+        BundleReferenceResolver(taxonomy),
+        parts["optimizer"],  # type: ignore[arg-type]
+        dimensions,
     )
     return coordinator, parts
 

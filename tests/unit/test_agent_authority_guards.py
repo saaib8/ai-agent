@@ -56,6 +56,11 @@ PRODUCT_IDENTITY = (
     "focused_product_id",
     "bundle_product_ids",
     "locked_product_ids",
+    # V2 bundle identity. The names changed; the rule did not - a model may
+    # neither name a product nor target a bundle line.
+    "bundle_items",
+    "line_id",
+    "next_bundle_line_id",
 )
 
 

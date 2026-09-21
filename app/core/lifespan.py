@@ -52,6 +52,10 @@ class AppResources:
     # the same reason as the second: the model identifier is fixed at
     # construction, and one client per process is what CLAUDE.md 24 requires.
     response_llm: OpenAIStructuredClient | None = None
+    # None when the interior-design specialist is not configured. A fourth
+    # client for the same reason as the second and third: the model identifier
+    # is fixed at construction (CLAUDE.md 24).
+    design_llm: OpenAIStructuredClient | None = None
 
 
 def get_resources(app: FastAPI) -> AppResources:
@@ -108,6 +112,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     semantic_index: SemanticIndex | None = None
     decision_llm: OpenAIStructuredClient | None = None
     response_llm: OpenAIStructuredClient | None = None
+    design_llm: OpenAIStructuredClient | None = None
     if settings.pinecone is not None and settings.llm.embedding_model:
         embedder = OpenAIQueryEmbedder(settings.llm)
         semantic_index = PineconeSemanticIndex(settings.pinecone)
@@ -121,10 +126,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         response_llm = OpenAIStructuredClient(
             settings.llm.model_copy(update={"model": response_model})
         )
+    design_model = settings.interior_design.model
+    if design_model:
+        design_llm = OpenAIStructuredClient(
+            settings.llm.model_copy(update={"model": design_model})
+        )
     logger.info(
-        "customer_agent_configured",
+        "agents_configured",
         decision_enabled=decision_llm is not None,
         response_enabled=response_llm is not None,
+        interior_design_enabled=design_llm is not None,
     )
     logger.info(
         "semantic_ranking_configured",
@@ -141,6 +152,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         semantic_index=semantic_index,
         decision_llm=decision_llm,
         response_llm=response_llm,
+        design_llm=design_llm,
         taxonomy=taxonomy,
         attributes=attributes,
         dimensions=dimensions,
@@ -157,6 +169,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await decision_llm.close()
         if response_llm is not None:
             await response_llm.close()
+        if design_llm is not None:
+            await design_llm.close()
         await llm_client.close()
         await redis_client.close()
         await database.dispose()

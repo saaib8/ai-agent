@@ -295,6 +295,18 @@ class CustomerAgentSettings(BaseModel):
     """
 
 
+class InteriorDesignSettings(BaseModel):
+    """The interior-design specialist's own model.
+
+    Its own settings block rather than another field on `CustomerAgentSettings`,
+    because it is a different agent. Absent means the specialist is not
+    configured, and nothing falls back to the query-understanding, decision or
+    response model: four jobs, four prompts, four identifiers.
+    """
+
+    model: str | None = Field(default=None, min_length=1)
+
+
 class ObservabilitySettings(BaseModel):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_format: Literal["json", "console"] = "json"
@@ -326,6 +338,7 @@ class Settings(BaseSettings):
     api: ApiSettings = ApiSettings()
     llm: LLMSettings
     customer_agent: CustomerAgentSettings = CustomerAgentSettings()
+    interior_design: InteriorDesignSettings = InteriorDesignSettings()
     discovery: DiscoverySettings = DiscoverySettings()
     relaxation: RelaxationSettings = RelaxationSettings()
     # Optional on purpose: semantic ranking is an enhancement, so the service
@@ -390,6 +403,7 @@ class Settings(BaseSettings):
             # whether a capability is configured, not which model serves it.
             "decision_configured": self.customer_agent.decision_model is not None,
             "response_configured": self.customer_agent.response_model is not None,
+            "interior_design_configured": self.interior_design.model is not None,
         }
 
 

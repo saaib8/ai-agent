@@ -55,16 +55,20 @@ from app.schemas.response import (
     ResponseRoute,
     ResponseViolation,
 )
-from app.services.numeric_guard import build_allowance
+from app.services.numeric_guard import build_allowance, bundle_counts
 from app.services.response_validation import validate_response
 from app.services.response_view import route_response, valid_grounding_refs
 from app.services.response_wording import (
+    BUNDLE_CHANGED_NOT_REFRESHED_WORDING,
+    BUNDLE_KEPT_WORDING,
+    BUNDLE_UNAVAILABLE_WORDING,
+    BUNDLE_UNLOCKED_WORDING,
     DESIGN_HANDOFF_WORDING,
     DETERMINISTIC_FALLBACK,
     FAILURE_WORDING,
-    FALLBACK_WORDING,
     SIDE_NOTICE_WORDING,
     compose,
+    fallback_for,
 )
 
 logger = get_logger(__name__)
@@ -169,6 +173,22 @@ class CustomerResponseGenerator:
                     used_fallback,
                 )
 
+            case DeterministicResponseKind.BUNDLE_CHANGED_NOT_REFRESHED:
+                return _reply(BUNDLE_CHANGED_NOT_REFRESHED_WORDING), 0, False
+
+            case DeterministicResponseKind.BUNDLE_KEPT:
+                return _reply(BUNDLE_KEPT_WORDING), 0, False
+
+            case DeterministicResponseKind.BUNDLE_UNLOCKED:
+                return _reply(BUNDLE_UNLOCKED_WORDING), 0, False
+
+            case DeterministicResponseKind.BUNDLE_UNAVAILABLE:
+                # The optimiser said exactly why it could not compute. A model
+                # asked to explain that would start proposing remedies nobody
+                # authorised - dropping a lock, changing a budget.
+                assert primary.bundle_reason is not None
+                return _reply(BUNDLE_UNAVAILABLE_WORDING[primary.bundle_reason]), 0, False
+
     async def _generated(
         self,
         turn: CustomerTurnInput,
@@ -187,6 +207,7 @@ class CustomerResponseGenerator:
             turn.message,
             presented_count=view.presented_count,
             compared_count=view.compared_count,
+            counts=bundle_counts(view.bundle) if view.bundle else (),
         )
         refs = valid_grounding_refs(result.grounding)
 
@@ -194,7 +215,7 @@ class CustomerResponseGenerator:
             request, allowance=allowance, refs=refs
         )
         if response is None:
-            return _reply(FALLBACK_WORDING[view.kind]), calls, True
+            return _reply(_fallback(view)), calls, True
         return response, calls, False
 
     async def _generated_message(
@@ -219,7 +240,7 @@ class CustomerResponseGenerator:
             refs=frozenset(),
         )
         if response is None:
-            return FALLBACK_WORDING[view.kind], calls, True
+            return _fallback(view), calls, True
         return response.message, calls, False
 
     # ── the call, and the one retry it may earn ─────────────────────────────
@@ -350,3 +371,8 @@ class CustomerResponseGenerator:
 def _reply(message: str) -> CustomerResponse:
     """An application-written reply: no citations, no optional question."""
     return CustomerResponse(message=message)
+
+
+def _fallback(view: ResponseGroundingView) -> str:
+    """This outcome's fixed sentence, bundle status included where it has one."""
+    return fallback_for(view.kind, view.bundle.status if view.bundle else None)
