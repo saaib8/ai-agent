@@ -1,0 +1,29 @@
+# Local dependencies for development and the integration test suite.
+#   docker compose up -d
+#
+# Host ports are deliberately non-default so these containers cannot collide
+# with a PostgreSQL or Redis the developer already runs. .env.example matches.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zory
+      POSTGRES_PASSWORD: zory
+      POSTGRES_DB: zory
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zory"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

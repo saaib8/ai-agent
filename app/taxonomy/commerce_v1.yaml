@@ -1,0 +1,120 @@
+# ZORY approved GLOBAL commerce taxonomy, version v1.
+#
+# This file is the single source of truth for the commerce vocabulary. It is
+# NOT generated from the catalog and must not be edited to match whatever the
+# current dataset happens to contain. Three separate concepts (CLAUDE.md 9.1):
+#
+#   global taxonomy  !=  retailer capabilities  !=  current product availability
+#
+# A category with zero products today is still part of the taxonomy.
+#
+# Adding a value: add it here. Nothing else in the codebase enumerates these.
+version: v1
+
+categories:
+  seating:
+    # `l-shape-sofa` is NOT canonical; reviewed data uses `sectional-sofa`.
+    - chair
+    - dining-chair
+    - lounge-chair
+    - office-chair
+    - recliner
+    - stool
+    - outdoor-chair
+    - single-seater-sofa
+    - sofa
+    - sectional-sofa
+    - sofa-bed
+    - sofa-set
+    - chaise-lounge
+
+  bedroom:
+    - bed
+    - dressing-table
+    - wardrobe
+    - dresser
+
+  bedding:
+    # `mattresses` is the approved V1 token. Do not rename without approval.
+    - bedspread
+    - pillow
+    - mattresses
+    - mattress-pad
+    - comforter
+
+  tables:
+    # `side-table` is NOT canonical. Reviewed data decides between
+    # `service-table` and `nightstand`; the runtime never re-derives it.
+    - service-table
+    - center-table
+    - nightstand
+    - console
+    - tv-table
+
+  dining:
+    - dining-table
+    - dining-set
+
+  office:
+    # Office chairs live under seating/office-chair.
+    - office-table
+
+  storage:
+    # `shelve` is the approved V1 token. Do not rename without approval.
+    - storage-box
+    - laundry-basket
+    - shelve
+
+  decor:
+    - carpet
+    - flower-pot-and-plant
+    - statue-and-antique
+    - candle
+    - candlestick
+    - vase
+    - flower
+    - wall-clock
+    - decorative-hanger
+    - art-canvas
+    - mirror
+
+  lighting:
+    # Superseded terminology: `lampshade` -> `table-lamp`,
+    # `floor-stand` -> `floor-lamp`. Neither old token is canonical.
+    - lighting
+    - table-lamp
+    - floor-lamp
+    - wall-lighting
+    - outdoor-lighting
+    - chandelier
+    - pendant-lighting
+
+  kitchen-appliances:
+    - coffee-maker
+    - cooking-appliance
+    - food-processor
+
+  kitchenware:
+    - cooking-pot
+    - serving-utensil-and-tray
+    - cup
+    - plate
+
+  fitness:
+    - weight-bench-flat
+    - weight-bench-adjustable
+    - stationary-bike
+    - treadmill
+    - dumbbell
+    - elliptical-machine
+    - kettlebells
+    - medicine-ball
+    - power-rack
+    - yoga-mat
+    - leg-press-machine
+    - chest-press-machine
+    - jump-rope
+    - air-bike
+    - barbell
+    - boxing-gloves
+    - weight-plates

@@ -1,0 +1,74 @@
+# Approved controlled catalog-attribute vocabularies, version v1.
+#
+# The single source of truth for colour and style values. Nothing else in the
+# codebase - no prompt, no enum, no validator, no test - enumerates these.
+#
+# These describe what the CATALOG records, and are matched exactly:
+#
+#   colours are stored one per product in `core_product.main_color`
+#   styles are stored comma-separated in `core_product.styles`
+#
+# Style tokens deliberately contain no spaces (underscores instead), which is
+# what lets stored values be split into exact tokens regardless of the ", "
+# spacing merchants use.
+version: v1
+
+colors:
+  - Ivory
+  - Beige
+  - Taupe
+  - Sand
+  - Greige
+  - Light Grey
+  - Grey
+  - White
+  - Charcoal
+  - Black
+  - Oak
+  - Walnut
+  - Espresso
+  - Clay
+  - Terracotta
+  - Olive
+  - Mustard
+  - Burnt Orange
+  - Gold
+  - Brass
+  - Bronze
+  - Sage
+  - Forest Green
+  - Powder Blue
+  - Denim Blue
+  - Navy
+  - Teal
+  - Emerald
+  - Sapphire
+  - Ruby
+  - Plum
+  - Blush
+  - Lavender
+
+styles:
+  # Membership here is the global vocabulary, not a description of any one
+  # retailer's stock. A value the current catalog happens not to use is still
+  # approved, and its absence from the data says nothing about it (CLAUDE.md
+  # 9.1) - so nothing is removed from this list on the strength of a query.
+  - Modern
+  - Contemporary
+  - Minimalist
+  - Boho
+  - Industrial
+  - Classy
+  - Modern_Classic
+  - Rustic_Modern
+  - Eclectic
+  - Zen
+  - Shabby_Chic
+  - Islamic
+  - Tropical
+  - Scandinavian
+  - Mid_Century
+  - Japandi
+  - Coastal
+  - Traditional
+  - Moroccan

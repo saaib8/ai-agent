@@ -1,0 +1,178 @@
+"""Turning what the model proposed into typed state updates.
+
+A decision carries *proposals* - what the customer said about themselves. This
+turns them into `AgentStateUpdate`, which is what the reducer accepts. The two
+are deliberately different types: a model that could emit an `AgentStateUpdate`
+could clear a room budget or replace a preference list directly, so the
+translation is application code's and the reducer still decides whether the
+result is a state that may exist (CLAUDE.md 3.3).
+
+Pure functions. No I/O, no clock, no reasoning.
+
+One asymmetry is worth naming. A price the customer stated arrives as strings
+with an optional currency, while a persisted budget requires one. When it is
+missing, nothing is guessed and nothing invalid is built: the budget is left
+out and the omission is reported as a clarification, while every other field in
+the same proposal still applies. A malformed *amount* is a different thing
+entirely - that is a defect in what the model produced, not a question for the
+customer, so it raises.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal, InvalidOperation
+from typing import NamedTuple
+
+from app.core.exceptions import LLMResponseInvalidError
+from app.schemas.agent_decision import (
+    BlockingClarificationReason,
+    CustomerStateProposal,
+    DerivedCommerceProposal,
+    PreferenceProposal,
+    PreferenceProposalOp,
+    PriceProposal,
+)
+from app.schemas.agent_updates import (
+    AddItems,
+    AgentStateUpdate,
+    CustomerPreferenceUpdate,
+    DerivedCommerceUpdate,
+    PreferenceListUpdate,
+    RemoveItems,
+    ReplaceItems,
+    RoomProjectUpdate,
+)
+from app.schemas.discovery import PriceConstraint
+from app.schemas.resolution import DeterministicClarification
+
+
+class MappedProposals(NamedTuple):
+    """The update to apply, and anything the customer must settle first."""
+
+    update: AgentStateUpdate
+    clarification: DeterministicClarification | None = None
+
+
+def map_proposals(
+    state_proposal: CustomerStateProposal | None,
+    commerce_proposal: DerivedCommerceProposal | None,
+) -> MappedProposals:
+    """Both proposals from one decision, as a single typed update.
+
+    Combined rather than applied separately so the reducer sees one transition:
+    two sequential updates would each rebuild the state, and a failure between
+    them would leave half of what the customer said recorded.
+    """
+    customer, room, clarification = _customer_state(state_proposal)
+    return MappedProposals(
+        update=AgentStateUpdate(
+            customer_preferences=customer,
+            room_project=room,
+            derived_commerce=_derived_commerce(commerce_proposal),
+        ),
+        clarification=clarification,
+    )
+
+
+def _customer_state(
+    proposal: CustomerStateProposal | None,
+) -> tuple[
+    CustomerPreferenceUpdate | None,
+    RoomProjectUpdate | None,
+    DeterministicClarification | None,
+]:
+    if proposal is None:
+        return None, None, None
+
+    customer = (
+        CustomerPreferenceUpdate(
+            semantic_preferences=_preferences(proposal.customer_preferences)
+        )
+        if proposal.customer_preferences is not None
+        else None
+    )
+
+    budget, clarification = _budget(proposal.room_budget)
+    touches_room = (
+        proposal.room_type is not None
+        or proposal.clear_room_type
+        or budget is not None
+        or proposal.clear_room_budget
+        or proposal.design_preferences is not None
+    )
+    room = (
+        RoomProjectUpdate(
+            room_type=proposal.room_type,
+            clear_room_type=proposal.clear_room_type,
+            budget=budget,
+            clear_budget=proposal.clear_room_budget,
+            design_preferences=_preferences(proposal.design_preferences),
+        )
+        if touches_room
+        else None
+    )
+    return customer, room, clarification
+
+
+def _preferences(proposal: PreferenceProposal | None) -> PreferenceListUpdate | None:
+    if proposal is None:
+        return None
+    match proposal.op:
+        case PreferenceProposalOp.ADD:
+            return AddItems(items=proposal.preferences)
+        case PreferenceProposalOp.REMOVE:
+            return RemoveItems(items=proposal.preferences)
+        case PreferenceProposalOp.REPLACE:
+            return ReplaceItems(items=proposal.preferences)
+
+
+def _budget(
+    proposal: PriceProposal | None,
+) -> tuple[PriceConstraint | None, DeterministicClarification | None]:
+    """A budget, or the reason it could not be recorded.
+
+    A stated amount with no currency is not an error and not a guess: the
+    retailer's currency is never inferred (CLAUDE.md 15), so the figure is held
+    back and the customer is asked which currency they meant.
+    """
+    if proposal is None:
+        return None, None
+    currency = (proposal.currency or "").strip()
+    if not currency:
+        return None, DeterministicClarification(
+            reason=BlockingClarificationReason.MISSING_PRICE_CURRENCY
+        )
+    return (
+        PriceConstraint(
+            currency=currency,
+            min_amount=_amount(proposal.min_amount, field="min_amount"),
+            max_amount=_amount(proposal.max_amount, field="max_amount"),
+        ),
+        None,
+    )
+
+
+def _amount(raw: str | None, *, field: str) -> Decimal | None:
+    """A stated figure as a decimal, or a defect.
+
+    Never asked about: the customer said a number, and our failure to read what
+    the model returned is not something they can fix.
+    """
+    if raw is None:
+        return None
+    try:
+        return Decimal(raw.strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise LLMResponseInvalidError(reason=f"{field} was not a decimal") from exc
+
+
+def _derived_commerce(
+    proposal: DerivedCommerceProposal | None,
+) -> DerivedCommerceUpdate | None:
+    """The system's own read, kept in its own domain (CLAUDE.md 6.1)."""
+    if proposal is None:
+        return None
+    return DerivedCommerceUpdate(
+        purchase_stage=proposal.purchase_stage,
+        clear_purchase_stage=proposal.clear_purchase_stage,
+    )

@@ -1,0 +1,136 @@
+# Which physical dimension a customer can ask about, per product type, and which
+# stored axis answers it. Version v1.
+#
+# A customer says "no wider than 220 cm". What "wide" means depends on the
+# product: a sofa's width is its along-wall span, stored in `length`, while its
+# `width` column holds front-to-back depth. There is no global mapping, so this
+# file is the only place the correspondence is recorded.
+#
+# Every mapping here is backed by the M8B audit of the reviewed catalog. For
+# sofas the evidence is direct: average `length` scales with seat count
+# (2 -> 174 cm, 3 -> 226 cm, 4 -> 251 cm) while `width` stays near 97 cm, and
+# product names like "180cm TV Stand" match `length` exactly.
+#
+# A role that is absent is NOT supported. Absence never means "guess".
+# `unsupported_roles` records the ones we deliberately refuse, with a reason.
+version: v1
+
+subcategories:
+
+  # ── families where the along-wall span is stored in `length` ─────────────
+  sofa:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  tv-table:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  console:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  wardrobe:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  center-table:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  service-table:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  shelve:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  office-table:
+    roles:
+      overall_width: {source_axis: length}
+      depth: {source_axis: width}
+      height: {source_axis: height}
+
+  # ── a dining table is described by its length, not an along-wall span ────
+  dining-table:
+    roles:
+      length: {source_axis: length}
+      overall_width: {source_axis: width}
+      height: {source_axis: height}
+
+  # ── a rug is a pair of sides, and nobody agrees which comes first ────────
+  carpet:
+    planar_pair:
+      axes: [length, width]
+      mode: unordered
+    unsupported_roles:
+      height: {reason: insufficient_coverage}
+      length: {reason: unsupported_product_geometry}
+      overall_width: {reason: unsupported_product_geometry}
+      depth: {reason: unsupported_product_geometry}
+
+  # ── families whose stored axes the audit found unreliable ───────────────
+  # A bed's two planar axes both sit in 190-230 cm and roughly one in seven
+  # rows appears transposed, which magnitude cannot detect. Filtering would
+  # silently return the wrong beds.
+  bed:
+    unsupported_roles:
+      length: {reason: unreliable_axis_mapping}
+      overall_width: {reason: unreliable_axis_mapping}
+      depth: {reason: unreliable_axis_mapping}
+      height: {reason: unreliable_axis_mapping}
+
+  # An L-shape has two spans and the data does not say which was recorded:
+  # 275x83 sits beside 85x180 in the same subcategory.
+  sectional-sofa:
+    unsupported_roles:
+      length: {reason: unsupported_product_geometry}
+      overall_width: {reason: unsupported_product_geometry}
+      depth: {reason: unsupported_product_geometry}
+      height: {reason: unsupported_product_geometry}
+
+  # Near-square footprints with no stable ordering between the two axes.
+  single-seater-sofa:
+    unsupported_roles:
+      length: {reason: unreliable_axis_mapping}
+      overall_width: {reason: unreliable_axis_mapping}
+      depth: {reason: unreliable_axis_mapping}
+      height: {reason: unreliable_axis_mapping}
+
+  chair:
+    unsupported_roles:
+      length: {reason: unreliable_axis_mapping}
+      overall_width: {reason: unreliable_axis_mapping}
+      depth: {reason: unreliable_axis_mapping}
+      height: {reason: unreliable_axis_mapping}
+
+  # A set has no single footprint to measure.
+  sofa-set:
+    unsupported_roles:
+      length: {reason: unsupported_product_geometry}
+      overall_width: {reason: unsupported_product_geometry}
+      depth: {reason: unsupported_product_geometry}
+      height: {reason: unsupported_product_geometry}
+
+  # Stored inverted relative to `bed`: width is the long axis.
+  mattresses:
+    unsupported_roles:
+      length: {reason: unreliable_axis_mapping}
+      overall_width: {reason: unreliable_axis_mapping}
+      depth: {reason: unreliable_axis_mapping}
+      height: {reason: unreliable_axis_mapping}
