@@ -66,16 +66,36 @@ def deduplicated_exclusions(
 
 
 def conflicting_role(
-    excluded: Sequence[ExcludedDesignRole], preserved: Sequence[ProductCandidate]
+    excluded: Sequence[ExcludedDesignRole], targets: Sequence[ProductCandidate]
 ) -> ExcludedDesignRole | None:
-    """The first exclusion that forbids a piece they asked to keep.
+    """The first exclusion that forbids a piece they asked to keep or design around.
 
     Compared against **freshly read** commerce facts, because a remembered
     classification could be stale and this decides whether the turn proceeds at
     all.
     """
     for role in excluded:
-        for product in preserved:
+        for product in targets:
             if role.excludes(product.commerce.category, product.commerce.subcategory):
                 return role
     return None
+
+
+def unprovable_against_exclusions(
+    excluded: Sequence[ExcludedDesignRole], targets: Sequence[ProductCandidate]
+) -> bool:
+    """Whether some target's role cannot be checked against the exclusions at all.
+
+    An unclassified product satisfies no exclusion - `excludes` says so, since
+    a missing commerce category is *unverified* rather than *any*. But "we
+    cannot show it conflicts" is not "we have shown it does not", and
+    proceeding on the first would lock a piece and hand it to the specialist as
+    an anchor while a constraint may forbid its very role.
+
+    So the turn fails closed instead, and only when there is something to
+    prove: with no exclusions there is no question to answer, and an
+    unclassified product is then perfectly ordinary (M12F 2).
+    """
+    if not excluded:
+        return False
+    return any(product.commerce.category is None for product in targets)

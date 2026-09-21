@@ -260,3 +260,92 @@ def test_contracts_are_frozen_and_reject_unknown_fields(
     """An ignored unexpected field is a model output nobody validated."""
     assert model.model_config.get("frozen") is True, model.__name__
     assert model.model_config.get("extra") == "forbid", model.__name__
+
+
+# ── both reasoning agents, and nothing left unguarded (M12F 6) ──────────────
+
+
+DURABLE_IDENTITY = (
+    "need_id",
+    "next_design_need_id",
+    "rejected_product_ids",
+    "bundle_revision",
+    "schema_version",
+)
+"""Persistence bookkeeping. A model that can see one can start reasoning about
+it, and one that can emit one is authoring state."""
+
+
+def _agent_inputs() -> list[type[BaseModel]]:
+    """What each reasoning agent reads.
+
+    V1 has exactly two (CLAUDE.md 35), so this list is complete by definition -
+    an agent added later with no entry here is an agent nobody guarded.
+    """
+    from app.schemas.design import InteriorDesignRequest
+
+    return [DecisionInput, InteriorDesignRequest]
+
+
+@pytest.mark.parametrize("model", _agent_inputs(), ids=lambda m: m.__name__)
+@pytest.mark.parametrize("forbidden", DURABLE_IDENTITY)
+def test_neither_reasoning_agent_reads_durable_identity(
+    model: type[BaseModel], forbidden: str
+) -> None:
+    for name in _names(model):
+        assert forbidden not in name, f"{model.__name__}.{name}"
+
+
+@pytest.mark.parametrize("model", _agent_inputs(), ids=lambda m: m.__name__)
+@pytest.mark.parametrize("forbidden", RETAILER_IDENTITY)
+def test_neither_reasoning_agent_reads_retailer_identity(
+    model: type[BaseModel], forbidden: str
+) -> None:
+    for name in _names(model):
+        assert forbidden not in name, f"{model.__name__}.{name}"
+
+
+@pytest.mark.parametrize("model", _agent_inputs(), ids=lambda m: m.__name__)
+def test_neither_reasoning_agent_reads_an_authoritative_type(
+    model: type[BaseModel],
+) -> None:
+    """The state itself, a catalog row, or a durable plan record."""
+    rendered = " ".join(_types(model))
+
+    for forbidden in (
+        "AgentStateV1",
+        "RoomProjectState",
+        "RoomDesignNeedState",
+        "BundleItemState",
+        "ProductCandidate",
+        "ProductRow",
+        "RetailerContext",
+    ):
+        assert forbidden not in rendered, f"{model.__name__} reaches {forbidden}"
+
+
+def test_the_commerce_agent_reads_a_view_and_never_the_state() -> None:
+    """`AgentStateView` exists for this. The projection drops every id."""
+    rendered = " ".join(_types(DecisionInput))
+
+    assert "AgentStateView" in rendered
+    assert "AgentStateV1" not in rendered
+
+
+def test_the_design_specialist_reads_design_meaning_and_never_plan_records() -> None:
+    """`CurrentDesignNeed` is the projection; `RoomDesignNeedState` is the
+    record it was projected from, and carries the identity it dropped."""
+    from app.schemas.design import InteriorDesignRequest
+
+    rendered = " ".join(_types(InteriorDesignRequest))
+
+    assert "CurrentDesignNeed" in rendered
+    assert "RoomDesignNeedState" not in rendered
+
+
+def test_the_customers_own_budget_is_still_allowed_through() -> None:
+    """The guards above must not be passing by excluding everything."""
+    from app.schemas.design import InteriorDesignRequest
+
+    assert "budget" in _names(InteriorDesignRequest)
+    assert "PriceConstraint" in " ".join(_types(InteriorDesignRequest))

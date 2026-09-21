@@ -22,7 +22,7 @@ would be told their redesign succeeded.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from app.core.exceptions import CatalogUnavailableError, LLMResponseInvalidError
@@ -90,13 +90,17 @@ CONTEXT = RetailerContext(store_id=50)
 
 
 def product(
-    product_id: int, *, category: str = "seating", subcategory: str | None = "sofa"
+    product_id: int,
+    *,
+    category: str = "seating",
+    subcategory: str | None = "sofa",
+    price: str = "1000.00",
 ) -> ProductCandidate:
     return ProductCandidate(
         product_id=product_id,
         name_english=f"Item {product_id}",
         name_arabic="منتج",
-        price_amount=Decimal("1000.00"),
+        price_amount=Decimal(price),
         price_unit="SAR",
         image_url=f"https://example.test/{product_id}.jpg",
         product_url=f"https://example.test/{product_id}",
@@ -140,12 +144,18 @@ def a_room(
     *,
     needs: tuple[DesignNeedSpec, ...] = (),
     lines: tuple[PlannedBundleLineSpec, ...] = (),
+    budget: str | None = None,
 ) -> AgentStateV1:
+    from app.schemas.discovery import PriceConstraint
+
     return apply_update(
         AgentStateV1(),
         AgentStateUpdate(
             room_project=RoomProjectUpdate(
-                bundle_operations=(ReplaceDesignPlan(needs=needs, added=lines),)
+                budget=PriceConstraint.at_most(Decimal(budget), "SAR")
+                if budget
+                else None,
+                bundle_operations=(ReplaceDesignPlan(needs=needs, added=lines),),
             )
         ),
     )
@@ -1079,3 +1089,204 @@ async def test_an_excluded_role_in_the_result_leaves_the_old_room() -> None:
     after = room(result.state)
     assert [n.commerce_category for n in after.design_needs] == ["dining", "seating"]
     assert result.grounding.failure.code is TurnFailureCode.DESIGN_UNAVAILABLE
+
+
+# ── the anchor is a hard constraint too (M12F 2) ════════════════════════════
+
+
+ANCHOR_ID = 42
+"""What `FakeReferences` resolves a presented selector to."""
+
+
+def anchored(
+    *, removed: tuple[DesignNeedCategoryMatch, ...] = ()
+) -> CustomerAgentDecision:
+    """Design around a product they were shown, while excluding roles."""
+    from app.schemas.agent_decision import DesignAnchorIntent
+    from app.schemas.product_reference import PresentedOrdinal
+
+    return CustomerAgentDecision(
+        action=AgentAction.DESIGN_HANDOFF,
+        design_anchor=DesignAnchorIntent(reference=PresentedOrdinal(position=1)),
+        design_revision=DesignRevisionIntent(removed_needs=removed)
+        if removed
+        else None,
+    )
+
+
+class UnclassifiedHydration:
+    """A catalog row whose commerce classification was never reviewed."""
+
+    def __init__(self, available: tuple[int, ...]) -> None:
+        self.available = available
+        self.calls: list[list[int]] = []
+
+    async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
+        self.calls.append(list(product_ids))
+        return tuple(
+            product(p, category=None, subcategory=None)  # type: ignore[arg-type]
+            for p in product_ids
+            if p in self.available
+        )
+
+
+async def test_an_anchor_whose_role_is_excluded_is_asked_about() -> None:
+    """The gap M12F closes: E4D checked preserved cards and not anchors.
+
+    "Design around this sofa" and "no seating in the new room" are the same
+    contradiction whichever surface named the piece.
+    """
+    state = a_room(needs=(need(),), lines=(line(10),))
+
+    result, parts = await run(
+        anchored(removed=(DesignNeedCategoryMatch(commerce_category="seating"),)),
+        state,
+        available=(10, ANCHOR_ID),
+    )
+
+    assert parts["design"].requests == [], "nothing is planned on a contradiction"
+    clarification = result.grounding.deterministic_clarification
+    assert clarification.reason is (
+        BlockingClarificationReason.CONTRADICTORY_ROOM_INSTRUCTIONS
+    )
+    assert clarification.need_reason is DesignNeedFailureReason.PRESERVED_ROLE_EXCLUDED
+
+
+async def test_no_lock_is_written_when_the_anchor_contradicts_an_exclusion() -> None:
+    """Neither the anchor's nor the preserved card's - resolution precedes all
+    mutation, so a contradiction found late leaves nothing half-applied."""
+    state = a_room(needs=(need(),), lines=(line(10),))
+
+    result, _ = await run(
+        anchored(removed=(DesignNeedCategoryMatch(commerce_category="seating"),)),
+        state,
+        available=(10, ANCHOR_ID),
+    )
+
+    after = room(result.state)
+    assert all(item.status is BundleItemStatus.SUGGESTED for item in after.bundle_items)
+    assert ANCHOR_ID not in [item.product_id for item in after.bundle_items]
+
+
+async def test_an_anchor_of_an_unrelated_role_proceeds() -> None:
+    state = a_room(needs=(need(), need("dining", "dining-table")), lines=(line(10),))
+
+    result, parts = await run(
+        anchored(
+            removed=(
+                DesignNeedCategoryMatch(
+                    commerce_category="dining", commerce_subcategory="dining-table"
+                ),
+            )
+        ),
+        state,
+        available=(10, ANCHOR_ID),
+        outcome=chosen(77),
+    )
+
+    assert len(parts["design"].requests) == 1
+    assert result.grounding.deterministic_clarification is None
+
+
+async def test_an_anchor_with_no_exclusions_needs_no_role_at_all() -> None:
+    """Nothing to prove, so an unreviewed classification is ordinary."""
+    coordinator, parts = _coordinator(
+        anchored(),
+        capabilities=FakeCapabilities((("seating", "sofa"),)),
+        hydration=cast(Any, UnclassifiedHydration((ANCHOR_ID,))),
+        design=FakeDesign(plan_of(category_need("seating", "sofa"))),
+        optimizer=FakeOptimizer(chosen(77)),
+    )
+
+    result = await coordinator.run(
+        CustomerTurnInput(
+            message="design around this", state=AgentStateV1(), context=CONTEXT
+        )
+    )
+
+    assert len(parts["design"].requests) == 1
+    assert result.grounding.deterministic_clarification is None
+
+
+async def test_an_unverifiable_role_fails_closed_against_an_exclusion() -> None:
+    """"Cannot show it conflicts" is not "shown not to conflict".
+
+    A missing commerce category is unverified, not "any" - so it satisfies no
+    exclusion. But locking the piece and handing it to the specialist as an
+    anchor would be assuming a compatibility nobody established (M12F 2).
+    """
+    state = a_room(needs=(need(),), lines=(line(10),))
+    coordinator, parts = _coordinator(
+        anchored(removed=(DesignNeedCategoryMatch(commerce_category="seating"),)),
+        capabilities=FakeCapabilities((("seating", "sofa"),)),
+        hydration=cast(Any, UnclassifiedHydration((10, ANCHOR_ID))),
+        design=FakeDesign(plan_of(category_need("seating", "sofa"))),
+    )
+
+    result = await coordinator.run(
+        CustomerTurnInput(message="design around this", state=state, context=CONTEXT)
+    )
+
+    assert parts["design"].requests == []
+    clarification = result.grounding.deterministic_clarification
+    assert clarification is not None
+    assert clarification.need_reason is DesignNeedFailureReason.PRESERVED_ROLE_EXCLUDED
+
+
+async def test_the_anchor_and_preserved_cards_lock_in_one_transition() -> None:
+    from app.schemas.agent_decision import DesignAnchorIntent
+    from app.schemas.product_reference import PresentedOrdinal
+
+    state = a_room(needs=(need(),), lines=(line(10),))
+    decision = CustomerAgentDecision(
+        action=AgentAction.DESIGN_HANDOFF,
+        design_anchor=DesignAnchorIntent(reference=PresentedOrdinal(position=1)),
+        design_revision=DesignRevisionIntent(
+            preserved_items=(BundleItemOrdinal(ordinal=1),)
+        ),
+    )
+
+    result, _ = await run(
+        decision, state, available=(10, ANCHOR_ID), outcome=chosen(77)
+    )
+
+    locked = {
+        item.product_id
+        for item in room(result.state).bundle_items
+        if item.status is BundleItemStatus.LOCKED
+    }
+    assert locked == {10, ANCHOR_ID}
+
+
+async def test_a_preserve_is_not_written_when_the_anchor_contradicts() -> None:
+    """The ordering the M12F restructure exists for.
+
+    The preserved card is resolvable and the exclusion is unrelated to it; the
+    contradiction is with the *anchor*, discovered later. If preservation were
+    applied as it resolved, this card would already be locked by then.
+    """
+    from app.schemas.agent_decision import DesignAnchorIntent
+    from app.schemas.product_reference import PresentedOrdinal
+
+    state = a_room(
+        needs=(need(), need("dining", "dining-table")),
+        lines=(line(11, need_index=1), line(10, need_index=0)),
+    )
+    decision = CustomerAgentDecision(
+        action=AgentAction.DESIGN_HANDOFF,
+        design_anchor=DesignAnchorIntent(reference=PresentedOrdinal(position=1)),
+        design_revision=DesignRevisionIntent(
+            # The dining piece, which no exclusion forbids.
+            preserved_items=(BundleItemOrdinal(ordinal=1),),
+            # The anchor is a sofa, so this contradicts the anchor alone.
+            removed_needs=(DesignNeedCategoryMatch(commerce_category="seating"),),
+        ),
+    )
+
+    result, parts = await run(decision, state, available=(10, 11, ANCHOR_ID))
+
+    assert parts["design"].requests == []
+    assert all(
+        item.status is BundleItemStatus.SUGGESTED
+        for item in room(result.state).bundle_items
+    ), "no preserve lock survives a contradiction found afterwards"

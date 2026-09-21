@@ -167,7 +167,11 @@ from app.services.comparison import ProductComparisonService
 from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.design_facts import project_anchors
-from app.services.design_revision import conflicting_role, project_current_plan
+from app.services.design_revision import (
+    conflicting_role,
+    project_current_plan,
+    unprovable_against_exclusions,
+)
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
@@ -380,6 +384,35 @@ def _stale_reference(state: AgentStateV1, resolved_revision: int) -> _Primary | 
     )
 
 
+def _contradicted(
+    excluded: tuple[ExcludedDesignRole, ...],
+    targets: list[ProductCandidate],
+    turn: CustomerTurnInput,
+) -> bool:
+    """Whether the customer's hard instructions cannot all hold.
+
+    Two ways they cannot. A piece they asked to keep - or to design around -
+    may be exactly what an exclusion forbids; or its commerce role may be
+    unknown, leaving the question unanswerable. Neither is resolved by
+    choosing: honouring either instruction would discard the other silently,
+    so the customer settles it (M12E-4D 16, M12F 2).
+    """
+    conflict = conflicting_role(excluded, targets)
+    if conflict is not None:
+        logger.info(
+            "design_revision_conflict",
+            store_id=turn.context.store_id,
+            commerce_category=conflict.commerce_category,
+        )
+        return True
+    if unprovable_against_exclusions(excluded, targets):
+        logger.info(
+            "design_revision_role_unverifiable", store_id=turn.context.store_id
+        )
+        return True
+    return False
+
+
 def _revision_context(
     room: RoomProjectState | None, excluded: tuple[ExcludedDesignRole, ...]
 ) -> DesignRevisionContext | None:
@@ -535,28 +568,34 @@ def _no_replacement_reason(outcome: BundleOptimizationOutcome) -> TurnFailureCod
 
 @dataclass(frozen=True, slots=True)
 class _Anchored:
-    """The state after recording a design anchor, or the reason to stop.
+    """A resolved design anchor, or the reason to stop.
 
-    `stop` carries the primary result to return as-is. The state travels beside
-    it because a stop still has to hand back whatever was already established.
+    Carries the operations that *would* record it rather than a state that
+    already has: the anchor's verified role must be checked against the
+    revision's exclusions first, and a lock written before that check could not
+    be taken back (M12F 2).
     """
 
-    state: AgentStateV1
+    product: ProductCandidate | None = None
+    operations: tuple[BundleOperation, ...] = ()
     stop: _Primary | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class _Revision:
-    """The hard constraints on recomposing a room, once all of them hold.
+    """The hard constraints on recomposing a room, resolved but not yet applied.
 
-    `stop` carries the primary result to return as-is. Nothing has been locked
-    when it is set: every reference is resolved and every contradiction found
-    before the first preservation lands, so one bad reference among several
-    never leaves half the customer's pieces preserved (M12E-4D 17).
+    **This step mutates nothing.** It resolves every reference and reports what
+    it found; the locks are applied later, once the anchor has been resolved
+    too and the whole constraint set is known to be consistent. One bad
+    reference among several must never leave half the customer's pieces
+    preserved, and an anchor that contradicts an exclusion must not find a
+    preserve lock already written (M12E-4D 17, M12F 2).
     """
 
-    state: AgentStateV1
     excluded: tuple[ExcludedDesignRole, ...] = ()
+    preserved: tuple[ProductCandidate, ...] = ()
+    operations: tuple[BundleOperation, ...] = ()
     stop: _Primary | None = None
 
 
@@ -837,19 +876,34 @@ class CustomerTurnCoordinator:
         room is optimised again. Without one there is nothing for it to change,
         and re-running the pipeline because a flag moved would replace products
         nobody asked about.
+
+        **A piece they already own is locked by saying so.** Owning it is not a
+        preference about which product to choose - it is already in the room,
+        and nothing the optimiser could pick would replace it. Without the lock
+        it would not reach the optimiser as one (`_verify_locks` reads status),
+        and a budgeted re-costing would quietly choose a replacement for a piece
+        the customer told us they have. `BundleLine` states the same rule from
+        the other side: an already-owned line is never a new selection.
+
+        Going back to buying it does not release the lock. "I do need to buy
+        that after all" corrects who pays, not whether the piece stays; letting
+        it stay is a separate instruction they can give (CLAUDE.md 10).
         """
         assert intent.acquisition is not None, "the contract requires one"
+        owned = intent.acquisition is BundleAcquisition.ALREADY_OWNED
+        operations: tuple[BundleOperation, ...] = tuple(
+            SetBundleLineAcquisition(line_id=line_id, acquisition=intent.acquisition)
+            for line_id in target.line_ids
+        )
+        if owned:
+            operations += tuple(
+                SetBundleLineStatus(line_id=line_id, status=BundleItemStatus.LOCKED)
+                for line_id in target.line_ids
+            )
         updated = apply_update(
             working,
             AgentStateUpdate(
-                room_project=RoomProjectUpdate(
-                    bundle_operations=tuple(
-                        SetBundleLineAcquisition(
-                            line_id=line_id, acquisition=intent.acquisition
-                        )
-                        for line_id in target.line_ids
-                    )
-                )
+                room_project=RoomProjectUpdate(bundle_operations=operations)
             ),
         )
         self._log_refinement(turn, intent.op, working, updated)
@@ -1319,15 +1373,42 @@ class CustomerTurnCoordinator:
                 failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
             )
 
+        # Everything the customer ruled in or out is resolved and verified
+        # before a single lock is written, so a contradiction found late cannot
+        # leave an earlier instruction half-applied (M12F 2).
         revision = await self._revision_constraints(decision, state, pre_turn, turn)
         if revision.stop is not None:
-            return replace(revision.stop, state=revision.state)
-        state = revision.state
+            return replace(revision.stop, state=state, proposals_applied=True)
 
-        anchored = await self._record_anchor(decision, state, pre_turn, turn)
+        anchored = await self._resolve_anchor(decision, state, pre_turn, turn)
         if anchored.stop is not None:
-            return replace(anchored.stop, state=anchored.state, proposals_applied=True)
-        state = anchored.state
+            return replace(anchored.stop, state=state, proposals_applied=True)
+
+        targets = [
+            *revision.preserved,
+            *([anchored.product] if anchored.product is not None else []),
+        ]
+        if _contradicted(revision.excluded, targets, turn):
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.CONTRADICTORY_ROOM_INSTRUCTIONS,
+                    need_reason=DesignNeedFailureReason.PRESERVED_ROLE_EXCLUDED,
+                ),
+            )
+
+        operations = (*revision.operations, *anchored.operations)
+        if operations:
+            # One transition for every piece they named, so the room is never
+            # observed half-preserved and the revision advances exactly once.
+            state = apply_update(
+                state,
+                AgentStateUpdate(
+                    room_project=RoomProjectUpdate(bundle_operations=operations)
+                ),
+            )
 
         locks = await self._verify_locks(state, turn.context)
         if locks is None:
@@ -1407,7 +1488,7 @@ class CustomerTurnCoordinator:
         """
         intent = decision.design_revision
         if intent is None:
-            return _Revision(state=state)
+            return _Revision()
 
         room = pre_turn.room_project
         excluded = self._bundle_references.resolve_exclusions(
@@ -1415,7 +1496,6 @@ class CustomerTurnCoordinator:
         )
         if isinstance(excluded, DesignNeedUnresolved):
             return _Revision(
-                state=state,
                 stop=_Primary(
                     state=state,
                     design_handoff=True,
@@ -1430,7 +1510,6 @@ class CustomerTurnCoordinator:
         verified = await self._verify_bundle_products(room, turn.context)
         if verified is None:
             return _Revision(
-                state=state,
                 stop=_Primary(
                     state=state,
                     design_handoff=True,
@@ -1449,71 +1528,32 @@ class CustomerTurnCoordinator:
             if isinstance(outcome, BundleReferenceUnresolved):
                 stop = _unresolved_bundle(outcome.reason, state)
                 return _Revision(
-                    state=state,
-                    stop=replace(stop, design_handoff=True, proposals_applied=True),
+                    stop=replace(stop, design_handoff=True, proposals_applied=True)
                 )
             line_ids.extend(outcome.line_ids)
             preserved.append(by_id[outcome.product_id])
 
-        conflict = conflicting_role(excluded, preserved)
-        if conflict is not None:
-            # Both instructions are clear and cannot both hold. Honouring
-            # either would silently discard the other, so neither is applied
-            # and the customer settles it (M12E-4D 16).
-            logger.info(
-                "design_revision_conflict",
-                store_id=turn.context.store_id,
-                commerce_category=conflict.commerce_category,
-            )
-            return _Revision(
-                state=state,
-                stop=_Primary(
-                    state=state,
-                    design_handoff=True,
-                    proposals_applied=True,
-                    clarification=DeterministicClarification(
-                        reason=BlockingClarificationReason.CONTRADICTORY_ROOM_INSTRUCTIONS,
-                        need_reason=DesignNeedFailureReason.PRESERVED_ROLE_EXCLUDED,
-                    ),
-                ),
-            )
-
         return _Revision(
-            state=self._preserve(state, line_ids), excluded=excluded
-        )
-
-    @staticmethod
-    def _preserve(state: AgentStateV1, line_ids: list[int]) -> AgentStateV1:
-        """Lock every preserved line in one transition.
-
-        One update rather than one per card, so the room is never observed
-        half-preserved and the revision advances exactly once - or not at all,
-        when every named card was already locked (M12E-4D 18).
-        """
-        if not line_ids:
-            return state
-        return apply_update(
-            state,
-            AgentStateUpdate(
-                room_project=RoomProjectUpdate(
-                    bundle_operations=tuple(
-                        SetBundleLineStatus(
-                            line_id=line_id, status=BundleItemStatus.LOCKED
-                        )
-                        for line_id in dict.fromkeys(line_ids)
-                    )
-                )
+            excluded=excluded,
+            preserved=tuple(preserved),
+            operations=tuple(
+                SetBundleLineStatus(line_id=line_id, status=BundleItemStatus.LOCKED)
+                for line_id in dict.fromkeys(line_ids)
             ),
         )
 
-    async def _record_anchor(
+    async def _resolve_anchor(
         self,
         decision: CustomerAgentDecision,
         state: AgentStateV1,
         pre_turn: AgentStateV1,
         turn: CustomerTurnInput,
     ) -> _Anchored:
-        """Turn "design around this one" into a locked line, or stop.
+        """Work out what "design around this one" would record, or stop.
+
+        Resolves and verifies; it writes nothing. The anchor's role still has
+        to be checked against the revision's exclusions, and a lock written
+        before that check could not be taken back (M12F 2).
 
         Resolved against the **pre-turn** universe, like every other reference:
         what "the second one" meant was fixed before this turn changed
@@ -1526,7 +1566,7 @@ class CustomerTurnCoordinator:
         """
         anchor = decision.design_anchor
         if anchor is None:
-            return _Anchored(state=state)
+            return _Anchored()
 
         outcome = await self._references.resolve(anchor.reference, pre_turn, turn.context)
         if isinstance(outcome, ReferenceUnresolved):
@@ -1534,24 +1574,22 @@ class CustomerTurnCoordinator:
                 outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
             )
             return _Anchored(
-                state=state,
                 stop=_Primary(
                     state=state,
                     design_handoff=True,
                     clarification=clarification,
                     failure=failure,
-                ),
+                )
             )
 
         products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
         if not products:
             return _Anchored(
-                state=state,
                 stop=_Primary(
                     state=state,
                     design_handoff=True,
                     failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE),
-                ),
+                )
             )
 
         room = state.room_project
@@ -1567,14 +1605,13 @@ class CustomerTurnCoordinator:
             # and those are a different surface: an anchor points at a product
             # that was presented, a preserved item at a card in the room.
             return _Anchored(
-                state=state,
                 stop=_Primary(
                     state=state,
                     design_handoff=True,
                     clarification=DeterministicClarification(
                         reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
                     ),
-                ),
+                )
             )
 
         acquisition = anchor.acquisition or BundleAcquisition.TO_BUY
@@ -1596,12 +1633,7 @@ class CustomerTurnCoordinator:
                     )
                 ),
             )
-        return _Anchored(
-            state=apply_update(
-                state,
-                AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=operations)),
-            )
-        )
+        return _Anchored(product=products[0], operations=operations)
 
     def _design_request(
         self,
