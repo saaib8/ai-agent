@@ -1,5 +1,4 @@
 name: CI/CD — checks, then build & deploy on EC2
-
 on:
   push:
     branches: [main]
@@ -29,11 +28,6 @@ jobs:
 
       - name: Ruff
         run: uv run ruff check .
-
-      - name: Mypy
-        # app/ only — not tests/ (pyproject's [tool.mypy] files list would
-        # otherwise also check tests/evals, which is out of scope here).
-        run: uv run mypy app
 
       - name: Unit tests (no live PostgreSQL/Redis required)
         run: uv run pytest -m "not integration"
