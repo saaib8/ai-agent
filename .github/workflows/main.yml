@@ -1,0 +1,108 @@
+name: CI/CD — checks, then build & deploy on EC2
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backend-checks:
+    name: Backend — lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Mypy
+        run: uv run mypy
+
+      - name: Unit tests (no live PostgreSQL/Redis required)
+        run: uv run pytest -m "not integration"
+
+  frontend-checks:
+    name: Frontend — typecheck, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  deploy:
+    name: Deploy to EC2
+    needs: [backend-checks, frontend-checks]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Pull latest code, build images, redeploy — over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          command_timeout: 900s
+          script_stop: true
+          envs: GIT_TOKEN,GIT_REPO,APP_DIR
+          script: |
+            set -euo pipefail
+            cd "${APP_DIR}"
+
+            # Authenticated fetch that never touches the stored `origin`
+            # remote (so the token isn't left in .git/config afterwards).
+            git fetch "https://x-access-token:${GIT_TOKEN}@github.com/${GIT_REPO}.git" main
+            git reset --hard FETCH_HEAD
+
+            docker compose build
+            docker compose up -d --remove-orphans
+
+            docker image prune -f
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+          GIT_REPO: ${{ github.repository }}
+          APP_DIR: ${{ secrets.EC2_APP_DIR }}
+
+      - name: Verify health
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            for i in $(seq 1 15); do
+              if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+                echo "backend healthy"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "backend did not become healthy in time" >&2
+            exit 1
