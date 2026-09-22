@@ -93,9 +93,7 @@ class FakeClient:
     def model(self) -> str:
         return self._model
 
-    async def parse(
-        self, *, instructions: str, user_input: str, schema: type[Any]
-    ) -> Any:
+    async def parse(self, *, instructions: str, user_input: str, schema: type[Any]) -> Any:
         self.calls.append(
             {"instructions": instructions, "user_input": user_input, "schema": schema}
         )
@@ -131,6 +129,7 @@ def _search(count: int = 3) -> SearchExecutionGrounding:
         ranked_count=count,
         selected_count=count,
         presented_count=count,
+        exact_candidate_count=count,
         stop_reason=StopReason.EXACT_SUFFICIENT,
     )
 
@@ -383,9 +382,7 @@ async def test_a_design_handoff_with_a_question_makes_one_call_for_it() -> None:
 
     response = await _generate(
         client,
-        TurnGrounding(
-            design_handoff_requested=True, deterministic_clarification=AMBIGUOUS
-        ),
+        TurnGrounding(design_handoff_requested=True, deterministic_clarification=AMBIGUOUS),
         action=AgentAction.DESIGN_HANDOFF,
     )
 
@@ -405,9 +402,7 @@ async def test_an_unsupported_figure_earns_one_correction_call() -> None:
         CustomerResponse(message="Here are the options I found."),
     )
 
-    response = await _generate(
-        client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-    )
+    response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2
     assert response.message == "Here are the options I found."
@@ -435,9 +430,7 @@ async def test_a_second_unsupported_figure_falls_back() -> None:
         CustomerResponse(message="More like 3,900."),
     )
 
-    response = await _generate(
-        client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-    )
+    response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2, "never a third call"
     assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
@@ -456,15 +449,11 @@ async def test_a_second_unsupported_figure_falls_back() -> None:
         ),
     ],
 )
-async def test_no_other_violation_earns_a_second_call(
-    reply: CustomerResponse, why: str
-) -> None:
+async def test_no_other_violation_earns_a_second_call(reply: CustomerResponse, why: str) -> None:
     """Asking again is not the remedy for a misunderstanding."""
     client = FakeClient(reply, SAFE)
 
-    response = await _generate(
-        client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-    )
+    response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 1, why
     assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
@@ -476,9 +465,7 @@ async def test_a_bad_citation_on_the_correction_call_falls_back() -> None:
         CustomerResponse(message="This one.", referenced_grounding_refs=(9,)),
     )
 
-    response = await _generate(
-        client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-    )
+    response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2
     assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
@@ -492,9 +479,7 @@ async def test_a_valid_citation_survives() -> None:
         )
     )
 
-    response = await _generate(
-        client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-    )
+    response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert response.referenced_grounding_refs == (2,)
 
@@ -547,22 +532,16 @@ async def test_a_provider_failure_falls_back_without_a_retry(
     completed."""
     client = FakeClient(error, SAFE)
 
-    response = await _generate(
-        client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-    )
+    response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 1
     assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
 
 
 async def test_a_provider_failure_on_the_correction_call_falls_back() -> None:
-    client = FakeClient(
-        CustomerResponse(message="Around 4,200."), CatalogUnavailableError()
-    )
+    client = FakeClient(CustomerResponse(message="Around 4,200."), CatalogUnavailableError())
 
-    response = await _generate(
-        client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-    )
+    response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2
     assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
@@ -573,9 +552,7 @@ async def test_an_unexpected_error_still_propagates() -> None:
     client = FakeClient(ValueError("programmer error"))
 
     with pytest.raises(ValueError, match="programmer error"):
-        await _generate(
-            client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH
-        )
+        await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
 
 @pytest.mark.parametrize("kind", list(ResponseOutcomeKind))
@@ -632,9 +609,7 @@ async def test_a_failed_side_effect_is_appended_by_the_application(
         client,
         outcome,
         action=action,
-        interaction=ProductInteractionIntent(
-            op=op, reference=PresentedOrdinal(position=1)
-        ),
+        interaction=ProductInteractionIntent(op=op, reference=PresentedOrdinal(position=1)),
     )
 
     assert response.message.startswith(SAFE.message)
@@ -676,9 +651,7 @@ async def test_an_answer_with_a_failed_side_effect_is_still_answered() -> None:
 
     assert len(client.calls) == 1, "the answer was still generated"
     assert response.message.startswith("Sofas usually seat three.")
-    assert (
-        SIDE_NOTICE_WORDING[SideEffectNotice.SELECTION_NOT_UPDATED] in response.message
-    )
+    assert SIDE_NOTICE_WORDING[SideEffectNotice.SELECTION_NOT_UPDATED] in response.message
 
 
 # ── what the generator structurally cannot do ───────────────────────────────

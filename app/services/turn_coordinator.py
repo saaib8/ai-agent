@@ -48,10 +48,12 @@ from app.schemas.agent_decision import (
     BundleInteractionOp,
     BundleReplacementMode,
     CustomerAgentDecision,
+    DesignScope,
     FollowUpPolicy,
     ProductInteractionOp,
 )
 from app.schemas.agent_state import (
+    ActiveSearchState,
     AgentStateV1,
     BundleItemState,
     BundleItemStatus,
@@ -253,9 +255,7 @@ being asked. The mapping is total over `ClarificationReason`.
 """
 
 _M7_UNSUPPORTED: dict[type, SearchRequirementClarificationReason] = {
-    UnsupportedRequirement: (
-        SearchRequirementClarificationReason.UNSUPPORTED_REQUIREMENT
-    ),
+    UnsupportedRequirement: (SearchRequirementClarificationReason.UNSUPPORTED_REQUIREMENT),
     UnsupportedDimensionRequirement: (
         SearchRequirementClarificationReason.UNSUPPORTED_DIMENSION_REQUIREMENT
     ),
@@ -316,12 +316,8 @@ class _Primary:
 
 
 _BUNDLE_REFERENCE_FAILURES: dict[BundleReferenceFailureReason, TurnFailureCode] = {
-    BundleReferenceFailureReason.TARGET_PRODUCT_UNAVAILABLE: (
-        TurnFailureCode.PRODUCT_UNAVAILABLE
-    ),
-    BundleReferenceFailureReason.BUNDLE_NOT_VERIFIABLE: (
-        TurnFailureCode.BUNDLE_NOT_VERIFIABLE
-    ),
+    BundleReferenceFailureReason.TARGET_PRODUCT_UNAVAILABLE: (TurnFailureCode.PRODUCT_UNAVAILABLE),
+    BundleReferenceFailureReason.BUNDLE_NOT_VERIFIABLE: (TurnFailureCode.BUNDLE_NOT_VERIFIABLE),
 }
 """Which unresolved references are facts rather than questions.
 
@@ -332,9 +328,7 @@ reading, so neither becomes a question.
 """
 
 
-def _unresolved_bundle(
-    reason: BundleReferenceFailureReason, state: AgentStateV1
-) -> _Primary:
+def _unresolved_bundle(reason: BundleReferenceFailureReason, state: AgentStateV1) -> _Primary:
     """What a failed bundle reference produces: a question, or a fact.
 
     Either way the room is untouched - a reference that did not resolve cannot
@@ -350,7 +344,6 @@ def _unresolved_bundle(
             bundle_reason=reason,
         ),
     )
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,9 +399,7 @@ def _contradicted(
         )
         return True
     if unprovable_against_exclusions(excluded, targets):
-        logger.info(
-            "design_revision_role_unverifiable", store_id=turn.context.store_id
-        )
+        logger.info("design_revision_role_unverifiable", store_id=turn.context.store_id)
         return True
     return False
 
@@ -460,9 +451,7 @@ def _replacement_price(
     return PriceConstraint.above(product.price_amount, product.price_unit)
 
 
-def _with_rejection(
-    room: RoomProjectState, need_id: int, product_id: int
-) -> tuple[int, ...]:
+def _with_rejection(room: RoomProjectState, need_id: int, product_id: int) -> tuple[int, ...]:
     """This role's rejections plus the product being replaced now.
 
     Insertion order, deduplicated, and bounded by the ceiling a search already
@@ -496,9 +485,7 @@ def _staged_refinements(
                 if wording is not None and wording.op is SemanticIntentOp.SET
                 else None
             ),
-            clear_semantic_intent=(
-                wording is not None and wording.op is SemanticIntentOp.CLEAR
-            ),
+            clear_semantic_intent=(wording is not None and wording.op is SemanticIntentOp.CLEAR),
         ),
     )
 
@@ -563,7 +550,6 @@ def _no_replacement_reason(outcome: BundleOptimizationOutcome) -> TurnFailureCod
     ):
         return TurnFailureCode.REPLACEMENT_NOT_FEASIBLE
     return TurnFailureCode.NO_REPLACEMENT_CANDIDATE
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -670,9 +656,7 @@ class CustomerTurnCoordinator:
 
         proposals = map_proposals(decision.state_proposal, decision.commerce_proposal)
         interaction = await self._apply_interaction(decision, pre_turn, turn.context)
-        primary = await self._execute(
-            decision, interaction.state, pre_turn, turn, proposals.update
-        )
+        primary = await self._execute(decision, interaction.state, pre_turn, turn, proposals.update)
 
         # Applied to what the primary action produced, not to the pre-turn
         # state: rebuilding from the start here would silently undo a
@@ -711,22 +695,16 @@ class CustomerTurnCoordinator:
         if decision.interaction is None:
             return _Interaction(state=pre_turn)
 
-        outcome = await self._references.resolve(
-            decision.interaction.reference, pre_turn, context
-        )
+        outcome = await self._references.resolve(decision.interaction.reference, pre_turn, context)
         if isinstance(outcome, ReferenceUnresolved):
             clarification, failure = _reference_outcome(
                 outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
             )
             # Value first: the interaction is optional, so a primary action
             # that does not depend on it still runs (locked M11A).
-            return _Interaction(
-                state=pre_turn, clarification=clarification, failure=failure
-            )
+            return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
 
-        update = _interaction_update(
-            decision.interaction.op, outcome.product_id, pre_turn
-        )
+        update = _interaction_update(decision.interaction.op, outcome.product_id, pre_turn)
         return _Interaction(
             state=apply_update(pre_turn, AgentStateUpdate(product_interaction=update)),
             applied=True,
@@ -748,23 +726,17 @@ class CustomerTurnCoordinator:
             case AgentAction.BUNDLE_REFINE:
                 return await self._bundle_refine(decision, working, pre_turn, turn)
             case AgentAction.DESIGN_HANDOFF:
-                return await self._design_handoff(
-                    decision, working, pre_turn, turn, proposals
-                )
+                return await self._design_handoff(decision, working, pre_turn, turn, proposals)
             case AgentAction.SEARCH:
                 if decision.reference is None:
                     return await self._new_search(decision, working, turn)
-                return await self._similar_search_turn(
-                    decision.reference, working, pre_turn, turn
-                )
+                return await self._similar_search_turn(decision.reference, working, pre_turn, turn)
             case AgentAction.REFINE_SEARCH:
                 return await self._refine(decision, working, pre_turn, turn)
             case AgentAction.PRODUCT_DETAIL:
                 return await self._product_detail(decision, working, pre_turn, turn)
             case AgentAction.COMPARE:
                 return await self._compare(decision, working, pre_turn, turn)
-
-
 
     # ── refining the room ───────────────────────────────────────────────────
 
@@ -819,9 +791,7 @@ class CustomerTurnCoordinator:
             case BundleInteractionOp.SET_ACQUISITION:
                 return await self._set_acquisition(intent, outcome, working, turn)
             case BundleInteractionOp.REPLACE_PRODUCT:
-                return await self._replace_product(
-                    intent, outcome, working, verified, turn
-                )
+                return await self._replace_product(intent, outcome, working, verified, turn)
 
     # ── keeping and releasing ───────────────────────────────────────────────
 
@@ -902,9 +872,7 @@ class CustomerTurnCoordinator:
             )
         updated = apply_update(
             working,
-            AgentStateUpdate(
-                room_project=RoomProjectUpdate(bundle_operations=operations)
-            ),
+            AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=operations)),
         )
         self._log_refinement(turn, intent.op, working, updated)
 
@@ -956,9 +924,7 @@ class CustomerTurnCoordinator:
                 ),
             )
 
-        product = next(
-            (p for p in verified if p.product_id == target.product_id), None
-        )
+        product = next((p for p in verified if p.product_id == target.product_id), None)
         assert product is not None, "resolution already required it"
         price = _replacement_price(intent.replacement.mode, product)
         if price is _UNUSABLE_PRICE:
@@ -1079,7 +1045,6 @@ class CustomerTurnCoordinator:
             )
         return need_id
 
-
     # ── the whole room, chosen again ────────────────────────────────────────
 
     async def _reoptimise(
@@ -1185,10 +1150,7 @@ class CustomerTurnCoordinator:
 
         room = state.room_project
         assert room is not None, "a refinement has a room"
-        by_position = {
-            position: need.need_id
-            for position, need in enumerate(room.design_needs)
-        }
+        by_position = {position: need.need_id for position, need in enumerate(room.design_needs)}
         return apply_update(
             state,
             AgentStateUpdate(
@@ -1200,10 +1162,7 @@ class CustomerTurnCoordinator:
                                 PreservedBundleLine(line_id=line.line_id)
                                 for line in room.bundle_items
                                 if line.status is BundleItemStatus.LOCKED
-                                and (
-                                    override is None
-                                    or line.need_id != override.need_id
-                                )
+                                and (override is None or line.need_id != override.need_id)
                             ),
                             added=tuple(
                                 BundleLineSpec(
@@ -1296,11 +1255,7 @@ class CustomerTurnCoordinator:
             op=str(op),
             line_count=len(new.bundle_items) if new else 0,
             need_count=len(new.design_needs) if new else 0,
-            changed=(
-                new is not None
-                and old is not None
-                and new.bundle_items != old.bundle_items
-            ),
+            changed=(new is not None and old is not None and new.bundle_items != old.bundle_items),
         )
 
     async def _verify_bundle_products(
@@ -1361,6 +1316,9 @@ class CustomerTurnCoordinator:
         started = time.perf_counter()
         state = apply_update(working, proposals)
 
+        if decision.design_scope is DesignScope.COMPLEMENT:
+            return await self._complement(decision, state, pre_turn, turn)
+
         if self._design is None:
             # Not configured here. Checked before anything is read or written,
             # so an unconfigured deployment leaves the customer's existing room
@@ -1405,9 +1363,7 @@ class CustomerTurnCoordinator:
             # observed half-preserved and the revision advances exactly once.
             state = apply_update(
                 state,
-                AgentStateUpdate(
-                    room_project=RoomProjectUpdate(bundle_operations=operations)
-                ),
+                AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=operations)),
             )
 
         locks = await self._verify_locks(state, turn.context)
@@ -1422,9 +1378,7 @@ class CustomerTurnCoordinator:
         try:
             capabilities = await self._capabilities.capabilities(turn.context)
             plan = await self._design.plan(
-                self._design_request(
-                    state, turn, capabilities, locks, revision.excluded
-                )
+                self._design_request(state, turn, capabilities, locks, revision.excluded)
             )
         except _HANDLED_DESIGN_FAILURES:
             logger.warning("whole_room_design_unavailable", store_id=turn.context.store_id)
@@ -1469,6 +1423,141 @@ class CustomerTurnCoordinator:
             bundle_outcome=outcome,
         )
 
+    async def _complement(
+        self,
+        decision: CustomerAgentDecision,
+        state: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """The next piece that would most complete the space around one they chose.
+
+        Products, not a room. The specialist names a single furnishing role and
+        the ordinary search pipeline finds real ones for it, so the customer
+        sees cards exactly as they would from any search - no plan, no total,
+        no package they did not ask for (M14 21, 22).
+
+        What goes with what is design reasoning, which is why the specialist
+        answers it. Nothing in this service records which products are bought
+        together, so any other source for that answer would be invented.
+        """
+        if self._design is None:
+            logger.info("complement_not_configured", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+
+        anchored = await self._resolve_anchor(decision, state, pre_turn, turn)
+        if anchored.stop is not None:
+            return replace(anchored.stop, state=state, proposals_applied=True)
+
+        product = anchored.product or await self._settled_product(pre_turn, turn)
+        if product is None:
+            # Nothing to complement. Asking the specialist what goes with
+            # nothing in particular is a different question.
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+                ),
+            )
+
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+            request = self._complement_request(state, turn, capabilities, product)
+            plan = await self._design.plan(request)
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("complement_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+
+        if not plan.needs:
+            # The specialist had nothing to suggest this retailer can supply.
+            # Reported as a handoff that produced nothing rather than filled
+            # with a category nobody chose.
+            logger.info("complement_no_need", store_id=turn.context.store_id)
+            return _Primary(state=state, design_handoff=True, proposals_applied=True)
+
+        resolved = self._design_discovery.resolve_need(plan.needs[0], request)
+        # Promoted like any other search, so "a cheaper one" next turn refines
+        # the rug rather than reaching back past it to the sofa.
+        composed = ComposedSearch(
+            candidate=ActiveSearchState(
+                request=resolved.request,
+                semantics=resolved.semantics,
+                semantic_preferences=resolved.semantic_preferences,
+                semantic_intent=resolved.semantic_text,
+                # Unread on this path: `_run_search` promotes the criteria
+                # through the reducer, which carries the live revision. The
+                # constant a first search uses is the honest placeholder.
+                revision=NO_RESULTS_REVISION,
+            ),
+            resolved=resolved,
+        )
+        return replace(
+            await self._run_search(composed, state, turn.context),
+            design_handoff=True,
+            proposals_applied=True,
+        )
+
+    async def _settled_product(
+        self, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> ProductCandidate | None:
+        """The one piece they have settled on, when the turn named none.
+
+        "I like the second one" routes here without always carrying a
+        reference, because the interesting thing about it is the interest, not
+        the pointing. One selected product is an unambiguous answer to "which
+        piece"; two is a question, and none is nothing to build on.
+
+        Re-read rather than remembered: an anchor is described to the
+        specialist, and describing a product from stale state would assert
+        facts nobody checked.
+        """
+        selected = pre_turn.product_interaction.selected_product_ids
+        if len(selected) != 1:
+            return None
+        products = await self._hydration.hydrate_ids(selected, turn.context)
+        return products[0] if products else None
+
+    def _complement_request(
+        self,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+        capabilities: RetailerCatalogCapabilities,
+        product: ProductCandidate,
+    ) -> InteriorDesignRequest:
+        """What the specialist is told about the piece they settled on.
+
+        The anchor carries design facts only - kind, colour, styles, size - and
+        no identity, exactly as a room plan's anchors do. Nothing here says
+        which product it is, what it cost, or where it came from.
+        """
+        room = state.room_project
+        return InteriorDesignRequest(
+            task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
+            design_brief=_design_brief(turn.message),
+            room_type=room.room_type if room else None,
+            design_preferences=room.design_preferences if room else (),
+            regular_seating_count=room.regular_seating_count if room else None,
+            catalog_capabilities=capabilities,
+            anchors=project_anchors(
+                [product],
+                dimensions=self._dimensions,
+                locked_product_ids=[product.product_id],
+                quantities={product.product_id: 1},
+            ),
+        )
+
     async def _revision_constraints(
         self,
         decision: CustomerAgentDecision,
@@ -1491,9 +1580,7 @@ class CustomerTurnCoordinator:
             return _Revision()
 
         room = pre_turn.room_project
-        excluded = self._bundle_references.resolve_exclusions(
-            intent.removed_needs, room
-        )
+        excluded = self._bundle_references.resolve_exclusions(intent.removed_needs, room)
         if isinstance(excluded, DesignNeedUnresolved):
             return _Revision(
                 stop=_Primary(
@@ -1514,9 +1601,7 @@ class CustomerTurnCoordinator:
                     state=state,
                     design_handoff=True,
                     proposals_applied=True,
-                    failure=TurnFailure(
-                        code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE
-                    ),
+                    failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
                 ),
             )
 
@@ -1527,9 +1612,7 @@ class CustomerTurnCoordinator:
             outcome = self._bundle_references.resolve(selector, room, verified)
             if isinstance(outcome, BundleReferenceUnresolved):
                 stop = _unresolved_bundle(outcome.reason, state)
-                return _Revision(
-                    stop=replace(stop, design_handoff=True, proposals_applied=True)
-                )
+                return _Revision(stop=replace(stop, design_handoff=True, proposals_applied=True))
             line_ids.extend(outcome.line_ids)
             preserved.append(by_id[outcome.product_id])
 
@@ -1677,6 +1760,7 @@ class CustomerTurnCoordinator:
             geometry=room.geometry if room else None,
             budget=room.budget if room else None,
             design_preferences=room.design_preferences if room else (),
+            regular_seating_count=room.regular_seating_count if room else None,
             catalog_capabilities=capabilities,
             anchors=project_anchors(
                 products,
@@ -1739,8 +1823,7 @@ class CustomerTurnCoordinator:
                                 for need in plan.needs
                             ),
                             preserved=tuple(
-                                PreservedBundleLine(line_id=line_id)
-                                for line_id in locked_ids
+                                PreservedBundleLine(line_id=line_id) for line_id in locked_ids
                             ),
                             added=tuple(
                                 PlannedBundleLineSpec(
@@ -1831,9 +1914,7 @@ class CustomerTurnCoordinator:
                 working.room_project.design_preferences if working.room_project else ()
             ),
             customer_defaults=working.customer_preferences.semantic_preferences,
-            semantic_intent=(
-                decision.new_search.semantic_intent if decision.new_search else None
-            ),
+            semantic_intent=(decision.new_search.semantic_intent if decision.new_search else None),
             revision=_current_revision(working),
         )
         return await self._run_search(composed, working, turn.context)
@@ -1845,7 +1926,7 @@ class CustomerTurnCoordinator:
         pre_turn: AgentStateV1,
         turn: CustomerTurnInput,
     ) -> _Primary:
-        """"Something like the second one" - a new task seeded from a product.
+        """ "Something like the second one" - a new task seeded from a product.
 
         Structural and built from reviewed catalog facts. M7 is never called:
         the reference's own classification says what to search for, and asking
@@ -1990,9 +2071,7 @@ class CustomerTurnCoordinator:
         if isinstance(outcome, NewTaskRequired):
             # A different product family is a different task, so nothing of the
             # old one carries across (CLAUDE.md 13.3).
-            return await self._seed_and_execute(
-                interpretation, decision, working, turn
-            )
+            return await self._seed_and_execute(interpretation, decision, working, turn)
         return await self._compose_and_run(outcome, working, turn)
 
     async def _compose_and_run(
@@ -2016,9 +2095,7 @@ class CustomerTurnCoordinator:
                 # did not match the state it was shown, which is not a question
                 # anyone can put to a customer.
                 logger.error("turn_composition_defect", defect=str(outcome.defect))
-                raise LLMResponseInvalidError(
-                    reason=f"composition refused: {outcome.defect}"
-                )
+                raise LLMResponseInvalidError(reason=f"composition refused: {outcome.defect}")
             case NewTaskRequired():  # pragma: no cover - only from refine_taxonomy
                 raise LLMResponseInvalidError(reason="unexpected new-task outcome")
 
@@ -2028,7 +2105,7 @@ class CustomerTurnCoordinator:
         pre_turn: AgentStateV1,
         context: RetailerContext,
     ) -> SearchRefinementDelta | _Primary:
-        """"Cheaper than the second one" becomes an ordinary bound.
+        """ "Cheaper than the second one" becomes an ordinary bound.
 
         Resolved against the pre-turn state, so the ordinal still means what
         the customer meant. The arithmetic belongs to the resolver, which reads
@@ -2043,9 +2120,7 @@ class CustomerTurnCoordinator:
         )
         if isinstance(outcome, RelativePriceUnresolved):
             clarification, failure = _relative_price_outcome(outcome)
-            return _Primary(
-                state=pre_turn, clarification=clarification, failure=failure
-            )
+            return _Primary(state=pre_turn, clarification=clarification, failure=failure)
         return delta.model_copy(update={"price": outcome.price})
 
     # ── product detail ──────────────────────────────────────────────────────
@@ -2058,9 +2133,7 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
     ) -> _Primary:
         assert decision.reference is not None
-        outcome = await self._references.resolve(
-            decision.reference, pre_turn, turn.context
-        )
+        outcome = await self._references.resolve(decision.reference, pre_turn, turn.context)
         if isinstance(outcome, ReferenceUnresolved):
             clarification, failure = _reference_outcome(
                 outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
@@ -2118,17 +2191,13 @@ class CustomerTurnCoordinator:
                     BlockingClarificationReason.AMBIGUOUS_COMPARATIVE_REFERENCE,
                     unavailable_code=TurnFailureCode.COMPARISON_TARGET_UNAVAILABLE,
                 )
-                return _Primary(
-                    state=working, clarification=clarification, failure=failure
-                )
+                return _Primary(state=working, clarification=clarification, failure=failure)
             product_ids.append(outcome.product_id)
 
         comparison = await self._comparison.compare(product_ids, turn.context)
         if isinstance(comparison, ComparisonUnavailable):
             clarification, failure = _comparison_outcome(comparison)
-            return _Primary(
-                state=working, clarification=clarification, failure=failure
-            )
+            return _Primary(state=working, clarification=clarification, failure=failure)
         return _Primary(state=working, comparison=comparison)
 
     # ── query understanding ─────────────────────────────────────────────────
@@ -2169,9 +2238,7 @@ class CustomerTurnCoordinator:
         deterministic: DeterministicClarification | None = None
         if decision.clarification is None and failure is None:
             deterministic = (
-                primary.clarification
-                or proposal_clarification
-                or interaction.clarification
+                primary.clarification or proposal_clarification or interaction.clarification
             )
 
         asking = decision.clarification is not None or deterministic is not None
@@ -2184,9 +2251,7 @@ class CustomerTurnCoordinator:
             failure=failure,
             design_handoff_requested=primary.design_handoff,
             follow_up_policy=(
-                FollowUpPolicy.NONE
-                if asking or failure is not None
-                else decision.follow_up_policy
+                FollowUpPolicy.NONE if asking or failure is not None else decision.follow_up_policy
             ),
         )
 
@@ -2205,9 +2270,7 @@ class CustomerTurnCoordinator:
             action=str(decision.action),
             had_interaction=decision.interaction is not None,
             interaction_applied=interaction.applied,
-            search_outcome=(
-                str(primary.search.outcome) if primary.search is not None else None
-            ),
+            search_outcome=(str(primary.search.outcome) if primary.search is not None else None),
             product_detail=primary.product_detail is not None,
             comparison=primary.comparison is not None,
             design_handoff=primary.design_handoff,
@@ -2262,9 +2325,7 @@ def _interaction_update(
     interaction = state.product_interaction
     match op:
         case ProductInteractionOp.SELECT:
-            return ProductInteractionUpdate(
-                selected_product_ids=AddItems(items=(product_id,))
-            )
+            return ProductInteractionUpdate(selected_product_ids=AddItems(items=(product_id,)))
         case ProductInteractionOp.FOCUS:
             return ProductInteractionUpdate(focused_product_id=product_id)
         case ProductInteractionOp.DESELECT:
@@ -2292,9 +2353,7 @@ def _reference_outcome(
     if reason in _UNAVAILABILITY_REASONS:
         return None, TurnFailure(code=unavailable_code)
     return (
-        DeterministicClarification(
-            reason=clarification_reason, reference_reason=reason
-        ),
+        DeterministicClarification(reason=clarification_reason, reference_reason=reason),
         None,
     )
 
@@ -2330,9 +2389,7 @@ def _comparison_outcome(
     if outcome.reason is ComparisonFailureReason.PRODUCT_UNAVAILABLE:
         return None, TurnFailure(code=TurnFailureCode.COMPARISON_TARGET_UNAVAILABLE)
     return (
-        DeterministicClarification(
-            reason=BlockingClarificationReason.COMPARISON_TARGETS
-        ),
+        DeterministicClarification(reason=BlockingClarificationReason.COMPARISON_TARGETS),
         None,
     )
 
@@ -2348,7 +2405,5 @@ def _interpretation_clarification(
     applied.
     """
     if isinstance(interpretation, ClarificationRequired):
-        return DeterministicClarification(
-            reason=_M7_CLARIFICATION[interpretation.reason]
-        )
+        return DeterministicClarification(reason=_M7_CLARIFICATION[interpretation.reason])
     return DeterministicClarification(reason=_M7_UNSUPPORTED[type(interpretation)])

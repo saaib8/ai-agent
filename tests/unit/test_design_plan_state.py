@@ -95,9 +95,7 @@ def commit(
                 bundle_operations=(
                     ReplaceDesignPlan(
                         needs=needs,
-                        preserved=tuple(
-                            PreservedBundleLine(line_id=i) for i in preserved
-                        ),
+                        preserved=tuple(PreservedBundleLine(line_id=i) for i in preserved),
                         added=added,
                     ),
                 )
@@ -116,8 +114,8 @@ def room(state: AgentStateV1) -> RoomProjectState:
 
 
 def test_the_state_contract_is_v3() -> None:
-    assert AGENT_STATE_VERSION == "agent_state_v3"
-    assert AgentStateV1().schema_version == "agent_state_v3"
+    assert AGENT_STATE_VERSION == "agent_state_v4"
+    assert AgentStateV1().schema_version == "agent_state_v4"
 
 
 @pytest.mark.parametrize("older", ["agent_state_v1", "agent_state_v2"])
@@ -479,10 +477,10 @@ def test_the_plan_reaches_the_view_in_its_own_order() -> None:
 
     view = project_state(state).room_project
     assert view is not None
-    assert [
-        (need.commerce_category, need.commerce_subcategory)
-        for need in view.design_needs
-    ] == [("lighting", "floor-lamp"), ("seating", "sofa")]
+    assert [(need.commerce_category, need.commerce_subcategory) for need in view.design_needs] == [
+        ("lighting", "floor-lamp"),
+        ("seating", "sofa"),
+    ]
 
 
 def test_an_unplanned_room_shows_no_roles() -> None:

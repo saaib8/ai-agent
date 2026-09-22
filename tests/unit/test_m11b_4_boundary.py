@@ -55,9 +55,7 @@ def test_this_phase_built_what_it_said(path: str, symbol: str) -> None:
 
 def test_the_decision_service_is_wired_through_dependency_injection() -> None:
     settings = build_settings(customer_agent={"decision_model": "decision-model"})
-    resources = type(
-        "R", (), {"settings": settings, "decision_llm": object()}
-    )()
+    resources = type("R", (), {"settings": settings, "decision_llm": object()})()
 
     service = customer_agent_decision_service(resources)
 
@@ -77,17 +75,6 @@ def test_the_decision_and_response_models_are_separate_settings() -> None:
     """Added by M11B-6. Neither may stand in for the other."""
     assert "decision_model" in CustomerAgentSettings.model_fields
     assert "response_model" in CustomerAgentSettings.model_fields
-
-
-def test_no_public_chat_route_exists() -> None:
-    assert "chat.py" not in {p.name for p in (APP / "api/routes").glob("*.py")}
-
-
-def test_no_orchestration_graph_exists() -> None:
-    """LangGraph is M11B-7's, and a decision service is not an orchestrator."""
-    assert not (APP / "orchestration").exists()
-    for module in APP.rglob("*.py"):
-        assert "langgraph" not in module.read_text().lower(), module.name
 
 
 def test_the_decision_service_touches_no_session_storage() -> None:
@@ -166,9 +153,7 @@ def test_lifespan_builds_each_agent_client_only_when_configured() -> None:
         and node.func.id == "OpenAIStructuredClient"
     ]
 
-    assert len(constructions) == 4, (
-        "query understanding, decision, response, interior design"
-    )
+    assert len(constructions) == 4, "query understanding, decision, response, interior design"
     assert "if decision_model:" in source
     assert "if response_model:" in source
     assert "if design_model:" in source
@@ -195,9 +180,7 @@ def test_the_configured_model_is_what_the_decision_client_carries() -> None:
     """The identifier reaches the provider through the client, not a parameter,
     so it cannot be overridden per call."""
     settings = build_settings(customer_agent={"decision_model": "decision-model"})
-    overridden = settings.llm.model_copy(
-        update={"model": settings.customer_agent.decision_model}
-    )
+    overridden = settings.llm.model_copy(update={"model": settings.customer_agent.decision_model})
 
     assert overridden.model == "decision-model"
     assert settings.llm.model == "test-model"

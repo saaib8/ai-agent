@@ -39,7 +39,9 @@ SAR = "SAR"
 def _capabilities(*pairs: tuple[str, str | None]) -> RetailerCatalogCapabilities:
     return RetailerCatalogCapabilities(
         capabilities=tuple(
-            RetailerCatalogCapability(commerce_category=c, commerce_subcategory=s)
+            RetailerCatalogCapability(
+                commerce_category=c, commerce_subcategory=s, active_product_count=12
+            )
             for c, s in pairs
         )
     )
@@ -227,11 +229,22 @@ def test_the_capability_service_exists_and_owns_no_vocabulary() -> None:
 
 
 def test_capabilities_carry_no_products_or_prices() -> None:
+    """Depth is allowed; inventory is not.
+
+    `active_product_count` is the one field naming a product, and it names a
+    quantity of them rather than any one of them. So the guard checks the
+    fields that would actually be inventory, and pins that count as the sole
+    exception rather than dropping "product" from the list and letting a
+    `product_url` through later.
+    """
     names = set(RetailerCatalogCapability.model_fields) | set(
         RetailerCatalogCapabilities.model_fields
     )
-    for forbidden in ("price", "product", "count", "vector", "embedding"):
+    for forbidden in ("price", "vector", "embedding", "url", "name", "id"):
         assert not any(forbidden in name for name in names), forbidden
+
+    naming_a_product = {name for name in names if "product" in name}
+    assert naming_a_product == {"active_product_count"}
 
 
 # ── per-need design intent ──────────────────────────────────────────────────

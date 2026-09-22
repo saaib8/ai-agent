@@ -49,9 +49,7 @@ SAR = "SAR"
 
 
 def _request(subcategory: str = "sofa") -> ProductSearchRequest:
-    return ProductSearchRequest(
-        commerce_category="seating", commerce_subcategory=subcategory
-    )
+    return ProductSearchRequest(commerce_category="seating", commerce_subcategory=subcategory)
 
 
 def _preference(value: str) -> SemanticPreference:
@@ -72,7 +70,6 @@ def _with_search(**kwargs: object) -> AgentStateV1:
 # ── omission is untouched ───────────────────────────────────────────────────
 
 
-
 def _spec(
     product_id: int,
     *,
@@ -91,15 +88,12 @@ def _spec(
 
 
 def _bundle(*operations: object) -> AgentStateUpdate:
-    return AgentStateUpdate(
-        room_project=RoomProjectUpdate(bundle_operations=tuple(operations))
-    )
+    return AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=tuple(operations)))
 
 
 def _with_bundle(*specs: BundleLineSpec) -> AgentStateV1:
     """A state whose bundle was committed once, as M12E-2 will commit it."""
     return apply_update(AgentStateV1(), _bundle(ReplaceBundle(added=specs)))
-
 
 
 def test_an_empty_update_changes_nothing() -> None:
@@ -110,11 +104,8 @@ def test_an_empty_update_changes_nothing() -> None:
 
 def test_a_one_domain_update_leaves_the_others_identical() -> None:
     state = AgentStateV1(
-        customer_preferences=CustomerPreferenceState(
-            semantic_preferences=(_preference("modern"),)
-        ),
-        active_search=ActiveSearchState(request=_request(), revision=1,
-                                        semantic_intent="cosy"),
+        customer_preferences=CustomerPreferenceState(semantic_preferences=(_preference("modern"),)),
+        active_search=ActiveSearchState(request=_request(), revision=1, semantic_intent="cosy"),
         product_interaction=ProductInteractionState(selected_product_ids=(5,)),
         room_project=RoomProjectState(room_type="living room"),
         derived_commerce=DerivedCommerceState(purchase_stage=PurchaseStage.EXPLORING),
@@ -123,9 +114,7 @@ def test_a_one_domain_update_leaves_the_others_identical() -> None:
     after = apply_update(
         state,
         AgentStateUpdate(
-            derived_commerce=DerivedCommerceUpdate(
-                purchase_stage=PurchaseStage.CONSIDERING
-            )
+            derived_commerce=DerivedCommerceUpdate(purchase_stage=PurchaseStage.CONSIDERING)
         ),
     )
 
@@ -155,9 +144,7 @@ def test_the_input_state_is_never_mutated() -> None:
 
 def test_add_appends_without_clearing() -> None:
     state = AgentStateV1(
-        customer_preferences=CustomerPreferenceState(
-            semantic_preferences=(_preference("modern"),)
-        )
+        customer_preferences=CustomerPreferenceState(semantic_preferences=(_preference("modern"),))
     )
 
     after = apply_update(
@@ -170,7 +157,8 @@ def test_add_appends_without_clearing() -> None:
     )
 
     assert [p.raw_value for p in after.customer_preferences.semantic_preferences] == [
-        "modern", "boho",
+        "modern",
+        "boho",
     ]
 
 
@@ -282,9 +270,7 @@ def test_the_three_turn_continuity_scenario() -> None:
     sleek = apply_update(
         cheaper,
         AgentStateUpdate(
-            active_search=ActiveSearchUpdate(
-                semantic_intent=SetSemanticIntent(value="sleek")
-            )
+            active_search=ActiveSearchUpdate(semantic_intent=SetSemanticIntent(value="sleek"))
         ),
     )
     assert sleek.active_search is not None
@@ -297,9 +283,7 @@ def test_clearing_semantic_intent_empties_it() -> None:
 
     after = apply_update(
         state,
-        AgentStateUpdate(
-            active_search=ActiveSearchUpdate(semantic_intent=ClearSemanticIntent())
-        ),
+        AgentStateUpdate(active_search=ActiveSearchUpdate(semantic_intent=ClearSemanticIntent())),
     )
 
     assert after.active_search is not None
@@ -310,9 +294,7 @@ def test_an_absent_intent_operation_preserves_the_value() -> None:
     """`None` is untouched, never clear — the ambiguity the tagged ops remove."""
     state = _with_search(semantic_intent=SetSemanticIntent(value="cosy"))
 
-    after = apply_update(
-        state, AgentStateUpdate(active_search=ActiveSearchUpdate(semantics=None))
-    )
+    after = apply_update(state, AgentStateUpdate(active_search=ActiveSearchUpdate(semantics=None)))
 
     assert after.active_search is not None
     assert after.active_search.semantic_intent == "cosy"
@@ -395,16 +377,10 @@ def test_only_a_commit_advances_the_revision() -> None:
             customer_preferences=CustomerPreferenceUpdate(
                 semantic_preferences=AddItems(items=(_preference("boho"),))
             ),
-            active_search=ActiveSearchUpdate(
-                semantic_intent=SetSemanticIntent(value="airy")
-            ),
-            product_interaction=ProductInteractionUpdate(
-                selected_product_ids=AddItems(items=(5,))
-            ),
+            active_search=ActiveSearchUpdate(semantic_intent=SetSemanticIntent(value="airy")),
+            product_interaction=ProductInteractionUpdate(selected_product_ids=AddItems(items=(5,))),
             room_project=RoomProjectUpdate(room_type="bedroom"),
-            derived_commerce=DerivedCommerceUpdate(
-                purchase_stage=PurchaseStage.CONSIDERING
-            ),
+            derived_commerce=DerivedCommerceUpdate(purchase_stage=PurchaseStage.CONSIDERING),
         ),
     )
 
@@ -427,10 +403,7 @@ def test_results_and_revision_commit_atomically() -> None:
 
     assert after.product_interaction.presented_product_ids == (11, 22, 33)
     assert after.active_search is not None
-    assert (
-        after.product_interaction.presented_search_revision
-        == after.active_search.revision
-    )
+    assert after.product_interaction.presented_search_revision == after.active_search.revision
 
 
 def test_a_new_commit_replaces_the_previous_result_set() -> None:
@@ -505,9 +478,7 @@ def test_an_update_focusing_an_unknown_product_is_rejected() -> None:
     with pytest.raises(ValidationError):
         apply_update(
             AgentStateV1(),
-            AgentStateUpdate(
-                product_interaction=ProductInteractionUpdate(focused_product_id=404)
-            ),
+            AgentStateUpdate(product_interaction=ProductInteractionUpdate(focused_product_id=404)),
         )
 
 
@@ -518,7 +489,7 @@ def test_the_result_is_a_fully_revalidated_state() -> None:
     )
 
     assert isinstance(state, AgentStateV1)
-    assert state.schema_version == "agent_state_v3"
+    assert state.schema_version == "agent_state_v4"
 
 
 def test_a_first_search_without_a_request_is_refused() -> None:
@@ -526,9 +497,7 @@ def test_a_first_search_without_a_request_is_refused() -> None:
         apply_update(
             AgentStateV1(),
             AgentStateUpdate(
-                active_search=ActiveSearchUpdate(
-                    semantic_intent=SetSemanticIntent(value="cosy")
-                )
+                active_search=ActiveSearchUpdate(semantic_intent=SetSemanticIntent(value="cosy"))
             ),
         )
 
@@ -544,11 +513,7 @@ def test_the_reducer_performs_no_io() -> None:
         for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom | ast.Import)
         for alias in node.names
-    } | {
-        node.module or ""
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
+    } | {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     for forbidden in ("openai", "pinecone", "redis", "sqlalchemy", "httpx", "datetime", "random"):
         assert not any(forbidden in name for name in imported), forbidden
 
@@ -566,9 +531,7 @@ def test_room_scalars_can_be_cleared_explicitly() -> None:
 
     after = apply_update(
         state,
-        AgentStateUpdate(
-            room_project=RoomProjectUpdate(clear_room_type=True, clear_budget=True)
-        ),
+        AgentStateUpdate(room_project=RoomProjectUpdate(clear_room_type=True, clear_budget=True)),
     )
 
     assert after.room_project is not None
@@ -593,9 +556,7 @@ def test_a_commit_preserves_selected_products() -> None:
     state = apply_update(
         _with_search(),
         AgentStateUpdate(
-            product_interaction=ProductInteractionUpdate(
-                selected_product_ids=AddItems(items=(77,))
-            )
+            product_interaction=ProductInteractionUpdate(selected_product_ids=AddItems(items=(77,)))
         ),
     )
 

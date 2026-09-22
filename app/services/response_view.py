@@ -17,6 +17,7 @@ from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
     AgentAction,
     BundleInteractionOp,
+    CommercialReason,
     FollowUpPolicy,
     ProductInteractionOp,
 )
@@ -156,13 +157,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
     """
     grounding = result.grounding
     clarification = grounding.deterministic_clarification
+    lapsed = _suggestion_came_to_nothing(result)
 
     if grounding.clarification is not None:
         # The decision model already wrote this question, and re-wording it
         # could only change what was asked.
-        return DeterministicResponse(
-            kind=DeterministicResponseKind.MODEL_CLARIFICATION
-        )
+        return DeterministicResponse(kind=DeterministicResponseKind.MODEL_CLARIFICATION)
 
     if grounding.failure is not None and not _has_primary_outcome(result):
         return DeterministicResponse(
@@ -171,30 +171,31 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         )
 
     if grounding.comparison is not None:
-        return _comparison(grounding, clarification)
+        return _comparison(result, grounding, clarification)
     if grounding.product_detail is not None:
         return _view(
-            ResponseOutcomeKind.PRODUCT_DETAIL, clarification, presented_count=1
+            ResponseOutcomeKind.PRODUCT_DETAIL,
+            clarification,
+            result=result,
+            presented_count=1,
         )
-    if grounding.search is not None:
-        return _search(grounding, clarification)
+    if grounding.search is not None and not lapsed:
+        return _search(result, grounding, clarification)
     if result.bundle_change is not None and grounding.failure is not None:
         # The change happened and the refresh did not. Saying the change failed
         # would be false, and rolling it back to simplify the wording would
         # discard something the customer actually told us.
-        return DeterministicResponse(
-            kind=DeterministicResponseKind.BUNDLE_CHANGED_NOT_REFRESHED
-        )
+        return DeterministicResponse(kind=DeterministicResponseKind.BUNDLE_CHANGED_NOT_REFRESHED)
     if result.bundle_change is not None and result.bundle_outcome is None:
         # A local change: no room was chosen, so there is no package to frame
         # and nothing for a model to add that a fixed sentence does not say.
-        return DeterministicResponse(
-            kind=(
-                DeterministicResponseKind.BUNDLE_KEPT
-                if result.bundle_change is BundleInteractionOp.LOCK
-                else DeterministicResponseKind.BUNDLE_UNLOCKED
-            )
-        )
+        #
+        # Matched per operation rather than "lock, or else unlocked". That
+        # shape told a customer who said "I already own the rug" that the piece
+        # could change later - the opposite of the lock it had just been given
+        # - because every operation that was not a lock borrowed the unlock
+        # sentence.
+        return _local_change(result, result.bundle_change)
     if isinstance(result.bundle_outcome, RoomBundle):
         # A room was selected - complete, partial or infeasible alike. Checked
         # before the handoff marker, which says only what was *asked for*:
@@ -208,14 +209,73 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             kind=DeterministicResponseKind.BUNDLE_UNAVAILABLE,
             bundle_reason=result.bundle_outcome.reason,
         )
-    if grounding.design_handoff_requested:
+    if grounding.design_handoff_requested and not lapsed:
         # Asked for, and nothing came of it. A clarification beside it is
         # worded on its own, from the route's `required_clarification`.
         return DeterministicResponse(kind=DeterministicResponseKind.DESIGN_HANDOFF)
     if clarification is not None and result.decision.action is not AgentAction.ANSWER:
         # No positive outcome to report: the question is the whole job.
-        return _view(ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION, clarification)
-    return _view(ResponseOutcomeKind.ANSWER, clarification)
+        return _view(ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION, clarification, result=result)
+    return _view(ResponseOutcomeKind.ANSWER, clarification, result=result)
+
+
+def _was_suggested(result: CustomerTurnResult) -> bool:
+    """Whether this search was our idea rather than their request.
+
+    A complementary piece runs the same pipeline as any other search, so by
+    the time a reply is worded the two are indistinguishable without asking.
+    `CommercialReason` is where that is already recorded - it exists to keep
+    the motive apart from the capability, which is exactly the question here -
+    so nothing new has to be invented to answer it.
+    """
+    return (
+        result.grounding.design_handoff_requested
+        and result.decision.commercial_reason is not CommercialReason.CUSTOMER_REQUEST
+    )
+
+
+def _suggestion_came_to_nothing(result: CustomerTurnResult) -> bool:
+    """A piece we proposed, which this retailer turns out not to stock.
+
+    Not reported, and this is the point rather than an omission. The customer
+    asked for nothing here, so nothing failed and there is no result to give
+    them - and a turn that says "I couldn't find any matching options" beside
+    an empty screen is answering a question they never asked. The turn is
+    whatever they actually did, which is what the rest of the grounding is
+    about.
+
+    Their *own* design question is a different thing and still answered: it
+    carries `CUSTOMER_REQUEST`, so it never reaches here.
+    """
+    search = result.grounding.search
+    return search is not None and not search.products and _was_suggested(result)
+
+
+def _local_change(result: CustomerTurnResult, change: BundleInteractionOp) -> DeterministicResponse:
+    """The fixed sentence for a room edit that chose no products.
+
+    Exhaustive on purpose: an operation with no sentence of its own raises
+    rather than borrowing another's, because borrowing is how the acquisition
+    branch came to state the opposite of what it did.
+    """
+    match change:
+        case BundleInteractionOp.LOCK:
+            return DeterministicResponse(kind=DeterministicResponseKind.BUNDLE_KEPT)
+        case BundleInteractionOp.UNLOCK:
+            return DeterministicResponse(kind=DeterministicResponseKind.BUNDLE_UNLOCKED)
+        case BundleInteractionOp.SET_ACQUISITION:
+            interaction = result.decision.bundle_interaction
+            assert interaction is not None, "an acquisition change carries its intent"
+            assert interaction.acquisition is not None, "the contract requires one"
+            return DeterministicResponse(
+                kind=DeterministicResponseKind.BUNDLE_ACQUISITION_SET,
+                acquisition=interaction.acquisition,
+            )
+        case _:
+            # Replacing a product and removing a role both re-optimise, so
+            # they arrive here only with an outcome or a failure. Reaching this
+            # branch means one of them stopped producing either.
+            raise AssertionError(f"no local wording for {change}")
 
 
 def _room_bundle(
@@ -248,21 +308,15 @@ def _room_bundle(
             bundle_line_count=len(bundle.lines),
             locked_line_count=sum(1 for line in bundle.lines if line.locked),
             already_owned_line_count=sum(
-                1
-                for line in bundle.lines
-                if line.acquisition is BundleAcquisition.ALREADY_OWNED
+                1 for line in bundle.lines if line.acquisition is BundleAcquisition.ALREADY_OWNED
             ),
             required_unmet_count=unmet[DesignPriority.REQUIRED],
             recommended_unmet_count=unmet[DesignPriority.RECOMMENDED],
             optional_unmet_count=unmet[DesignPriority.OPTIONAL],
-            unmet_reasons=tuple(
-                dict.fromkeys(entry.reason for entry in bundle.unmet)
-            ),
+            unmet_reasons=tuple(dict.fromkeys(entry.reason for entry in bundle.unmet)),
             budget_supplied=budget is not None,
             within_budget=(
-                None
-                if budget is None
-                else bundle.status is not BundleStatus.INFEASIBLE
+                None if budget is None else bundle.status is not BundleStatus.INFEASIBLE
             ),
             relaxed_line_count=sum(
                 1
@@ -272,15 +326,15 @@ def _room_bundle(
         ),
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
-        relative_price_reason=(
-            clarification.relative_price_reason if clarification else None
-        ),
+        relative_price_reason=(clarification.relative_price_reason if clarification else None),
     )
 
 
 def _view(
     kind: ResponseOutcomeKind,
     clarification: DeterministicClarification | None,
+    *,
+    result: CustomerTurnResult | None = None,
     **fields: object,
 ) -> ResponseGroundingView:
     """A view of one outcome, carrying any question it also owes.
@@ -292,11 +346,22 @@ def _view(
         kind=kind,
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
-        relative_price_reason=(
-            clarification.relative_price_reason if clarification else None
-        ),
+        relative_price_reason=(clarification.relative_price_reason if clarification else None),
+        # Turn-wide facts, so no branch has to remember them: what the decision
+        # step wants asked, and whether the room requirement is already on
+        # record. Both exist to stop the reply asking twice.
+        follow_up_goal=result.decision.follow_up_goal if result else None,
+        seating_requirement_known=_seating_known(result),
         **fields,
     )
+
+
+def _seating_known(result: CustomerTurnResult | None) -> bool:
+    """Whether the customer has already said how many people use the room."""
+    if result is None:
+        return False
+    room = result.state.room_project
+    return room is not None and room.regular_seating_count is not None
 
 
 _NOTICE_FOR_OP = {
@@ -309,38 +374,62 @@ through to no notice at all."""
 
 
 def _search(
-    grounding: TurnGrounding, clarification: DeterministicClarification | None
+    result: CustomerTurnResult,
+    grounding: TurnGrounding,
+    clarification: DeterministicClarification | None,
 ) -> ResponseGroundingView:
-    """Counts and which axes moved. Never a figure, never a product."""
+    """Counts, which axes moved, and what kind of thing was searched for.
+
+    The category comes from the search that actually executed - the request on
+    `active_search` - rather than from the products it returned. That is the
+    verified fact even when nothing came back, which is exactly when saying
+    what was looked for matters most.
+    """
     search = grounding.search
     assert search is not None
     results = search.outcome is SearchOutcome.RESULTS
+    executed = result.state.active_search
     return _view(
-        (
-            ResponseOutcomeKind.SEARCH_RESULTS
-            if results
-            else ResponseOutcomeKind.ZERO_RESULTS
-        ),
+        (ResponseOutcomeKind.SEARCH_RESULTS if results else ResponseOutcomeKind.ZERO_RESULTS),
         clarification,
+        result=result,
         presented_count=search.presented_count,
+        commerce_category=_words(executed.request.commerce_category if executed else None),
+        commerce_subcategory=_words(executed.request.commerce_subcategory if executed else None),
+        exact_match_count=search.exact_candidate_count,
+        # A search reached through a design handoff is one we proposed: the
+        # customer asked what would suit the piece they chose, or said nothing
+        # about a second category at all. Every other search is their own
+        # request, which is the difference between introducing a set and
+        # reporting one.
+        search_was_suggested=_was_suggested(result),
         was_relaxed=search.was_relaxed,
         # The field that moved, not the bound it moved to: the application
         # renders "I widened your 5,000 to 5,500" from the real summary.
-        relaxed_fields=tuple(
-            dict.fromkeys(item.field for item in search.relaxations)
-        ),
+        relaxed_fields=tuple(dict.fromkeys(item.field for item in search.relaxations)),
         dropped_roles=tuple(
             dict.fromkeys(
-                dropped.role
-                for dropped in search.dropped_constraints
-                if dropped.role is not None
+                dropped.role for dropped in search.dropped_constraints if dropped.role is not None
             )
         ),
     )
 
 
+def _words(value: str | None) -> str | None:
+    """A taxonomy key as the customer would say it.
+
+    Mechanical and total - hyphens become spaces - so this is text
+    normalisation rather than a second vocabulary to maintain beside the
+    registry (CLAUDE.md 14.2). Nothing is renamed and no value is mapped to
+    another, which is what keeps a display name from quietly becoming an alias.
+    """
+    return None if value is None else value.replace("-", " ")
+
+
 def _comparison(
-    grounding: TurnGrounding, clarification: DeterministicClarification | None
+    result: CustomerTurnResult,
+    grounding: TurnGrounding,
+    clarification: DeterministicClarification | None,
 ) -> ResponseGroundingView:
     """Which fields differ, never by how much."""
     comparison = grounding.comparison
@@ -348,11 +437,9 @@ def _comparison(
     return _view(
         ResponseOutcomeKind.COMPARISON,
         clarification,
+        result=result,
         compared_count=len(comparison.products),
         comparison_differs_on=tuple(
-            row.field
-            for row in comparison.rows
-            if row.status is ComparisonStatus.DIFFERENT
+            row.field for row in comparison.rows if row.status is ComparisonStatus.DIFFERENT
         ),
     )
-

@@ -103,11 +103,18 @@ from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
 
+STOCKED_WITH_RANGE = 12
+"""A capability depth that is not the thing under test.
+
+Every capability carries how many products back it. These suites are about
+which *types* a plan may use, so they give each one an unremarkable range -
+enough that nothing is refused for being thin, and a number no assertion here
+reads.
+"""
+
 CONTEXT = RetailerContext(store_id=50)
 SOFAS = ProductSearchRequest(commerce_category="seating", commerce_subcategory="sofa")
-RECLINERS = ProductSearchRequest(
-    commerce_category="seating", commerce_subcategory="recliner"
-)
+RECLINERS = ProductSearchRequest(commerce_category="seating", commerce_subcategory="recliner")
 TABLES = ProductSearchRequest(commerce_category="tables", commerce_subcategory="console")
 
 OFF_SCREEN = 42
@@ -193,7 +200,9 @@ class FakePipeline:
                 outcome=SearchOutcome.RESULTS if self.ids else SearchOutcome.ZERO_RESULTS,
                 products=tuple(
                     to_grounded_product(
-                        _product(pid), grounding_ref=n, presented_ordinal=n,
+                        _product(pid),
+                        grounding_ref=n,
+                        presented_ordinal=n,
                         relaxation_depth=0,
                     )
                     for n, pid in enumerate(self.ids, start=1)
@@ -202,26 +211,21 @@ class FakePipeline:
                 ranked_count=len(self.ids),
                 selected_count=len(self.ids),
                 presented_count=len(self.ids),
+                exact_candidate_count=len(self.ids),
                 stop_reason=StopReason.EXACT_SUFFICIENT,
             ),
         )
 
 
 class FakeHydration:
-    def __init__(
-        self, available: tuple[int, ...] = (OFF_SCREEN,), price: str | None = None
-    ):
+    def __init__(self, available: tuple[int, ...] = (OFF_SCREEN,), price: str | None = None):
         self.available = available
         self.price = price
         self.calls: list[list[int]] = []
 
     async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
         self.calls.append(list(product_ids))
-        return tuple(
-            _product(p, price=self.price)
-            for p in product_ids
-            if p in self.available
-        )
+        return tuple(_product(p, price=self.price) for p in product_ids if p in self.available)
 
 
 def _product(
@@ -240,7 +244,6 @@ def _product(
         main_color="Beige",
         styles=("Modern",),
     )
-
 
 
 _UNSET = object()
@@ -271,7 +274,9 @@ class FakeCapabilities:
         return RetailerCatalogCapabilities(
             capabilities=tuple(
                 RetailerCatalogCapability(
-                    commerce_category=category, commerce_subcategory=subcategory
+                    commerce_category=category,
+                    commerce_subcategory=subcategory,
+                    active_product_count=STOCKED_WITH_RANGE,
                 )
                 for category, subcategory in self.pairs
             )
@@ -322,9 +327,13 @@ class FakeOptimizer:
             TotalUnavailableReason,
         )
 
-        self.outcome = outcome if outcome is not None else RoomBundle(
-            status=BundleStatus.COMPLETE,
-            total_unavailable=TotalUnavailableReason.NO_PRICED_LINES,
+        self.outcome = (
+            outcome
+            if outcome is not None
+            else RoomBundle(
+                status=BundleStatus.COMPLETE,
+                total_unavailable=TotalUnavailableReason.NO_PRICED_LINES,
+            )
         )
         self.requests: list[Any] = []
 
@@ -402,9 +411,7 @@ def _state(
 
     return AgentStateV1(
         customer_preferences=CustomerPreferenceState(semantic_preferences=preferences),
-        active_search=(
-            ActiveSearchState(request=request, revision=revision) if request else None
-        ),
+        active_search=(ActiveSearchState(request=request, revision=revision) if request else None),
         product_interaction=ProductInteractionState(
             presented_product_ids=presented,
             presented_search_revision=revision if presented and request else None,
@@ -468,9 +475,7 @@ async def test_the_current_message_stays_out_of_the_history() -> None:
     )
 
     history = ConversationContext(
-        messages=(
-            ConversationMessage(role=ConversationRole.USER, content="show me sofas"),
-        )
+        messages=(ConversationMessage(role=ConversationRole.USER, content="show me sofas"),)
     )
     coordinator, parts = _coordinator(CustomerAgentDecision(action=AgentAction.ANSWER))
 
@@ -573,16 +578,14 @@ async def test_deselecting_a_still_presented_product_keeps_focus() -> None:
         references=FakeReferences(default=ResolvedProductReference(product_id=10)),
     )
 
-    result = await coordinator.run(
-        _turn(_state(presented=(10, 11), selected=(10,), focus=10))
-    )
+    result = await coordinator.run(_turn(_state(presented=(10, 11), selected=(10,), focus=10)))
 
     assert result.state.product_interaction.selected_product_ids == ()
     assert result.state.product_interaction.focused_product_id == 10
 
 
 async def test_interactions_resolve_against_the_pre_turn_state() -> None:
-    """"The second one" means the second of what they are looking at now."""
+    """ "The second one" means the second of what they are looking at now."""
     pre_turn = _state(presented=(10, 11))
     coordinator, parts = _coordinator(
         CustomerAgentDecision(
@@ -616,9 +619,7 @@ async def test_an_unresolved_interaction_does_not_stop_the_search() -> None:
         ),
         interpretation=_resolved(),
         references=FakeReferences(
-            default=ReferenceUnresolved(
-                reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-            )
+            default=ReferenceUnresolved(reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE)
         ),
     )
 
@@ -641,9 +642,7 @@ async def test_an_unavailable_interaction_reference_is_a_failure_not_a_question(
             ),
         ),
         references=FakeReferences(
-            default=ReferenceUnresolved(
-                reason=ReferenceFailureReason.PRODUCT_UNAVAILABLE
-            )
+            default=ReferenceUnresolved(reason=ReferenceFailureReason.PRODUCT_UNAVAILABLE)
         ),
     )
 
@@ -659,9 +658,7 @@ async def test_an_unavailable_interaction_reference_is_a_failure_not_a_question(
 
 async def test_an_answer_touches_no_service() -> None:
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.ANSWER, follow_up_policy=FollowUpPolicy.OPTIONAL
-        )
+        CustomerAgentDecision(action=AgentAction.ANSWER, follow_up_policy=FollowUpPolicy.OPTIONAL)
     )
 
     result = await coordinator.run(_turn(_state()))
@@ -694,9 +691,7 @@ async def test_a_model_clarification_is_carried_through_verbatim() -> None:
 
 
 async def test_a_design_handoff_is_a_marker_only() -> None:
-    coordinator, parts = _coordinator(
-        CustomerAgentDecision(action=AgentAction.DESIGN_HANDOFF)
-    )
+    coordinator, parts = _coordinator(CustomerAgentDecision(action=AgentAction.DESIGN_HANDOFF))
 
     result = await coordinator.run(_turn(_state()))
 
@@ -809,7 +804,7 @@ async def test_an_internal_failure_propagates_rather_than_becoming_a_result(
 
 
 async def test_this_turns_proposal_seeds_this_turns_search() -> None:
-    """"I usually prefer Modern. Show me sofas." - the preference must reach
+    """ "I usually prefer Modern. Show me sofas." - the preference must reach
     the search that runs now, before it is persisted."""
     coordinator, parts = _coordinator(
         CustomerAgentDecision(
@@ -827,9 +822,9 @@ async def test_this_turns_proposal_seeds_this_turns_search() -> None:
 
     executed = parts["pipeline"].calls[0]
     assert [p.canonical_value for p in executed.semantic_preferences] == ["Modern"]
-    assert [
-        p.canonical_value for p in result.state.customer_preferences.semantic_preferences
-    ] == ["Modern"]
+    assert [p.canonical_value for p in result.state.customer_preferences.semantic_preferences] == [
+        "Modern"
+    ]
 
 
 async def test_a_new_search_carries_the_proposed_semantic_intent() -> None:
@@ -837,9 +832,7 @@ async def test_a_new_search_carries_the_proposed_semantic_intent() -> None:
         CustomerAgentDecision(
             action=AgentAction.SEARCH,
             new_search=NewSearchProposal(
-                semantic_intent=SemanticIntentRefinement(
-                    op=SemanticIntentOp.SET, value="cosy"
-                )
+                semantic_intent=SemanticIntentRefinement(op=SemanticIntentOp.SET, value="cosy")
             ),
         ),
         interpretation=_resolved(RECLINERS),
@@ -857,9 +850,7 @@ async def test_a_new_task_drops_the_previous_semantic_intent() -> None:
     assert state.active_search is not None
     with_intent = state.model_copy(
         update={
-            "active_search": state.active_search.model_copy(
-                update={"semantic_intent": "elegant"}
-            )
+            "active_search": state.active_search.model_copy(update={"semantic_intent": "elegant"})
         }
     )
     coordinator, _ = _coordinator(
@@ -941,9 +932,7 @@ def _unresolved_strict() -> UnresolvedStrictRequirement:
     return UnresolvedStrictRequirement(
         request=SOFAS,
         semantics=ConstraintSemantics(),
-        unresolved=(
-            UnresolvedAttribute(family=AttributeFamily.COLOR, raw_value="crimson"),
-        ),
+        unresolved=(UnresolvedAttribute(family=AttributeFamily.COLOR, raw_value="crimson"),),
     )
 
 
@@ -1001,9 +990,7 @@ async def test_no_unsupported_outcome_is_an_undefined_quality_criterion(
 
     clarification = result.grounding.deterministic_clarification
     assert clarification is not None
-    assert clarification.reason is not (
-        BlockingClarificationReason.UNDEFINED_QUALITY_CRITERION
-    )
+    assert clarification.reason is not (BlockingClarificationReason.UNDEFINED_QUALITY_CRITERION)
 
 
 @pytest.mark.parametrize(
@@ -1040,9 +1027,7 @@ async def test_an_unsupported_outcome_keeps_this_turns_other_work(
                 op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=1)
             ),
             state_proposal=CustomerStateProposal(room_type="living room"),
-            commerce_proposal=DerivedCommerceProposal(
-                purchase_stage=PurchaseStage.CONSIDERING
-            ),
+            commerce_proposal=DerivedCommerceProposal(purchase_stage=PurchaseStage.CONSIDERING),
         ),
         interpretation=build(),
         references=FakeReferences(default=ResolvedProductReference(product_id=10)),
@@ -1061,9 +1046,7 @@ async def test_a_primary_m7_question_outranks_a_proposal_question() -> None:
     coordinator, _ = _coordinator(
         CustomerAgentDecision(
             action=AgentAction.SEARCH,
-            state_proposal=CustomerStateProposal(
-                room_budget=PriceProposal(max_amount="12000")
-            ),
+            state_proposal=CustomerStateProposal(room_budget=PriceProposal(max_amount="12000")),
         ),
         interpretation=_unsupported_requirement(),
     )
@@ -1122,9 +1105,7 @@ async def test_a_search_with_a_reference_seeds_from_the_product(
 
 async def test_a_similar_search_leans_on_the_reference_colour_and_style() -> None:
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1)
-        )
+        CustomerAgentDecision(action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1))
     )
 
     await coordinator.run(_turn(_state()))
@@ -1136,13 +1117,9 @@ async def test_a_similar_search_leans_on_the_reference_colour_and_style() -> Non
 
 async def test_an_unresolved_similar_reference_stops_the_search() -> None:
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.SEARCH, reference=PresentedOrdinal(position=9)
-        ),
+        CustomerAgentDecision(action=AgentAction.SEARCH, reference=PresentedOrdinal(position=9)),
         references=FakeReferences(
-            default=ReferenceUnresolved(
-                reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-            )
+            default=ReferenceUnresolved(reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE)
         ),
     )
 
@@ -1156,9 +1133,7 @@ async def test_an_unresolved_similar_reference_stops_the_search() -> None:
 
 async def test_a_stale_similar_reference_is_a_failure() -> None:
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1)
-        ),
+        CustomerAgentDecision(action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1)),
         hydration=FakeHydration(available=()),
     )
 
@@ -1181,9 +1156,7 @@ class UnclassifiedHydration(FakeHydration):
         )
 
 
-async def test_an_unbuildable_seed_reports_the_search_unavailable_not_the_product() -> (
-    None
-):
+async def test_an_unbuildable_seed_reports_the_search_unavailable_not_the_product() -> None:
     """The product was read from the catalog a moment ago, so it is plainly
     available. What cannot be built is a search from it.
 
@@ -1191,9 +1164,7 @@ async def test_an_unbuildable_seed_reports_the_search_unavailable_not_the_produc
     about a product still in front of them.
     """
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1)
-        ),
+        CustomerAgentDecision(action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1)),
         hydration=UnclassifiedHydration(),
     )
 
@@ -1208,9 +1179,7 @@ async def test_an_unbuildable_seed_falls_back_to_nothing() -> None:
     """No generic search and no M7: guessing a category from the product's
     name is exactly what this service must not do (CLAUDE.md 6.1)."""
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1)
-        ),
+        CustomerAgentDecision(action=AgentAction.SEARCH, reference=PresentedOrdinal(position=1)),
         hydration=UnclassifiedHydration(),
     )
 
@@ -1239,9 +1208,7 @@ async def test_the_two_similar_search_failures_are_told_apart() -> None:
     assert product_gone.grounding.failure is not None
     assert product_gone.grounding.failure.code is TurnFailureCode.PRODUCT_UNAVAILABLE
     assert seed_unbuildable.grounding.failure is not None
-    assert seed_unbuildable.grounding.failure.code is (
-        TurnFailureCode.SEARCH_UNAVAILABLE
-    )
+    assert seed_unbuildable.grounding.failure.code is (TurnFailureCode.SEARCH_UNAVAILABLE)
 
 
 async def test_an_unbuildable_seed_keeps_this_turns_other_work() -> None:
@@ -1255,9 +1222,7 @@ async def test_an_unbuildable_seed_keeps_this_turns_other_work() -> None:
                 op=ProductInteractionOp.SELECT, reference=FocusedProduct()
             ),
             state_proposal=CustomerStateProposal(room_type="living room"),
-            commerce_proposal=DerivedCommerceProposal(
-                purchase_stage=PurchaseStage.CONSIDERING
-            ),
+            commerce_proposal=DerivedCommerceProposal(purchase_stage=PurchaseStage.CONSIDERING),
         ),
         references=FakeReferences(
             outcomes={"FocusedProduct": ResolvedProductReference(product_id=10)},
@@ -1282,9 +1247,7 @@ async def test_a_refinement_does_not_consult_query_understanding() -> None:
         CustomerAgentDecision(
             action=AgentAction.REFINE_SEARCH,
             refinement=SearchRefinementDelta(
-                price=PriceRefinement(
-                    op=PriceRefinementOp.SET, max_amount="3000", currency="SAR"
-                )
+                price=PriceRefinement(op=PriceRefinementOp.SET, max_amount="3000", currency="SAR")
             ),
         )
     )
@@ -1315,9 +1278,7 @@ async def test_a_relative_price_is_resolved_before_composition() -> None:
         ),
         relative_price=FakeRelativePrice(
             ResolvedRelativePrice(
-                price=PriceRefinement(
-                    op=PriceRefinementOp.SET, max_amount="800", currency="SAR"
-                ),
+                price=PriceRefinement(op=PriceRefinementOp.SET, max_amount="800", currency="SAR"),
                 reference_product_id=10,
                 reference_price_amount="1000",
                 reference_price_unit="SAR",
@@ -1387,9 +1348,7 @@ async def test_a_currency_conflict_is_a_question_not_a_conversion() -> None:
             ),
         ),
         relative_price=FakeRelativePrice(
-            RelativePriceUnresolved(
-                reason=RelativePriceFailureReason.CURRENCY_CONFLICT
-            )
+            RelativePriceUnresolved(reason=RelativePriceFailureReason.CURRENCY_CONFLICT)
         ),
     )
 
@@ -1398,9 +1357,7 @@ async def test_a_currency_conflict_is_a_question_not_a_conversion() -> None:
     assert parts["pipeline"].calls == []
     clarification = result.grounding.deterministic_clarification
     assert clarification is not None
-    assert clarification.relative_price_reason is (
-        RelativePriceFailureReason.CURRENCY_CONFLICT
-    )
+    assert clarification.relative_price_reason is (RelativePriceFailureReason.CURRENCY_CONFLICT)
 
 
 async def test_a_refinement_with_no_active_search_is_a_defect_not_a_question() -> None:
@@ -1410,9 +1367,7 @@ async def test_a_refinement_with_no_active_search_is_a_defect_not_a_question() -
         CustomerAgentDecision(
             action=AgentAction.REFINE_SEARCH,
             refinement=SearchRefinementDelta(
-                price=PriceRefinement(
-                    op=PriceRefinementOp.SET, max_amount="3000", currency="SAR"
-                )
+                price=PriceRefinement(op=PriceRefinementOp.SET, max_amount="3000", currency="SAR")
             ),
         )
     )
@@ -1423,9 +1378,7 @@ async def test_a_refinement_with_no_active_search_is_a_defect_not_a_question() -
 
 async def test_a_same_parent_taxonomy_change_refines_in_place() -> None:
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True
-        ),
+        CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True),
         interpretation=_resolved(RECLINERS),
     )
 
@@ -1442,16 +1395,10 @@ async def test_a_taxonomy_change_takes_only_the_category_pair_from_m7() -> None:
     """M7's price, wording and sort must not leak into a refinement made only
     to change the product type."""
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True
-        ),
+        CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True),
         interpretation=_resolved(
             RECLINERS.model_copy(
-                update={
-                    "price": PriceConstraint(
-                        currency="SAR", max_amount=Decimal("99999")
-                    )
-                }
+                update={"price": PriceConstraint(currency="SAR", max_amount=Decimal("99999"))}
             ),
             semantic_text="something dramatic",
         ),
@@ -1468,9 +1415,7 @@ async def test_a_taxonomy_change_takes_only_the_category_pair_from_m7() -> None:
 
 async def test_a_different_parent_taxonomy_change_becomes_a_new_task() -> None:
     coordinator, parts = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True
-        ),
+        CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True),
         interpretation=_resolved(TABLES),
     )
     state = _state(
@@ -1529,9 +1474,7 @@ async def test_detail_grounding_invents_no_provenance() -> None:
 
 async def test_a_detail_can_name_an_off_screen_selected_product() -> None:
     coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.PRODUCT_DETAIL, reference=SoleSelectedProduct()
-        ),
+        CustomerAgentDecision(action=AgentAction.PRODUCT_DETAIL, reference=SoleSelectedProduct()),
         hydration=FakeHydration(available=(OFF_SCREEN,)),
     )
 
@@ -1674,9 +1617,7 @@ async def test_one_unresolved_reference_stops_the_whole_comparison() -> None:
     outcomes = iter(
         [
             ResolvedProductReference(product_id=10),
-            ReferenceUnresolved(
-                reason=ReferenceFailureReason.SEVERAL_ATTRIBUTE_MATCHES
-            ),
+            ReferenceUnresolved(reason=ReferenceFailureReason.SEVERAL_ATTRIBUTE_MATCHES),
         ]
     )
 
@@ -1809,9 +1750,7 @@ async def test_a_room_type_can_be_cleared() -> None:
         )
     )
 
-    result = await coordinator.run(
-        _turn(_state(room=RoomProjectState(room_type="bedroom")))
-    )
+    result = await coordinator.run(_turn(_state(room=RoomProjectState(room_type="bedroom"))))
 
     assert result.state.room_project is not None
     assert result.state.room_project.room_type is None
@@ -1826,9 +1765,7 @@ async def test_proposals_apply_on_a_clarify_turn() -> None:
                 question="Which kind?",
             ),
             follow_up_policy=FollowUpPolicy.NONE,
-            commerce_proposal=DerivedCommerceProposal(
-                purchase_stage=PurchaseStage.CONSIDERING
-            ),
+            commerce_proposal=DerivedCommerceProposal(purchase_stage=PurchaseStage.CONSIDERING),
         )
     )
 
@@ -1843,9 +1780,7 @@ async def test_proposals_survive_a_handled_search_failure() -> None:
         CustomerAgentDecision(
             action=AgentAction.SEARCH,
             state_proposal=CustomerStateProposal(room_type="living room"),
-            commerce_proposal=DerivedCommerceProposal(
-                purchase_stage=PurchaseStage.CONSIDERING
-            ),
+            commerce_proposal=DerivedCommerceProposal(purchase_stage=PurchaseStage.CONSIDERING),
         ),
         interpretation=_resolved(),
         pipeline=FakePipeline(error=CatalogUnavailableError()),
@@ -1864,9 +1799,7 @@ async def test_proposals_survive_a_handled_m7_failure() -> None:
     coordinator, _ = _coordinator(
         CustomerAgentDecision(
             action=AgentAction.SEARCH,
-            commerce_proposal=DerivedCommerceProposal(
-                purchase_stage=PurchaseStage.CONSIDERING
-            ),
+            commerce_proposal=DerivedCommerceProposal(purchase_stage=PurchaseStage.CONSIDERING),
         ),
         m7_error=LLMUnavailableError(provider="openai"),
     )
@@ -1909,9 +1842,7 @@ async def test_a_model_clarification_outranks_a_proposal_question() -> None:
                 question="Which kind?",
             ),
             follow_up_policy=FollowUpPolicy.NONE,
-            state_proposal=CustomerStateProposal(
-                room_budget=PriceProposal(max_amount="12000")
-            ),
+            state_proposal=CustomerStateProposal(room_budget=PriceProposal(max_amount="12000")),
         )
     )
 
@@ -1926,13 +1857,9 @@ async def test_a_primary_question_outranks_a_proposal_question() -> None:
     coordinator, _ = _coordinator(
         CustomerAgentDecision(
             action=AgentAction.SEARCH,
-            state_proposal=CustomerStateProposal(
-                room_budget=PriceProposal(max_amount="12000")
-            ),
+            state_proposal=CustomerStateProposal(room_budget=PriceProposal(max_amount="12000")),
         ),
-        interpretation=ClarificationRequired(
-            reason=ClarificationReason.MULTIPLE_PRODUCT_TYPES
-        ),
+        interpretation=ClarificationRequired(reason=ClarificationReason.MULTIPLE_PRODUCT_TYPES),
     )
 
     result = await coordinator.run(_turn(_state()))
@@ -1949,14 +1876,10 @@ async def test_a_proposal_question_outranks_an_interaction_question() -> None:
             interaction=ProductInteractionIntent(
                 op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=9)
             ),
-            state_proposal=CustomerStateProposal(
-                room_budget=PriceProposal(max_amount="12000")
-            ),
+            state_proposal=CustomerStateProposal(room_budget=PriceProposal(max_amount="12000")),
         ),
         references=FakeReferences(
-            default=ReferenceUnresolved(
-                reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-            )
+            default=ReferenceUnresolved(reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE)
         ),
     )
 
@@ -1974,16 +1897,12 @@ async def test_a_primary_failure_suppresses_every_question() -> None:
             interaction=ProductInteractionIntent(
                 op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=9)
             ),
-            state_proposal=CustomerStateProposal(
-                room_budget=PriceProposal(max_amount="12000")
-            ),
+            state_proposal=CustomerStateProposal(room_budget=PriceProposal(max_amount="12000")),
             follow_up_policy=FollowUpPolicy.OPTIONAL,
         ),
         interpretation=_resolved(),
         references=FakeReferences(
-            default=ReferenceUnresolved(
-                reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-            )
+            default=ReferenceUnresolved(reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE)
         ),
         pipeline=FakePipeline(error=CatalogUnavailableError()),
     )
@@ -1998,9 +1917,7 @@ async def test_a_primary_failure_suppresses_every_question() -> None:
 
 async def test_an_ordinary_turn_keeps_the_decisions_follow_up_policy() -> None:
     coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.SEARCH, follow_up_policy=FollowUpPolicy.OPTIONAL
-        ),
+        CustomerAgentDecision(action=AgentAction.SEARCH, follow_up_policy=FollowUpPolicy.OPTIONAL),
         interpretation=_resolved(),
     )
 
@@ -2098,9 +2015,7 @@ async def test_a_refinement_with_no_active_search_stays_a_defect() -> None:
         CustomerAgentDecision(
             action=AgentAction.REFINE_SEARCH,
             refinement=SearchRefinementDelta(
-                price=PriceRefinement(
-                    op=PriceRefinementOp.SET, max_amount="3000", currency="SAR"
-                )
+                price=PriceRefinement(op=PriceRefinementOp.SET, max_amount="3000", currency="SAR")
             ),
         )
     )
@@ -2129,9 +2044,7 @@ async def test_an_unapproved_attribute_value_is_a_defect() -> None:
                         op=AttributeRefinementOp.SET_REQUIREMENT,
                         family=AttributeFamily.COLOR,
                         values=(
-                            ProposedAttributeValue(
-                                raw_value="crimson", canonical_value="Crimson"
-                            ),
+                            ProposedAttributeValue(raw_value="crimson", canonical_value="Crimson"),
                         ),
                     ),
                 )
@@ -2150,9 +2063,7 @@ async def test_a_malformed_amount_is_a_defect() -> None:
         CustomerAgentDecision(
             action=AgentAction.REFINE_SEARCH,
             refinement=SearchRefinementDelta(
-                price=PriceRefinement(
-                    op=PriceRefinementOp.SET, max_amount="cheap", currency="SAR"
-                )
+                price=PriceRefinement(op=PriceRefinementOp.SET, max_amount="cheap", currency="SAR")
             ),
         )
     )
@@ -2167,9 +2078,7 @@ async def test_a_defect_never_becomes_a_clarification_or_a_failure() -> None:
         CustomerAgentDecision(
             action=AgentAction.REFINE_SEARCH,
             refinement=SearchRefinementDelta(
-                price=PriceRefinement(
-                    op=PriceRefinementOp.SET, max_amount="cheap", currency="SAR"
-                )
+                price=PriceRefinement(op=PriceRefinementOp.SET, max_amount="cheap", currency="SAR")
             ),
         )
     )

@@ -124,9 +124,7 @@ def test_the_coordinator_is_wired_lazily() -> None:
 
 def test_requesting_it_unconfigured_fails_with_a_typed_error() -> None:
     """Unconfigured means unavailable, not a half-built coordinator."""
-    resources = type(
-        "R", (), {"settings": build_settings(), "decision_llm": None}
-    )()
+    resources = type("R", (), {"settings": build_settings(), "decision_llm": None})()
 
     with pytest.raises(ConfigurationError):
         customer_turn_coordinator(None, resources)  # type: ignore[arg-type]
@@ -153,16 +151,6 @@ def test_the_response_model_setting_arrived_with_its_consumer() -> None:
     assert CustomerAgentSettings().response_model is None
 
 
-def test_no_public_chat_route_exists() -> None:
-    assert "chat.py" not in {p.name for p in (APP / "api/routes").glob("*.py")}
-
-
-def test_no_orchestration_graph_exists() -> None:
-    assert not (APP / "orchestration").exists()
-    for module in APP.rglob("*.py"):
-        assert "langgraph" not in module.read_text().lower(), module.name
-
-
 def _coordinator_identifiers() -> set[str]:
     """Names the module actually uses - not words in its prose."""
     tree = ast.parse(COORDINATOR.read_text())
@@ -184,11 +172,7 @@ def test_the_coordinator_persists_nothing(forbidden: str) -> None:
 
 def test_the_coordinator_imports_no_persistence() -> None:
     tree = ast.parse(COORDINATOR.read_text())
-    imported = {
-        node.module or ""
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
+    imported = {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
 
     assert not any("redis" in name for name in imported)
     assert not any("repositories" in name for name in imported)

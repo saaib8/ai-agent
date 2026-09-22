@@ -163,9 +163,7 @@ class CurrentDesignNeed(BaseModel):
     priority: DesignPriority
     quantity: int = Field(default=1, ge=1)
     seating_capacity: SeatingCapacityConstraint | None = None
-    semantic_intent: str | None = Field(
-        default=None, max_length=MAX_NEED_SEMANTIC_INTENT_CHARS
-    )
+    semantic_intent: str | None = Field(default=None, max_length=MAX_NEED_SEMANTIC_INTENT_CHARS)
 
     @field_validator("semantic_intent")
     @classmethod
@@ -204,10 +202,7 @@ class ExcludedDesignRole(BaseModel):
         """
         if category is None or self.commerce_category != category:
             return False
-        return (
-            self.commerce_subcategory is None
-            or self.commerce_subcategory == subcategory
-        )
+        return self.commerce_subcategory is None or self.commerce_subcategory == subcategory
 
 
 class DesignRevisionContext(BaseModel):
@@ -244,6 +239,21 @@ class DesignTask(StrEnum):
 
     ROOM_PLAN = "room_plan"
     """Which product types this room calls for, and how badly."""
+
+    COMPLEMENTARY_RECOMMENDATION = "complementary_recommendation"
+    """The single furnishing role that would most complete the space around a
+    piece the customer has settled on.
+
+    Not a small room plan. A customer who likes a sofa has not asked to furnish
+    a room, and answering with eight roles and a total would be answering a
+    question they did not ask - so this returns **one** need, occasionally two,
+    and no bundle is optimised from it.
+
+    The reasoning is the same expertise a room plan uses, which is why it is
+    the same agent and the same contract rather than a recommender of its own:
+    what goes with a sofa is a design judgement, and nothing in this service
+    records which products are bought together (CLAUDE.md 17.2).
+    """
 
 
 class InteriorDesignRequest(BaseModel):
@@ -296,6 +306,19 @@ class InteriorDesignRequest(BaseModel):
     """Already composed by the locked precedence ladder. The specialist
     receives one settled list and resolves no precedence itself."""
 
+    regular_seating_count: int | None = Field(default=None, ge=1, le=30)
+    """How many people regularly use this room, when the customer has said.
+
+    A room requirement to design against, and **not a furniture count**. Five
+    regular users does not mean two sofas: it means the room should seat five,
+    and which composition achieves that - a sectional, a sofa and two chairs,
+    two sofas - is yours to decide from what this retailer actually stocks
+    (CLAUDE.md 10.1).
+
+    Never invent a product's capacity to satisfy it, and never claim a plan
+    seats five unless the capacities you were given add up.
+    """
+
     catalog_capabilities: RetailerCatalogCapabilities | None = None
     anchors: tuple[AnchorProduct, ...] = ()
 
@@ -329,8 +352,17 @@ class InteriorDesignRequest(BaseModel):
             raise ValueError("a room plan carries a brief, not a question")
         elif self.catalog_capabilities is None:
             # Planning without knowing what the retailer stocks produces a room
-            # full of things nobody can buy.
+            # full of things nobody can buy - and recommending a complement
+            # this shop does not sell is the same mistake at smaller scale.
             raise ValueError("a room plan needs the retailer's capabilities")
+        if self.task is DesignTask.COMPLEMENTARY_RECOMMENDATION:
+            if not self.anchors:
+                # The piece they chose is the whole premise: without it there
+                # is nothing to complement, and the question becomes "what
+                # furniture is nice", which is not this task.
+                raise ValueError("a complementary recommendation needs an anchor")
+            if self.revision is not None:
+                raise ValueError("a complementary recommendation revises no plan")
         if self.task is DesignTask.GENERAL_ADVICE and self.revision is not None:
             # Advice revises nothing: it answers a question and proposes no
             # composition, so a plan to revise would have no bearing on it.
@@ -347,9 +379,7 @@ class DesignCategoryNeed(BaseModel):
     commerce_subcategory: str | None = Field(default=None, min_length=1)
     priority: DesignPriority
 
-    semantic_intent: str | None = Field(
-        default=None, max_length=MAX_NEED_SEMANTIC_INTENT_CHARS
-    )
+    semantic_intent: str | None = Field(default=None, max_length=MAX_NEED_SEMANTIC_INTENT_CHARS)
     """This piece's qualitative character, for ranking only.
 
     The design reasoning a structured field cannot hold: "visually light",
@@ -485,9 +515,7 @@ class GuidanceMeasurement(BaseModel):
         if self.minimum_cm is None and self.maximum_cm is None:
             raise ValueError("a guideline needs a bound")
         minimum, maximum = self.minimum, self.maximum
-        if (minimum is not None and minimum <= 0) or (
-            maximum is not None and maximum <= 0
-        ):
+        if (minimum is not None and minimum <= 0) or (maximum is not None and maximum <= 0):
             raise ValueError("a guideline measures a positive distance")
         if minimum is not None and maximum is not None and minimum > maximum:
             raise ValueError("a guideline range runs upwards")
@@ -553,9 +581,7 @@ class InteriorDesignResult(BaseModel):
             if need.commerce_subcategory is None:
                 taxonomy.subcategories(need.commerce_category)  # raises if unapproved
             else:
-                taxonomy.validate_pair(
-                    need.commerce_category, need.commerce_subcategory
-                )
+                taxonomy.validate_pair(need.commerce_category, need.commerce_subcategory)
 
 
 class FitVerdict(StrEnum):
@@ -608,8 +634,6 @@ class FitAssessment(BaseModel):
         decided = self.verdict is not FitVerdict.INSUFFICIENT_GEOMETRY
         if decided and (self.product_cm is None or self.available_cm is None):
             raise ValueError("a comparison names both measurements")
-        if not decided and (
-            self.product_cm is not None and self.available_cm is not None
-        ):
+        if not decided and (self.product_cm is not None and self.available_cm is not None):
             raise ValueError("both measurements present is a decidable comparison")
         return self

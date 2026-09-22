@@ -15,7 +15,7 @@ import asyncio
 from typing import Any, Protocol
 
 from app.core.config import PineconeSettings
-from app.core.exceptions import SemanticIndexUnavailableError
+from app.core.exceptions import ConfigurationError, SemanticIndexUnavailableError
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -58,11 +58,26 @@ class PineconeSemanticIndex:
     def __init__(self, settings: PineconeSettings) -> None:
         # Lazy and optional, like boto3: a deployment with semantic ranking
         # switched off never imports the SDK and need not install it.
-        from pinecone import Pinecone  # type: ignore[import-not-found]
+        #
+        # But *configured* and *installed* are two different things, and only
+        # one of them is visible in the settings. Configuring Pinecone without
+        # the `semantic` extra installed used to kill startup with a bare
+        # ModuleNotFoundError naming a package the operator never mentioned;
+        # now it says which install is missing (CLAUDE.md 21).
+        try:
+            from pinecone import Pinecone  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise ConfigurationError(
+                detail=(
+                    "pinecone settings are configured but the 'semantic' extra "
+                    "is not installed; install it or unset ZORY_PINECONE__*"
+                ),
+                public_message="Semantic ranking is not installed.",
+            ) from exc
 
-        self._index = Pinecone(
-            api_key=settings.api_key.get_secret_value()
-        ).Index(settings.index_name)
+        self._index = Pinecone(api_key=settings.api_key.get_secret_value()).Index(
+            settings.index_name
+        )
         self._index_name = settings.index_name
 
     async def score(
@@ -116,7 +131,5 @@ class PineconeSemanticIndex:
                 # An id shaped by another pipeline. Ignored rather than parsed
                 # into something plausible.
                 continue
-            scored[identifier] = float(
-                match["score"] if isinstance(match, dict) else match.score
-            )
+            scored[identifier] = float(match["score"] if isinstance(match, dict) else match.score)
         return scored

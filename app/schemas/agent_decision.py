@@ -110,6 +110,42 @@ class FollowUpPolicy(StrEnum):
     OPTIONAL = "optional"
 
 
+class FollowUpGoal(StrEnum):
+    """What the optional question should be *about*.
+
+    The split this exists for: the Customer/Commerce Agent knows which missing
+    fact would most improve the next recommendation, and the response model
+    knows how to ask for it in a sentence. Neither does the other's job - so
+    this carries the subject and never the wording.
+
+    A controlled list, because a free-text goal would be question prose by
+    another name, and prose here would bypass the response layer's validation.
+    """
+
+    BUDGET = "budget"
+    """What they want to spend. Asked for a room before building one; asked
+    after results when the range shown is clearly wide of the mark."""
+
+    ROOM_SIZE = "room_size"
+    STYLE = "style"
+
+    SEATING_REQUIREMENT = "seating_requirement"
+    """How many people use the room, or need to sit on the piece. A
+    requirement, never a quantity of furniture."""
+
+    USE_CASE = "use_case"
+    """How the piece is actually lived with - everyday family use, occasional
+    guests, a reading corner. Often worth more than a style word."""
+
+    PRODUCT_PREFERENCE = "product_preference"
+    """Which way to narrow what is already on screen: colour, material,
+    proportion. Only when the set shown genuinely divides on it."""
+
+    ROOM_COMPLETION = "room_completion"
+    """Whether they want help with the rest of the room. Asked only after
+    they have shown real interest in something."""
+
+
 # ── product interactions ────────────────────────────────────────────────────
 
 
@@ -217,9 +253,7 @@ class BundleReplacementIntent(BaseModel):
 
     @model_validator(mode="after")
     def _wording_belongs_to_the_semantic_mode(self) -> Self:
-        if (self.mode is BundleReplacementMode.SEMANTIC) != (
-            self.semantic_intent is not None
-        ):
+        if (self.mode is BundleReplacementMode.SEMANTIC) != (self.semantic_intent is not None):
             raise ValueError("only a semantic replacement carries new wording")
         return self
 
@@ -297,6 +331,24 @@ class DesignAnchorIntent(BaseModel):
     quantity: int = Field(default=1, ge=1)
     """How many of this piece the room has. Only from what they said - "I
     already own two of these" - never from the kind of thing it is."""
+
+
+class DesignScope(StrEnum):
+    """How much of the space a design handoff is about.
+
+    The same route serves two different requests, and answering one with the
+    other is the mistake: a customer who likes a sofa has not asked to furnish
+    a room, and replying with eight pieces and a total would be selling at them
+    rather than helping. A customer who asked for a room is not served by one
+    rug.
+    """
+
+    WHOLE_ROOM = "whole_room"
+    """Furnish or recompose the room. Produces a plan and a chosen bundle."""
+
+    COMPLEMENT = "complement"
+    """The single furnishing role that would most complete the space around a
+    piece they have settled on. Produces products, not a room."""
 
 
 class DesignRevisionIntent(BaseModel):
@@ -434,6 +486,21 @@ class CustomerStateProposal(BaseModel):
     clear_room_budget: bool = False
     design_preferences: PreferenceProposal | None = None
 
+    regular_seating_count: int | None = Field(default=None, ge=1, le=30)
+    """How many people regularly use the room, when they said so.
+
+    "Family of five", "we're five people", "seating for four" - the same fact
+    however it is phrased. A room requirement, never a product quantity: it
+    says nothing about how many sofas to buy, and the design specialist decides
+    the composition (CLAUDE.md 10.1).
+
+    Only from an explicit statement about who uses the room. Never inferred
+    from a room type, a product's seating capacity, or how many pieces are in
+    their bundle.
+    """
+
+    clear_regular_seating_count: bool = False
+
     @model_validator(mode="after")
     def _setting_and_clearing_are_exclusive(self) -> Self:
         if self.clear_room_type and self.room_type is not None:
@@ -509,6 +576,22 @@ class BlockingClarificationReason(StrEnum):
     """"more premium" with no criterion the catalog can actually honour."""
 
     COMPARISON_TARGETS = "comparison_targets"
+
+    MISSING_ROOM_REQUIREMENTS = "missing_room_requirements"
+    """A room was asked for without enough to plan one worth showing.
+
+    The one place this service asks before delivering. A single product search
+    can proceed on almost nothing - "show me sofas" is answerable - but a whole
+    room commits the customer to a set of pieces and a total, and building that
+    around a guessed budget produces a room they cannot buy.
+
+    Budget first, because it constrains every other choice. Beyond it, only
+    what the state view shows is still missing: the size of the room, the look
+    they want, or how many people the seating is for.
+
+    At most two questions, once. If they decline or answer partially, the room
+    is built from what is known (CLAUDE.md 10).
+    """
 
     CONTRADICTORY_ROOM_INSTRUCTIONS = "contradictory_room_instructions"
     """Two things they asked for in one turn cannot both hold.
@@ -595,6 +678,24 @@ class CustomerAgentDecision(BaseModel):
     "which piece".
     """
 
+    design_scope: DesignScope = DesignScope.WHOLE_ROOM
+    """Whether this handoff is about the room or about one next piece.
+
+    Defaulted to the whole room because that is what a design handoff has
+    always meant; a complement is the narrower, newer case and says so
+    explicitly.
+
+    **Read only on a design handoff, and deliberately not refused elsewhere.**
+    The provider's strict schema requires every field on every decision, so
+    "absent" cannot mean "not applicable" - a search must still carry some
+    value here. Refusing the ones that come back wrong turned an artefact of
+    that into a failed turn, while the value itself changes nothing: no branch
+    but the handoff ever reads it.
+
+    This is the exception to refusing payloads rather than ignoring them. It
+    holds only because the field cannot alter what a non-handoff turn does.
+    """
+
     design_revision: DesignRevisionIntent | None = None
     """Hard constraints on recomposing an existing room, for `DESIGN_HANDOFF`.
 
@@ -607,12 +708,21 @@ class CustomerAgentDecision(BaseModel):
     state_proposal: CustomerStateProposal | None = None
     commerce_proposal: DerivedCommerceProposal | None = None
     follow_up_policy: FollowUpPolicy = FollowUpPolicy.OPTIONAL
+    follow_up_goal: FollowUpGoal | None = None
+    """What the optional question should be about, when one is worth asking.
+
+    Absent means the turn offers no question - either because nothing useful is
+    missing, or because they asked not to be asked. It is never the question
+    itself: the wording is the response layer's, and a goal that carried prose
+    would route around the checks that wording goes through.
+    """
 
     @model_validator(mode="after")
     def _payload_matches_the_action(self) -> Self:
         self._check_search_payloads()
         self._check_reference_payloads()
         self._check_clarification()
+        self._check_follow_up()
         self._check_interaction()
         return self
 
@@ -630,14 +740,10 @@ class CustomerAgentDecision(BaseModel):
             # product; a durable intent proposed beside it would have to be
             # combined with the seed, and V1 has no composite planner to
             # decide how. Refused rather than silently dropping one of them.
-            raise ValueError(
-                "a search for alternatives carries no new-search proposal"
-            )
+            raise ValueError("a search for alternatives carries no new-search proposal")
         if self.action is AgentAction.REFINE_SEARCH:
             if self.refinement is None and not self.taxonomy_change_requested:
-                raise ValueError(
-                    "a refinement needs a delta or a taxonomy change"
-                )
+                raise ValueError("a refinement needs a delta or a taxonomy change")
             if self.refinement is not None and self.refinement.is_empty():
                 raise ValueError("a refinement delta that changes nothing is not one")
         elif self.refinement is not None or self.taxonomy_change_requested:
@@ -662,16 +768,20 @@ class CustomerAgentDecision(BaseModel):
         references_allowed = (AgentAction.PRODUCT_DETAIL, AgentAction.SEARCH)
         if self.reference is not None and self.action not in references_allowed:
             raise ValueError(f"{self.action} may not carry a product reference")
-        if (
-            self.design_anchor is not None
-            and self.action is not AgentAction.DESIGN_HANDOFF
-        ):
+        if self.design_anchor is not None and self.action is not AgentAction.DESIGN_HANDOFF:
             raise ValueError("only a design handoff carries a design anchor")
-        if (
-            self.design_revision is not None
-            and self.action is not AgentAction.DESIGN_HANDOFF
-        ):
+        if self.design_revision is not None and self.action is not AgentAction.DESIGN_HANDOFF:
             raise ValueError("only a design handoff carries revision constraints")
+        if (
+            self.action is AgentAction.DESIGN_HANDOFF
+            and self.design_scope is DesignScope.COMPLEMENT
+            and self.design_revision is not None
+        ):
+            # A complement adds one piece beside what they have; a revision
+            # rewrites the plan. Asking for both leaves it unclear which room
+            # the answer describes. Checked only on a handoff, where both
+            # fields mean something.
+            raise ValueError("a complement revises no plan")
         self._check_bundle_interaction()
 
     def _check_bundle_interaction(self) -> None:
@@ -689,6 +799,17 @@ class CustomerAgentDecision(BaseModel):
             raise ValueError("a bundle refinement needs the change it makes")
         if self.interaction is not None:
             raise ValueError("a bundle refinement makes one change, not two")
+
+    def _check_follow_up(self) -> None:
+        """A goal belongs to a turn that is actually offering a question.
+
+        Refused rather than ignored in either direction: a goal on a silent
+        turn means the model meant to ask and the policy says it may not, and
+        that disagreement should surface here rather than become a question
+        nobody sees or a silence nobody intended.
+        """
+        if self.follow_up_policy is FollowUpPolicy.NONE and self.follow_up_goal:
+            raise ValueError("a turn offering no follow-up has nothing to ask about")
 
     def _check_clarification(self) -> None:
         if self.action is AgentAction.CLARIFY:

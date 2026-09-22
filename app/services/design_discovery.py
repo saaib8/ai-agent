@@ -52,9 +52,7 @@ logger = get_logger(__name__)
 class DesignDiscoveryService:
     """A room plan in, verified candidate products per need out."""
 
-    def __init__(
-        self, pipeline: ProductSearchPipeline, taxonomy: CommerceTaxonomy
-    ) -> None:
+    def __init__(self, pipeline: ProductSearchPipeline, taxonomy: CommerceTaxonomy) -> None:
         self._pipeline = pipeline
         self._taxonomy = taxonomy
 
@@ -114,9 +112,7 @@ class DesignDiscoveryService:
             pipeline_execution_count=discovered.searched_count,
             skipped_count=len(discovered.needs) - discovered.searched_count,
             candidate_counts=[entry.candidate_count for entry in discovered.needs],
-            empty_need_count=sum(
-                1 for entry in discovered.needs if entry.candidate_count == 0
-            ),
+            empty_need_count=sum(1 for entry in discovered.needs if entry.candidate_count == 0),
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return discovered
@@ -168,9 +164,19 @@ class DesignDiscoveryService:
             if not self._taxonomy.is_category(need.commerce_category):
                 raise UnknownCommerceCategoryError(category=need.commerce_category)
             return
-        self._taxonomy.validate_pair(
-            need.commerce_category, need.commerce_subcategory
-        )
+        self._taxonomy.validate_pair(need.commerce_category, need.commerce_subcategory)
+
+    def resolve_need(
+        self, need: DesignCategoryNeed, request: InteriorDesignRequest
+    ) -> ResolvedSearch:
+        """One need as a search, for a caller that is not building a room.
+
+        The same conversion the room path uses, exposed because a complementary
+        recommendation runs a single need through the ordinary search pipeline
+        rather than through the optimiser - one rug to look at, not a package
+        to price (M14 21).
+        """
+        return self._resolve(need, request)
 
     def _resolve(
         self,
@@ -210,9 +216,7 @@ class DesignDiscoveryService:
                 # turned down for this role. Neither was authored by a model,
                 # and neither is a design fact (CLAUDE.md 12.1).
                 price=override.price if override else None,
-                exclude_product_ids=(
-                    override.exclude_product_ids if override else ()
-                ),
+                exclude_product_ids=(override.exclude_product_ids if override else ()),
             ),
             semantics=_semantics_for(need),
             # Colour and style the customer leaned towards, reaching ranking
@@ -241,11 +245,7 @@ def _semantics_for(need: DesignCategoryNeed) -> ConstraintSemantics:
     """
     capacity = need.seating_capacity
     return ConstraintSemantics(
-        subcategory=(
-            ConstraintStrength.LOCKED
-            if need.commerce_subcategory is not None
-            else None
-        ),
+        subcategory=(ConstraintStrength.LOCKED if need.commerce_subcategory is not None else None),
         seating_min=(
             ConstraintStrength.LOCKED
             if capacity is not None and capacity.min_capacity is not None
@@ -259,9 +259,7 @@ def _semantics_for(need: DesignCategoryNeed) -> ConstraintSemantics:
     )
 
 
-def _wording(
-    need: DesignCategoryNeed, override: DesignNeedSearchOverride | None
-) -> str | None:
+def _wording(need: DesignCategoryNeed, override: DesignNeedSearchOverride | None) -> str | None:
     """This search's qualitative wording: the plan's, or the one staged over it.
 
     Replaced rather than combined. A customer refining "visually light" to

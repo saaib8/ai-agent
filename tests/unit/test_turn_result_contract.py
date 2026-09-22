@@ -252,9 +252,7 @@ def test_a_currency_conflict_is_customer_resolvable() -> None:
         relative_price_reason=RelativePriceFailureReason.CURRENCY_CONFLICT,
     )
 
-    assert clarification.relative_price_reason is (
-        RelativePriceFailureReason.CURRENCY_CONFLICT
-    )
+    assert clarification.relative_price_reason is (RelativePriceFailureReason.CURRENCY_CONFLICT)
 
 
 @pytest.mark.parametrize(
@@ -365,9 +363,7 @@ def test_a_room_budget_needs_a_currency_the_proposal_may_not_have() -> None:
     with pytest.raises(ValidationError):
         PriceConstraint.model_validate({"max_amount": Decimal("12000")})
     # The reason that case is reported with, rather than a guessed currency.
-    assert DeterministicClarification(
-        reason=BlockingClarificationReason.MISSING_PRICE_CURRENCY
-    )
+    assert DeterministicClarification(reason=BlockingClarificationReason.MISSING_PRICE_CURRENCY)
 
 
 # ── the two reason families have two different authorities ──────────────────
@@ -408,6 +404,9 @@ def test_the_model_facing_enum_holds_only_its_original_vocabulary() -> None:
         # itself in the customer's own words. The application raises the same
         # reason when resolving revision constraints finds the contradiction.
         "contradictory_room_instructions",
+        # Room requests ask before they deliver, and only for what the state
+        # view shows is missing - so the model can legitimately know it.
+        "missing_room_requirements",
     }
 
 
@@ -485,9 +484,7 @@ def test_the_provider_structure_stays_intact_as_the_schema_grows() -> None:
         assert rendered.count('"oneOf"') == 0
         assert rendered.count('"discriminator"') == 0
         selector = schema["$defs"]["ProductInteractionIntent"]["properties"]["reference"]
-        assert {
-            branch["$ref"].rsplit("/", 1)[-1] for branch in selector["anyOf"]
-        } == members
+        assert {branch["$ref"].rsplit("/", 1)[-1] for branch in selector["anyOf"]} == members
 
 
 def test_a_model_clarification_still_uses_its_own_vocabulary() -> None:

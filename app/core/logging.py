@@ -48,6 +48,26 @@ _LIBRARIES_WITH_OWN_HANDLERS: tuple[str, ...] = (
     "uvicorn.access",
 )
 
+_PAYLOAD_LOGGING_LIBRARIES: tuple[str, ...] = (
+    "openai",
+    "httpx",
+    "httpcore",
+)
+"""Clients that log entire HTTP bodies at DEBUG.
+
+`DEBUG` is an offered value of `observability.log_level`, and an operator
+reaching for it while diagnosing a live problem would not expect it to write
+customers' messages and whole conversation histories to stdout - but that is
+what these SDKs do, because a prompt *is* the request body.
+
+`redact_processor` cannot help: it removes values by key name from structlog
+event dicts, and this content arrives as one opaque message string.
+
+So their floor is INFO whatever the service level is. Application logging stays
+as verbose as it is configured to be; only the libraries that would print
+payloads are held back (CLAUDE.md 20.3, 22).
+"""
+
 
 def _is_sensitive(key: str) -> bool:
     lowered = key.lower()
@@ -59,8 +79,7 @@ def _redact_value(value: Any) -> Any:
         return REDACTED
     if isinstance(value, dict):
         return {
-            k: (REDACTED if _is_sensitive(str(k)) else _redact_value(v))
-            for k, v in value.items()
+            k: (REDACTED if _is_sensitive(str(k)) else _redact_value(v)) for k, v in value.items()
         }
     if isinstance(value, (list, tuple)):
         return type(value)(_redact_value(item) for item in value)
@@ -75,6 +94,12 @@ def redact_processor(
         key: (REDACTED if _is_sensitive(str(key)) else _redact_value(value))
         for key, value in event_dict.items()
     }
+
+
+def _level(name: str) -> int:
+    """A level name as its number. Unknown names fall back to INFO."""
+    value = logging.getLevelNamesMapping().get(name.upper())
+    return value if isinstance(value, int) else logging.INFO
 
 
 def configure_logging(settings: ObservabilitySettings) -> None:
@@ -130,6 +155,9 @@ def configure_logging(settings: ObservabilitySettings) -> None:
         library_logger = logging.getLogger(name)
         library_logger.handlers.clear()
         library_logger.propagate = True
+
+    for name in _PAYLOAD_LOGGING_LIBRARIES:
+        logging.getLogger(name).setLevel(max(logging.INFO, _level(settings.log_level)))
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:

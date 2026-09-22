@@ -122,10 +122,13 @@ def test_bundle_refinement_does_not_exist_yet(symbol: str) -> None:
         assert symbol not in module.read_text(), f"{module.name} defines {symbol}"
 
 
-def test_no_agent_module_or_public_route_exists() -> None:
-    """The decision prompt arrived with M11B-4; these have not."""
+def test_no_agent_module_exists() -> None:
+    """Reasoning lives in services, not in an `agents` package.
+
+    The public chat route this once also forbade arrived with M13; what must
+    stay true of it is pinned in `test_m13_boundary.py`.
+    """
     assert not (APP / "agents").exists()
-    assert "chat.py" not in {p.name for p in (APP / "api/routes").glob("*.py")}
 
 
 def test_query_understanding_is_still_the_only_provider_call_site() -> None:

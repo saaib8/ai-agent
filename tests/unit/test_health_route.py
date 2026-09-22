@@ -12,6 +12,7 @@ from app.integrations.llm import OpenAIStructuredClient
 from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
 from app.main import create_app
+from app.orchestration.graph import ChatGraphRunner
 from app.services.health import HealthService
 from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
@@ -34,6 +35,7 @@ def _app(settings: Settings, *, postgres_up: bool, redis_up: bool) -> FastAPI:
     redis_client = cast(RedisClient, _Stub(redis_up))
 
     application.dependency_overrides[deps.resources] = lambda: AppResources(
+        chat_graph=ChatGraphRunner(),
         settings=settings,
         database=database,
         redis=redis_client,
@@ -76,9 +78,7 @@ async def test_all_dependencies_up_reports_ok(settings: Settings) -> None:
 async def test_a_failing_dependency_degrades_the_service(
     settings: Settings, postgres_up: bool, redis_up: bool, expected: dict[str, str]
 ) -> None:
-    status, body, _ = await _get_health(
-        _app(settings, postgres_up=postgres_up, redis_up=redis_up)
-    )
+    status, body, _ = await _get_health(_app(settings, postgres_up=postgres_up, redis_up=redis_up))
 
     assert status == 503
     assert body["status"] == "degraded"

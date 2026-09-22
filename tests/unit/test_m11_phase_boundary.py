@@ -106,12 +106,6 @@ def test_no_agent_module_exists_yet() -> None:
     assert not (APP / "agents").exists()
 
 
-def test_no_public_chat_route_exists() -> None:
-    routes = {p.name for p in (APP / "api/routes").glob("*.py")}
-
-    assert "chat.py" not in routes
-
-
 def test_no_new_openai_call_site_was_added() -> None:
     """Query understanding remains the only place a provider is consulted."""
     callers = [

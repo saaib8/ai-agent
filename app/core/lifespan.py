@@ -22,6 +22,7 @@ from app.integrations.llm import OpenAIStructuredClient
 from app.integrations.pinecone import PineconeSemanticIndex, SemanticIndex
 from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
+from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
 from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
@@ -38,6 +39,7 @@ class AppResources:
     taxonomy: CommerceTaxonomy
     attributes: CatalogAttributes
     dimensions: DimensionSemantics
+    chat_graph: ChatGraphRunner
     # Both None when semantic ranking is not configured. Discovery still
     # works; results come back in deterministic order. Defaulted so a
     # deployment without them constructs exactly as it did before.
@@ -75,7 +77,17 @@ async def _check_catalog_schema(database: Database) -> None:
     try:
         async with database.engine.connect() as connection:
             await verify_commerce_schema(connection)
-    except SQLAlchemyError as exc:
+    except (SQLAlchemyError, OSError) as exc:
+        # `OSError` as well as SQLAlchemy's own: asyncpg raises a bare
+        # ConnectionRefusedError when nothing is listening, and SQLAlchemy does
+        # not wrap it at connect time. Without it here, a database that is
+        # briefly away during a rolling deploy crash-loops the service instead
+        # of starting and reporting itself unhealthy - which is the opposite of
+        # what this function is for.
+        #
+        # A *reachable* catalog missing a required column still raises: that is
+        # `CatalogSchemaError`, it is a deployment mistake rather than a blip,
+        # and it must stop the process.
         logger.warning("catalog_schema_check_skipped", error_type=type(exc).__name__)
         return
     logger.info("catalog_schema_verified")
@@ -107,6 +119,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     database = Database.create(settings.db)
     redis_client = RedisClient.create(settings.redis)
+    # Compiled once for the process. The per-request runtime travels with each
+    # invocation, so one graph serves every customer (CLAUDE.md 24).
+    chat_graph = ChatGraphRunner()
     llm_client = OpenAIStructuredClient(settings.llm)
     embedder: OpenAIQueryEmbedder | None = None
     semantic_index: SemanticIndex | None = None
@@ -128,9 +143,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     design_model = settings.interior_design.model
     if design_model:
-        design_llm = OpenAIStructuredClient(
-            settings.llm.model_copy(update={"model": design_model})
-        )
+        design_llm = OpenAIStructuredClient(settings.llm.model_copy(update={"model": design_model}))
+    logger.info("chat_graph_compiled", nodes=len(NODE_ORDER))
     logger.info(
         "agents_configured",
         decision_enabled=decision_llm is not None,
@@ -156,6 +170,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         taxonomy=taxonomy,
         attributes=attributes,
         dimensions=dimensions,
+        chat_graph=chat_graph,
     )
 
     await _check_catalog_schema(database)

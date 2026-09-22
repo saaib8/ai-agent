@@ -48,6 +48,15 @@ from app.taxonomy.dimensions import DimensionRole
 from app.taxonomy.registry import load_taxonomy
 from pydantic import ValidationError
 
+STOCKED_WITH_RANGE = 12
+"""A capability depth that is not the thing under test.
+
+Every capability carries how many products back it. These suites are about
+which *types* a plan may use, so they give each one an unremarkable range -
+enough that nothing is refused for being thin, and a number no assertion here
+reads.
+"""
+
 APP = Path(__file__).parents[2] / "app"
 TAXONOMY = load_taxonomy()
 AGENT_SOURCE = APP / "services/interior_design.py"
@@ -81,7 +90,9 @@ def _capabilities(*pairs: tuple[str, str | None]) -> RetailerCatalogCapabilities
     return RetailerCatalogCapabilities(
         capabilities=tuple(
             RetailerCatalogCapability(
-                commerce_category=category, commerce_subcategory=subcategory
+                commerce_category=category,
+                commerce_subcategory=subcategory,
+                active_product_count=STOCKED_WITH_RANGE,
             )
             for category, subcategory in pairs
         )

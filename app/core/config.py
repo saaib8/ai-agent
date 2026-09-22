@@ -99,6 +99,34 @@ class RedisSettings(BaseModel):
         return value
 
 
+class SessionSettings(BaseModel):
+    """Short-term runtime session lifetime and size.
+
+    Redis expiry here is a **technical** session lifetime and nothing else. It
+    is not customer memory, not a billing period and not a commercial
+    engagement window; conflating them would let an infrastructure timeout
+    redefine a product concept (CLAUDE.md 19).
+    """
+
+    ttl_s: int = Field(default=3600, ge=60, le=86_400)
+    """How long an idle session survives. Refreshed on every successful save,
+    so an active conversation does not expire mid-way through."""
+
+    max_history_messages: int = Field(default=20, ge=2, le=200)
+    """How many prior messages travel into the next turn.
+
+    Counted in messages rather than turns, and even by default so a bound can
+    always be met by whole user/assistant pairs. No summarisation in V1: a
+    model asked to compress history is a third reasoning step nobody approved,
+    and it would put invented wording into the context of every later turn.
+    """
+
+    operation_timeout_s: float = Field(default=2.0, gt=0, le=30)
+    """Ceiling on one session read or write. Distinct from the connection
+    timeouts on `RedisSettings`: those bound reaching Redis at all, this bounds
+    a single session operation once connected."""
+
+
 class ApiSettings(BaseModel):
     prefix: str = "/v1"
     cors_origins: tuple[str, ...] = ()
@@ -160,9 +188,7 @@ class DiscoverySettings(BaseModel):
     @model_validator(mode="after")
     def _default_within_maximum(self) -> DiscoverySettings:
         if self.default_candidate_limit > self.max_candidate_limit:
-            raise ValueError(
-                "discovery default_candidate_limit cannot exceed max_candidate_limit"
-            )
+            raise ValueError("discovery default_candidate_limit cannot exceed max_candidate_limit")
         return self
 
 
@@ -336,6 +362,7 @@ class Settings(BaseSettings):
     db: DatabaseSettings
     redis: RedisSettings
     api: ApiSettings = ApiSettings()
+    session: SessionSettings = SessionSettings()
     llm: LLMSettings
     customer_agent: CustomerAgentSettings = CustomerAgentSettings()
     interior_design: InteriorDesignSettings = InteriorDesignSettings()
@@ -372,8 +399,7 @@ class Settings(BaseSettings):
         """A target discovery could never return would relax forever."""
         if self.relaxation.target_candidates > self.discovery.max_candidate_limit:
             raise ValueError(
-                "relaxation target_candidates cannot exceed "
-                "discovery max_candidate_limit"
+                "relaxation target_candidates cannot exceed discovery max_candidate_limit"
             )
         return self
 
@@ -397,8 +423,7 @@ class Settings(BaseSettings):
             "llm_model": self.llm.model,
             "relaxation_target_candidates": self.relaxation.target_candidates,
             "comparison_max_products": self.customer_agent.comparison_max_products,
-            "presentation_configured": self.customer_agent.presentation_limit
-            is not None,
+            "presentation_configured": self.customer_agent.presentation_limit is not None,
             # Booleans, never the identifiers: an operator needs to know
             # whether a capability is configured, not which model serves it.
             "decision_configured": self.customer_agent.decision_model is not None,

@@ -87,7 +87,7 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "search_eligible_pool": lambda repo: repo.search_eligible_pool(
         ProductSearchRequest(commerce_category="seating"), CONTEXT
     ),
-    "supported_commerce_pairs": lambda repo: repo.supported_commerce_pairs(CONTEXT),
+    "supported_commerce_types": lambda repo: repo.supported_commerce_types(CONTEXT),
 }
 
 

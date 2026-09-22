@@ -18,11 +18,14 @@ from app.core.lifespan import AppResources, get_resources
 from app.integrations.llm import StructuredLLMClient
 from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
+from app.orchestration.graph import ChatGraphRunner
 from app.repositories.products import ProductRepository
+from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog_capability import CatalogCapabilityService
+from app.services.chat_runtime import ChatRuntime
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.customer_decision import CustomerAgentDecisionService
@@ -126,10 +129,10 @@ def product_discovery_service(
 
 
 ProductRepositoryDep = Annotated[ProductRepository, Depends(product_repository)]
-RetailerContextProviderDep = Annotated[
-    RetailerContextProvider, Depends(retailer_context_provider)
-]
+RetailerContextProviderDep = Annotated[RetailerContextProvider, Depends(retailer_context_provider)]
 HealthServiceDep = Annotated[HealthService, Depends(health_service)]
+
+
 def controlled_relaxation_service(
     session: SessionDep, app_resources: ResourcesDep
 ) -> ControlledRelaxationService:
@@ -156,9 +159,7 @@ def query_understanding_service(
     return QueryUnderstandingService(client, commerce_taxonomy, attributes, dimensions)
 
 
-ProductDiscoveryServiceDep = Annotated[
-    ProductDiscoveryService, Depends(product_discovery_service)
-]
+ProductDiscoveryServiceDep = Annotated[ProductDiscoveryService, Depends(product_discovery_service)]
 QueryUnderstandingServiceDep = Annotated[
     QueryUnderstandingService, Depends(query_understanding_service)
 ]
@@ -198,9 +199,7 @@ def product_search_pipeline(
     limit = settings.customer_agent.presentation_limit
     if limit is None:
         raise ConfigurationError(
-            detail=(
-                "customer_agent.presentation_limit must be set to use product search"
-            ),
+            detail=("customer_agent.presentation_limit must be set to use product search"),
             public_message="Product search is not configured.",
         )
     return ProductSearchPipeline(
@@ -228,9 +227,7 @@ def customer_agent_decision_service(
     client = app_resources.decision_llm
     if client is None:
         raise ConfigurationError(
-            detail=(
-                "customer_agent.decision_model must be set to use the customer agent"
-            ),
+            detail=("customer_agent.decision_model must be set to use the customer agent"),
             public_message="The customer agent is not configured.",
         )
     return CustomerAgentDecisionService(client)
@@ -239,6 +236,8 @@ def customer_agent_decision_service(
 CustomerAgentDecisionServiceDep = Annotated[
     CustomerAgentDecisionService, Depends(customer_agent_decision_service)
 ]
+
+
 def customer_turn_coordinator(
     session: SessionDep, app_resources: ResourcesDep
 ) -> CustomerTurnCoordinator:
@@ -276,9 +275,7 @@ def customer_turn_coordinator(
         SearchRefinementComposer(app_resources.attributes, app_resources.dimensions),
         resolver,
         RelativePriceResolver(resolver, repository),
-        ProductComparisonService(
-            repository, app_resources.dimensions, settings.customer_agent
-        ),
+        ProductComparisonService(repository, app_resources.dimensions, settings.customer_agent),
         pipeline,
         product_hydration_service(session),
         SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
@@ -324,9 +321,7 @@ def interior_design_agent(app_resources: ResourcesDep) -> InteriorDesignAgent:
     return agent
 
 
-InteriorDesignAgentDep = Annotated[
-    InteriorDesignAgent, Depends(interior_design_agent)
-]
+InteriorDesignAgentDep = Annotated[InteriorDesignAgent, Depends(interior_design_agent)]
 
 
 def catalog_capability_service(
@@ -357,9 +352,7 @@ def design_discovery_service(
     )
 
 
-DesignDiscoveryServiceDep = Annotated[
-    DesignDiscoveryService, Depends(design_discovery_service)
-]
+DesignDiscoveryServiceDep = Annotated[DesignDiscoveryService, Depends(design_discovery_service)]
 
 
 def customer_response_generator(
@@ -375,9 +368,7 @@ def customer_response_generator(
     client = app_resources.response_llm
     if client is None:
         raise ConfigurationError(
-            detail=(
-                "customer_agent.response_model must be set to generate responses"
-            ),
+            detail=("customer_agent.response_model must be set to generate responses"),
             public_message="The customer agent is not configured.",
         )
     return CustomerResponseGenerator(client)
@@ -386,15 +377,45 @@ def customer_response_generator(
 CustomerResponseGeneratorDep = Annotated[
     CustomerResponseGenerator, Depends(customer_response_generator)
 ]
-CustomerTurnCoordinatorDep = Annotated[
-    CustomerTurnCoordinator, Depends(customer_turn_coordinator)
-]
-SemanticRankingServiceDep = Annotated[
-    SemanticRankingService, Depends(semantic_ranking_service)
-]
-ProductSearchPipelineDep = Annotated[
-    ProductSearchPipeline, Depends(product_search_pipeline)
-]
-ProductHydrationServiceDep = Annotated[
-    ProductHydrationService, Depends(product_hydration_service)
-]
+CustomerTurnCoordinatorDep = Annotated[CustomerTurnCoordinator, Depends(customer_turn_coordinator)]
+SemanticRankingServiceDep = Annotated[SemanticRankingService, Depends(semantic_ranking_service)]
+ProductSearchPipelineDep = Annotated[ProductSearchPipeline, Depends(product_search_pipeline)]
+ProductHydrationServiceDep = Annotated[ProductHydrationService, Depends(product_hydration_service)]
+
+
+def session_store(app_resources: ResourcesDep) -> SessionStore:
+    """Session persistence over the process-wide Redis client.
+
+    The client is created once in lifespan; this wraps it with the validated
+    session policy. Nothing here opens a connection (CLAUDE.md 24).
+    """
+    return SessionStore(app_resources.redis.client, app_resources.settings.session)
+
+
+SessionStoreDep = Annotated[SessionStore, Depends(session_store)]
+
+
+def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntime:
+    """One chat exchange, or a refusal to build one.
+
+    Both reasoning capabilities are requested through their own factories, so
+    an unconfigured deployment is refused here with the reason that applies
+    rather than part-way through a turn.
+    """
+    return ChatRuntime(
+        customer_turn_coordinator(session, app_resources),
+        customer_response_generator(app_resources),
+        session_store(app_resources),
+        app_resources.settings.session,
+    )
+
+
+ChatRuntimeDep = Annotated[ChatRuntime, Depends(chat_runtime)]
+
+
+def chat_graph(app_resources: ResourcesDep) -> ChatGraphRunner:
+    """The process-wide compiled graph. Never rebuilt per request."""
+    return app_resources.chat_graph
+
+
+ChatGraphDep = Annotated[ChatGraphRunner, Depends(chat_graph)]

@@ -213,6 +213,17 @@ class RoomProjectView(BaseModel):
     is about to accept refers to anything. It names no product and no type.
     """
 
+    regular_seating_count: int | None = None
+    """How many people regularly use the room, when they have said.
+
+    Shown so the agent does not ask twice. History is trimmed; this is not, so
+    a customer who said "family of five" three turns ago is not asked again
+    when the room is finally planned (CLAUDE.md 10.1).
+
+    A requirement, not a quantity: it never tells the agent how many sofas to
+    put in the room.
+    """
+
     design_needs: tuple[DesignNeedReferenceView, ...] = ()
     """The roles the current plan calls for, in durable plan order.
 

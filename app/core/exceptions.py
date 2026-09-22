@@ -204,6 +204,48 @@ class RankingIntegrityError(ZoryError):
     code = "ranking_integrity_error"
 
 
+# ── Runtime session errors ──────────────────────────────────────────────────
+
+
+class SessionConflictError(ZoryError):
+    """Another turn changed this session first.
+
+    Raised in two situations that mean the same thing to a caller. A client may
+    send the revision its screen was rendered from, and that revision may
+    already be superseded; or two requests may load the same revision and race
+    to persist it. Either way the answer computed here describes a session that
+    no longer exists.
+
+    **The computed reply is discarded rather than returned.** It resolved "the
+    second one" and "keep that sofa" against a room that has since moved, so
+    returning it would apply the customer's words to products they were not
+    looking at. There is no automatic replay in V1: re-running would spend a
+    second set of provider calls on an intent the customer may no longer have,
+    so retrying is the client's decision (CLAUDE.md 21).
+    """
+
+    code = "session_conflict"
+    http_status = HTTPStatus.CONFLICT
+    public_message = "This conversation moved on while that was being prepared. Please try again."
+
+
+class SessionStateInvalidError(ZoryError):
+    """Stored session data is not something this version can read.
+
+    Malformed JSON, an envelope version nobody supports, or state that no
+    longer validates against the current agent-state schema. Distinct from an
+    absent key, which is simply a new conversation.
+
+    **Never silently reset.** Starting fresh would discard a room the customer
+    built and then reinterpret "the second one" against an empty session, which
+    is worse than saying the conversation cannot be continued (M13 7).
+    """
+
+    code = "session_state_invalid"
+    http_status = HTTPStatus.CONFLICT
+    public_message = "This conversation can no longer be continued. Please start a new one."
+
+
 # ── Startup / programming errors ────────────────────────────────────────────
 
 

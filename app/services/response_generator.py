@@ -59,6 +59,7 @@ from app.services.numeric_guard import build_allowance, bundle_counts
 from app.services.response_validation import validate_response
 from app.services.response_view import route_response, valid_grounding_refs
 from app.services.response_wording import (
+    BUNDLE_ACQUISITION_WORDING,
     BUNDLE_CHANGED_NOT_REFRESHED_WORDING,
     BUNDLE_KEPT_WORDING,
     BUNDLE_UNAVAILABLE_WORDING,
@@ -161,9 +162,7 @@ class CustomerResponseGenerator:
                         kind=ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION,
                         clarification_reason=route.required_clarification.reason,
                         reference_reason=route.required_clarification.reference_reason,
-                        relative_price_reason=(
-                            route.required_clarification.relative_price_reason
-                        ),
+                        relative_price_reason=(route.required_clarification.relative_price_reason),
                     ),
                     follow_up_allowed=False,
                 )
@@ -178,6 +177,12 @@ class CustomerResponseGenerator:
 
             case DeterministicResponseKind.BUNDLE_KEPT:
                 return _reply(BUNDLE_KEPT_WORDING), 0, False
+
+            case DeterministicResponseKind.BUNDLE_ACQUISITION_SET:
+                # No model: the customer stated this, and a sentence that
+                # re-described it could only get it wrong.
+                assert primary.acquisition is not None
+                return _reply(BUNDLE_ACQUISITION_WORDING[primary.acquisition]), 0, False
 
             case DeterministicResponseKind.BUNDLE_UNLOCKED:
                 return _reply(BUNDLE_UNLOCKED_WORDING), 0, False
@@ -211,9 +216,7 @@ class CustomerResponseGenerator:
         )
         refs = valid_grounding_refs(result.grounding)
 
-        response, calls = await self._call_and_validate(
-            request, allowance=allowance, refs=refs
-        )
+        response, calls = await self._call_and_validate(request, allowance=allowance, refs=refs)
         if response is None:
             return _reply(_fallback(view)), calls, True
         return response, calls, False
@@ -291,9 +294,7 @@ class CustomerResponseGenerator:
         self._log_violation(repeated, attempt=2)
         return None, 2
 
-    async def _parse(
-        self, instructions: str, request: ResponseInput
-    ) -> CustomerResponse | None:
+    async def _parse(self, instructions: str, request: ResponseInput) -> CustomerResponse | None:
         """One provider call, or None when it could not be made.
 
         The request travels as the user turn: it carries the customer's own
@@ -348,9 +349,7 @@ class CustomerResponseGenerator:
             detail=violation.detail,
         )
 
-    def _log(
-        self, route: ResponseRoute, calls: int, used_fallback: bool, started: float
-    ) -> None:
+    def _log(self, route: ResponseRoute, calls: int, used_fallback: bool, started: float) -> None:
         """Shape of the turn only: no message, no history, no prose, no facts."""
         primary = route.primary
         logger.info(

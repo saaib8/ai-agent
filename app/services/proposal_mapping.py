@@ -90,9 +90,7 @@ def _customer_state(
         return None, None, None
 
     customer = (
-        CustomerPreferenceUpdate(
-            semantic_preferences=_preferences(proposal.customer_preferences)
-        )
+        CustomerPreferenceUpdate(semantic_preferences=_preferences(proposal.customer_preferences))
         if proposal.customer_preferences is not None
         else None
     )
@@ -111,6 +109,8 @@ def _customer_state(
         or geometry is not None
         or proposal.clear_room_geometry
         or proposal.design_preferences is not None
+        or proposal.regular_seating_count is not None
+        or proposal.clear_regular_seating_count
     )
     room = (
         RoomProjectUpdate(
@@ -121,6 +121,8 @@ def _customer_state(
             budget=budget,
             clear_budget=proposal.clear_room_budget,
             design_preferences=_preferences(proposal.design_preferences),
+            regular_seating_count=proposal.regular_seating_count,
+            clear_regular_seating_count=proposal.clear_regular_seating_count,
         )
         if touches_room
         else None

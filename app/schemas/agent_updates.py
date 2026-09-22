@@ -60,7 +60,8 @@ class ReplaceItems[ItemT](BaseModel):
 
 
 PreferenceListUpdate = Annotated[
-    AddItems[SemanticPreference] | RemoveItems[SemanticPreference]
+    AddItems[SemanticPreference]
+    | RemoveItems[SemanticPreference]
     | ReplaceItems[SemanticPreference],
     Field(discriminator="op"),
 ]
@@ -102,9 +103,7 @@ class ClearSemanticIntent(BaseModel):
     op: Literal["clear"] = "clear"
 
 
-SemanticIntentUpdate = Annotated[
-    SetSemanticIntent | ClearSemanticIntent, Field(discriminator="op")
-]
+SemanticIntentUpdate = Annotated[SetSemanticIntent | ClearSemanticIntent, Field(discriminator="op")]
 
 
 # ── domain updates ──────────────────────────────────────────────────────────
@@ -403,6 +402,8 @@ class RoomProjectUpdate(BaseModel):
     budget: PriceConstraint | None = None
     clear_budget: bool = False
     design_preferences: PreferenceListUpdate | None = None
+    regular_seating_count: int | None = Field(default=None, ge=1, le=30)
+    clear_regular_seating_count: bool = False
     bundle_operations: tuple[BundleOperation, ...] = ()
     """Changes to the room bundle, applied in order.
 

@@ -95,9 +95,7 @@ def bundle_of(
             quantity=1,
             locked=product_id in held,
             acquisition=(
-                BundleAcquisition.ALREADY_OWNED
-                if product_id in owned
-                else BundleAcquisition.TO_BUY
+                BundleAcquisition.ALREADY_OWNED if product_id in owned else BundleAcquisition.TO_BUY
             ),
             relaxation_depth=None if product_id in held else 0,
         )
@@ -140,9 +138,7 @@ def cards(result: Any) -> list[tuple[str, int]]:
 
 
 async def test_a_room_is_planned_discovered_optimised_committed_and_shown() -> None:
-    plan = plan_of(
-        category_need("seating", "sofa"), category_need("lighting", "floor-lamp")
-    )
+    plan = plan_of(category_need("seating", "sofa"), category_need("lighting", "floor-lamp"))
     outcome = bundle_of((10, 0, "1000.00"), (11, 1, "1000.00"))
 
     result, parts = await run(
@@ -165,9 +161,7 @@ async def test_a_room_is_planned_discovered_optimised_committed_and_shown() -> N
     after = room(result.state)
     assert [n.commerce_category for n in after.design_needs] == ["seating", "lighting"]
     assert [i.product_id for i in after.bundle_items] == [10, 11]
-    assert {i.need_id for i in after.bundle_items} == {
-        n.need_id for n in after.design_needs
-    }
+    assert {i.need_id for i in after.bundle_items} == {n.need_id for n in after.design_needs}
 
     # and the customer is shown the room, priced from what the optimiser verified
     assert route_response(result).primary.kind is ResponseOutcomeKind.ROOM_BUNDLE
@@ -341,9 +335,7 @@ async def test_an_already_owned_piece_stays_in_the_room_without_a_reoptimisation
 
 async def test_a_budgeted_room_is_reoptimised_when_a_piece_becomes_owned() -> None:
     """What they own changes what the budget can still buy."""
-    state = a_room(
-        needs=(need(), need("decor", "carpet")), lines=(line(10),), budget="1500"
-    )
+    state = a_room(needs=(need(), need("decor", "carpet")), lines=(line(10),), budget="1500")
 
     result, parts = await run(
         refine(
@@ -396,9 +388,7 @@ async def test_removing_a_role_keeps_the_rest_of_the_plan() -> None:
 async def test_adding_a_use_revises_the_existing_plan_and_reissues_its_ids() -> None:
     state = a_room(needs=(need(),), lines=(line(10),))
     old_ids = {n.need_id for n in room(state).design_needs}
-    revised = plan_of(
-        category_need("seating", "sofa"), category_need("seating", "lounge-chair")
-    )
+    revised = plan_of(category_need("seating", "sofa"), category_need("seating", "lounge-chair"))
 
     result, parts = await run(
         CustomerAgentDecision(action=AgentAction.DESIGN_HANDOFF),
@@ -479,9 +469,7 @@ async def test_a_successful_recomposition_installs_the_whole_new_plan() -> None:
         outcome=bundle_of((10, 0, "1000.00"), (77, 1, "500.00")),
     )
 
-    assert parts["design"].requests[0].revision.excluded[0].commerce_subcategory == (
-        "dining-table"
-    )
+    assert parts["design"].requests[0].revision.excluded[0].commerce_subcategory == ("dining-table")
     after = room(result.state)
     assert [n.commerce_category for n in after.design_needs] == ["seating", "seating"]
 
@@ -496,9 +484,7 @@ async def test_a_preserved_piece_survives_into_the_recomposed_room() -> None:
     result, _ = await run(
         CustomerAgentDecision(
             action=AgentAction.DESIGN_HANDOFF,
-            design_revision=DesignRevisionIntent(
-                preserved_items=(BundleItemOrdinal(ordinal=1),)
-            ),
+            design_revision=DesignRevisionIntent(preserved_items=(BundleItemOrdinal(ordinal=1),)),
         ),
         state,
         available=(10, 77),
@@ -647,10 +633,9 @@ async def test_a_changed_room_that_could_not_be_refreshed_tells_both_truths() ->
         discovery_error=CatalogUnavailableError(),
     )
 
-    assert (
-        room(result.state).bundle_items[0].acquisition
-        is BundleAcquisition.ALREADY_OWNED
-    ), "what they told us about themselves survived"
+    assert room(result.state).bundle_items[0].acquisition is BundleAcquisition.ALREADY_OWNED, (
+        "what they told us about themselves survived"
+    )
     assert result.grounding.failure is not None, "and the refresh failure is reported"
     assert (
         route_response(result).primary.kind
@@ -670,9 +655,7 @@ def test_no_customer_wording_names_the_specialist_or_the_machinery() -> None:
     import app.services.response_wording as wording
 
     phrases = [
-        value
-        for name, value in vars(wording).items()
-        if name.isupper() and isinstance(value, str)
+        value for name, value in vars(wording).items() if name.isupper() and isinstance(value, str)
     ]
     assert phrases, "the wording module must actually expose wording"
 
@@ -703,9 +686,7 @@ async def test_a_response_failure_never_undoes_what_the_turn_did() -> None:
     """
     state = a_room(needs=(need(),), lines=(line(10),))
 
-    result, _ = await run(
-        refine(BundleInteractionOp.LOCK), state, available=(10,)
-    )
+    result, _ = await run(refine(BundleInteractionOp.LOCK), state, available=(10,))
 
     committed = room(result.state)
     assert committed.bundle_items[0].status is BundleItemStatus.LOCKED
@@ -715,3 +696,114 @@ async def test_a_response_failure_never_undoes_what_the_turn_did() -> None:
     assert route.primary.kind is DeterministicResponseKind.BUNDLE_KEPT
     assert not hasattr(route, "state")
     assert room(result.state).bundle_items[0].status is BundleItemStatus.LOCKED
+
+
+# ── what an acquisition change actually says (UAT closure) ──────────────────
+
+
+@pytest.mark.parametrize(
+    ("acquisition", "forbidden"),
+    [
+        (BundleAcquisition.ALREADY_OWNED, "already have"),
+        (BundleAcquisition.TO_BUY, "still need to buy"),
+    ],
+)
+async def test_an_acquisition_change_says_what_it_did(
+    acquisition: BundleAcquisition, forbidden: str
+) -> None:
+    """The UAT blocker: state was right and the sentence was the opposite.
+
+    "I already own the rug" left the line owned *and locked*, then answered
+    "that piece can change in later refinements" - because every operation
+    that was not a lock borrowed the unlock wording.
+    """
+    from app.schemas.response import DeterministicResponse, DeterministicResponseKind
+    from app.services.response_wording import BUNDLE_ACQUISITION_WORDING
+
+    state = a_room(needs=(need(),), lines=(line(10),))
+
+    result, _ = await run(
+        refine(BundleInteractionOp.SET_ACQUISITION, acquisition=acquisition),
+        state,
+        available=(10,),
+    )
+
+    # state
+    committed = room(result.state).bundle_items[0]
+    assert committed.acquisition is acquisition
+
+    # and the sentence the customer actually receives
+    primary = route_response(result).primary
+    assert isinstance(primary, DeterministicResponse)
+    # The bug was that this kind was `BUNDLE_UNLOCKED`; asserting the right one
+    # is the whole check, and mypy proves the negative is then redundant.
+    assert primary.kind is DeterministicResponseKind.BUNDLE_ACQUISITION_SET
+    assert primary.acquisition is acquisition
+    assert forbidden in BUNDLE_ACQUISITION_WORDING[acquisition]
+
+
+async def test_owning_a_piece_locks_it_and_never_says_it_may_change() -> None:
+    """Both halves of the same truth: the piece is fixed, and it is not for
+    sale to this customer. Neither sentence may offer a later replacement."""
+    from app.services.response_wording import (
+        BUNDLE_ACQUISITION_WORDING,
+        BUNDLE_UNLOCKED_WORDING,
+    )
+
+    state = a_room(needs=(need(),), lines=(line(10),))
+
+    result, _ = await run(
+        refine(
+            BundleInteractionOp.SET_ACQUISITION,
+            acquisition=BundleAcquisition.ALREADY_OWNED,
+        ),
+        state,
+        available=(10,),
+    )
+
+    assert room(result.state).bundle_items[0].status is BundleItemStatus.LOCKED
+    for wording in BUNDLE_ACQUISITION_WORDING.values():
+        assert wording != BUNDLE_UNLOCKED_WORDING
+        assert "can change" not in wording
+
+
+async def test_needing_to_buy_it_after_all_keeps_the_lock() -> None:
+    """Correcting who pays is not permission to replace the piece.
+
+    Release is a separate instruction; until they give it, the line stays.
+    """
+    state = a_room(needs=(need(),), lines=(line(10),))
+
+    owned, _ = await run(
+        refine(
+            BundleInteractionOp.SET_ACQUISITION,
+            acquisition=BundleAcquisition.ALREADY_OWNED,
+        ),
+        state,
+        available=(10,),
+    )
+    corrected, _ = await run(
+        refine(BundleInteractionOp.SET_ACQUISITION, acquisition=BundleAcquisition.TO_BUY),
+        owned.state,
+        available=(10,),
+    )
+
+    item = room(corrected.state).bundle_items[0]
+    assert item.acquisition is BundleAcquisition.TO_BUY
+    assert item.status is BundleItemStatus.LOCKED, "still theirs to release"
+
+
+def test_every_local_room_change_has_wording_of_its_own() -> None:
+    """No operation may borrow another's sentence.
+
+    The exhaustive match is what makes this true; this pins that a new
+    operation cannot be added without deciding what it says.
+    """
+    import inspect
+
+    from app.services import response_view
+
+    source = inspect.getsource(response_view._local_change)
+    for op in ("LOCK", "UNLOCK", "SET_ACQUISITION"):
+        assert f"BundleInteractionOp.{op}" in source, op
+    assert "raise AssertionError" in source, "an unhandled op must not fall through"

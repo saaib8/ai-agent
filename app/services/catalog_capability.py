@@ -51,15 +51,17 @@ class CatalogCapabilityService:
         is safe in the direction that matters - the planner proposes less, not
         something that cannot be bought.
         """
-        pairs = await self._repository.supported_commerce_pairs(context)
+        types = await self._repository.supported_commerce_types(context)
         approved: list[RetailerCatalogCapability] = []
         rejected: list[str] = []
 
-        for category, subcategory in pairs:
+        for category, subcategory, active_count in types:
             if self._is_approved(category, subcategory):
                 approved.append(
                     RetailerCatalogCapability(
-                        commerce_category=category, commerce_subcategory=subcategory
+                        commerce_category=category,
+                        commerce_subcategory=subcategory,
+                        active_product_count=active_count,
                     )
                 )
             else:

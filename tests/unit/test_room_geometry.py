@@ -36,9 +36,7 @@ def _m(role: RoomMeasurementRole, cm: str, label: str | None = None) -> RoomMeas
 def _proposal(
     *measurements: RoomMeasurementProposal,
 ) -> CustomerStateProposal:
-    return CustomerStateProposal(
-        room_geometry=RoomGeometryProposal(measurements=measurements)
-    )
+    return CustomerStateProposal(room_geometry=RoomGeometryProposal(measurements=measurements))
 
 
 # ── the contract ────────────────────────────────────────────────────────────
@@ -112,12 +110,8 @@ def test_the_contract_holds_no_geometry_engine() -> None:
 def test_five_by_four_metres_is_recorded_in_centimetres() -> None:
     mapped = map_proposals(
         _proposal(
-            RoomMeasurementProposal(
-                role=RoomMeasurementRole.ROOM_LENGTH, value="5", unit="m"
-            ),
-            RoomMeasurementProposal(
-                role=RoomMeasurementRole.ROOM_WIDTH, value="4", unit="m"
-            ),
+            RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5", unit="m"),
+            RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_WIDTH, value="4", unit="m"),
         ),
         None,
     )
@@ -143,9 +137,7 @@ def test_every_recognised_unit_converts_through_the_shared_vocabulary(
     comparable without converting twice."""
     mapped = map_proposals(
         _proposal(
-            RoomMeasurementProposal(
-                role=RoomMeasurementRole.USABLE_WALL, value=value, unit=unit
-            )
+            RoomMeasurementProposal(role=RoomMeasurementRole.USABLE_WALL, value=value, unit=unit)
         ),
         None,
     )
@@ -160,25 +152,19 @@ def test_a_measurement_with_no_unit_is_asked_about_not_assumed() -> None:
     """Five could be metres or feet, and recording the wrong room is worse than
     recording none."""
     mapped = map_proposals(
-        _proposal(
-            RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5")
-        ),
+        _proposal(RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5")),
         None,
     )
 
     assert mapped.update.room_project is None, "nothing recorded"
     assert mapped.clarification is not None
-    assert mapped.clarification.reason is (
-        BlockingClarificationReason.MISSING_DIMENSION_UNIT
-    )
+    assert mapped.clarification.reason is (BlockingClarificationReason.MISSING_DIMENSION_UNIT)
 
 
 def test_an_unrecognised_unit_is_also_refused() -> None:
     mapped = map_proposals(
         _proposal(
-            RoomMeasurementProposal(
-                role=RoomMeasurementRole.ROOM_LENGTH, value="5", unit="parsecs"
-            )
+            RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5", unit="parsecs")
         ),
         None,
     )
@@ -194,9 +180,7 @@ def test_other_room_facts_survive_a_missing_unit() -> None:
             room_type="living room",
             room_geometry=RoomGeometryProposal(
                 measurements=(
-                    RoomMeasurementProposal(
-                        role=RoomMeasurementRole.ROOM_LENGTH, value="5"
-                    ),
+                    RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5"),
                 )
             ),
         ),
@@ -239,9 +223,7 @@ def test_geometry_persists_so_a_later_turn_can_use_it() -> None:
         AgentStateV1(),
         AgentStateUpdate(
             room_project=RoomProjectUpdate(
-                geometry=RoomGeometry(
-                    measurements=(_m(RoomMeasurementRole.USABLE_WALL, "320"),)
-                )
+                geometry=RoomGeometry(measurements=(_m(RoomMeasurementRole.USABLE_WALL, "320"),))
             )
         ),
     )
@@ -250,17 +232,15 @@ def test_geometry_persists_so_a_later_turn_can_use_it() -> None:
 
     assert later.room_project is not None
     assert later.room_project.geometry is not None
-    assert later.room_project.geometry.one(
-        RoomMeasurementRole.USABLE_WALL
-    ).centimetres == Decimal("320")  # type: ignore[union-attr]
+    wall = later.room_project.geometry.one(RoomMeasurementRole.USABLE_WALL)
+    assert wall is not None
+    assert wall.centimetres == Decimal("320")
 
 
 def test_geometry_can_be_cleared() -> None:
     state = AgentStateV1(
         room_project=RoomProjectState(
-            geometry=RoomGeometry(
-                measurements=(_m(RoomMeasurementRole.ROOM_LENGTH, "500"),)
-            )
+            geometry=RoomGeometry(measurements=(_m(RoomMeasurementRole.ROOM_LENGTH, "500"),))
         )
     )
 
@@ -277,9 +257,7 @@ def test_an_update_that_omits_geometry_leaves_it_alone() -> None:
     state = AgentStateV1(
         room_project=RoomProjectState(
             room_type="bedroom",
-            geometry=RoomGeometry(
-                measurements=(_m(RoomMeasurementRole.ROOM_LENGTH, "500"),)
-            ),
+            geometry=RoomGeometry(measurements=(_m(RoomMeasurementRole.ROOM_LENGTH, "500"),)),
         )
     )
 
@@ -298,8 +276,8 @@ def test_geometry_survived_the_later_state_changes() -> None:
     a version marks a shape a reader could get wrong."""
     from app.schemas.agent_state import AGENT_STATE_VERSION
 
-    assert AGENT_STATE_VERSION == "agent_state_v3"
-    assert AgentStateV1().schema_version == "agent_state_v3"
+    assert AGENT_STATE_VERSION == "agent_state_v4"
+    assert AgentStateV1().schema_version == "agent_state_v4"
     # A state carrying only the fields geometry added still validates.
     assert AgentStateV1.model_validate({"room_project": {"room_type": "bedroom"}})
     assert "geometry" in RoomProjectState.model_fields

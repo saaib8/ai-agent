@@ -45,16 +45,21 @@ from app.schemas.query import (
     validate_dimension_correspondence,
 )
 
-AGENT_STATE_VERSION: Literal["agent_state_v3"] = "agent_state_v3"
+AGENT_STATE_VERSION: Literal["agent_state_v4"] = "agent_state_v4"
 """The state contract. Change the shape, change this.
 
-V2 replaced the room bundle's two id tuples with typed lines. V3 makes the
-furnishing plan itself durable and renames a bundle line's `need_index` to
-`need_id` - an execution-local position becoming a lasting identity. Both are
-shape changes a reader could get wrong, so the version moves with them.
+V2 replaced the room bundle's two id tuples with typed lines. V3 made the
+furnishing plan itself durable and renamed a bundle line's `need_index` to
+`need_id` - an execution-local position becoming a lasting identity. V4 adds
+the room's regular seating requirement, which is a durable customer fact a
+later turn must not have to re-ask for.
 
-Nothing persists state yet, so each bump costs no migration - which is exactly
-why they are worth taking now rather than when they would."""
+Each is a shape change a reader could get wrong, so the version moves with it.
+
+A session written by an older version is refused rather than coerced: the store
+validates through this contract, and an unreadable session is a controlled
+failure (M13 7). No migration is written, because the product has not launched
+and inventing one would be maintaining a path nobody has travelled."""
 
 MAX_SEMANTIC_INTENT_CHARS = 200
 """A quality phrase is a few words. This bound is the only thing standing
@@ -175,9 +180,7 @@ class ProductInteractionState(BaseModel):
             return self
         known = set(self.presented_product_ids) | set(self.selected_product_ids)
         if self.focused_product_id not in known:
-            raise ValueError(
-                "focused_product_id must be a presented or selected product"
-            )
+            raise ValueError("focused_product_id must be a presented or selected product")
         return self
 
 
@@ -268,9 +271,7 @@ class RoomDesignNeedState(BaseModel):
     quantity: int = Field(ge=1)
     seating_capacity: SeatingCapacityConstraint | None = None
 
-    semantic_intent: str | None = Field(
-        default=None, max_length=MAX_DESIGN_INTENT_CHARS
-    )
+    semantic_intent: str | None = Field(default=None, max_length=MAX_DESIGN_INTENT_CHARS)
     """This role's qualitative character, as the specialist described it.
 
     **A deliberate amendment to M12C.1**, which kept this transient. The rule
@@ -313,9 +314,7 @@ class RoomDesignNeedState(BaseModel):
         if len(value) != len(set(value)):
             raise ValueError("a product is rejected at most once for a need")
         if len(value) > MAX_EXCLUDED_PRODUCT_IDS:
-            raise ValueError(
-                f"a need may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products"
-            )
+            raise ValueError(f"a need may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products")
         return value
 
 
@@ -349,6 +348,25 @@ class RoomProjectState(BaseModel):
 
     budget: PriceConstraint | None = None
     design_preferences: tuple[SemanticPreference, ...] = ()
+
+    regular_seating_count: int | None = Field(default=None, ge=1, le=30)
+    """How many people regularly use this room, when the customer has said.
+
+    A **room requirement**, not a product quantity and not a shopping list. It
+    records that five people use the living room; it decides nothing about what
+    is bought. Whether that becomes a sectional, a sofa and two chairs, or two
+    sofas is the design specialist's reasoning against this retailer's catalog
+    (CLAUDE.md 10.1).
+
+    Durable because it must survive the turns between being said and being
+    used: a customer who says "family of five" while giving a budget must not
+    be asked again two turns later when the room is finally planned. History
+    alone cannot carry it - history is trimmed.
+
+    Only from what they actually said. Never inferred from a room type, a
+    product's seating capacity, how many pieces are in the bundle, or anything
+    else about their behaviour.
+    """
 
     design_needs: tuple[RoomDesignNeedState, ...] = ()
     """The furnishing plan currently being worked on, in the specialist's own
@@ -396,9 +414,7 @@ class RoomProjectState(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("a design need id identifies exactly one need")
         if ids and self.next_design_need_id <= max(ids):
-            raise ValueError(
-                "next_design_need_id must exceed every need id already issued"
-            )
+            raise ValueError("next_design_need_id must exceed every need id already issued")
         return self
 
     @model_validator(mode="after")
@@ -421,9 +437,7 @@ class RoomProjectState(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("a bundle line id identifies exactly one line")
         if ids and self.next_bundle_line_id <= max(ids):
-            raise ValueError(
-                "next_bundle_line_id must exceed every line id already issued"
-            )
+            raise ValueError("next_bundle_line_id must exceed every line id already issued")
         return self
 
     @property
@@ -475,7 +489,7 @@ class AgentStateV1(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal["agent_state_v3"] = AGENT_STATE_VERSION
+    schema_version: Literal["agent_state_v4"] = AGENT_STATE_VERSION
     customer_preferences: CustomerPreferenceState = CustomerPreferenceState()
     active_search: ActiveSearchState | None = None
     product_interaction: ProductInteractionState = ProductInteractionState()
@@ -493,15 +507,9 @@ class AgentStateV1(BaseModel):
         if revision is None:
             return self
         if self.active_search is None:
-            raise ValueError(
-                "presented_search_revision requires an active_search"
-            )
+            raise ValueError("presented_search_revision requires an active_search")
         if revision != self.active_search.revision:
-            raise ValueError(
-                "presented_search_revision must equal active_search.revision"
-            )
+            raise ValueError("presented_search_revision must equal active_search.revision")
         if revision < 1:
-            raise ValueError(
-                "a presented result set implies a committed search revision"
-            )
+            raise ValueError("a presented result set implies a committed search revision")
         return self

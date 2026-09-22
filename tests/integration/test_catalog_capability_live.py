@@ -145,3 +145,48 @@ async def test_a_store_with_nothing_supports_nothing(
     capabilities = await _capabilities(database, RetailerContext(store_id=999))
 
     assert capabilities.capabilities == ()
+
+
+async def test_depth_is_counted_from_the_live_catalog(
+    database: Database, catalog: None
+) -> None:
+    """How many of each type, against real SQL.
+
+    The fixture gives store A two sofas and one console, so the two entries
+    differ - which is the whole point of carrying a count. A planner asking
+    "what would go with this?" can now tell a type the retailer can show a
+    range of from one it has a single example of (CLAUDE.md 9).
+    """
+    capabilities = await _capabilities(database, CONTEXT_A)
+
+    depths = {
+        (entry.commerce_category, entry.commerce_subcategory): entry.active_product_count
+        for entry in capabilities.capabilities
+    }
+    assert depths[("seating", "sofa")] == 2
+    assert depths[("tables", "console")] == 1
+    assert depths[("lighting", "floor-lamp")] == 1
+
+
+async def test_depth_counts_only_what_a_customer_could_buy(
+    database: Database, catalog: None
+) -> None:
+    """Scoped and active, exactly like the capability it qualifies.
+
+    A count drawn from a wider set than the capability would be worse than no
+    count: it would report depth the retailer cannot actually supply, which is
+    the failure this field exists to prevent rather than cause.
+    """
+    a = await _capabilities(database, CONTEXT_A)
+    b = await _capabilities(database, CONTEXT_B)
+
+    assert all(entry.active_product_count >= 1 for entry in a.capabilities)
+    # The inactive nightstand is absent rather than counted as a thin type.
+    assert not any(
+        entry.commerce_subcategory == "nightstand" for entry in a.capabilities
+    )
+    # Store B's single shelf is its own, and store A's stock never inflates it.
+    assert [
+        (entry.commerce_subcategory, entry.active_product_count)
+        for entry in b.capabilities
+    ] == [("shelve", 1)]

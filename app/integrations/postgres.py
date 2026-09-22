@@ -34,9 +34,7 @@ class Database:
 
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
-        self._sessionmaker = async_sessionmaker(
-            engine, expire_on_commit=False, class_=AsyncSession
-        )
+        self._sessionmaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     @classmethod
     def create(cls, settings: DatabaseSettings) -> Database:
@@ -73,6 +71,15 @@ class Database:
         async with self._sessionmaker() as session:
             try:
                 yield session
+            except OSError as exc:
+                # asyncpg raises a bare ConnectionRefusedError, TimeoutError or
+                # gaierror when the server is unreachable, and SQLAlchemy does
+                # not wrap those at connect time. Untranslated they escape as
+                # unexpected errors and a transient outage answers 500 rather
+                # than the retryable 503 the Redis path already gives
+                # (CLAUDE.md 21).
+                logger.warning("postgres_unreachable", error_type=type(exc).__name__)
+                raise CatalogUnavailableError(dependency="postgres") from exc
             finally:
                 await session.rollback()
 
@@ -80,7 +87,12 @@ class Database:
         try:
             async with self._engine.connect() as connection:
                 await connection.execute(text("SELECT 1"))
-        except SQLAlchemyError as exc:
+        except (SQLAlchemyError, OSError) as exc:
+            # `OSError` too, for the same reason the session translates it: a
+            # refused connection is exactly what this probe exists to report,
+            # and catching only SQLAlchemy's own errors made the probe *crash*
+            # on the one condition it is meant to detect - so /health answered
+            # 500 instead of naming the dependency that was down.
             logger.warning("postgres_health_check_failed", error_type=type(exc).__name__)
             return False
         return True

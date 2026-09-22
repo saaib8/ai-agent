@@ -65,9 +65,7 @@ def spec(
 
 
 def update(*operations: object) -> AgentStateUpdate:
-    return AgentStateUpdate(
-        room_project=RoomProjectUpdate(bundle_operations=tuple(operations))
-    )
+    return AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=tuple(operations)))
 
 
 def committed(*specs: BundleLineSpec) -> AgentStateV1:
@@ -83,8 +81,8 @@ def room(state: AgentStateV1) -> RoomProjectState:
 
 
 def test_the_state_contract_is_v3() -> None:
-    assert AGENT_STATE_VERSION == "agent_state_v3"
-    assert AgentStateV1().schema_version == "agent_state_v3"
+    assert AGENT_STATE_VERSION == "agent_state_v4"
+    assert AgentStateV1().schema_version == "agent_state_v4"
 
 
 def test_a_v1_payload_is_refused_rather_than_partially_read() -> None:
@@ -94,9 +92,7 @@ def test_a_v1_payload_is_refused_rather_than_partially_read() -> None:
         AgentStateV1.model_validate({"schema_version": "agent_state_v1"})
 
     with pytest.raises(ValidationError):
-        RoomProjectState.model_validate(
-            {"bundle_product_ids": [1, 2], "locked_product_ids": [1]}
-        )
+        RoomProjectState.model_validate({"bundle_product_ids": [1, 2], "locked_product_ids": [1]})
 
 
 def test_no_migration_machinery_was_written() -> None:
@@ -125,9 +121,7 @@ def test_a_line_carries_what_an_id_could_not() -> None:
 def test_acquisition_is_required_on_a_line() -> None:
     """A lock proves preservation and says nothing about purchase."""
     with pytest.raises(ValidationError):
-        BundleItemState(
-            line_id=1, product_id=1, quantity=1, status=BundleItemStatus.SUGGESTED
-        )  # type: ignore[call-arg]
+        BundleItemState(line_id=1, product_id=1, quantity=1, status=BundleItemStatus.SUGGESTED)  # type: ignore[call-arg]
 
 
 def test_acquisition_is_required_on_a_spec_too() -> None:
@@ -181,9 +175,7 @@ def test_a_removed_id_is_never_handed_out_again() -> None:
     removed line would then resolve to a different product."""
     state = committed(spec(10), spec(11), spec(12))
     state = apply_update(state, update(RemoveBundleLine(line_id=3)))
-    state = apply_update(
-        state, update(AddBundleLine(line=spec(13)))
-    )
+    state = apply_update(state, update(AddBundleLine(line=spec(13))))
 
     assert [i.line_id for i in room(state).bundle_items] == [1, 2, 4]
     assert room(state).next_bundle_line_id == 5
@@ -222,9 +214,7 @@ def _revision(state: AgentStateV1) -> int:
         ("quantity", SetBundleLineQuantity(line_id=1, quantity=4)),
         (
             "acquisition",
-            SetBundleLineAcquisition(
-                line_id=1, acquisition=BundleAcquisition.ALREADY_OWNED
-            ),
+            SetBundleLineAcquisition(line_id=1, acquisition=BundleAcquisition.ALREADY_OWNED),
         ),
         ("lock", SetBundleLineStatus(line_id=1, status=BundleItemStatus.LOCKED)),
     ],
@@ -253,9 +243,7 @@ def test_an_atomic_commit_advances_it_exactly_once() -> None:
     """Whatever it replaces: three lines out and three in is one change."""
     state = committed(spec(10), spec(11), spec(12))
 
-    after = apply_update(
-        state, update(ReplaceBundle(added=(spec(20), spec(21), spec(22))))
-    )
+    after = apply_update(state, update(ReplaceBundle(added=(spec(20), spec(21), spec(22)))))
 
     assert _revision(after) == _revision(state) + 1
 

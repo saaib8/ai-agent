@@ -62,14 +62,10 @@ class FakeRepository:
         self.rows = rows
         self.calls: list[tuple[list[int], RetailerContext]] = []
 
-    async def get_by_ids(
-        self, product_ids: Any, context: RetailerContext
-    ) -> list[ProductRow]:
+    async def get_by_ids(self, product_ids: Any, context: RetailerContext) -> list[ProductRow]:
         self.calls.append((list(product_ids), context))
         wanted = set(product_ids)
-        return [
-            r for r in self.rows if r.id in wanted and r.store_id == context.store_id
-        ]
+        return [r for r in self.rows if r.id in wanted and r.store_id == context.store_id]
 
 
 def _service(rows: list[ProductRow]) -> tuple[ProductHydrationService, FakeRepository]:
@@ -195,31 +191,23 @@ def _grounding(count: int) -> Any:
 
 
 def test_the_result_pairs_ids_with_grounded_products() -> None:
-    result = ProductSearchExecutionResult(
-        presented_product_ids=(11, 22), grounding=_grounding(2)
-    )
+    result = ProductSearchExecutionResult(presented_product_ids=(11, 22), grounding=_grounding(2))
 
     assert len(result.presented_product_ids) == len(result.grounding.products)
 
 
 def test_a_count_mismatch_is_refused() -> None:
     with pytest.raises(ValidationError, match="every presented product"):
-        ProductSearchExecutionResult(
-            presented_product_ids=(11,), grounding=_grounding(2)
-        )
+        ProductSearchExecutionResult(presented_product_ids=(11,), grounding=_grounding(2))
 
 
 def test_a_repeated_id_is_refused() -> None:
     with pytest.raises(ValidationError, match="at most once"):
-        ProductSearchExecutionResult(
-            presented_product_ids=(11, 11), grounding=_grounding(2)
-        )
+        ProductSearchExecutionResult(presented_product_ids=(11, 11), grounding=_grounding(2))
 
 
 def test_the_grounding_still_carries_no_product_id() -> None:
-    result = ProductSearchExecutionResult(
-        presented_product_ids=(11, 22), grounding=_grounding(2)
-    )
+    result = ProductSearchExecutionResult(presented_product_ids=(11, 22), grounding=_grounding(2))
 
     assert "product_id" not in GroundedProduct.model_fields
     assert "11" not in result.grounding.model_dump_json()
@@ -336,9 +324,7 @@ def test_nothing_builds_the_pipeline_at_startup() -> None:
 
 
 def test_settings_is_declared_the_way_the_project_declares_optional_values() -> None:
-    annotation = str(
-        CustomerAgentSettings.model_fields["presentation_limit"].annotation
-    )
+    annotation = str(CustomerAgentSettings.model_fields["presentation_limit"].annotation)
 
     assert annotation == "int | None"
     assert Settings.model_fields["customer_agent"].annotation is CustomerAgentSettings
@@ -353,21 +339,29 @@ def test_the_phases_capabilities_exist() -> None:
     assert "presentation_limit" in (APP / "core/config.py").read_text()
 
 
-@pytest.mark.parametrize(
-    "symbol",
-    [
-                    "LangGraph",
-    ],
-)
-def test_no_later_phase_capability_exists(symbol: str) -> None:
-    for module in APP.rglob("*.py"):
-        assert symbol not in module.read_text(), f"{module.name} defines {symbol}"
+def test_orchestration_stays_out_of_the_search_pipeline() -> None:
+    """M13 introduced LangGraph, so "no LangGraph anywhere" expired.
+
+    What replaced it is narrower and outlives the milestone: the graph
+    sequences phases, and no deterministic service may import it. A pipeline
+    that knew about orchestration would be a pipeline that could branch on it.
+    """
+    orchestrated = {
+        module.relative_to(APP).as_posix()
+        for module in APP.rglob("*.py")
+        if "langgraph" in module.read_text().lower()
+    }
+
+    assert orchestrated == {"orchestration/graph.py", "orchestration/state.py"}
 
 
-def test_no_agent_module_or_route_exists() -> None:
-    """The customer decision prompt is M11B-4's and now exists; these do not."""
+def test_no_agent_module_exists() -> None:
+    """Reasoning lives in services, not in an `agents` package.
+
+    The public route this once also forbade arrived with M13; `test_m13_
+    boundary.py` pins what must stay true of it.
+    """
     assert not (APP / "agents").exists()
-    assert "chat.py" not in {p.name for p in (APP / "api/routes").glob("*.py")}
 
 
 def test_the_pipeline_owns_no_policy() -> None:

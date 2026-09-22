@@ -55,6 +55,24 @@ class RetailerCatalogCapability(BaseModel):
     commerce_category: str = Field(min_length=1)
     commerce_subcategory: str | None = Field(default=None, min_length=1)
 
+    active_product_count: int = Field(ge=1)
+    """How many active products this retailer has of this type.
+
+    At least one by definition: the type is a capability *because* the catalog
+    holds something of it, so a zero here would be a contradiction rather than
+    an empty shelf.
+
+    It exists because "supported" and "worth proposing" are not the same
+    question. A retailer with a single lounge chair supports lounge chairs and
+    is still the wrong answer to "what would go with this sofa?" - the customer
+    gets one card and no choice, and if that one row is unsuitable they get
+    nothing at all. A planner cannot tell 1 from 41 without being told
+    (CLAUDE.md 9).
+
+    Depth, never inventory: a count is not a product, a price or a stock level,
+    and nothing downstream can turn it back into one.
+    """
+
 
 class RetailerCatalogCapabilities(BaseModel):
     """What the active retailer can supply, for whole-room planning.
@@ -62,7 +80,9 @@ class RetailerCatalogCapabilities(BaseModel):
     Application-supplied context, parallel to :class:`RetailerContext`: derived
     from live catalog data by a deterministic service, never proposed by an
     agent and never part of agent state. It carries capability, not inventory -
-    no products, no prices, no counts.
+    no products and no prices. It does carry how many active products back each
+    type, which is what makes "this retailer sells lounge chairs" usable rather
+    than merely true.
 
     Taxonomy validity is checked by :meth:`validate_against` rather than at
     construction, matching how :class:`~app.schemas.discovery.ProductSearchRequest`

@@ -73,11 +73,18 @@ from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
 
+STOCKED_WITH_RANGE = 12
+"""A capability depth that is not the thing under test.
+
+Every capability carries how many products back it. These suites are about
+which *types* a plan may use, so they give each one an unremarkable range -
+enough that nothing is refused for being thin, and a number no assertion here
+reads.
+"""
+
 CONTEXT = RetailerContext(store_id=50)
 SOFAS = ProductSearchRequest(commerce_category="seating", commerce_subcategory="sofa")
-RECLINERS = ProductSearchRequest(
-    commerce_category="seating", commerce_subcategory="recliner"
-)
+RECLINERS = ProductSearchRequest(commerce_category="seating", commerce_subcategory="recliner")
 PROSE = "Here are a few that should suit."
 
 
@@ -139,7 +146,9 @@ class FakePipeline:
                 outcome=SearchOutcome.RESULTS if self.ids else SearchOutcome.ZERO_RESULTS,
                 products=tuple(
                     to_grounded_product(
-                        _candidate(p), grounding_ref=n, presented_ordinal=n,
+                        _candidate(p),
+                        grounding_ref=n,
+                        presented_ordinal=n,
                         relaxation_depth=0,
                     )
                     for n, p in enumerate(self.ids, start=1)
@@ -148,6 +157,7 @@ class FakePipeline:
                 ranked_count=len(self.ids),
                 selected_count=len(self.ids),
                 presented_count=len(self.ids),
+                exact_candidate_count=len(self.ids),
                 stop_reason=StopReason.EXACT_SUFFICIENT,
             ),
         )
@@ -182,7 +192,6 @@ class _Unusable:
         raise AssertionError(f"this branch must not call {name}")
 
 
-
 class FakeCapabilities:
     """The retailer's stocked types, or an unreachable catalog."""
 
@@ -207,7 +216,9 @@ class FakeCapabilities:
         return RetailerCatalogCapabilities(
             capabilities=tuple(
                 RetailerCatalogCapability(
-                    commerce_category=category, commerce_subcategory=subcategory
+                    commerce_category=category,
+                    commerce_subcategory=subcategory,
+                    active_product_count=STOCKED_WITH_RANGE,
                 )
                 for category, subcategory in self.pairs
             )
@@ -258,9 +269,13 @@ class FakeOptimizer:
             TotalUnavailableReason,
         )
 
-        self.outcome = outcome if outcome is not None else RoomBundle(
-            status=BundleStatus.COMPLETE,
-            total_unavailable=TotalUnavailableReason.NO_PRICED_LINES,
+        self.outcome = (
+            outcome
+            if outcome is not None
+            else RoomBundle(
+                status=BundleStatus.COMPLETE,
+                total_unavailable=TotalUnavailableReason.NO_PRICED_LINES,
+            )
         )
         self.requests: list[Any] = []
 
@@ -283,7 +298,8 @@ def _coordinator(
         FakeDecisions(decision),  # type: ignore[arg-type]
         FakeM7(interpretation),  # type: ignore[arg-type]
         SearchRefinementComposer(attributes, dimensions),
-        references or FakeReferences(  # type: ignore[arg-type]
+        references
+        or FakeReferences(  # type: ignore[arg-type]
             ResolvedProductReference(product_id=1)
         ),
         _Unusable(),  # type: ignore[arg-type]
@@ -321,9 +337,7 @@ async def _run(
     replies: tuple[CustomerResponse | Exception, ...] = (),
 ) -> tuple[Any, CustomerResponse, FakeResponseClient]:
     """One turn, coordinated for real and then worded for real."""
-    turn = CustomerTurnInput(
-        message=message, state=state or _state(), context=CONTEXT
-    )
+    turn = CustomerTurnInput(message=message, state=state or _state(), context=CONTEXT)
     coordinator = _coordinator(
         decision,
         interpretation=interpretation,
@@ -421,9 +435,7 @@ async def test_a_deterministic_clarification_is_worded_by_the_model() -> None:
     question = CustomerResponse(message="Which kind of product did you mean?")
     result, response, client = await _run(
         CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=ClarificationRequired(
-            reason=ClarificationReason.NO_COMMERCE_CATEGORY
-        ),
+        interpretation=ClarificationRequired(reason=ClarificationReason.NO_COMMERCE_CATEGORY),
         replies=(question,),
     )
 
@@ -467,9 +479,7 @@ async def test_a_successful_search_beside_a_required_clarification() -> None:
     result, _, client = await _run(
         CustomerAgentDecision(
             action=AgentAction.SEARCH,
-            state_proposal=CustomerStateProposal(
-                room_budget=PriceProposal(max_amount="12000")
-            ),
+            state_proposal=CustomerStateProposal(room_budget=PriceProposal(max_amount="12000")),
         ),
         interpretation=_resolved(),
         pipeline=FakePipeline(ids=(10, 11)),

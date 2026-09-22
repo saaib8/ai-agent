@@ -80,9 +80,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
 # ── the application-owned result commit ─────────────────────────────────────
 
 
-def commit_search_results(
-    state: AgentStateV1, product_ids: tuple[int, ...]
-) -> AgentStateV1:
+def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> AgentStateV1:
     """Record the result set discovery actually returned, in its order.
 
     **Application-owned.** Which products were presented is a fact about an
@@ -96,9 +94,7 @@ def commit_search_results(
     """
     search = state.active_search
     if search is None:
-        raise InvalidRequestError(
-            reason="cannot commit search results without an active search"
-        )
+        raise InvalidRequestError(reason="cannot commit search results without an active search")
     revision = search.revision + 1
     interaction = state.product_interaction
     return AgentStateV1(
@@ -132,9 +128,7 @@ def _customer(
     if update is None:
         return current
     return CustomerPreferenceState(
-        semantic_preferences=apply_items(
-            current.semantic_preferences, update.semantic_preferences
-        )
+        semantic_preferences=apply_items(current.semantic_preferences, update.semantic_preferences)
     )
 
 
@@ -145,9 +139,7 @@ def _search(
         return current
     if current is None:
         if update.request is None:
-            raise InvalidRequestError(
-                reason="a first active search needs a request"
-            )
+            raise InvalidRequestError(reason="a first active search needs a request")
         return ActiveSearchState(
             request=update.request,
             semantics=update.semantics or ConstraintSemantics(),
@@ -157,12 +149,8 @@ def _search(
         )
     return ActiveSearchState(
         request=update.request if update.request is not None else current.request,
-        semantics=(
-            update.semantics if update.semantics is not None else current.semantics
-        ),
-        semantic_preferences=apply_items(
-            current.semantic_preferences, update.semantic_preferences
-        ),
+        semantics=(update.semantics if update.semantics is not None else current.semantics),
+        semantic_preferences=apply_items(current.semantic_preferences, update.semantic_preferences),
         semantic_intent=_intent(current.semantic_intent, update.semantic_intent),
         # Carried, never taken from the update: criteria changing is not a
         # search executing.
@@ -195,9 +183,7 @@ def _interaction(
         presented_product_ids=current.presented_product_ids,
         presented_search_revision=current.presented_search_revision,
         focused_product_id=focus,
-        selected_product_ids=apply_items(
-            current.selected_product_ids, update.selected_product_ids
-        ),
+        selected_product_ids=apply_items(current.selected_product_ids, update.selected_product_ids),
     )
 
 
@@ -211,16 +197,17 @@ def _room(
         room_type=None if update.clear_room_type else (update.room_type or base.room_type),
         geometry=None if update.clear_geometry else (update.geometry or base.geometry),
         budget=None if update.clear_budget else (update.budget or base.budget),
-        design_preferences=apply_items(
-            base.design_preferences, update.design_preferences
+        regular_seating_count=(
+            None
+            if update.clear_regular_seating_count
+            else (update.regular_seating_count or base.regular_seating_count)
         ),
+        design_preferences=apply_items(base.design_preferences, update.design_preferences),
         **_bundle(base, update.bundle_operations),
     )
 
 
-def _bundle(
-    base: RoomProjectState, operations: Sequence[BundleOperation]
-) -> dict[str, object]:
+def _bundle(base: RoomProjectState, operations: Sequence[BundleOperation]) -> dict[str, object]:
     """The room bundle after this turn's operations, and what that cost.
 
     Three fields move together or not at all, which is why they are produced
@@ -292,9 +279,7 @@ def _refined(
     changes = {entry.need_id: entry for entry in operation.refinements}
     unknown = (removed | set(changes)) - {need.need_id for need in needs}
     if unknown:
-        raise InvalidRequestError(
-            reason="a refinement names a design need the plan does not have"
-        )
+        raise InvalidRequestError(reason="a refinement names a design need the plan does not have")
 
     kept_needs = [
         _refined_need(need, changes.get(need.need_id))
@@ -308,13 +293,9 @@ def _refined(
     for entry in operation.preserved:
         existing = by_id.get(entry.line_id)
         if existing is None:
-            raise InvalidRequestError(
-                reason="a preserved bundle line must already exist"
-            )
+            raise InvalidRequestError(reason="a preserved bundle line must already exist")
         if existing.status is not BundleItemStatus.LOCKED:
-            raise InvalidRequestError(
-                reason="only a locked bundle line may be preserved"
-            )
+            raise InvalidRequestError(reason="only a locked bundle line may be preserved")
         if existing.need_id is not None and existing.need_id not in surviving:
             # Its role is gone, so the line goes with it: an explicit removal
             # supersedes an earlier instruction to keep the piece filling it.
@@ -387,13 +368,9 @@ def _replanned(
     for entry in operation.preserved:
         existing = by_id.get(entry.line_id)
         if existing is None:
-            raise InvalidRequestError(
-                reason="a preserved bundle line must already exist"
-            )
+            raise InvalidRequestError(reason="a preserved bundle line must already exist")
         if existing.status is not BundleItemStatus.LOCKED:
-            raise InvalidRequestError(
-                reason="only a locked bundle line may be preserved"
-            )
+            raise InvalidRequestError(reason="only a locked bundle line may be preserved")
         kept.append(existing.model_copy(update={"need_id": None}))
 
     created: list[BundleItemState] = []
@@ -409,9 +386,7 @@ def _replanned(
                 quantity=spec.quantity,
                 acquisition=spec.acquisition,
                 status=spec.status,
-                need_id=(
-                    None if spec.need_index is None else needs[spec.need_index].need_id
-                ),
+                need_id=(None if spec.need_index is None else needs[spec.need_index].need_id),
             )
         )
     return needs, [*kept, *created], next_need_id, next_line_id + len(operation.added)
@@ -439,22 +414,16 @@ def _replaced(
     for entry in operation.preserved:
         existing = by_id.get(entry.line_id)
         if existing is None:
-            raise InvalidRequestError(
-                reason="a preserved bundle line must already exist"
-            )
+            raise InvalidRequestError(reason="a preserved bundle line must already exist")
         if existing.status is not BundleItemStatus.LOCKED:
-            raise InvalidRequestError(
-                reason="only a locked bundle line may be preserved"
-            )
+            raise InvalidRequestError(reason="only a locked bundle line may be preserved")
         kept.append(existing)
 
     created, next_id = _allocate(operation.added, next_id)
     return [*kept, *created], next_id
 
 
-def _allocate(
-    specs: Sequence[BundleLineSpec], next_id: int
-) -> tuple[list[BundleItemState], int]:
+def _allocate(specs: Sequence[BundleLineSpec], next_id: int) -> tuple[list[BundleItemState], int]:
     """Specs become lines, each taking the next id in turn."""
     created = [
         BundleItemState(

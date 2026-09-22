@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_exception_handlers
 from app.api.middleware import TraceContextMiddleware
+from app.api.routes.chat import router as chat_router
 from app.api.routes.health import router as health_router
 from app.core.config import Settings, get_settings
 from app.core.lifespan import lifespan
@@ -37,9 +38,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Added first so CORS (added last) wraps it, and so error responses still
     # carry the trace header.
-    app.add_middleware(
-        TraceContextMiddleware, header=settings.observability.trace_header
-    )
+    app.add_middleware(TraceContextMiddleware, header=settings.observability.trace_header)
     if settings.api.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -54,4 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Health sits outside the versioned prefix so probes are stable across
     # API versions (CLAUDE.md 25).
     app.include_router(health_router)
+    # Everything a customer touches is versioned, so a later contract change is
+    # a new prefix rather than a silent change under the old one.
+    app.include_router(chat_router, prefix=settings.api.prefix)
     return app

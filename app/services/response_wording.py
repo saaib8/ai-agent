@@ -17,6 +17,7 @@ and a format string with a slot is a slot something can be interpolated into.
 
 from __future__ import annotations
 
+from app.schemas.acquisition import BundleAcquisition
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason
 from app.schemas.grounding import TurnFailureCode
 from app.schemas.response import (
@@ -29,18 +30,12 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
     TurnFailureCode.SEARCH_UNAVAILABLE: (
         "I wasn't able to run that search just now. Please try again in a moment."
     ),
-    TurnFailureCode.PRODUCT_UNAVAILABLE: (
-        "I wasn't able to pull up that product just now."
-    ),
+    TurnFailureCode.PRODUCT_UNAVAILABLE: ("I wasn't able to pull up that product just now."),
     TurnFailureCode.COMPARISON_TARGET_UNAVAILABLE: (
         "I wasn't able to put those side by side just now."
     ),
-    TurnFailureCode.REFERENCE_UNRESOLVED: (
-        "I wasn't able to work out which product you meant."
-    ),
-    TurnFailureCode.RESPONSE_UNAVAILABLE: (
-        "I wasn't able to put a reply together just now."
-    ),
+    TurnFailureCode.REFERENCE_UNRESOLVED: ("I wasn't able to work out which product you meant."),
+    TurnFailureCode.RESPONSE_UNAVAILABLE: ("I wasn't able to put a reply together just now."),
     TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE: (
         "One of the pieces you asked me to keep isn't available any more, so I "
         "wasn't able to plan the room around it."
@@ -58,8 +53,7 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "room, so I've left your current choice as it is."
     ),
     TurnFailureCode.DESIGN_UNAVAILABLE: (
-        "I wasn't able to put a room plan together just now. Please try again "
-        "in a moment."
+        "I wasn't able to put a room plan together just now. Please try again in a moment."
     ),
 }
 """Total over the failure codes, so a new one cannot fall through to silence.
@@ -104,20 +98,40 @@ BUNDLE_KEPT_WORDING = "That piece will stay in the room."
 BUNDLE_UNLOCKED_WORDING = "That piece can change in later refinements."
 """Says what changed - permission - and does not promise a replacement."""
 
+BUNDLE_ACQUISITION_WORDING: dict[BundleAcquisition, str] = {
+    BundleAcquisition.ALREADY_OWNED: (
+        "I'll treat that as something you already have, so it won't count towards what you spend."
+    ),
+    BundleAcquisition.TO_BUY: ("I'll count that as something you still need to buy."),
+}
+"""What the customer told us about owning a piece, said back plainly.
+
+Neither sentence says the piece may change: an already-owned line is locked,
+and nothing replaces it until the customer asks. Saying otherwise is exactly
+the bug this wording exists to fix.
+
+No product name, no figure, no enum, and no question - the card beside it
+carries the rest.
+"""
+
 BUNDLE_CHANGED_NOT_REFRESHED_WORDING = (
     "I've made that change. I wasn't able to work the rest of the room out "
     "again just now, so what you can see may be out of date."
 )
 """Both halves, in order. The change is stated as done because it is done, and
 the room is described as stale rather than as wrong."""
-"""Says what changed - permission - and does not promise a replacement."""
 
-DESIGN_HANDOFF_WORDING = (
-    "I can't help with planning a whole room yet, but I can help you find "
-    "individual pieces."
-)
-"""Claims nothing about a design, a product selection, spatial analysis, or
-when the capability might arrive."""
+DESIGN_HANDOFF_WORDING = "I wasn't able to put that together just now."
+"""A design request that produced nothing to show.
+
+It used to say the service could not plan a whole room yet. That stopped being
+true when whole-room planning shipped, and it was doubly wrong once the same
+route began answering "what goes with this?" - a customer who asked for one
+complementary piece was told the room feature did not exist.
+
+So it claims nothing at all: not about the design, not about a selection, not
+about what the capability can or cannot do. Something did not come back, and
+that is the whole message."""
 
 SIDE_NOTICE_WORDING: dict[SideEffectNotice, str] = {
     SideEffectNotice.SELECTION_NOT_UPDATED: "I wasn't able to save that selection.",
@@ -129,8 +143,7 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.ANSWER: "I'm not able to answer that just now.",
     ResponseOutcomeKind.SEARCH_RESULTS: "Here's what I found.",
     ResponseOutcomeKind.ZERO_RESULTS: (
-        "I couldn't find anything matching that. It's worth trying a different "
-        "description."
+        "I couldn't find anything matching that. It's worth trying a different description."
     ),
     ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",
     ResponseOutcomeKind.COMPARISON: "Here's how those compare.",
@@ -146,12 +159,9 @@ usable answer rather than an apology.
 """
 
 BUNDLE_FALLBACK_WORDING: dict[BundleStatus, str] = {
-    BundleStatus.COMPLETE: (
-        "Here's a room package covering everything it needs."
-    ),
+    BundleStatus.COMPLETE: ("Here's a room package covering everything it needs."),
     BundleStatus.PARTIAL: (
-        "Here's a partial room package - some of the pieces it needs are still "
-        "missing."
+        "Here's a partial room package - some of the pieces it needs are still missing."
     ),
     BundleStatus.INFEASIBLE: (
         "The pieces you asked me to keep don't fit within the budget you gave "
@@ -174,11 +184,15 @@ DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
         TurnFailureCode.RESPONSE_UNAVAILABLE
     ],
     DeterministicResponseKind.DESIGN_HANDOFF: DESIGN_HANDOFF_WORDING,
-    DeterministicResponseKind.BUNDLE_CHANGED_NOT_REFRESHED: (
-        BUNDLE_CHANGED_NOT_REFRESHED_WORDING
-    ),
+    DeterministicResponseKind.BUNDLE_CHANGED_NOT_REFRESHED: (BUNDLE_CHANGED_NOT_REFRESHED_WORDING),
     DeterministicResponseKind.BUNDLE_KEPT: BUNDLE_KEPT_WORDING,
     DeterministicResponseKind.BUNDLE_UNLOCKED: BUNDLE_UNLOCKED_WORDING,
+    # Deliberately the owned sentence rather than a neutral one: this map is
+    # reached only when the branch's own wording could not be produced, and
+    # the safer of the two is the one that promises no change.
+    DeterministicResponseKind.BUNDLE_ACQUISITION_SET: BUNDLE_ACQUISITION_WORDING[
+        BundleAcquisition.ALREADY_OWNED
+    ],
     DeterministicResponseKind.BUNDLE_UNAVAILABLE: (
         "I wasn't able to work the room package out just now."
     ),

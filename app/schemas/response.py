@@ -28,7 +28,8 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.agent_decision import BlockingClarificationReason
+from app.schemas.acquisition import BundleAcquisition
+from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
@@ -95,6 +96,19 @@ class DeterministicResponseKind(StrEnum):
     """A piece may now change later. **Permission, not a change** - wording a
     model chose could easily promise a replacement that did not happen."""
 
+    BUNDLE_ACQUISITION_SET = "bundle_acquisition_set"
+    """The customer said whether they already have a piece, or still need it.
+
+    Its own branch because it is its own fact. Before this existed, anything
+    that was not a lock fell through to `BUNDLE_UNLOCKED` - so "I already own
+    the rug" was answered with "that piece can change in later refinements",
+    which was the opposite of what had just been recorded: the line was marked
+    owned *and* locked.
+
+    The wording is selected by `acquisition`, the way `BUNDLE_UNAVAILABLE`
+    selects on its reason, rather than by a second enum member per value.
+    """
+
     BUNDLE_CHANGED_NOT_REFRESHED = "bundle_changed_not_refreshed"
     """The change was made; the room could not be worked out again.
 
@@ -121,6 +135,9 @@ class DeterministicResponse(BaseModel):
     failure_code: TurnFailureCode | None = None
     """Never model-visible. It selects fixed wording, and that is all."""
 
+    acquisition: BundleAcquisition | None = None
+    """Which way the customer settled it. Selects fixed wording, nothing more."""
+
     bundle_reason: BundleUnavailableReason | None = None
     """Why no bundle could be computed. Selects fixed wording, nothing more.
 
@@ -135,12 +152,17 @@ class DeterministicResponse(BaseModel):
             self.failure_code is not None
         ):
             raise ValueError("a failure carries its code, and only a failure does")
+        if (self.kind is DeterministicResponseKind.BUNDLE_ACQUISITION_SET) != (
+            self.acquisition is not None
+        ):
+            # Required rather than defaulted: a missing acquisition would have
+            # to pick a sentence, and either choice would be a guess about what
+            # the customer said.
+            raise ValueError("an acquisition update states which way, and only it does")
         if (self.kind is DeterministicResponseKind.BUNDLE_UNAVAILABLE) != (
             self.bundle_reason is not None
         ):
-            raise ValueError(
-                "an unavailable bundle carries its reason, and only it does"
-            )
+            raise ValueError("an unavailable bundle carries its reason, and only it does")
         return self
 
 
@@ -231,6 +253,11 @@ class BundleGroundingView(BaseModel):
         return self
 
 
+_SEARCH_KINDS = frozenset({ResponseOutcomeKind.SEARCH_RESULTS, ResponseOutcomeKind.ZERO_RESULTS})
+"""The two outcomes an executed search produces, either of which may carry
+search provenance. A detail, a comparison or a room ran no search."""
+
+
 class ResponseGroundingView(BaseModel):
     """What one turn's outcome looks like to the response model.
 
@@ -247,6 +274,70 @@ class ResponseGroundingView(BaseModel):
 
     The one number that makes ordinals sayable: without it the model cannot
     know whether "the second one" refers to anything.
+    """
+
+    commerce_category: str | None = None
+    commerce_subcategory: str | None = None
+    """What kind of thing is on screen, in **customer-facing words**.
+
+    Added so a reply can be about something. Without it the model knew only
+    that five results existed, which is how every search came back as "here's
+    what I found" - true, and no use to anyone.
+
+    Application-owned and verified: it is the category the search actually
+    executed against, validated against the registry, not a guess from a
+    product name. It names a *kind*, never a product - no id, no name, no
+    price - so nothing here can become a claim about an item (CLAUDE.md 20.4).
+
+    Carried as words rather than as the stored taxonomy value. The registry
+    key is an internal identifier, and a model shown `lounge-chair` writes
+    `lounge-chair` - which is how a customer who had asked about sofas came to
+    be told there were no matching "lounge-chair options". The transformation
+    is mechanical, not a second vocabulary: hyphens become spaces and nothing
+    is renamed, so the registry stays the one source of truth (CLAUDE.md 14.1)
+    and no taxonomy value can be spelled a second way here.
+    """
+
+    exact_match_count: int = Field(default=0, ge=0)
+    """How many products satisfied the customer's request *as they made it*.
+
+    The one figure that makes a widened search explainable. Without it the
+    reply could say only that something was broadened - a statement about
+    machinery that the customer cannot check against the cards, and which read
+    as a change when the five products on screen had not moved. With it, the
+    reply can say the thing that is actually true of what they are looking at:
+    that one piece meets the requirement exactly and the rest are near it
+    (CLAUDE.md 13.4).
+
+    Catalog-wide for this request, not a count of what is presented. A count,
+    never a bound: the figure the customer named is theirs, and this is only
+    how many products met it.
+    """
+
+    search_was_suggested: bool = False
+    """Whether this set is something we proposed rather than something they
+    asked for.
+
+    A complementary suggestion runs the same pipeline as any other search, so
+    by the time a reply is worded the two are indistinguishable - which is how
+    an errand the customer never sent came to be reported to them as a failed
+    search. A proposed set has to be introduced; a proposed set that found
+    nothing is a passing remark at most, because there was no request for it to
+    have failed.
+    """
+
+    seating_requirement_known: bool = False
+    """Whether the customer has already said how many people use the room.
+
+    A bool, not the number: it exists so the reply does not ask again, and
+    stating the figure is the application's job.
+    """
+
+    follow_up_goal: FollowUpGoal | None = None
+    """What the optional question should be about, chosen by the decision step.
+
+    The subject only. The model writes the sentence, which is why this is an
+    enum and not prose.
     """
 
     was_relaxed: bool = False
@@ -287,8 +378,7 @@ class ResponseGroundingView(BaseModel):
         ):
             raise ValueError("a clarification names the reason it is being asked")
         if self.clarification_reason is None and (
-            self.reference_reason is not None
-            or self.relative_price_reason is not None
+            self.reference_reason is not None or self.relative_price_reason is not None
         ):
             raise ValueError("a detail reason needs the reason it details")
 
@@ -308,6 +398,25 @@ class ResponseGroundingView(BaseModel):
 
         if self.was_relaxed != bool(self.relaxed_fields):
             raise ValueError("was_relaxed must match the fields recorded")
+
+        searched = self.kind in _SEARCH_KINDS
+        if not searched and (self.exact_match_count or self.search_was_suggested):
+            raise ValueError("only a search carries search provenance")
+        # An unwidened search presented products from the exact pool, so the
+        # exact count cannot be smaller than what is on screen. Widened, it
+        # freely can - that gap is the whole reason the figure is carried.
+        if (
+            searched
+            and not self.was_relaxed
+            and self.exact_match_count < self.presented_count
+        ):
+            raise ValueError("an unwidened search presents only exact matches")
+
+        for words in (self.commerce_category, self.commerce_subcategory):
+            # The registry key is an internal identifier; a model shown one
+            # writes it back verbatim.
+            if words is not None and "-" in words:
+                raise ValueError("a category reaches the model as words, not a key")
         return self
 
 

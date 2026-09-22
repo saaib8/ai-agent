@@ -103,9 +103,7 @@ def test_an_answer_carries_no_execution_payload() -> None:
     assert decision.comparison_references == ()
 
 
-@pytest.mark.parametrize(
-    "action", [AgentAction.ANSWER, AgentAction.SEARCH, AgentAction.COMPARE]
-)
+@pytest.mark.parametrize("action", [AgentAction.ANSWER, AgentAction.SEARCH, AgentAction.COMPARE])
 def test_only_a_refinement_may_carry_a_delta(action: AgentAction) -> None:
     with pytest.raises(ValidationError, match="only a refinement"):
         CustomerAgentDecision(action=action, refinement=CHEAPER)
@@ -118,9 +116,7 @@ def test_a_refinement_needs_something_to_change() -> None:
 
 def test_an_empty_delta_is_not_a_refinement() -> None:
     with pytest.raises(ValidationError, match="changes nothing"):
-        CustomerAgentDecision(
-            action=AgentAction.REFINE_SEARCH, refinement=SearchRefinementDelta()
-        )
+        CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, refinement=SearchRefinementDelta())
 
 
 def test_a_taxonomy_change_alone_is_a_valid_refinement() -> None:
@@ -188,9 +184,7 @@ def test_comparison_references_belong_only_to_a_comparison() -> None:
 
 def test_a_clarification_action_needs_a_question() -> None:
     with pytest.raises(ValidationError, match="needs a question"):
-        CustomerAgentDecision(
-            action=AgentAction.CLARIFY, follow_up_policy=FollowUpPolicy.NONE
-        )
+        CustomerAgentDecision(action=AgentAction.CLARIFY, follow_up_policy=FollowUpPolicy.NONE)
 
 
 def test_only_a_clarification_action_may_carry_a_question() -> None:
@@ -232,7 +226,7 @@ def test_blocking_clarification_is_separate_from_the_follow_up_directive() -> No
 
 
 def test_a_refinement_may_carry_one_interaction() -> None:
-    """"I like the second one, but show me cheaper options." """
+    """ "I like the second one, but show me cheaper options." """
     decision = CustomerAgentDecision(
         action=AgentAction.REFINE_SEARCH,
         refinement=CHEAPER,
@@ -303,6 +297,10 @@ def test_customer_state_carries_only_stated_facts() -> None:
         "room_geometry",
         "clear_room_geometry",
         "room_budget",
+        # Also theirs, and also never inferred: how many people regularly use
+        # the room. A requirement, not a product quantity.
+        "regular_seating_count",
+        "clear_regular_seating_count",
         "clear_room_budget",
         "design_preferences",
     }
@@ -327,9 +325,7 @@ def test_derived_commerce_owns_the_purchase_stage() -> None:
 
 def test_a_stage_cannot_be_set_and_cleared_at_once() -> None:
     with pytest.raises(ValidationError, match="set and cleared"):
-        DerivedCommerceProposal(
-            purchase_stage=PurchaseStage.EXPLORING, clear_purchase_stage=True
-        )
+        DerivedCommerceProposal(purchase_stage=PurchaseStage.EXPLORING, clear_purchase_stage=True)
 
 
 def test_a_room_fact_cannot_be_set_and_cleared_at_once() -> None:
@@ -338,7 +334,7 @@ def test_a_room_fact_cannot_be_set_and_cleared_at_once() -> None:
 
 
 def test_a_reusable_preference_is_expressible() -> None:
-    """"I usually prefer Modern" - about the customer, not about this search."""
+    """ "I usually prefer Modern" - about the customer, not about this search."""
     proposal = CustomerStateProposal(
         customer_preferences=PreferenceProposal(
             op=PreferenceProposalOp.ADD,
@@ -357,7 +353,7 @@ def test_a_reusable_preference_is_expressible() -> None:
 
 
 def test_a_task_preference_has_no_home_on_customer_state() -> None:
-    """"Show me modern sofas" is a search preference. The contract offers no
+    """ "Show me modern sofas" is a search preference. The contract offers no
     way to file it as a reusable customer default by accident."""
     assert "search_preferences" not in CustomerStateProposal.model_fields
     assert "attribute_preferences" not in CustomerStateProposal.model_fields
@@ -425,9 +421,7 @@ def test_a_selector_is_chosen_by_kind() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "op", [ProductInteractionOp.SELECT, ProductInteractionOp.DESELECT]
-)
+@pytest.mark.parametrize("op", [ProductInteractionOp.SELECT, ProductInteractionOp.DESELECT])
 def test_interactions_address_products_by_selector(
     op: ProductInteractionOp,
 ) -> None:

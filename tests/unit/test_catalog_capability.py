@@ -11,7 +11,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
+from app.schemas.retailer import (
+    RetailerCatalogCapabilities,
+    RetailerCatalogCapability,
+    RetailerContext,
+)
 from app.services.catalog_capability import CatalogCapabilityService
 from app.taxonomy.registry import load_taxonomy
 from pydantic import ValidationError
@@ -22,19 +26,29 @@ OTHER = RetailerContext(store_id=60)
 
 
 class FakeRepository:
-    def __init__(self, pairs: tuple[tuple[str, str | None], ...]) -> None:
-        self.pairs = pairs
+    def __init__(self, types: tuple[tuple[str, str | None, int], ...]) -> None:
+        self.types = types
         self.calls: list[RetailerContext] = []
 
-    async def supported_commerce_pairs(
+    async def supported_commerce_types(
         self, context: RetailerContext
-    ) -> tuple[tuple[str, str | None], ...]:
+    ) -> tuple[tuple[str, str | None, int], ...]:
         self.calls.append(context)
-        return self.pairs
+        return self.types
+
+
+STOCK_DEPTH = 7
+"""What the store has of each type in these fixtures.
+
+A count these tests do not reason about: they are about which pairs survive
+taxonomy approval, and a single shared depth keeps that the only variable.
+"""
 
 
 def _service(*pairs: tuple[str, str | None]) -> tuple[CatalogCapabilityService, Any]:
-    repository = FakeRepository(pairs)
+    repository = FakeRepository(
+        tuple((category, subcategory, STOCK_DEPTH) for category, subcategory in pairs)
+    )
     return CatalogCapabilityService(repository, TAXONOMY), repository  # type: ignore[arg-type]
 
 
@@ -122,21 +136,41 @@ def test_a_category_cannot_be_described_both_ways() -> None:
         RetailerCatalogCapabilities.model_validate(
             {
                 "capabilities": [
-                    {"commerce_category": "seating", "commerce_subcategory": None},
-                    {"commerce_category": "seating", "commerce_subcategory": "sofa"},
+                    {
+                        "commerce_category": "seating",
+                        "commerce_subcategory": None,
+                        "active_product_count": STOCK_DEPTH,
+                    },
+                    {
+                        "commerce_category": "seating",
+                        "commerce_subcategory": "sofa",
+                        "active_product_count": STOCK_DEPTH,
+                    },
                 ]
             }
         )
 
 
-async def test_the_result_carries_no_inventory() -> None:
-    """Capability, not counts, prices or products."""
+async def test_the_result_carries_depth_but_not_inventory() -> None:
+    """How many, never which ones.
+
+    A count was once forbidden here alongside prices and identities. It is
+    carried now because "supported" and "worth proposing" are different
+    questions and a bare list cannot tell them apart (CLAUDE.md 9) - a
+    retailer with one lounge chair supports lounge chairs and still cannot
+    offer the customer a choice of them.
+
+    Everything that would make it inventory stays out. A count names no
+    product, quotes no price and identifies no row, so nothing downstream can
+    turn it back into one.
+    """
     service, _ = _service(("seating", "sofa"))
 
     capabilities = await service.capabilities(CONTEXT)
 
+    assert capabilities.capabilities[0].active_product_count == STOCK_DEPTH
     rendered = capabilities.model_dump_json()
-    for forbidden in ("count", "price", "product_id", "store_id"):
+    for forbidden in ("price", "product_id", "product_url", "store_id", "name"):
         assert forbidden not in rendered
 
 
@@ -156,3 +190,50 @@ async def test_it_consults_no_model() -> None:
 
     assert not any("llm" in name or "prompt" in name for name in imported)
     assert "redis" not in source.lower(), "no caching in M12A"
+
+
+async def test_each_type_carries_its_own_depth() -> None:
+    """One shared number would defeat the point.
+
+    The distinction that matters is between a type the retailer has 41 of and
+    one it has a single example of, so the count has to travel per type rather
+    than as a property of the store.
+    """
+    repository = FakeRepository(
+        (("seating", "sofa", 173), ("seating", "lounge-chair", 1))
+    )
+    service = CatalogCapabilityService(repository, TAXONOMY)  # type: ignore[arg-type]
+
+    capabilities = await service.capabilities(CONTEXT)
+
+    depths = {
+        entry.commerce_subcategory: entry.active_product_count
+        for entry in capabilities.capabilities
+    }
+    assert depths == {"sofa": 173, "lounge-chair": 1}
+
+
+async def test_a_thin_type_is_still_supported() -> None:
+    """Depth informs a choice; it does not remove a capability.
+
+    Silently dropping the single lounge chair would make the catalog summary
+    disagree with the catalog, and a customer asking for one directly would be
+    told the retailer has none (CLAUDE.md 9.1).
+    """
+    repository = FakeRepository((("seating", "lounge-chair", 1),))
+    service = CatalogCapabilityService(repository, TAXONOMY)  # type: ignore[arg-type]
+
+    capabilities = await service.capabilities(CONTEXT)
+
+    assert capabilities.supports("seating", "lounge-chair")
+
+
+def test_a_capability_cannot_claim_a_type_the_store_has_none_of() -> None:
+    """The type is a capability *because* something backs it, so zero is a
+    contradiction rather than an empty shelf."""
+    with pytest.raises(ValidationError):
+        RetailerCatalogCapability(
+            commerce_category="seating",
+            commerce_subcategory="sofa",
+            active_product_count=0,
+        )

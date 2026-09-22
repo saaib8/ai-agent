@@ -425,8 +425,33 @@ Do not force the customer to pick every category one-by-one before seeing value.
 
 Default UX behavior:
 
-1. propose a coherent complete bundle first
-2. let the customer iteratively refine it
+1. ask at most two opening questions, once
+2. propose a coherent complete bundle
+3. let the customer iteratively refine it
+
+### 10.1 The two opening questions
+
+A whole room is the only place this service asks before delivering. A single
+product search proceeds on almost nothing - "show me sofas" is answerable - but
+a room commits the customer to a set of pieces and a total, and one built
+around a guessed budget is a room they cannot buy.
+
+**Budget is asked for first** when it is not already known, because it
+constrains every other choice.
+
+When the budget *is* known, ask instead for whichever single fact would most
+change the room: its size, the look they want, or - for a living room - how
+many people the seating is for.
+
+Only ask for what is genuinely missing. The agent's state view already carries
+the budget, the room measurements, the room type and the style preferences on
+record; asking again for something already said is the annoyance this rule
+exists to avoid.
+
+**At most two questions, asked together, once.** If the customer answers
+partly, declines, or says to get on with it, build the room from what is known.
+Everything after the first room is refinement, never a second round of
+questions.
 
 Track per-item state such as:
 

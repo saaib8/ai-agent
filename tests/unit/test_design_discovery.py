@@ -62,12 +62,20 @@ CONTEXT = RetailerContext(store_id=50)
 
 STOCKED = RetailerCatalogCapabilities(
     capabilities=(
-        RetailerCatalogCapability(commerce_category="seating", commerce_subcategory="sofa"),
         RetailerCatalogCapability(
-            commerce_category="seating", commerce_subcategory="lounge-chair"
+            commerce_category="seating",
+            commerce_subcategory="sofa",
+            active_product_count=12,
         ),
         RetailerCatalogCapability(
-            commerce_category="tables", commerce_subcategory="center-table"
+            commerce_category="seating",
+            commerce_subcategory="lounge-chair",
+            active_product_count=12,
+        ),
+        RetailerCatalogCapability(
+            commerce_category="tables",
+            commerce_subcategory="center-table",
+            active_product_count=12,
         ),
     )
 )
@@ -194,7 +202,11 @@ async def test_the_taxonomy_pair_is_copied_exactly() -> None:
 async def test_a_need_without_a_subcategory_stays_without_one() -> None:
     """Never narrowed to a plausible child: the plan said what it said."""
     broad = RetailerCatalogCapabilities(
-        capabilities=(RetailerCatalogCapability(commerce_category="seating"),)
+        capabilities=(
+            RetailerCatalogCapability(
+                commerce_category="seating", active_product_count=12
+            ),
+        )
     )
 
     _, pipeline = await _run(

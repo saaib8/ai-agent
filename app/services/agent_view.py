@@ -49,9 +49,7 @@ def project_state(state: AgentStateV1) -> AgentStateView:
     """The model-safe view of one conversation's memory."""
     return AgentStateView(
         active_search=_active_search(state.active_search),
-        customer_preferences=_preferences(
-            state.customer_preferences.semantic_preferences
-        ),
+        customer_preferences=_preferences(state.customer_preferences.semantic_preferences),
         presented=_presented(state),
         room_project=_room_project(state.room_project),
         purchase_stage=state.derived_commerce.purchase_stage,
@@ -72,9 +70,7 @@ def _preferences(
     )
 
 
-def _price(
-    price: PriceConstraint | None, semantics: ConstraintSemantics
-) -> PriceView | None:
+def _price(price: PriceConstraint | None, semantics: ConstraintSemantics) -> PriceView | None:
     """The bounds, each with how firmly the customer meant it.
 
     Strengths are attached per bound rather than passing `ConstraintSemantics`
@@ -136,8 +132,7 @@ def _active_search(search: ActiveSearchState | None) -> ActiveSearchView | None:
                 source_unit=request.planar_dimensions.source_unit,
                 strength=semantics.planar_dimension.strength,
             )
-            if request.planar_dimensions is not None
-            and semantics.planar_dimension is not None
+            if request.planar_dimensions is not None and semantics.planar_dimension is not None
             else None
         ),
         required_colors=request.colors_any_of,
@@ -182,6 +177,7 @@ def _room_project(room: RoomProjectState | None) -> RoomProjectView | None:
         room_type=room.room_type,
         budget=_price(room.budget, ConstraintSemantics()),
         design_preferences=_preferences(room.design_preferences),
+        regular_seating_count=room.regular_seating_count,
         design_needs=tuple(
             DesignNeedReferenceView(
                 commerce_category=need.commerce_category,
@@ -192,7 +188,5 @@ def _room_project(room: RoomProjectState | None) -> RoomProjectView | None:
         bundle_line_count=len(room.bundle_items),
         bundle_card_count=len(group_bundle_cards(room.bundle_items)),
         locked_line_count=room.count(BundleItemStatus.LOCKED),
-        already_owned_line_count=room.count_acquisition(
-            BundleAcquisition.ALREADY_OWNED
-        ),
+        already_owned_line_count=room.count_acquisition(BundleAcquisition.ALREADY_OWNED),
     )

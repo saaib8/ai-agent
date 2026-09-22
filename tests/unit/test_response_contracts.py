@@ -18,6 +18,7 @@ from app.schemas.agent_decision import (
     AgentAction,
     BlockingClarification,
     BlockingClarificationReason,
+    CommercialReason,
     CustomerAgentDecision,
     FollowUpPolicy,
     ProductInteractionIntent,
@@ -112,9 +113,7 @@ def _route(
     action: AgentAction = AgentAction.ANSWER,
     interaction: ProductInteractionIntent | None = None,
 ) -> Any:
-    return route_response(
-        _result(grounding, action=action, interaction=interaction)
-    ).primary
+    return route_response(_result(grounding, action=action, interaction=interaction)).primary
 
 
 def _product(ref: int, *, ordinal: int | None = None) -> GroundedProduct:
@@ -145,6 +144,10 @@ def _search(
         ranked_count=count,
         selected_count=count,
         presented_count=count,
+        # A widened search is one whose exact pool was too small: leaving this
+        # equal to the presented count would describe a search that widened
+        # with nothing to gain.
+        exact_candidate_count=0 if relaxed else count,
         was_relaxed=relaxed,
         relaxations=(
             (
@@ -202,7 +205,8 @@ def _comparison() -> ProductComparisonResult:
 def test_a_model_written_clarification_is_passed_through() -> None:
     """The decision model already wrote it; re-wording could only change what
     was asked."""
-    routing = _route(TurnGrounding(
+    routing = _route(
+        TurnGrounding(
             clarification=BlockingClarification(
                 reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
                 question="Which kind of table?",
@@ -216,9 +220,7 @@ def test_a_model_written_clarification_is_passed_through() -> None:
 
 @pytest.mark.parametrize("code", list(TurnFailureCode))
 def test_a_handled_failure_is_worded_deterministically(code: TurnFailureCode) -> None:
-    routing = _route(
-        TurnGrounding(failure=TurnFailure(code=code)), action=AgentAction.SEARCH
-    )
+    routing = _route(TurnGrounding(failure=TurnFailure(code=code)), action=AgentAction.SEARCH)
 
     assert isinstance(routing, DeterministicResponse)
     assert routing.kind is DeterministicResponseKind.HANDLED_FAILURE
@@ -275,7 +277,8 @@ def test_the_model_call_branches_project_a_view(
 def test_a_failed_side_effect_does_not_hide_a_successful_search() -> None:
     """An optional interaction can fail beside a search that worked. The search
     is what the customer asked for, so it is what gets reported."""
-    routing = _route(TurnGrounding(
+    routing = _route(
+        TurnGrounding(
             search=_search(count=2),
             failure=TurnFailure(code=TurnFailureCode.REFERENCE_UNRESOLVED),
         )
@@ -346,7 +349,8 @@ def test_a_comparison_projects_which_fields_differ_not_the_cells() -> None:
 
 
 def test_a_clarification_projects_every_reason_it_has() -> None:
-    routing = _route(TurnGrounding(
+    routing = _route(
+        TurnGrounding(
             deterministic_clarification=DeterministicClarification(
                 reason=SearchRequirementClarificationReason.UNSUPPORTED_REQUIREMENT
             )
@@ -839,9 +843,7 @@ MISSING_CURRENCY = DeterministicClarification(
 def test_a_successful_search_survives_a_clarification_beside_it() -> None:
     route = route_response(
         _result(
-            TurnGrounding(
-                search=_search(count=3), deterministic_clarification=AMBIGUOUS_SELECTION
-            ),
+            TurnGrounding(search=_search(count=3), deterministic_clarification=AMBIGUOUS_SELECTION),
             action=AgentAction.SEARCH,
         )
     )
@@ -856,9 +858,7 @@ def test_the_primary_view_carries_the_question_it_owes() -> None:
     """One model call does both jobs, so the reasons travel with the framing."""
     route = route_response(
         _result(
-            TurnGrounding(
-                search=_search(count=3), deterministic_clarification=AMBIGUOUS_SELECTION
-            ),
+            TurnGrounding(search=_search(count=3), deterministic_clarification=AMBIGUOUS_SELECTION),
             action=AgentAction.SEARCH,
         )
     )
@@ -867,9 +867,7 @@ def test_the_primary_view_carries_the_question_it_owes() -> None:
     assert route.primary.clarification_reason is (
         BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
     )
-    assert route.primary.reference_reason is (
-        ReferenceFailureReason.SEVERAL_ATTRIBUTE_MATCHES
-    )
+    assert route.primary.reference_reason is (ReferenceFailureReason.SEVERAL_ATTRIBUTE_MATCHES)
 
 
 def test_every_card_still_renders_beside_a_required_question() -> None:
@@ -889,9 +887,7 @@ def test_every_card_still_renders_beside_a_required_question() -> None:
     ("grounding", "action", "expected"),
     [
         (
-            TurnGrounding(
-                search=_search(count=0), deterministic_clarification=AMBIGUOUS_SELECTION
-            ),
+            TurnGrounding(search=_search(count=0), deterministic_clarification=AMBIGUOUS_SELECTION),
             AgentAction.SEARCH,
             ResponseOutcomeKind.ZERO_RESULTS,
         ),
@@ -948,9 +944,7 @@ def test_a_proposal_clarification_behaves_the_same_way() -> None:
     shape of problem, and the search still stands."""
     route = route_response(
         _result(
-            TurnGrounding(
-                search=_search(count=2), deterministic_clarification=MISSING_CURRENCY
-            ),
+            TurnGrounding(search=_search(count=2), deterministic_clarification=MISSING_CURRENCY),
             action=AgentAction.SEARCH,
         )
     )
@@ -1077,9 +1071,7 @@ def test_a_failed_search_is_still_a_failure() -> None:
 def test_an_ordinary_turn_may_still_offer_an_optional_question() -> None:
     route = route_response(
         _result(
-            TurnGrounding(
-                search=_search(count=2), follow_up_policy=FollowUpPolicy.OPTIONAL
-            ),
+            TurnGrounding(search=_search(count=2), follow_up_policy=FollowUpPolicy.OPTIONAL),
             action=AgentAction.SEARCH,
         )
     )
@@ -1108,10 +1100,29 @@ def test_a_required_question_leaves_no_room_for_an_optional_one() -> None:
 
 
 def test_the_composite_route_widened_no_model_authority() -> None:
-    """Only the already-approved reason enums entered the view."""
+    """Approved reason enums, counts, and controlled taxonomy - no values.
+
+    The sales pass added three fields so a reply can be about something rather
+    than announcing that results exist. Each names a *kind* or a subject:
+    the category searched for, whether a requirement is already known, and
+    what an optional question should cover. None carries a figure, a product
+    or an identity.
+
+    Two more followed the conversational UAT, and neither loosens that. An
+    exact-match *count* is a count, of the same kind as `presented_count`,
+    and says how many products met the request the customer actually made.
+    `search_was_suggested` is a bool about whose idea the search was. Neither
+    names a product, a price or a bound.
+    """
     assert set(ResponseGroundingView.model_fields) == {
         "kind",
         "presented_count",
+        "commerce_category",
+        "commerce_subcategory",
+        "exact_match_count",
+        "search_was_suggested",
+        "seating_requirement_known",
+        "follow_up_goal",
         "was_relaxed",
         "relaxed_fields",
         "dropped_roles",
@@ -1155,4 +1166,216 @@ def test_a_reason_cannot_appear_without_a_question_behind_it() -> None:
             kind=ResponseOutcomeKind.SEARCH_RESULTS,
             presented_count=2,
             reference_reason=ReferenceFailureReason.TIED_EXTREMUM,
+        )
+
+
+# ── the words must match the cards ──────────────────────────────────────────
+#
+# Three defects from the conversational UAT, all of the same shape: the reply
+# described something the customer had no way to see. A search that widened
+# while the five products on screen stayed put; an internal taxonomy key read
+# back as if it were English; and an errand the agent chose to run reported as
+# a search that had failed.
+
+
+def _searched_result(
+    subcategory: str = "sofa",
+    *,
+    count: int = 2,
+    relaxed: bool = False,
+    suggested: bool = False,
+    reason: CommercialReason | None = None,
+) -> CustomerTurnResult:
+    """A turn whose search ran, built the way the application builds one."""
+    from app.schemas.agent_state import ActiveSearchState
+    from app.schemas.discovery import ProductSearchRequest
+
+    decision = _decision(AgentAction.SEARCH)
+    if suggested or reason is not None:
+        decision = decision.model_copy(
+            update={"commercial_reason": reason or CommercialReason.PURCHASE_PROGRESSION}
+        )
+    return CustomerTurnResult(
+        state=AgentStateV1(
+            active_search=ActiveSearchState(
+                request=ProductSearchRequest(
+                    commerce_category="seating", commerce_subcategory=subcategory
+                ),
+                revision=1,
+            )
+        ),
+        decision=decision,
+        grounding=TurnGrounding(
+            search=_search(count=count, relaxed=relaxed),
+            design_handoff_requested=suggested or reason is not None,
+        ),
+    )
+
+
+def _searched(*args: Any, **kwargs: Any) -> ResponseGroundingView:
+    view = route_response(_searched_result(*args, **kwargs)).primary
+    assert isinstance(view, ResponseGroundingView)
+    return view
+
+
+def test_a_category_reaches_the_model_as_words_not_as_a_registry_key() -> None:
+    """The UAT defect: a customer who had asked about sofas was told there were
+    no matching "lounge-chair options".
+
+    The key is an internal identifier, and a model shown one writes it back
+    verbatim - so it never sees one.
+    """
+    view = _searched("lounge-chair")
+
+    assert view.commerce_subcategory == "lounge chair"
+    assert "-" not in view.model_dump_json()
+
+
+def test_the_words_rename_nothing() -> None:
+    """Mechanical, so the registry stays the only vocabulary (CLAUDE.md 14.2).
+
+    A display *name* would be an alias by another route: a second place a
+    product type is spelled, free to drift from the one that is authoritative.
+    """
+    from app.taxonomy.registry import load_taxonomy
+
+    taxonomy = load_taxonomy()
+    for category in taxonomy.categories:
+        for subcategory in taxonomy.subcategories(category):
+            view = _searched(subcategory)
+
+            assert view.commerce_subcategory is not None
+            assert view.commerce_subcategory.replace(" ", "-") == subcategory
+
+
+def test_a_view_refuses_a_key_that_reached_it_unconverted() -> None:
+    """The projection is one call site today. The contract holds whatever
+    number of call sites it grows."""
+    with pytest.raises(ValidationError, match="words, not a key"):
+        ResponseGroundingView(
+            kind=ResponseOutcomeKind.SEARCH_RESULTS,
+            presented_count=1,
+            exact_match_count=1,
+            commerce_subcategory="lounge-chair",
+        )
+
+
+def test_a_widened_search_carries_what_the_customer_can_check() -> None:
+    """How many products met the request as they made it.
+
+    Without this the reply could only say a bound had moved - true of the
+    pipeline, unverifiable on screen, and read by the customer as a change to
+    products that had not changed (CLAUDE.md 13.4).
+    """
+    widened = _searched(count=5, relaxed=True)
+
+    assert widened.was_relaxed is True
+    assert widened.exact_match_count == 0
+    assert widened.presented_count == 5
+
+
+def test_an_unwidened_search_says_everything_matched() -> None:
+    exact = _searched(count=2)
+
+    assert exact.was_relaxed is False
+    assert exact.exact_match_count == exact.presented_count
+
+
+def test_a_suggestion_that_found_something_is_still_a_search() -> None:
+    """Only the empty case is withheld. Products we proposed are on screen and
+    have to be introduced, so the turn reports them like any other."""
+    found = _searched(count=3, suggested=True)
+
+    assert found.kind is ResponseOutcomeKind.SEARCH_RESULTS
+    assert found.search_was_suggested is True
+    assert found.presented_count == 3
+
+
+def test_a_suggested_search_is_marked_as_ours_not_theirs() -> None:
+    """A complementary suggestion runs the same pipeline as any other search.
+
+    By the time a reply is worded the two are indistinguishable without this,
+    which is how "I couldn't find any matching options in this search" came to
+    be said about a search the customer never asked for.
+    """
+    assert _searched(count=3, suggested=True).search_was_suggested is True
+    assert _searched(count=3).search_was_suggested is False
+    assert (
+        _searched(count=3, reason=CommercialReason.CUSTOMER_REQUEST
+        ).search_was_suggested
+        is False
+    ), "their own design question is not a suggestion of ours"
+
+
+def test_a_suggestion_that_found_nothing_is_not_reported_at_all() -> None:
+    """The case the customer actually hit.
+
+    They said they liked the second sofa. The reply told them nothing matched
+    for a product type they had never mentioned, beside an empty screen. They
+    asked for nothing, so nothing failed - and the turn is what they did.
+    """
+    empty = _searched("lounge-chair", count=0, suggested=True)
+
+    assert empty.kind is ResponseOutcomeKind.ANSWER
+    assert empty.presented_count == 0
+    assert empty.commerce_subcategory is None, "no kind of thing is on screen"
+    assert empty.search_was_suggested is False, "an answer ran no search"
+
+
+def test_a_lapsed_suggestion_is_not_reported_as_a_failed_handoff_either() -> None:
+    """The branch it would otherwise fall into says the planning failed. That
+    is the same false report in different words."""
+    route = route_response(
+        _searched_result("lounge-chair", count=0, suggested=True)
+    ).primary
+
+    assert not isinstance(route, DeterministicResponse)
+
+
+def test_their_own_design_question_is_still_answered_when_nothing_matches() -> None:
+    """The distinction the whole rule turns on.
+
+    "What would go with this?" is their question, so an empty answer is owed
+    to them. Silence there would be a different defect, not the same fix.
+    """
+    asked = _searched(
+        "lounge-chair", count=0, reason=CommercialReason.CUSTOMER_REQUEST
+    )
+
+    assert asked.kind is ResponseOutcomeKind.ZERO_RESULTS
+    assert asked.commerce_subcategory == "lounge chair"
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        ResponseOutcomeKind.ANSWER,
+        ResponseOutcomeKind.PRODUCT_DETAIL,
+        ResponseOutcomeKind.COMPARISON,
+    ],
+)
+def test_only_a_search_carries_search_provenance(kind: ResponseOutcomeKind) -> None:
+    """A detail, a comparison and a plain answer ran no search, so neither
+    field means anything on them."""
+    fields: dict[str, Any] = {"kind": kind, "presented_count": 1}
+    if kind is ResponseOutcomeKind.COMPARISON:
+        fields["compared_count"] = 2
+
+    with pytest.raises(ValidationError, match="search provenance"):
+        ResponseGroundingView(**fields, exact_match_count=1)
+    with pytest.raises(ValidationError, match="search provenance"):
+        ResponseGroundingView(**fields, search_was_suggested=True)
+
+
+def test_an_unwidened_search_cannot_claim_fewer_exact_matches_than_it_shows() -> None:
+    """Nothing widened, so every product on screen came from the exact pool.
+
+    The invariant that stops the new count drifting into decoration: a figure
+    the reply quotes has to agree with the cards beside it.
+    """
+    with pytest.raises(ValidationError, match="only exact matches"):
+        ResponseGroundingView(
+            kind=ResponseOutcomeKind.SEARCH_RESULTS,
+            presented_count=5,
+            exact_match_count=1,
         )

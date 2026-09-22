@@ -137,3 +137,31 @@ def test_library_loggers_are_rerouted_into_the_pipeline(
     access.info("GET /health 200")
     emitted = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert emitted["event"] == "GET /health 200"
+
+
+# ── payload-logging libraries are held back (Release QA) ────────────────────
+
+
+@pytest.mark.parametrize("library", ["openai", "httpx", "httpcore"])
+def test_debug_logging_never_reaches_the_sdks_that_print_payloads(
+    library: str,
+) -> None:
+    """`DEBUG` is an offered level, and these SDKs log whole request bodies.
+
+    A prompt *is* the request body, so an operator reaching for DEBUG while
+    diagnosing a live problem would otherwise write customers' messages and
+    whole conversation histories to stdout. `redact_processor` cannot catch
+    it: it drops values by key name from structlog event dicts, and this
+    content arrives as one opaque message string.
+    """
+    configure_logging(ObservabilitySettings(log_level="DEBUG"))
+
+    assert logging.getLogger(library).getEffectiveLevel() >= logging.INFO
+
+
+def test_application_logging_is_still_as_verbose_as_configured() -> None:
+    """The guard above must not be muting the service's own diagnostics."""
+    configure_logging(ObservabilitySettings(log_level="DEBUG"))
+
+    assert logging.getLogger("app.services.discovery").getEffectiveLevel() == (logging.DEBUG)
+    assert logging.getLogger().level == logging.DEBUG

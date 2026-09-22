@@ -35,13 +35,18 @@ from app.taxonomy.registry import CommerceTaxonomy
 
 logger = get_logger(__name__)
 
+MAX_COMPLEMENTARY_NEEDS = 2
+"""How many roles one complementary recommendation may carry.
+
+One is the normal answer. Two exists for the case where the second is
+inseparable from the first - a rug and the table that sits on it - and not as
+licence to start furnishing the room they did not ask about."""
+
 
 class InteriorDesignAgent:
     """A design request in, structured design reasoning out."""
 
-    def __init__(
-        self, client: StructuredLLMClient, taxonomy: CommerceTaxonomy
-    ) -> None:
+    def __init__(self, client: StructuredLLMClient, taxonomy: CommerceTaxonomy) -> None:
         self._client = client
         self._taxonomy = taxonomy
         self._instructions = build_instructions(taxonomy)
@@ -110,6 +115,9 @@ class InteriorDesignAgent:
         if request.task is DesignTask.GENERAL_ADVICE:
             return self._advice_only(result)
 
+        if request.task is DesignTask.COMPLEMENTARY_RECOMMENDATION:
+            return self._complementary(result, request)
+
         violated = self._excluded_role(result, request)
         if violated is not None:
             # Refused, never dropped. Dropping it here would be indistinguishable
@@ -122,9 +130,7 @@ class InteriorDesignAgent:
                 commerce_category=violated.commerce_category,
                 commerce_subcategory=violated.commerce_subcategory,
             )
-            raise LLMResponseInvalidError(
-                reason="design result contained an excluded role"
-            )
+            raise LLMResponseInvalidError(reason="design result contained an excluded role")
 
         return self._fulfillable(result, request)
 
@@ -155,10 +161,29 @@ class InteriorDesignAgent:
         """
         if not result.needs:
             return result
-        logger.warning(
-            "interior_design_needs_on_advice", dropped=len(result.needs)
-        )
+        logger.warning("interior_design_needs_on_advice", dropped=len(result.needs))
         return InteriorDesignResult(guidance=result.guidance)
+
+    def _complementary(
+        self, result: InteriorDesignResult, request: InteriorDesignRequest
+    ) -> InteriorDesignResult:
+        """One next role, not a room.
+
+        Trimmed rather than refused when the specialist overreaches: the first
+        need is still the answer to what was asked, and discarding good
+        reasoning because it came with extras would leave the customer with
+        nothing. Capability filtering runs first, so what survives is both
+        wanted and stocked.
+        """
+        fulfillable = self._fulfillable(result, request)
+        kept = fulfillable.needs[:MAX_COMPLEMENTARY_NEEDS]
+        if len(fulfillable.needs) > len(kept):
+            logger.info(
+                "interior_design_complement_trimmed",
+                proposed=len(fulfillable.needs),
+                kept=len(kept),
+            )
+        return InteriorDesignResult(guidance=fulfillable.guidance, needs=kept)
 
     def _fulfillable(
         self, result: InteriorDesignResult, request: InteriorDesignRequest
