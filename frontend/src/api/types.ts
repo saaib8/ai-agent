@@ -1,0 +1,133 @@
+// TypeScript mirror of the ZORY backend's public wire contract.
+//
+// These types match the customer-safe shapes the service returns — not its
+// internal schemas. Note that every monetary / dimensional value arrives as a
+// JSON *string*: Pydantic v2 serialises `Decimal` as a string, so we type them
+// as `string` and parse only for display (see lib/format.ts).
+
+export type DimensionStatus = 'normalised' | 'unknown_unit' | 'absent'
+
+export interface NormalisedDimensions {
+  length_cm: string | null
+  width_cm: string | null
+  height_cm: string | null
+  unit: string | null
+  status: DimensionStatus
+}
+
+export interface CommerceClassification {
+  category: string | null
+  subcategory: string | null
+  seating_capacity: number | null
+}
+
+export interface GroundedProduct {
+  grounding_ref: number
+  presented_ordinal: number | null
+  name_english: string
+  price_amount: string
+  price_unit: string
+  image_url: string
+  product_url: string
+  commerce: CommerceClassification
+  dimensions: NormalisedDimensions
+  main_color: string | null
+  styles: string[]
+  /** 0 = matched the request exactly; >0 = surfaced only after widening. */
+  relaxation_depth: number | null
+}
+
+export type ComparisonStatus = 'same' | 'different' | 'unknown'
+
+export interface ComparisonCell {
+  known: boolean
+  value: string | null
+}
+
+export interface ComparisonRow {
+  field: string
+  cells: ComparisonCell[]
+  status: ComparisonStatus
+}
+
+export interface ProductComparisonResult {
+  products: GroundedProduct[]
+  rows: ComparisonRow[]
+}
+
+export type BundleStatus = 'complete' | 'partial' | 'infeasible'
+export type BundleAcquisition = 'to_buy' | 'already_owned'
+
+export interface GroundedBundleItem {
+  grounding_ref: number
+  name_english: string
+  image_url: string
+  product_url: string
+  commerce: CommerceClassification
+  quantity: number
+  acquisition: BundleAcquisition
+  locked: boolean
+  unit_price: string
+  price_unit: string
+  /** null when the line adds nothing to new spend (an already-owned piece). */
+  new_spend_line_total: string | null
+}
+
+export interface GroundedBundleTotals {
+  new_spend_total: string | null
+  currency: string | null
+  total_unavailable: string | null
+  budget_max_amount: string | null
+  budget_currency: string | null
+  budget_max_exclusive: boolean
+  within_budget: boolean | null
+}
+
+export interface GroundedBundlePresentation {
+  status: BundleStatus
+  items: GroundedBundleItem[]
+  totals: GroundedBundleTotals
+}
+
+export interface ChatPresentation {
+  products: GroundedProduct[]
+  comparison: ProductComparisonResult | null
+  room: GroundedBundlePresentation | null
+}
+
+export interface CustomerResponse {
+  message: string
+  referenced_grounding_refs: number[]
+  follow_up_question: string | null
+}
+
+export interface ChatResponse {
+  session_id: string
+  session_revision: number
+  response: CustomerResponse
+  presentation: ChatPresentation | null
+}
+
+export interface ChatRequest {
+  session_id: string
+  store_id: number
+  message: string
+  expected_session_revision?: number
+}
+
+export interface ErrorBody {
+  code: string
+  message: string
+  trace_id: string | null
+}
+
+export interface ErrorResponse {
+  error: ErrorBody
+}
+
+export interface HealthResponse {
+  status: string
+  service: string
+  environment: string
+  dependencies: Record<string, string>
+}
