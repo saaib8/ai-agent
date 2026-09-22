@@ -39,7 +39,7 @@ services:
       dockerfile: Dockerfile
     image: ${FRONTEND_IMAGE:-zory-agent-frontend}:${TAG:-local}
     ports:
-      - "3000:3000"
+      - "3090:3000"
     depends_on:
       backend:
         condition: service_healthy
