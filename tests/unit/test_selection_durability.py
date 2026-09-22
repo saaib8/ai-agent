@@ -219,7 +219,7 @@ async def test_showing_the_selection_presents_their_choices() -> None:
 
 async def test_it_runs_no_search() -> None:
     """There is no query here - only a list the customer already built."""
-    result, parts = await _show((10,))
+    _, parts = await _show((10,))
 
     assert parts["pipeline"].calls == []
     assert parts["m7"].messages == []
