@@ -122,6 +122,8 @@ measurement it is: how wide across the front, how deep front-to-back, how tall, 
 or how long. If they gave a number without saying which, leave that field null \
 rather than picking the likeliest.
 - Record the unit exactly as they gave it, and leave it null if they gave none. \
+  A product measurement with no unit is read as centimetres afterwards, so \
+  there is no need to guess one or to ask - write down what they said. \
 Never assume one.
 - Use a maximum for under or no more than, a minimum for at least, a range for \
 between two numbers, and a target for around or about. A target is a figure to \

@@ -270,3 +270,14 @@ def test_going_with_something_is_not_being_like_it() -> None:
     assert "When they name a different kind of thing, the reference would search" in (
         FLAT_INSTRUCTIONS
     )
+
+
+def test_similar_after_a_design_answer_is_not_the_anchor() -> None:
+    """The live defect: "which sofa goes with this carpet?" was answered about
+    sofas, then "show me some similar option" returned more rugs - the
+    reference was attached to the selected carpet, so a similar-search ran for
+    the very kind of thing they already had (M23 2)."""
+    assert "SIMILAR TO WHAT YOU WERE JUST TALKING ABOUT" in FLAT_INSTRUCTIONS
+    assert "they want the sofas you described" in FLAT_INSTRUCTIONS
+    assert "attach no reference" in FLAT_INSTRUCTIONS
+    assert "not what is selected" in FLAT_INSTRUCTIONS

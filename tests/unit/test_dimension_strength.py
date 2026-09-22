@@ -379,7 +379,9 @@ async def test_a_refused_measurement_preserves_its_strength(
     ("dimension", "reason"),
     [
         (_dim(None, Kind.MAX, LOCKED, max_value="200"), "missing_dimension_role"),
-        (_dim(WIDTH, Kind.MAX, LOCKED, unit=None, max_value="220"), "missing_dimension_unit"),
+        # A unit we cannot act on. A *missing* unit is centimetres now, so it
+        # is no longer incomplete (M23 1).
+        (_dim(WIDTH, Kind.MAX, LOCKED, unit="cubits", max_value="220"), "missing_dimension_unit"),
     ],
 )
 async def test_an_incomplete_measurement_asks_and_records_nothing(
