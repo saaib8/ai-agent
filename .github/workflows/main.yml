@@ -76,7 +76,7 @@ jobs:
             git fetch "https://x-access-token:${GIT_TOKEN}@github.com/${GIT_REPO}.git" main
             git reset --hard FETCH_HEAD
 
-            docker compose build
+            docker compose build --no-cache
             docker compose up -d --remove-orphans
 
             docker image prune -f
