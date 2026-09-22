@@ -402,6 +402,10 @@ def test_the_model_facing_enum_holds_only_its_original_vocabulary() -> None:
         "missing_price_currency",
         "missing_refinement_currency",
         "missing_dimension_role",
+        # M21: they adjusted a search that was never run, because the turn
+        # before only asked a question. Ordinary, so it is a question rather
+        # than a failed turn.
+        "no_search_to_refine",
         "missing_dimension_unit",
         "ambiguous_product_reference",
         "ambiguous_comparative_reference",

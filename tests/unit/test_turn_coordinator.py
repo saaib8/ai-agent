@@ -1391,9 +1391,10 @@ async def test_a_currency_conflict_is_a_question_not_a_conversion() -> None:
     assert clarification.relative_price_reason is (RelativePriceFailureReason.CURRENCY_CONFLICT)
 
 
-async def test_a_refinement_with_no_active_search_is_a_defect_not_a_question() -> None:
-    """The state view told the model there was no search. Asking the customer
-    to fix that would hide the mismatch."""
+async def test_a_refinement_with_no_active_search_asks_rather_than_fails() -> None:
+    """Covered in full further down, where the reasoning it replaces is set
+    out. Kept here so the refinement section reads completely: adjusting a
+    search that was never run is a question, not a failed turn (M21 1)."""
     coordinator, _ = _coordinator(
         CustomerAgentDecision(
             action=AgentAction.REFINE_SEARCH,
@@ -1403,8 +1404,11 @@ async def test_a_refinement_with_no_active_search_is_a_defect_not_a_question() -
         )
     )
 
-    with pytest.raises(LLMResponseInvalidError):
-        await coordinator.run(_turn(_state(request=None, presented=(), selected=())))
+    result = await coordinator.run(_turn(_state(request=None, presented=(), selected=())))
+
+    clarification = result.grounding.deterministic_clarification
+    assert clarification is not None
+    assert clarification.reason is BlockingClarificationReason.NO_SEARCH_TO_REFINE
 
 
 async def test_a_same_parent_taxonomy_change_refines_in_place() -> None:
@@ -2036,12 +2040,19 @@ def test_every_composition_defect_is_accounted_for() -> None:
     }
 
 
-async def test_a_refinement_with_no_active_search_stays_a_defect() -> None:
-    """The state view showed `active_search=None` and the model refined anyway.
+async def test_a_refinement_with_no_active_search_becomes_a_question() -> None:
+    """This used to raise, on the reasoning that the customer "were never the
+    reason this failed, and asking them would hide the mismatch".
 
-    Not converted to a clarification: the customer could of course start a
-    search, but they were never the reason this failed, and asking them would
-    hide the mismatch.
+    A live conversation disproved the premise. "I want a sofa less than 200 cm"
+    names no measurement, so the turn is a blocking clarification - which asks
+    *and runs no search*. The customer answers "the width along the wall", the
+    model calls that a refinement, and there is nothing active to refine. They
+    were the reason, they were answering our own question, and they got "we
+    could not interpret that request" (M21 1).
+
+    So this one defect becomes a question. The mismatch is still visible - it
+    is logged - but a customer-facing 5xx is the wrong way to surface it.
     """
     coordinator, parts = _coordinator(
         CustomerAgentDecision(
@@ -2052,10 +2063,25 @@ async def test_a_refinement_with_no_active_search_stays_a_defect() -> None:
         )
     )
 
-    with pytest.raises(LLMResponseInvalidError):
-        await coordinator.run(_turn(_state(request=None, presented=(), selected=())))
+    result = await coordinator.run(_turn(_state(request=None, presented=(), selected=())))
 
-    assert parts["pipeline"].calls == []
+    clarification = result.grounding.deterministic_clarification
+    assert clarification is not None
+    assert clarification.reason is BlockingClarificationReason.NO_SEARCH_TO_REFINE
+    assert parts["pipeline"].calls == [], "nothing was searched for"
+
+
+async def test_the_other_composition_defects_still_raise() -> None:
+    """Only `NO_ACTIVE_SEARCH` was reclassified. An unapproved attribute value
+    and an unresolved relative price are still internal mismatches, and still
+    not questions anyone can put to a customer."""
+    from app.schemas.composition import CompositionDefect
+
+    assert {d.value for d in CompositionDefect} >= {
+        "no_active_search",
+        "relative_price_not_resolved",
+        "unapproved_attribute_value",
+    }
 
 
 async def test_an_unapproved_attribute_value_is_a_defect() -> None:

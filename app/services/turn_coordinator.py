@@ -102,6 +102,7 @@ from app.schemas.bundle import (
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.composition import (
     ComposedSearch,
+    CompositionDefect,
     CompositionFailed,
     CompositionNeedsClarification,
     CompositionOutcome,
@@ -2361,8 +2362,15 @@ class CustomerTurnCoordinator:
         working: AgentStateV1,
         turn: CustomerTurnInput,
     ) -> _Primary:
-        """A genuinely new task. M7 reads the current message and nothing else."""
-        interpretation = await self._interpret(turn.message)
+        """A genuinely new task.
+
+        M7 reads one message and nothing else, which keeps the same sentence
+        meaning the same thing on every turn. When the request was finished
+        across turns the decision restates it, and the restatement is what M7
+        reads - still one self-contained request, interpreted and validated
+        exactly as a message would be (M22 1).
+        """
+        interpretation = await self._interpret(decision.search_request or turn.message)
         if isinstance(interpretation, TurnFailure):
             return _Primary(state=working, failure=interpretation)
         if not isinstance(interpretation, ResolvedSearch):
@@ -2566,12 +2574,24 @@ class CustomerTurnCoordinator:
                     state=working,
                     clarification=DeterministicClarification(reason=outcome.reason),
                 )
+            case CompositionFailed(defect=CompositionDefect.NO_ACTIVE_SEARCH):
+                # Not a sequencing bug, and the only defect that is not. The
+                # turn before asked a question and ran no search, so there is
+                # nothing to adjust - which is an ordinary place for a
+                # conversation to be, and a question anyone can put to a
+                # customer. Raising made answering the agent's own question a
+                # failed turn (M21 1).
+                logger.info("turn_refinement_without_a_search")
+                return _Primary(
+                    state=working,
+                    clarification=DeterministicClarification(
+                        reason=BlockingClarificationReason.NO_SEARCH_TO_REFINE
+                    ),
+                )
             case CompositionFailed():
-                # The composer was asked to do something it must refuse: a
-                # refinement with nothing active, an unapproved attribute
-                # value, an unresolved relative price. Each means the decision
-                # did not match the state it was shown, which is not a question
-                # anyone can put to a customer.
+                # An unapproved attribute value, an unresolved relative price.
+                # Each means the decision did not match the state it was shown,
+                # which is not a question anyone can put to a customer.
                 logger.error("turn_composition_defect", defect=str(outcome.defect))
                 raise LLMResponseInvalidError(reason=f"composition refused: {outcome.defect}")
             case NewTaskRequired():  # pragma: no cover - only from refine_taxonomy

@@ -45,6 +45,7 @@ from tests.unit.test_turn_coordinator import (
     FakeHydration,
     FakeReferences,
     _coordinator,
+    _resolved,
     _state,
     _turn,
 )
@@ -706,3 +707,77 @@ def test_the_reply_is_told_not_to_stop_at_a_receipt() -> None:
 
     assert "Never end on the acknowledgement alone" in flat
     assert "acknowledge in a clause, not a sentence" in flat
+
+
+# ── a request finished across turns ─────────────────────────────────────────
+#
+# "How big should a rug be under a sofa?" -> a good answer, 15-30 cm beyond
+# each arm. Then "Do you have anything like that in store?" -> "What size rug
+# are you looking for?" - asking back the very thing it had just answered.
+#
+# Query understanding reads one message and never the conversation, so the
+# second message arrived naming no product at all (M22 1).
+
+
+async def test_the_restated_request_is_what_gets_interpreted() -> None:
+    """Not the bare continuation, which names nothing."""
+    coordinator, parts = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH, search_request="rugs"),
+        interpretation=_resolved(),
+    )
+
+    await coordinator.run(_turn(_state(), "do you have anything like that in store?"))
+
+    assert parts["m7"].messages == ["rugs"]
+
+
+async def test_the_message_is_used_when_it_asks_by_itself() -> None:
+    """The common case, unchanged."""
+    coordinator, parts = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH), interpretation=_resolved()
+    )
+
+    await coordinator.run(_turn(_state(), "show me modern sofas"))
+
+    assert parts["m7"].messages == ["show me modern sofas"]
+
+
+async def test_the_restatement_is_still_interpreted_and_validated() -> None:
+    """It is read exactly as a message would be, so a product type invented in
+    it is rejected by the same validation (CLAUDE.md 14.3)."""
+    from app.schemas.query import ClarificationReason, ClarificationRequired
+
+    coordinator, parts = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH, search_request="luxury couches"),
+        interpretation=ClarificationRequired(
+            reason=ClarificationReason.NO_COMMERCE_CATEGORY
+        ),
+    )
+
+    result = await coordinator.run(_turn(_state(), "anything like that?"))
+
+    assert parts["pipeline"].calls == [], "nothing unapproved reached the catalog"
+    assert result.grounding.deterministic_clarification is not None
+
+
+def test_a_restatement_is_bounded() -> None:
+    """A request, not a transcript - so a conversation cannot be pasted in."""
+    import pytest as _pytest
+    from app.schemas.agent_decision import MAX_SEARCH_REQUEST_CHARS
+    from pydantic import ValidationError
+
+    assert MAX_SEARCH_REQUEST_CHARS == 300
+    with _pytest.raises(ValidationError):
+        CustomerAgentDecision(
+            action=AgentAction.SEARCH, search_request="x" * (MAX_SEARCH_REQUEST_CHARS + 1)
+        )
+
+
+def test_the_agent_is_told_to_restate_rather_than_resolve() -> None:
+    from app.prompts.customer_commerce.v1 import INSTRUCTIONS
+
+    flat = " ".join(INSTRUCTIONS.split())
+
+    assert "A REQUEST FINISHED ACROSS TURNS IS STILL THE REQUEST" in flat
+    assert "Restate; do not resolve" in flat
+    assert "never answer a question with the same question" in flat

@@ -47,6 +47,14 @@ from app.schemas.refinement import SearchRefinementDelta, SemanticIntentRefineme
 
 MAX_CLARIFICATION_CHARS = 300
 
+MAX_SEARCH_REQUEST_CHARS = 300
+"""A restated request is a request, not a transcript.
+
+Long enough for what a customer actually asks for - "a sofa less than 200 cm
+wide", "rugs around 230 by 330" - and short enough that a conversation cannot
+be pasted in and interpreted as one.
+"""
+
 
 class AgentAction(StrEnum):
     """What this turn executes. One per turn."""
@@ -643,6 +651,18 @@ class BlockingClarificationReason(StrEnum):
 
     COMPARISON_TARGETS = "comparison_targets"
 
+    NO_SEARCH_TO_REFINE = "no_search_to_refine"
+    """They adjusted a search that was never run.
+
+    Ordinary, not a bug. Ask "less than 200 cm" about a sofa and the turn is a
+    clarification - which measurement? - and no search executes. Answer it and
+    the reply refines something that does not exist, because the request it
+    belongs to was never carried out (M21 1).
+
+    The customer-facing truth is that we do not yet know what to look for, so
+    it is a question rather than a failed turn.
+    """
+
     MISSING_ROOM_REQUIREMENTS = "missing_room_requirements"
     """A room was asked for without enough to plan one worth showing.
 
@@ -742,6 +762,31 @@ class CustomerAgentDecision(BaseModel):
     anchor at all. It is the single source of anchor truth - the top-level
     `reference` no longer carries one - so there are never two answers to
     "which piece".
+    """
+
+    search_request: str | None = Field(
+        default=None, min_length=1, max_length=MAX_SEARCH_REQUEST_CHARS
+    )
+    """What to search for, when the latest message does not say it by itself.
+
+    A request can be finished across turns. "How big should a rug be under a
+    sofa?" -> "Do you have anything like that in store?" asks for rugs, but the
+    second message alone names no product at all - so query understanding,
+    which reads that message and nothing else, had nothing to work with and
+    asked what size rug they wanted, moments after answering that very
+    question (M22 1).
+
+    So restate it here, in the customer's own terms, carrying what they have
+    already said: "rugs", "a sofa less than 200 cm wide". `None` when the
+    message asks for the thing by itself, which is the common case.
+
+    **It is restated, not resolved.** Write what they asked for, never a
+    category, a subcategory or a filter: the interpretation and its validation
+    against the approved vocabulary happen afterwards exactly as they do for
+    any message (CLAUDE.md 14.2, 14.3). A product type invented here would be
+    rejected there.
+
+    Read only on a search.
     """
 
     design_question: str | None = Field(
