@@ -95,7 +95,7 @@ jobs:
           script: |
             set -euo pipefail
             for i in $(seq 1 15); do
-              if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+              if curl -fsS http://127.0.0.1:8010/health >/dev/null; then
                 echo "backend healthy"
                 exit 0
               fi
