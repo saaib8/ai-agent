@@ -9,8 +9,15 @@ Two things are deliberately absent.
 **Every product id.** The whole authority design rests on the model never
 emitting one. Serialising ids into the prompt is what makes emitting one easy,
 and a plausible-looking id is exactly the hallucination a membership check
-waves through. So products appear here as positions and counts: enough to say
-"the second one", never enough to name it.
+waves through. So products appear here by *position*: enough to say "the second
+one", never enough to name it.
+
+What a position carries is the card the customer is looking at - its name,
+price, capacity, colour and size (CLAUDE.md 2). That is merchandise, not
+identity: it is already on their screen, it cannot be used to address a
+repository, and without it the agent could not tell a four-seater from a
+five-seater it had shown a moment earlier. The rule was never "the model knows
+nothing about the products"; it was "the model cannot name one to the backend".
 
 **Retailer scope.** `store_id` lives on `RetailerContext`, which application
 code passes straight to the repositories. There is no decision a model makes
@@ -32,6 +39,7 @@ from app.schemas.agent_state import PurchaseStage
 from app.schemas.discovery import DimensionConstraintKind, ProductSort
 from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.query import ConstraintStrength
+from app.schemas.screen import PresentedCardView
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole
 
@@ -138,6 +146,24 @@ class PresentedProductsView(BaseModel):
     shorter than `selected_count`. It is never padded to match.
     """
 
+    cards: tuple[PresentedCardView, ...] = ()
+    """What is actually on those cards, freshly read from the catalog.
+
+    The count alone was not enough. A salesperson beside five sofas knows which
+    five; knowing only that there are five is what produced "here's what I
+    found" and an agent that could not tell a 4-seater from a 5-seater it had
+    just shown (CLAUDE.md 2, 9).
+
+    Shorter than `count` when the catalog no longer returns a product that was
+    on screen. Positions are never closed up to hide the gap, so a card's
+    `presented_ordinal` always means the same thing as the ordinal the customer
+    would say (CLAUDE.md 7).
+
+    Empty is ordinary: nothing has been shown yet, or this turn could not read
+    the catalog. A missing card is a card the agent must not talk about, which
+    is the safe direction to fail in.
+    """
+
     @model_validator(mode="after")
     def _ordinals_are_within_the_presented_list(self) -> Self:
         for ordinal in self.selected_ordinals:
@@ -147,6 +173,15 @@ class PresentedProductsView(BaseModel):
             raise ValueError("selected_ordinals must not repeat a position")
         if len(self.selected_ordinals) > self.selected_count:
             raise ValueError("more selected ordinals than selected products")
+
+        positions = [card.presented_ordinal for card in self.cards]
+        for ordinal in positions:
+            if not 1 <= ordinal <= self.count:
+                raise ValueError("a card must occupy a presented position")
+        if len(set(positions)) != len(positions):
+            raise ValueError("two cards cannot occupy the same position")
+        if positions != sorted(positions):
+            raise ValueError("cards must be in the order they are presented")
         return self
 
 

@@ -334,15 +334,46 @@ async def test_the_model_receives_only_the_locked_response_input() -> None:
 
 @pytest.mark.parametrize(
     "forbidden",
-    ["Aurora", "4299", "SAR", "https://", "product_id", "store_id", "product_url"],
+    # `grounding_ref` is absent from this list because the prompt names the
+    # field the model fills in. The *value* never travels: the contracts suite
+    # checks the projected view carries no ref.
+    ["https://", "product_id", "store_id", "product_url", "uuid", "pinecone"],
 )
-async def test_no_product_or_retailer_fact_reaches_the_model(forbidden: str) -> None:
+async def test_no_backend_identity_reaches_the_model(forbidden: str) -> None:
+    """Merchandise crosses; identity does not (CLAUDE.md 6)."""
     client = FakeClient(SAFE)
 
     await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert forbidden not in client.calls[0]["user_input"], forbidden
     assert forbidden not in client.calls[0]["instructions"], forbidden
+
+
+@pytest.mark.parametrize("fact", ["Aurora", "4299", "SAR"])
+async def test_the_visible_merchandise_does_reach_the_model(fact: str) -> None:
+    """The point of the pass: the model can see what the customer sees.
+
+    These same three strings were forbidden before. They are on the card in
+    front of the customer, so withholding them bought no safety - it only made
+    the reply vaguer than the screen (CLAUDE.md 15).
+    """
+    client = FakeClient(SAFE)
+
+    await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
+
+    assert fact in client.calls[0]["user_input"], fact
+
+
+async def test_no_product_fact_is_ever_written_into_the_instructions() -> None:
+    """Catalog data is data. It travels in the serialised user turn, never in
+    the system prompt, so merchant text cannot become instruction
+    (CLAUDE.md 13, 20.1)."""
+    client = FakeClient(SAFE)
+
+    await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
+
+    for fact in ("Aurora", "4299", "SAR", "https://"):
+        assert fact not in client.calls[0]["instructions"], fact
 
 
 async def test_the_customers_words_travel_as_data_not_instructions() -> None:

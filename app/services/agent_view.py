@@ -21,6 +21,8 @@ the same view.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import (
     ActiveSearchState,
@@ -42,15 +44,29 @@ from app.schemas.agent_view import (
 )
 from app.schemas.discovery import PriceConstraint
 from app.schemas.query import ConstraintSemantics, SemanticPreference
+from app.schemas.screen import PresentedCardView
 from app.services.bundle_cards import group_bundle_cards
 
 
-def project_state(state: AgentStateV1) -> AgentStateView:
-    """The model-safe view of one conversation's memory."""
+def project_state(
+    state: AgentStateV1, cards: Sequence[PresentedCardView] = ()
+) -> AgentStateView:
+    """The model-safe view of one conversation's memory.
+
+    `cards` are the products currently on the customer's screen, read fresh
+    from the catalog by the caller. They are a parameter rather than something
+    derived here because this function is pure and reading the catalog is not -
+    and because card facts must never be stored in `AgentStateV1` and replayed
+    from it, which would show the agent a price that was true once
+    (CLAUDE.md 61, 62).
+
+    Omitted means nothing is on screen, or the catalog could not be read. Both
+    fail the same safe way: the agent talks about no card in particular.
+    """
     return AgentStateView(
         active_search=_active_search(state.active_search),
         customer_preferences=_preferences(state.customer_preferences.semantic_preferences),
-        presented=_presented(state),
+        presented=_presented(state, cards),
         room_project=_room_project(state.room_project),
         purchase_stage=state.derived_commerce.purchase_stage,
     )
@@ -145,7 +161,9 @@ def _active_search(search: ActiveSearchState | None) -> ActiveSearchView | None:
     )
 
 
-def _presented(state: AgentStateV1) -> PresentedProductsView:
+def _presented(
+    state: AgentStateV1, cards: Sequence[PresentedCardView] = ()
+) -> PresentedProductsView:
     """Counts and positions. Never an id.
 
     `selected_ordinals` holds only selections that are *currently on screen*.
@@ -159,6 +177,7 @@ def _presented(state: AgentStateV1) -> PresentedProductsView:
         for ordinal, product_id in enumerate(interaction.presented_product_ids, start=1)
     }
     return PresentedProductsView(
+        cards=tuple(cards),
         count=len(interaction.presented_product_ids),
         has_focused_product=interaction.focused_product_id is not None,
         selected_count=len(interaction.selected_product_ids),

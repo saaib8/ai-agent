@@ -152,7 +152,19 @@ DESIGN_POLICIES = {
     "no handover talk": ("never say you are handing anything over",),
     "no product facts": ("You have no catalog, no prices, no stock",),
     "never names a product": ("You never name a product",),
-    "two tasks": ("The request says which one",),
+    "three tasks": ("The request says which one",),
+    "a complement is an ordered shortlist": (
+        "The first is your real recommendation",
+    ),
+    "fallbacks are alternatives not a sequence": (
+        "They are alternatives, not a sequence to buy",
+    ),
+    "depth breaks a design tie only": (
+        "Never let that outrank design sense",
+    ),
+    "advice answers at length": (
+        "Answer at the length the question deserves",
+    ),
     "advice is not shopping": ("Do not turn it into shopping",),
     "figures go in measurements": ("every figure goes in a measurement field",),
     "guidance is a convention": ("It is true of rooms in general",),

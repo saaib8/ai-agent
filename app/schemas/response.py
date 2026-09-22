@@ -33,6 +33,7 @@ from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
+from app.schemas.design import DesignGuidance
 from app.schemas.grounding import TurnFailureCode
 from app.schemas.relaxation import RelaxableField
 from app.schemas.resolution import (
@@ -41,6 +42,7 @@ from app.schemas.resolution import (
     RelativePriceFailureReason,
     SearchRequirementClarificationReason,
 )
+from app.schemas.screen import CustomerVisibleScreenView
 from app.taxonomy.dimensions import DimensionRole
 
 
@@ -63,6 +65,14 @@ class ResponseOutcomeKind(StrEnum):
 
     Only a real `RoomBundle`. A refusal to compute one carries no package to
     frame, so it is answered deterministically instead.
+    """
+
+    DESIGN_ADVICE = "design_advice"
+    """A design question, answered from the specialist's reasoning.
+
+    Words and no cards. The guidance on the view is what the reply is written
+    from, and it is general knowledge rather than anything about a product this
+    retailer sells (CLAUDE.md 36, 41).
     """
 
     DETERMINISTIC_CLARIFICATION = "deterministic_clarification"
@@ -359,6 +369,31 @@ class ResponseGroundingView(BaseModel):
     bundle: BundleGroundingView | None = None
     """The whole-room outcome, for `ROOM_BUNDLE` and nothing else."""
 
+    guidance: tuple[DesignGuidance, ...] = ()
+    """The design specialist's answer, for `DESIGN_ADVICE`.
+
+    The one place the response model is given something to *say* rather than
+    something to frame. It carries no product, no price and no stock claim, so
+    a reply written from it is design knowledge and never a statement about
+    what this retailer has (CLAUDE.md 41).
+    """
+
+    screen: CustomerVisibleScreenView = CustomerVisibleScreenView()
+    """What the customer is looking at while they read this reply.
+
+    Projected from the same objects the presentation payload is built from, so
+    a fact stated in prose and a fact printed on a card are the same fact
+    (CLAUDE.md 2, 10).
+
+    This is what lets a reply be *about* something: "the second one seats five"
+    rather than "here are five options". It carries merchandise and no
+    identity - no id, no store, no score, no url - so a model that reads it
+    still cannot name a product to the backend (CLAUDE.md 6).
+
+    Empty on a turn that shows nothing, which reads correctly: an answer with
+    no cards beside it should not talk about cards.
+    """
+
     clarification_reason: (
         BlockingClarificationReason | SearchRequirementClarificationReason | None
     ) = None
@@ -384,6 +419,9 @@ class ResponseGroundingView(BaseModel):
 
         if (self.kind is ResponseOutcomeKind.ROOM_BUNDLE) != (self.bundle is not None):
             raise ValueError("a room bundle outcome carries its bundle, and only it does")
+
+        if (self.kind is ResponseOutcomeKind.DESIGN_ADVICE) != bool(self.guidance):
+            raise ValueError("design advice carries guidance, and only it does")
 
         if self.kind is ResponseOutcomeKind.ZERO_RESULTS and self.presented_count:
             raise ValueError("a zero-result search presents nothing")

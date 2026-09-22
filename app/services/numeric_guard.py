@@ -15,6 +15,14 @@ or counts the application supplied.
 "20%", not "80%" - even though one follows from the other. Deriving a figure is
 commerce arithmetic, which belongs to services that read real prices
 (CLAUDE.md 3.3).
+
+The screen-awareness pass widened *what has a source*, not what the rule is.
+The response model now reads the cards the customer is looking at, so a price,
+a capacity or a measurement printed on one of them has an approved origin and
+may be repeated. Everything the application did not put on screen is still
+unsourced: a saving, a percentage, a difference between two prices, a running
+total, a remaining budget. Repeating is allowed; computing never was
+(CLAUDE.md 14).
 """
 
 from __future__ import annotations
@@ -24,7 +32,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from app.schemas.design import DesignGuidance
 from app.schemas.response import BundleGroundingView
+from app.schemas.screen import CustomerVisibleScreenView
 
 ResponseNumericAllowance = frozenset[str]
 """Canonical numeric tokens generated prose may contain.
@@ -114,12 +124,88 @@ def bundle_counts(bundle: BundleGroundingView) -> tuple[int, ...]:
     )
 
 
+def screen_figures(screen: CustomerVisibleScreenView) -> tuple[Decimal | int, ...]:
+    """Every figure the customer can read off the current screen.
+
+    Field by field, for the same reason :func:`bundle_counts` is: "every number
+    on the view" would mean a field added later silently widened what prose may
+    assert, and the next such field might be a margin.
+
+    Room figures are included because the application computed and rendered
+    them. The budget maximum is here for the same reason - it is printed beside
+    the total - while `within_budget` is a verdict rather than a figure and has
+    no number to license.
+    """
+    figures: list[Decimal | int] = []
+    for card in screen.products:
+        if card.price_amount is not None:
+            figures.append(card.price_amount)
+        if card.seating_capacity is not None:
+            figures.append(card.seating_capacity)
+        if card.dimensions is not None:
+            figures.extend(
+                value
+                for value in (
+                    card.dimensions.length_cm,
+                    card.dimensions.width_cm,
+                    card.dimensions.height_cm,
+                )
+                if value is not None
+            )
+
+    if screen.comparison is not None:
+        # Cells are strings the application rendered, so a cell reading
+        # "220 cm" licenses 220. Parsed rather than trusted wholesale: a cell
+        # the comparison could not establish carries no value to license.
+        for row in screen.comparison.rows:
+            for cell in row.cells:
+                if cell.value is None:
+                    continue
+                figures.extend(
+                    Decimal(number)
+                    for token in _NUMERIC_TOKEN.findall(cell.value)
+                    if (number := canonical_number(token)) is not None
+                )
+
+    room = screen.room
+    if room is not None:
+        for line in room.cards:
+            figures.append(line.quantity)
+            if line.unit_price is not None:
+                figures.append(line.unit_price)
+            if line.new_spend_line_total is not None:
+                figures.append(line.new_spend_line_total)
+        if room.new_spend_total is not None:
+            figures.append(room.new_spend_total)
+        if room.budget_max_amount is not None:
+            figures.append(room.budget_max_amount)
+    return tuple(figures)
+
+
+def guidance_figures(guidance: Sequence[DesignGuidance]) -> tuple[Decimal, ...]:
+    """Measurements the design specialist supplied as general guidance.
+
+    Sayable because the specialist produced them as structured measurements
+    rather than in prose - which is exactly why `DesignGuidance.summary`
+    forbids digits. A rule of thumb about rug sizing is design knowledge, not a
+    claim about any product (CLAUDE.md 41).
+    """
+    return tuple(
+        bound
+        for item in guidance
+        for measurement in item.measurements
+        for bound in (measurement.minimum, measurement.maximum)
+        if bound is not None
+    )
+
+
 def build_allowance(
     message: str,
     *,
     presented_count: int = 0,
     compared_count: int = 0,
     counts: Sequence[int] = (),
+    figures: Sequence[Decimal | int] = (),
 ) -> ResponseNumericAllowance:
     """What this turn's prose is permitted to say in figures.
 
@@ -137,12 +223,18 @@ def build_allowance(
     * approved counts from a whole-room outcome, listed explicitly by
       :func:`bundle_counts` rather than swept from the view.
 
-    No product price, dimension, capacity, comparison cell, relaxation
-    threshold, budget figure, total or id is ever admitted here. A budget the
-    customer stated is sayable only because *they* said it, through the first
-    source - never because a bundle was computed against it.
+    * figures the application put on the customer's screen, named field by
+      field by :func:`screen_figures`, plus any general design measurements the
+      specialist supplied.
+
+    No relaxation threshold, internal score or identifier is ever admitted. Nor
+    is anything derived: a saving, a percentage, a price difference and a
+    remaining budget all have to be computed, and the guard admits only figures
+    that already exist somewhere authoritative (CLAUDE.md 14).
     """
     allowed = set(numbers_in(message))
+    for figure in figures:
+        allowed.add(canonical_number(str(figure)) or str(figure))
     for count in (presented_count, compared_count):
         if count > 0:
             allowed.add(canonical_number(str(count)) or str(count))

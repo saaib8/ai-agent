@@ -35,12 +35,20 @@ from app.taxonomy.registry import CommerceTaxonomy
 
 logger = get_logger(__name__)
 
-MAX_COMPLEMENTARY_NEEDS = 2
+MAX_COMPLEMENTARY_NEEDS = 3
 """How many roles one complementary recommendation may carry.
 
-One is the normal answer. Two exists for the case where the second is
-inseparable from the first - a rug and the table that sits on it - and not as
-licence to start furnishing the room they did not ask about."""
+A shortlist, not a shopping list. **One of them is shown** - the first the
+retailer can actually supply - and the rest exist because "this retailer
+stocks lounge chairs" and "this retailer can offer the customer a choice of
+lounge chairs" are different claims, and only running the search settles the
+second (CLAUDE.md 26).
+
+Three is enough to survive a thin category twice and small enough that the
+specialist still has to choose. It is not licence to furnish a room nobody
+asked about: the roles beyond the first are fallbacks, discarded once one
+works.
+"""
 
 
 class InteriorDesignAgent:
@@ -167,7 +175,12 @@ class InteriorDesignAgent:
     def _complementary(
         self, result: InteriorDesignResult, request: InteriorDesignRequest
     ) -> InteriorDesignResult:
-        """One next role, not a room.
+        """One next role, with fallbacks - not a room.
+
+        Order is preserved exactly as the specialist produced it, because the
+        order *is* the design judgement: the caller shows the first role it can
+        fill and never reorders them. Trimming takes from the end for the same
+        reason (CLAUDE.md 26, 27).
 
         Trimmed rather than refused when the specialist overreaches: the first
         need is still the answer to what was asked, and discarding good

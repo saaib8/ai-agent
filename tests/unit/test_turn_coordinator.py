@@ -228,6 +228,25 @@ class FakeHydration:
         return tuple(_product(p, price=self.price) for p in product_ids if p in self.available)
 
 
+def _action_reads(parts: dict[str, Any], state: AgentStateV1) -> list[list[int]]:
+    """Catalog reads the turn's *action* made, with the screen read removed.
+
+    Every turn now reads the cards the customer is looking at before the
+    decision model runs, so it knows which five sofas they are comparing rather
+    than only that there are five (CLAUDE.md 2). That read is context - it
+    happens whatever the turn goes on to do - so tests about what an action
+    touched subtract it rather than counting it.
+
+    Matched by its exact argument, the presented ids in order, so a genuine
+    second read of the same products would still be visible.
+    """
+    calls = [list(call) for call in parts["hydration"].calls]
+    screen = list(state.product_interaction.presented_product_ids)
+    if screen and calls and calls[0] == screen:
+        calls.pop(0)
+    return calls
+
+
 def _product(
     product_id: int, *, subcategory: str | None = "sofa", price: str | None = None
 ) -> ProductCandidate:
@@ -661,11 +680,12 @@ async def test_an_answer_touches_no_service() -> None:
         CustomerAgentDecision(action=AgentAction.ANSWER, follow_up_policy=FollowUpPolicy.OPTIONAL)
     )
 
-    result = await coordinator.run(_turn(_state()))
+    state = _state()
+    result = await coordinator.run(_turn(state))
 
     assert parts["m7"].messages == []
     assert parts["pipeline"].calls == []
-    assert parts["hydration"].calls == []
+    assert _action_reads(parts, state) == []
     assert result.grounding.search is None
     assert result.grounding.follow_up_policy is FollowUpPolicy.OPTIONAL
 
@@ -693,11 +713,12 @@ async def test_a_model_clarification_is_carried_through_verbatim() -> None:
 async def test_a_design_handoff_is_a_marker_only() -> None:
     coordinator, parts = _coordinator(CustomerAgentDecision(action=AgentAction.DESIGN_HANDOFF))
 
-    result = await coordinator.run(_turn(_state()))
+    state = _state()
+    result = await coordinator.run(_turn(state))
 
     assert result.grounding.design_handoff_requested is True
     assert parts["pipeline"].calls == []
-    assert parts["hydration"].calls == []
+    assert _action_reads(parts, state) == []
 
 
 # ── search ──────────────────────────────────────────────────────────────────
@@ -1168,9 +1189,10 @@ async def test_an_unbuildable_seed_reports_the_search_unavailable_not_the_produc
         hydration=UnclassifiedHydration(),
     )
 
-    result = await coordinator.run(_turn(_state(revision=1)))
+    state = _state(revision=1)
+    result = await coordinator.run(_turn(state))
 
-    assert parts["hydration"].calls == [[OFF_SCREEN]], "the product WAS read"
+    assert _action_reads(parts, state) == [[OFF_SCREEN]], "the product WAS read"
     assert result.grounding.failure is not None
     assert result.grounding.failure.code is TurnFailureCode.SEARCH_UNAVAILABLE
 
@@ -1446,9 +1468,10 @@ async def test_a_product_detail_hydrates_and_focuses() -> None:
         hydration=FakeHydration(available=(10,)),
     )
 
-    result = await coordinator.run(_turn(_state()))
+    state = _state()
+    result = await coordinator.run(_turn(state))
 
-    assert parts["hydration"].calls == [[10]]
+    assert _action_reads(parts, state) == [[10]]
     assert result.grounding.product_detail is not None
     assert result.state.product_interaction.focused_product_id == 10
 

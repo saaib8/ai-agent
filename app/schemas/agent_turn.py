@@ -29,6 +29,7 @@ from app.schemas.agent_view import AgentStateView
 from app.schemas.bundle import BundleOptimizationOutcome
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.conversation import ConversationContext
+from app.schemas.design import DesignGuidance
 from app.schemas.grounding import (
     GroundedProduct,
     SearchExecutionGrounding,
@@ -105,6 +106,18 @@ class TurnGrounding(BaseModel):
     """
 
     failure: TurnFailure | None = None
+
+    design_guidance: tuple[DesignGuidance, ...] = ()
+    """What the design specialist answered, when the turn was a design question.
+
+    Carried whole rather than summarised: `DesignGuidance` is already a safe
+    shape - a topic, a summary that contains no digits by validation, and any
+    figures as tagged measurements - so projecting it again would be a second
+    place the same words could be trimmed differently (CLAUDE.md 4, 41).
+
+    It is design knowledge, true of rooms in general and of none in particular.
+    Nothing here is a claim about a product, a price or this retailer's stock.
+    """
 
     design_handoff_requested: bool = False
     """The turn **asked** for interior-design reasoning.

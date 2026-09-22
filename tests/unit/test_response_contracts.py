@@ -299,6 +299,7 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         "product_detail",
         "comparison",
         "room_bundle",
+        "design_advice",
         "deterministic_clarification",
     }
     for absent in ("clarify", "failure", "design_handoff", "handled_failure"):
@@ -308,13 +309,30 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
 # ── what the projection carries ─────────────────────────────────────────────
 
 
-def test_a_search_projects_counts_not_products() -> None:
+def test_a_search_projects_the_cards_the_customer_can_see() -> None:
+    """Counts *and* merchandise.
+
+    The count says an ordinal is sayable; the cards say what the ordinal points
+    at. Without the second, a reply can only announce that results exist
+    (CLAUDE.md 2).
+    """
     routing = _route(TurnGrounding(search=_search(count=2)))
 
     assert isinstance(routing, ResponseGroundingView)
     assert routing.presented_count == 2
-    assert "Aurora" not in routing.model_dump_json()
-    assert "4299" not in routing.model_dump_json()
+    assert [card.presented_ordinal for card in routing.screen.products] == [1, 2]
+    assert routing.screen.products[0].name == "Aurora Three Seater"
+    assert routing.screen.products[0].price_amount == Decimal("4299")
+
+
+def test_a_projected_card_carries_no_way_to_address_the_catalog() -> None:
+    """The line the merchandise does not cross."""
+    routing = _route(TurnGrounding(search=_search(count=2)))
+
+    assert isinstance(routing, ResponseGroundingView)
+    rendered = routing.model_dump_json()
+    for forbidden in ("product_id", "store_id", "https://", "grounding_ref", "uuid"):
+        assert forbidden not in rendered, forbidden
 
 
 def test_relaxation_projects_the_axis_never_the_figure() -> None:
@@ -406,23 +424,35 @@ def _reachable_names(model: type[BaseModel], seen: set[type] | None = None) -> l
     return names
 
 
+# What the response model may and may not be told about a product changed with
+# the screen-awareness pass. It may read the merchandise the customer is
+# looking at - a name, a price, a capacity, a colour - because a salesperson
+# beside five sofas can see them, and an agent that cannot is reduced to "here
+# are five options" (CLAUDE.md 2, 15).
+#
+# What it may never read is *identity*: anything that could address a
+# repository, name a retailer, or be emitted as a handle. The rule was never
+# "the model knows nothing about products"; it was "the model cannot name one
+# to the backend", and that is what these guards enforce.
+
+
 @pytest.mark.parametrize(
     "forbidden",
     [
         "product_id",
+        "uuid",
         "store_id",
         "retailer",
         "revision",
-        "price_amount",
-        "price_unit",
         "image_url",
         "product_url",
-        "name_english",
-        "main_color",
-        "styles",
-        "dimensions",
+        "pinecone_id",
+        "line_id",
+        "need_id",
         "schema_version",
-        "pinecone",
+        "similarity",
+        "relaxation_depth",
+        "grounding_ref",
     ],
 )
 def test_the_response_input_reaches_no_product_or_retailer_fact(
@@ -1129,6 +1159,8 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "compared_count",
         "comparison_differs_on",
         "bundle",
+        "guidance",
+        "screen",
         "clarification_reason",
         "reference_reason",
         "relative_price_reason",

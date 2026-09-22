@@ -350,6 +350,19 @@ class DesignScope(StrEnum):
     """The single furnishing role that would most complete the space around a
     piece they have settled on. Produces products, not a room."""
 
+    ADVICE = "advice"
+    """A design question, answered as design knowledge. Produces no products.
+
+    "What colours work with walnut?" and "how big should a rug be for a
+    three-seat sofa?" are questions about rooms in general, not requests to
+    shop. Searching the catalog for them would answer something the customer
+    did not ask and bury what they did (CLAUDE.md 36, 38).
+
+    It is a scope rather than a separate action because it is the same
+    capability - the design specialist - asked about a different extent: the
+    whole room, one piece beside another, or neither.
+    """
+
 
 class DesignRevisionIntent(BaseModel):
     """The hard constraints on recomposing a room the customer already has.
@@ -717,6 +730,24 @@ class CustomerAgentDecision(BaseModel):
     would route around the checks that wording goes through.
     """
 
+    @property
+    def anchor_reference(self) -> ProductReferenceSelector | None:
+        """Which piece a design handoff is about, however the model said it.
+
+        `design_anchor` is the fuller shape - it can also record that they
+        already own the piece, or want two of it - so it wins when both are
+        present. A bare `reference` says only which piece, which is all a
+        complement needs.
+
+        One reader, so no branch has to remember that the same statement can
+        arrive two ways, and so a slip between them changes nothing.
+        """
+        if self.design_anchor is not None:
+            return self.design_anchor.reference
+        if self.action is AgentAction.DESIGN_HANDOFF:
+            return self.reference
+        return None
+
     @model_validator(mode="after")
     def _payload_matches_the_action(self) -> Self:
         self._check_search_payloads()
@@ -765,8 +796,52 @@ class CustomerAgentDecision(BaseModel):
                 raise ValueError("a comparison must not repeat a reference")
         elif self.comparison_references:
             raise ValueError("only a comparison may carry comparison references")
-        references_allowed = (AgentAction.PRODUCT_DETAIL, AgentAction.SEARCH)
-        if self.reference is not None and self.action not in references_allowed:
+        # Three groups, and the difference is whether anything acts on it.
+        #
+        # **Resolved and used.** A detail is about one product; a search may be
+        # seeded from one; a design question may be about the piece on screen -
+        # "would the second one work with a walnut table?" - and the specialist
+        # is told that piece's design facts (CLAUDE.md 42). Only the advice
+        # scope: a room plan takes its anchors from the bundle and a complement
+        # from what they settled on, so a reference on either would be a
+        # second, competing account of what the design is about.
+        #
+        # **Recorded and unread.** An answer and a clarification execute
+        # nothing. A question about the second sofa naturally carries which
+        # sofa, and the provider's strict schema puts the field on every
+        # decision anyway - so refusing it turned "I need your room
+        # measurements first" into a failed turn while changing nothing, which
+        # is the `design_scope` mistake in another place. It is kept for the
+        # trace and acted on nowhere.
+        #
+        # **Refused.** Everything else has its own reference field - a
+        # comparison, a bundle edit - so a stray product reference there means
+        # the model confused the two, and acting on the wrong one would edit
+        # the wrong thing.
+        references_used = (AgentAction.PRODUCT_DETAIL, AgentAction.SEARCH)
+        # A complement is *about* the piece they settled on, so the model
+        # naturally names it - sometimes on `design_anchor`, sometimes here.
+        # Both are the same statement, and only `design_anchor` can also say
+        # they already own it or want two. Refusing the plainer shape turned
+        # "I like the second one" into a failed turn roughly one time in three;
+        # `anchor_reference` reads whichever arrived, so there is one path
+        # through the code rather than two.
+        complement = (
+            self.action is AgentAction.DESIGN_HANDOFF
+            and self.design_scope is DesignScope.COMPLEMENT
+        )
+        references_inert = (AgentAction.ANSWER, AgentAction.CLARIFY)
+        advice = (
+            self.action is AgentAction.DESIGN_HANDOFF
+            and self.design_scope is DesignScope.ADVICE
+        )
+        if (
+            self.reference is not None
+            and not advice
+            and not complement
+            and self.action not in references_used
+            and self.action not in references_inert
+        ):
             raise ValueError(f"{self.action} may not carry a product reference")
         if self.design_anchor is not None and self.action is not AgentAction.DESIGN_HANDOFF:
             raise ValueError("only a design handoff carries a design anchor")

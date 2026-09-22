@@ -31,10 +31,12 @@ here, not by whichever branch happened to run last.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from app.core.exceptions import (
+    CatalogUnavailableError,
     IntegrationUnavailableError,
     LLMResponseInvalidError,
     TaxonomyValidationError,
@@ -106,7 +108,10 @@ from app.schemas.composition import (
 )
 from app.schemas.design import (
     MAX_DESIGN_BRIEF_CHARS,
+    MAX_DESIGN_QUESTION_CHARS,
+    AnchorProduct,
     DesignCategoryNeed,
+    DesignGuidance,
     DesignRevisionContext,
     DesignTask,
     ExcludedDesignRole,
@@ -156,6 +161,7 @@ from app.schemas.resolution import (
     SimilarSearchUnavailable,
 )
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
+from app.schemas.screen import PresentedCardView
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
@@ -182,11 +188,22 @@ from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.relative_price import RelativePriceResolver
+from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.similar_search import SimilarSearchBuilder
 from app.taxonomy.dimensions import DimensionSemantics
 
 logger = get_logger(__name__)
+
+_HANDLED_CATALOG_FAILURES = (CatalogUnavailableError,)
+"""A catalog read that failed while gathering *context*, not an answer.
+
+Only the visible-card read uses this. Losing it costs the agent its knowledge
+of what is on screen, which makes for a vaguer reply; it does not make a wrong
+one. Anything the turn genuinely needs from the catalog is read on a path that
+lets the failure propagate, so a database that is really down still ends the
+turn there rather than being hidden here (CLAUDE.md 21).
+"""
 
 _HANDLED_DESIGN_FAILURES = (
     IntegrationUnavailableError,
@@ -200,6 +217,24 @@ satisfy its schema, and a plan naming a product type the vocabulary does not
 contain. Every one means no authoritative plan exists *now* - which is a fact
 about us, never about what the retailer stocks.
 """
+
+
+def _design_question(message: str) -> str | None:
+    """The customer's design question, in their own words.
+
+    Their message, trimmed, and only when it fits. Never truncated: a question
+    cut mid-phrase can ask something else entirely, and "what goes with walnut
+    in a small room" clipped to "what goes with walnut" would be answered
+    wrongly rather than partly.
+
+    It travels as the question rather than as a design brief because the
+    contract keeps the two apart: a brief describes a room being planned, and
+    carrying both would leave which one was answered ambiguous.
+    """
+    trimmed = message.strip()
+    if not trimmed or len(trimmed) > MAX_DESIGN_QUESTION_CHARS:
+        return None
+    return trimmed
 
 
 def _design_brief(message: str) -> str | None:
@@ -295,6 +330,9 @@ class _Primary:
     failure: TurnFailure | None = None
     clarification: DeterministicClarification | None = None
     design_handoff: bool = False
+    design_guidance: tuple[DesignGuidance, ...] = ()
+    """The specialist's answer to a design question. Words, never products."""
+
     bundle_outcome: BundleOptimizationOutcome | None = None
     bundle_change: BundleInteractionOp | None = None
     """The room edit this turn made, for the deterministic acknowledgement.
@@ -650,7 +688,7 @@ class CustomerTurnCoordinator:
             DecisionInput(
                 message=turn.message,
                 conversation=turn.conversation,
-                state_view=project_state(pre_turn),
+                state_view=project_state(pre_turn, await self._visible_cards(turn)),
             )
         )
 
@@ -678,6 +716,32 @@ class CustomerTurnCoordinator:
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
         )
+
+    async def _visible_cards(
+        self, turn: CustomerTurnInput
+    ) -> tuple[PresentedCardView, ...]:
+        """The products the customer was looking at when they typed.
+
+        Read fresh rather than remembered. The session records which products
+        were shown and in what order; what they cost and how many they seat
+        comes from the catalog every turn, so "the second one" is priced at
+        today's price and not at the price it had when the card was drawn
+        (CLAUDE.md 61, 62).
+
+        One bounded read of at most the presentation limit, and it never fails
+        the turn: a catalog the agent could not reach leaves it talking about
+        no card in particular, which is worse conversation and not a wrong
+        answer (CLAUDE.md 21).
+        """
+        presented = turn.state.product_interaction.presented_product_ids
+        if not presented:
+            return ()
+        try:
+            products = await self._hydration.hydrate_ids(presented, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("visible_cards_unavailable", store_id=turn.context.store_id)
+            return ()
+        return cards_from_candidates(products, presented)
 
     # ── the optional interaction ────────────────────────────────────────────
 
@@ -1319,6 +1383,9 @@ class CustomerTurnCoordinator:
         if decision.design_scope is DesignScope.COMPLEMENT:
             return await self._complement(decision, state, pre_turn, turn)
 
+        if decision.design_scope is DesignScope.ADVICE:
+            return await self._design_advice(decision, state, turn)
+
         if self._design is None:
             # Not configured here. Checked before anything is read or written,
             # so an unconfigured deployment leaves the customer's existing room
@@ -1423,6 +1490,109 @@ class CustomerTurnCoordinator:
             bundle_outcome=outcome,
         )
 
+    async def _design_advice(
+        self,
+        decision: CustomerAgentDecision,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """A design question, answered as design knowledge.
+
+        No catalog, no search, no products. "What colours work with walnut?" is
+        a question about rooms in general, and answering it with a shelf of
+        rugs would answer something else and bury what they asked
+        (CLAUDE.md 36, 38).
+
+        The specialist gets no capabilities and no anchors beyond whatever the
+        customer's own message carried, because general advice is not a claim
+        about what this retailer stocks - and `_advice_only` drops any need it
+        returns, so a product cannot enter through this door (CLAUDE.md 41).
+
+        A failure here is the customer's question going unanswered, so unlike a
+        suggestion of ours it is reported.
+        """
+        if self._design is None:
+            logger.info("design_advice_not_configured", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+
+        question = _design_question(turn.message)
+        if question is None:
+            # Nothing to answer. A message too long to carry as a question is
+            # not a design question we can put to the specialist, and passing a
+            # truncated one would ask something they did not say.
+            logger.info("design_advice_unquotable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+
+        room = state.room_project
+        request = InteriorDesignRequest(
+            task=DesignTask.GENERAL_ADVICE,
+            question=question,
+            room_type=room.room_type if room else None,
+            design_preferences=room.design_preferences if room else (),
+            regular_seating_count=room.regular_seating_count if room else None,
+            anchors=await self._advice_anchors(decision, state, turn),
+        )
+        try:
+            plan = await self._design.plan(request)
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("design_advice_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+
+        if not plan.guidance:
+            # A design question with no design answer. Reported rather than
+            # dressed up: there is nothing to tell them.
+            logger.info("design_advice_empty", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+        return _Primary(state=state, design_handoff=True, design_guidance=plan.guidance)
+
+    async def _advice_anchors(
+        self,
+        decision: CustomerAgentDecision,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> tuple[AnchorProduct, ...]:
+        """The piece the question is about, when it names one.
+
+        "Would the second sofa work with a walnut coffee table?" is a design
+        question *about something on screen*, so the specialist is told the
+        design facts of that piece - its kind, colour, styles and size - and
+        nothing that identifies it (CLAUDE.md 42).
+
+        An unresolvable reference yields no anchor rather than a failure: the
+        general form of the question is still answerable, and refusing it over
+        a pointing word would be worse than answering it broadly.
+        """
+        if decision.reference is None:
+            return ()
+        outcome = await self._references.resolve(decision.reference, state, turn.context)
+        if isinstance(outcome, ReferenceUnresolved):
+            return ()
+        products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
+        if not products:
+            return ()
+        return project_anchors(
+            list(products),
+            dimensions=self._dimensions,
+            locked_product_ids=[products[0].product_id],
+            quantities={products[0].product_id: 1},
+        )
+
     async def _complement(
         self,
         decision: CustomerAgentDecision,
@@ -1472,13 +1642,11 @@ class CustomerTurnCoordinator:
             request = self._complement_request(state, turn, capabilities, product)
             plan = await self._design.plan(request)
         except _HANDLED_DESIGN_FAILURES:
+            # Our own idea, and it could not be formed. Reporting it would tell
+            # the customer that something failed when the thing they actually
+            # did - choosing a product - succeeded (CLAUDE.md 51).
             logger.warning("complement_unavailable", store_id=turn.context.store_id)
-            return _Primary(
-                state=state,
-                design_handoff=True,
-                proposals_applied=True,
-                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
-            )
+            return _Primary(state=state, design_handoff=True, proposals_applied=True)
 
         if not plan.needs:
             # The specialist had nothing to suggest this retailer can supply.
@@ -1487,27 +1655,77 @@ class CustomerTurnCoordinator:
             logger.info("complement_no_need", store_id=turn.context.store_id)
             return _Primary(state=state, design_handoff=True, proposals_applied=True)
 
-        resolved = self._design_discovery.resolve_need(plan.needs[0], request)
-        # Promoted like any other search, so "a cheaper one" next turn refines
-        # the rug rather than reaching back past it to the sofa.
-        composed = ComposedSearch(
-            candidate=ActiveSearchState(
-                request=resolved.request,
-                semantics=resolved.semantics,
-                semantic_preferences=resolved.semantic_preferences,
-                semantic_intent=resolved.semantic_text,
-                # Unread on this path: `_run_search` promotes the criteria
-                # through the reducer, which carries the live revision. The
-                # constant a first search uses is the honest placeholder.
-                revision=NO_RESULTS_REVISION,
-            ),
-            resolved=resolved,
+        return await self._first_viable_complement(plan.needs, request, state, turn)
+
+    async def _first_viable_complement(
+        self,
+        needs: Sequence[DesignCategoryNeed],
+        request: InteriorDesignRequest,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """The best complementary role this retailer can actually fill.
+
+        The specialist returns a short ordered list rather than one answer,
+        because "supported" and "in stock for this request" are different
+        questions and only the second can be settled by running the search. A
+        retailer with one lounge chair supports lounge chairs; proposing it and
+        finding nothing left the customer with an empty screen and a remark
+        about a product type they never mentioned (CLAUDE.md 26).
+
+        Strictly in order, and the first that returns products wins. The order
+        is the specialist's judgement of design usefulness, so falling past a
+        role is a statement about stock, never a re-ranking by this service -
+        no category is guessed here, and none is reordered.
+
+        **One category per turn.** Later roles are discarded rather than
+        queued: a customer who liked a sofa is offered a rug, not a rug and a
+        table and a lamp (CLAUDE.md 28).
+
+        Each attempt runs from the same pre-attempt state, so a role that came
+        to nothing promotes no criteria and leaves nothing for the next turn's
+        "a cheaper one" to refine.
+        """
+        for position, need in enumerate(needs, start=1):
+            resolved = self._design_discovery.resolve_need(need, request)
+            composed = ComposedSearch(
+                candidate=ActiveSearchState(
+                    request=resolved.request,
+                    semantics=resolved.semantics,
+                    semantic_preferences=resolved.semantic_preferences,
+                    semantic_intent=resolved.semantic_text,
+                    # Unread on this path: `_run_search` promotes the criteria
+                    # through the reducer, which carries the live revision. The
+                    # constant a first search uses is the honest placeholder.
+                    revision=NO_RESULTS_REVISION,
+                ),
+                resolved=resolved,
+            )
+            attempt = await self._run_search(composed, state, turn.context)
+            if attempt.failure is not None:
+                # The catalog, not the idea. Trying the next role would issue
+                # another query against something that just failed.
+                break
+            if attempt.search is not None and attempt.search.products:
+                if position > 1:
+                    logger.info(
+                        "complement_role_fallback",
+                        store_id=turn.context.store_id,
+                        attempts=position,
+                    )
+                return replace(attempt, design_handoff=True, proposals_applied=True)
+
+        # Every role the specialist proposed came back empty, or the catalog
+        # could not be reached. Either way this was *our* idea and it produced
+        # nothing, so the turn carries no search grounding and no failure: the
+        # customer asked for none of it, and nothing they asked for failed
+        # (CLAUDE.md 51).
+        logger.info(
+            "complement_no_products",
+            store_id=turn.context.store_id,
+            roles_tried=len(needs),
         )
-        return replace(
-            await self._run_search(composed, state, turn.context),
-            design_handoff=True,
-            proposals_applied=True,
-        )
+        return _Primary(state=state, design_handoff=True, proposals_applied=True)
 
     async def _settled_product(
         self, pre_turn: AgentStateV1, turn: CustomerTurnInput
@@ -1647,11 +1865,12 @@ class CustomerTurnCoordinator:
         created from a remembered fact. Once verified, the lock is a customer
         statement and survives whatever the rest of the turn does to it.
         """
-        anchor = decision.design_anchor
-        if anchor is None:
+        reference = decision.anchor_reference
+        if reference is None:
             return _Anchored()
+        anchor = decision.design_anchor
 
-        outcome = await self._references.resolve(anchor.reference, pre_turn, turn.context)
+        outcome = await self._references.resolve(reference, pre_turn, turn.context)
         if isinstance(outcome, ReferenceUnresolved):
             clarification, failure = _reference_outcome(
                 outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
@@ -1697,12 +1916,17 @@ class CustomerTurnCoordinator:
                 )
             )
 
-        acquisition = anchor.acquisition or BundleAcquisition.TO_BUY
+        # A bare reference names the piece and says nothing else about it, so
+        # the application's own defaults apply - exactly as they do when
+        # `design_anchor` leaves them unsaid. Neither is read as a claim the
+        # customer did not make (CLAUDE.md 3.3).
+        acquisition = (anchor.acquisition if anchor else None) or BundleAcquisition.TO_BUY
+        quantity = anchor.quantity if anchor else 1
         if existing:
             line = existing[0]
             operations: tuple[BundleOperation, ...] = (
                 SetBundleLineStatus(line_id=line.line_id, status=BundleItemStatus.LOCKED),
-                SetBundleLineQuantity(line_id=line.line_id, quantity=anchor.quantity),
+                SetBundleLineQuantity(line_id=line.line_id, quantity=quantity),
                 SetBundleLineAcquisition(line_id=line.line_id, acquisition=acquisition),
             )
         else:
@@ -1710,7 +1934,7 @@ class CustomerTurnCoordinator:
                 AddBundleLine(
                     line=BundleLineSpec(
                         product_id=outcome.product_id,
-                        quantity=anchor.quantity,
+                        quantity=quantity,
                         acquisition=acquisition,
                         status=BundleItemStatus.LOCKED,
                     )
@@ -2249,6 +2473,7 @@ class CustomerTurnCoordinator:
             clarification=decision.clarification,
             deterministic_clarification=deterministic,
             failure=failure,
+            design_guidance=primary.design_guidance,
             design_handoff_requested=primary.design_handoff,
             follow_up_policy=(
                 FollowUpPolicy.NONE if asking or failure is not None else decision.follow_up_policy

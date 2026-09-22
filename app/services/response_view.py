@@ -25,7 +25,7 @@ from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
 from app.schemas.bundle import BundleStatus, BundleUnavailable, RoomBundle
 from app.schemas.comparison import ComparisonStatus
 from app.schemas.design import DesignPriority
-from app.schemas.grounding import SearchOutcome
+from app.schemas.grounding import GroundedProduct, SearchOutcome
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
     BundleGroundingView,
@@ -37,6 +37,9 @@ from app.schemas.response import (
     ResponseRouting,
     SideEffectNotice,
 )
+from app.schemas.screen import CustomerVisibleScreenView
+from app.services.bundle_presentation import build_bundle_presentation
+from app.services.screen_view import screen_from_presentation
 
 
 def route_response(result: CustomerTurnResult) -> ResponseRoute:
@@ -123,6 +126,7 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
         grounding.search is not None
         or grounding.product_detail is not None
         or grounding.comparison is not None
+        or bool(grounding.design_guidance)
         or result.bundle_outcome is not None
         or result.bundle_change is not None
         or result.decision.action is AgentAction.ANSWER
@@ -168,6 +172,17 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         return DeterministicResponse(
             kind=DeterministicResponseKind.HANDLED_FAILURE,
             failure_code=grounding.failure.code,
+        )
+
+    if grounding.design_guidance:
+        # A design question, answered. Checked before the product branches
+        # because a turn that also happens to have products on screen from an
+        # earlier search is still answering the question they asked.
+        return _view(
+            ResponseOutcomeKind.DESIGN_ADVICE,
+            clarification,
+            result=result,
+            guidance=grounding.design_guidance,
         )
 
     if grounding.comparison is not None:
@@ -219,6 +234,19 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
     return _view(ResponseOutcomeKind.ANSWER, clarification, result=result)
 
 
+_OUR_IDEA = frozenset(
+    {CommercialReason.UPSELL, CommercialReason.PURCHASE_PROGRESSION}
+)
+"""The motives that mean *we* raised this, not the customer.
+
+Named positively rather than as "anything but a request". Withholding a result
+is only safe when we know it answered no question, and an absent motive is not
+evidence of that - it is no evidence at all. `ALTERNATIVE` and
+`ADDRESS_OBJECTION` are replies to something the customer said, so they are
+theirs too.
+"""
+
+
 def _was_suggested(result: CustomerTurnResult) -> bool:
     """Whether this search was our idea rather than their request.
 
@@ -230,7 +258,7 @@ def _was_suggested(result: CustomerTurnResult) -> bool:
     """
     return (
         result.grounding.design_handoff_requested
-        and result.decision.commercial_reason is not CommercialReason.CUSTOMER_REQUEST
+        and result.decision.commercial_reason in _OUR_IDEA
     )
 
 
@@ -242,13 +270,24 @@ def _suggestion_came_to_nothing(result: CustomerTurnResult) -> bool:
     them - and a turn that says "I couldn't find any matching options" beside
     an empty screen is answering a question they never asked. The turn is
     whatever they actually did, which is what the rest of the grounding is
-    about.
+    about (CLAUDE.md 51).
+
+    Two shapes reach here, because the coordinator tries several roles before
+    giving up: a search that ran and matched nothing, and no search at all when
+    every proposed role was empty or the specialist could not be reached. Both
+    mean the same thing to the customer - we had an idea and it came to
+    nothing - so both are withheld the same way.
+
+    A room is never withheld. It is something they asked for, it carries a
+    bundle outcome, and a plan that failed owes them an explanation.
 
     Their *own* design question is a different thing and still answered: it
     carries `CUSTOMER_REQUEST`, so it never reaches here.
     """
+    if not _was_suggested(result) or result.bundle_outcome is not None:
+        return False
     search = result.grounding.search
-    return search is not None and not search.products and _was_suggested(result)
+    return search is None or not search.products
 
 
 def _local_change(result: CustomerTurnResult, change: BundleInteractionOp) -> DeterministicResponse:
@@ -344,6 +383,10 @@ def _view(
     """
     return ResponseGroundingView(
         kind=kind,
+        # Built once, for every branch, from the same grounding the
+        # presentation payload is built from. Per-branch assembly would be one
+        # more place the words and the cards could come apart (CLAUDE.md 2).
+        screen=_screen(result),
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
         relative_price_reason=(clarification.relative_price_reason if clarification else None),
@@ -353,6 +396,29 @@ def _view(
         follow_up_goal=result.decision.follow_up_goal if result else None,
         seating_requirement_known=_seating_known(result),
         **fields,
+    )
+
+
+def _screen(result: CustomerTurnResult | None) -> CustomerVisibleScreenView:
+    """This turn's cards, comparison and room, as the model may read them.
+
+    Deliberately reads `TurnGrounding` rather than `ChatPresentation`: the
+    payload is assembled later, in the runtime, and a projection built from the
+    same source cannot drift from it. The mapping from grounding to payload is
+    one function, tested where it lives.
+    """
+    if result is None:
+        return CustomerVisibleScreenView()
+    grounding = result.grounding
+    products: tuple[GroundedProduct, ...] = ()
+    if grounding.search is not None:
+        products = grounding.search.products
+    elif grounding.product_detail is not None:
+        products = (grounding.product_detail,)
+    return screen_from_presentation(
+        products=products,
+        comparison=grounding.comparison,
+        room=build_bundle_presentation(result),
     )
 
 

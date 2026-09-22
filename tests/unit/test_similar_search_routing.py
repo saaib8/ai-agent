@@ -13,8 +13,11 @@ import pytest
 from app.prompts.customer_commerce.v1 import INSTRUCTIONS
 from app.schemas.agent_decision import (
     AgentAction,
+    BlockingClarification,
+    BlockingClarificationReason,
     CommercialReason,
     CustomerAgentDecision,
+    FollowUpPolicy,
     NewSearchProposal,
 )
 from app.schemas.product_reference import (
@@ -26,7 +29,13 @@ from app.schemas.product_reference import (
     ProductReferenceSelector,
     SoleSelectedProduct,
 )
-from app.schemas.refinement import SemanticIntentOp, SemanticIntentRefinement
+from app.schemas.refinement import (
+    PriceRefinement,
+    PriceRefinementOp,
+    SearchRefinementDelta,
+    SemanticIntentOp,
+    SemanticIntentRefinement,
+)
 from app.taxonomy.attributes import AttributeFamily
 from pydantic import ValidationError
 
@@ -151,11 +160,48 @@ def test_no_similar_action_was_added() -> None:
     assert "similar" not in {a.value for a in AgentAction}
 
 
-def test_a_reference_still_cannot_accompany_the_other_actions() -> None:
-    """The permission was documented, not widened."""
-    for action in (AgentAction.ANSWER, AgentAction.CLARIFY, AgentAction.REFINE_SEARCH):
+def test_a_reference_is_still_refused_where_it_would_act_on_the_wrong_thing() -> None:
+    """Refused where the action has a reference field of its own.
+
+    A comparison and a bundle edit each carry their own, so a stray product
+    reference on either means the model confused the two - and acting on the
+    wrong one would edit the wrong piece of the customer's room.
+    """
+    for action, payload in (
+        (AgentAction.REFINE_SEARCH, {"refinement": SearchRefinementDelta(
+            price=PriceRefinement(op=PriceRefinementOp.CLEAR))}),
+    ):
         with pytest.raises(ValidationError):
-            CustomerAgentDecision(action=action, reference=FocusedProduct())
+            CustomerAgentDecision(action=action, reference=FocusedProduct(), **payload)
+
+
+def test_an_inert_reference_does_not_fail_the_turn() -> None:
+    """The live defect this closes: "will the second sofa fit my living room?"
+    with no room measurements on record is a clarification *about* card two, so
+    the model attached card two - and the turn 502'd.
+
+    The provider's strict schema puts the field on every decision, so refusing
+    it turned an artefact of that into a failed answer while changing nothing:
+    neither branch resolves a reference. Recorded for the trace, acted on
+    nowhere.
+    """
+    for action in (AgentAction.ANSWER, AgentAction.CLARIFY):
+        decision = CustomerAgentDecision(
+            action=action,
+            reference=FocusedProduct(),
+            **(
+                {
+                    "clarification": BlockingClarification(
+                        reason=BlockingClarificationReason.MISSING_ROOM_REQUIREMENTS,
+                        question="How big is the room?",
+                    ),
+                    "follow_up_policy": FollowUpPolicy.NONE,
+                }
+                if action is AgentAction.CLARIFY
+                else {}
+            ),
+        )
+        assert decision.reference is not None
 
 
 def test_a_similar_search_still_names_no_product() -> None:
@@ -206,3 +252,18 @@ def test_the_prompt_tells_the_model_not_to_deselect_during_a_detail() -> None:
 
 def test_the_prompt_still_names_no_product_identity() -> None:
     assert "product_id" not in INSTRUCTIONS
+
+
+def test_going_with_something_is_not_being_like_it() -> None:
+    """The live defect: "show me coffee tables that would work with it" was
+    routed as a search *for alternatives to the sofa*, so the customer asked
+    for tables and got a fresh page of sofas.
+
+    A reference means more of this kind of thing. It never means something that
+    would suit it.
+    """
+    assert "LIKE THIS ONE IS NOT GOES WITH THIS ONE" in FLAT_INSTRUCTIONS
+    assert "It never means \"something that would suit it\"" in FLAT_INSTRUCTIONS
+    assert "When they name a different kind of thing, the reference would search" in (
+        FLAT_INSTRUCTIONS
+    )

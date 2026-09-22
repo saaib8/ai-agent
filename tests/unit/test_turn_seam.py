@@ -522,9 +522,14 @@ async def test_an_answer_beside_a_failed_selection_is_still_answered() -> None:
 # ── what the seam must never carry ──────────────────────────────────────────
 
 
-async def test_no_product_fact_crosses_into_the_response_model() -> None:
-    """The coordinator grounded real products; the generator's payload holds
-    none of their facts."""
+async def test_no_backend_identity_crosses_into_the_response_model() -> None:
+    """The coordinator grounded real products. Their merchandise reaches the
+    response model, across the whole seam; their identity does not.
+
+    Checked end to end rather than on the projection alone, because the
+    interesting failure is a field that is safe in the view and leaks through
+    the payload built around it (CLAUDE.md 6).
+    """
     _, _, client = await _run(
         CustomerAgentDecision(action=AgentAction.SEARCH),
         interpretation=_resolved(),
@@ -532,8 +537,31 @@ async def test_no_product_fact_crosses_into_the_response_model() -> None:
     )
 
     payload = client.calls[0]["user_input"]
-    for forbidden in ("Aurora", "4299", "SAR", "https://", "store_id", "product_id"):
+    for forbidden in ("https://", "store_id", "product_id", "uuid", "pinecone"):
         assert forbidden not in payload, forbidden
+
+
+async def test_the_visible_cards_cross_into_the_response_model() -> None:
+    """The same seam, in the direction the pass opened.
+
+    Two products were searched, hydrated and presented. The reply is written
+    beside them, so the model reading it can see them - in the order and at the
+    positions the customer will (CLAUDE.md 2, 7).
+    """
+    _, _, client = await _run(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=_resolved(),
+        pipeline=FakePipeline(ids=(10, 11)),
+    )
+
+    from app.schemas.response import ResponseInput
+
+    sent = ResponseInput.model_validate_json(client.calls[0]["user_input"])
+    cards = sent.grounding.screen.products
+
+    assert [card.presented_ordinal for card in cards] == [1, 2]
+    assert all(card.name for card in cards)
+    assert all(card.price_amount is not None for card in cards)
 
 
 async def test_the_response_layer_never_alters_the_turn_state() -> None:

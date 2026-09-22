@@ -175,15 +175,27 @@ def test_a_complement_needs_the_piece_it_complements() -> None:
         )
 
 
-def test_a_complement_is_capped_at_two_roles() -> None:
-    """One is the normal answer; two exists for the genuinely inseparable."""
+def test_a_complement_carries_a_short_ordered_shortlist() -> None:
+    """One role is shown; the others are fallbacks for a thin category.
+
+    The cap was two when the first role was the only one ever run. It is three
+    now because a role the retailer *supports* can still return nothing - which
+    is how a customer came to see an empty screen and a remark about lounge
+    chairs they had never mentioned (CLAUDE.md 26).
+
+    Small enough that the specialist still has to choose. It is not a licence
+    to furnish a room nobody asked about: everything past the first viable role
+    is discarded.
+    """
     from app.services.interior_design import MAX_COMPLEMENTARY_NEEDS
 
-    assert MAX_COMPLEMENTARY_NEEDS == 2
+    assert MAX_COMPLEMENTARY_NEEDS == 3
 
 
 def test_the_handoff_says_which_scope_it_means() -> None:
-    assert {s.value for s in DesignScope} == {"whole_room", "complement"}
+    """Three extents of the same capability: the whole room, one piece beside
+    another, or neither - a question about rooms in general (CLAUDE.md 36)."""
+    assert {s.value for s in DesignScope} == {"whole_room", "complement", "advice"}
     assert CustomerAgentDecision(action=AgentAction.SEARCH).design_scope is (DesignScope.WHOLE_ROOM)
 
 

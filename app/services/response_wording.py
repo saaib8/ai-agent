@@ -147,6 +147,9 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ),
     ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",
     ResponseOutcomeKind.COMPARISON: "Here's how those compare.",
+    ResponseOutcomeKind.DESIGN_ADVICE: (
+        "I wasn't able to put that answer into words just now."
+    ),
     ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION: (
         "Could you tell me a little more about what you're after?"
     ),

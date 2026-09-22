@@ -55,7 +55,12 @@ from app.schemas.response import (
     ResponseRoute,
     ResponseViolation,
 )
-from app.services.numeric_guard import build_allowance, bundle_counts
+from app.services.numeric_guard import (
+    build_allowance,
+    bundle_counts,
+    guidance_figures,
+    screen_figures,
+)
 from app.services.response_validation import validate_response
 from app.services.response_view import route_response, valid_grounding_refs
 from app.services.response_wording import (
@@ -213,6 +218,16 @@ class CustomerResponseGenerator:
             presented_count=view.presented_count,
             compared_count=view.compared_count,
             counts=bundle_counts(view.bundle) if view.bundle else (),
+            # Figures the customer can read off the cards beside the reply.
+            # Repeating one is reporting what is on screen; the guard still
+            # refuses anything that had to be computed (CLAUDE.md 14).
+            figures=(
+                *screen_figures(view.screen),
+                # Rules of thumb the specialist supplied as structured
+                # measurements. Sayable as guidance about rooms in general,
+                # never as a fact about a product (CLAUDE.md 14, 41).
+                *guidance_figures(view.guidance),
+            ),
         )
         refs = valid_grounding_refs(result.grounding)
 
