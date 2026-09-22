@@ -25,7 +25,7 @@ from app.core.exceptions import LLMResponseInvalidError
 from app.core.logging import get_logger
 from app.integrations.llm import StructuredLLMClient
 from app.prompts.query_understanding.v1 import VERSION, build_instructions
-from app.schemas.dimensions import DimensionUnit, parse_unit, to_centimetres
+from app.schemas.dimensions import parse_unit, to_centimetres
 from app.schemas.discovery import (
     DimensionConstraint,
     PlanarDimensionConstraint,
@@ -285,23 +285,7 @@ class QueryUnderstandingService:
 
         Uses the shared unit vocabulary, so there is no second converter and a
         unit the catalog understands is a unit a customer may use.
-
-        **A product measurement with no unit is centimetres.** Furniture is
-        discussed in centimetres, the catalog records it in centimetres, and
-        "a sofa under 200" has no other sensible reading - so asking which unit
-        they meant was a question with one possible answer (M23 1).
-
-        Two absences that are not the same. *No unit given* is a convention we
-        can apply. A unit given that the vocabulary does not recognise is a
-        word we cannot act on, and still returns None so the customer is asked
-        - guessing there would convert a number we did not understand.
-
-        Room measurements are deliberately not covered by this. A room stated
-        as "5 by 5" is metres and as "400 by 500" is centimetres, so there is
-        no convention to apply and that path still asks.
         """
-        if unit_text is None or not unit_text.strip():
-            return to_centimetres(_to_decimal(raw, field=field), DimensionUnit.CENTIMETRE)
         unit = parse_unit(unit_text)
         if unit is None:
             return None

@@ -325,24 +325,14 @@ async def test_a_number_with_no_stated_measurement_asks() -> None:
     assert outcome.reason is ClarificationReason.MISSING_DIMENSION_ROLE
 
 
-async def test_a_number_with_no_unit_is_centimetres() -> None:
-    """Furniture is discussed in centimetres and the catalog records it in
-    centimetres, so "a sofa under 200" has one sensible reading - and asking
-    which unit they meant was a question with one possible answer (M23 1).
-
-    Room measurements are not covered by this: "5 by 5" is metres there and
-    "400 by 500" is centimetres, so that path still asks.
-    """
+async def test_a_number_with_no_unit_asks() -> None:
     outcome = await _interpret(_dim(WIDTH, Kind.MAX, unit=None, max_value="200"))
 
-    assert isinstance(outcome, ResolvedSearch)
-    assert outcome.request.dimensions[0].max_cm == Decimal("200")
+    assert isinstance(outcome, ClarificationRequired)
+    assert outcome.reason is ClarificationReason.MISSING_DIMENSION_UNIT
 
 
-async def test_a_unit_we_do_not_recognise_still_asks() -> None:
-    """A different absence. No unit is a convention we can apply; a word the
-    vocabulary does not contain is one we cannot act on, and converting it
-    would be converting a number we did not understand."""
+async def test_an_unrecognised_unit_asks() -> None:
     outcome = await _interpret(_dim(WIDTH, Kind.MAX, unit="cubits", max_value="200"))
 
     assert isinstance(outcome, ClarificationRequired)
@@ -436,17 +426,3 @@ def test_there_is_no_three_number_dimension_input() -> None:
     assert set(PlanarDimensionInterpretation.model_fields) == {
         "first_value", "second_value", "unit", "strength"
     }
-
-
-def test_the_agent_is_told_not_to_ask_which_unit() -> None:
-    """The clarification the customer saw came from the decision agent, before
-    interpretation ever ran - so defaulting the unit downstream was not enough
-    on its own (M23 1)."""
-    from app.prompts.customer_commerce.v1 import INSTRUCTIONS
-
-    flat = " ".join(INSTRUCTIONS.split())
-
-    assert "A MEASUREMENT WITHOUT A UNIT IS CENTIMETRES" in flat
-    assert "do not ask which unit they meant" in flat
-    assert "a unit you do not recognise" in flat
-    assert "a *room* size has no such convention" in flat

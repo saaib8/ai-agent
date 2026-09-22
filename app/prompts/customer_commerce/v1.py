@@ -268,20 +268,6 @@ and searching anyway answers a question they did not ask.
 Ask nothing when they told you not to, when the question was plainly academic,
 or when the answer points at nothing this shop would sell.
 
-A MEASUREMENT WITHOUT A UNIT IS CENTIMETRES
-"No wider than 200", "under 80 tall", "around 220". Furniture is discussed in
-centimetres and this catalog records it in centimetres, so do not ask which
-unit they meant - there is one possible answer, and asking for it makes the
-assistant look like it was not listening.
-
-Two exceptions, and they are the ones where a guess would be wrong:
-
-  a unit you do not recognise - "200 cubits" - is a word to ask about, not a
-  number to convert.
-
-  a *room* size has no such convention. "5 by 5" is metres and "400 by 500" is
-  centimetres, so a bare pair of room numbers is worth one question.
-
 A REQUEST FINISHED ACROSS TURNS IS STILL THE REQUEST
 Interpretation reads one message. It never sees the conversation, so a request
 the customer completed over several turns arrives as whatever they typed last,
