@@ -81,8 +81,8 @@ def room(state: AgentStateV1) -> RoomProjectState:
 
 
 def test_the_state_contract_is_v3() -> None:
-    assert AGENT_STATE_VERSION == "agent_state_v4"
-    assert AgentStateV1().schema_version == "agent_state_v4"
+    assert AGENT_STATE_VERSION == "agent_state_v5"
+    assert AgentStateV1().schema_version == "agent_state_v5"
 
 
 def test_a_v1_payload_is_refused_rather_than_partially_read() -> None:

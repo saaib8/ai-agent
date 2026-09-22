@@ -276,8 +276,8 @@ def test_geometry_survived_the_later_state_changes() -> None:
     a version marks a shape a reader could get wrong."""
     from app.schemas.agent_state import AGENT_STATE_VERSION
 
-    assert AGENT_STATE_VERSION == "agent_state_v4"
-    assert AgentStateV1().schema_version == "agent_state_v4"
+    assert AGENT_STATE_VERSION == "agent_state_v5"
+    assert AgentStateV1().schema_version == "agent_state_v5"
     # A state carrying only the fields geometry added still validates.
     assert AgentStateV1.model_validate({"room_project": {"room_type": "bedroom"}})
     assert "geometry" in RoomProjectState.model_fields

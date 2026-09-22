@@ -124,6 +124,7 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
     grounding = result.grounding
     return (
         grounding.search is not None
+        or grounding.selection is not None
         or grounding.product_detail is not None
         or grounding.comparison is not None
         or bool(grounding.design_guidance)
@@ -148,6 +149,8 @@ def valid_grounding_refs(grounding: TurnGrounding) -> frozenset[int]:
         refs.add(grounding.product_detail.grounding_ref)
     if grounding.comparison is not None:
         refs |= {product.grounding_ref for product in grounding.comparison.products}
+    if grounding.selection is not None:
+        refs |= {product.grounding_ref for product in grounding.selection.products}
     return frozenset(refs)
 
 
@@ -193,6 +196,15 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             clarification,
             result=result,
             presented_count=1,
+        )
+    if grounding.selection is not None:
+        # Their own choices, back on screen. Framed as what it is rather than
+        # as a result set: nothing was searched for, so nothing was found.
+        return _view(
+            ResponseOutcomeKind.SELECTION,
+            clarification,
+            result=result,
+            presented_count=len(grounding.selection.products),
         )
     if grounding.search is not None and not lapsed:
         return _search(result, grounding, clarification)
@@ -394,6 +406,11 @@ def _view(
         # step wants asked, and whether the room requirement is already on
         # record. Both exist to stop the reply asking twice.
         follow_up_goal=result.decision.follow_up_goal if result else None,
+        selected_count=(
+            len(result.state.product_interaction.selected_product_ids) if result else 0
+        ),
+        selected_kinds=result.selected_kinds if result else (),
+        selection_changed=_selection_changed(result),
         seating_requirement_known=_seating_known(result),
         **fields,
     )
@@ -413,6 +430,8 @@ def _screen(result: CustomerTurnResult | None) -> CustomerVisibleScreenView:
     products: tuple[GroundedProduct, ...] = ()
     if grounding.search is not None:
         products = grounding.search.products
+    elif grounding.selection is not None:
+        products = grounding.selection.products
     elif grounding.product_detail is not None:
         products = (grounding.product_detail,)
     return screen_from_presentation(
@@ -420,6 +439,18 @@ def _screen(result: CustomerTurnResult | None) -> CustomerVisibleScreenView:
         comparison=grounding.comparison,
         room=build_bundle_presentation(result),
     )
+
+
+def _selection_changed(result: CustomerTurnResult | None) -> bool:
+    """Whether this turn actually added to what they have chosen.
+
+    Compared against the state the turn started from rather than inferred from
+    the decision: a turn can express a choice several ways - an explicit
+    interaction, or settling on the piece a complement is built around - and
+    what matters to the reply is whether anything was recorded, not which
+    route recorded it.
+    """
+    return result is not None and result.selection_added
 
 
 def _seating_known(result: CustomerTurnResult | None) -> bool:

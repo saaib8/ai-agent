@@ -156,6 +156,9 @@ def test_no_similar_action_was_added() -> None:
         "compare",
         "bundle_refine",
         "design_handoff",
+        # M17: showing the customer their own choices. Deterministic - it
+        # presents what the session records and searches for nothing.
+        "show_selection",
     }
     assert "similar" not in {a.value for a in AgentAction}
 

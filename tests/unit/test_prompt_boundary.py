@@ -153,6 +153,15 @@ DESIGN_POLICIES = {
     "no product facts": ("You have no catalog, no prices, no stock",),
     "never names a product": ("You never name a product",),
     "three tasks": ("The request says which one",),
+    "a complement is a different kind of thing": (
+        "A complement is a *different* kind of thing",
+    ),
+    "quantity is not a second product type": (
+        "has given you a quantity, not a second product type",
+    ),
+    "capacity is per product not per room": (
+        "never how many of it the room wants",
+    ),
     "a complement is an ordered shortlist": (
         "The first is your real recommendation",
     ),

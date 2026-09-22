@@ -52,6 +52,7 @@ from app.schemas.agent_decision import (
     CustomerAgentDecision,
     DesignScope,
     FollowUpPolicy,
+    ProductInteractionIntent,
     ProductInteractionOp,
 )
 from app.schemas.agent_state import (
@@ -124,6 +125,7 @@ from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS, PriceConstraint
 from app.schemas.grounding import (
     GroundedProduct,
     SearchExecutionGrounding,
+    SelectionGrounding,
     TurnFailure,
     TurnFailureCode,
 )
@@ -157,6 +159,7 @@ from app.schemas.resolution import (
     RelativePriceFailureReason,
     RelativePriceUnresolved,
     ResolvedBundleReference,
+    ResolvedProductReference,
     SearchRequirementClarificationReason,
     SimilarSearchUnavailable,
 )
@@ -192,6 +195,8 @@ from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.similar_search import SimilarSearchBuilder
 from app.taxonomy.dimensions import DimensionSemantics
+from app.taxonomy.registry import CommerceTaxonomy
+from app.taxonomy.words import customer_words_or_none
 
 logger = get_logger(__name__)
 
@@ -325,6 +330,7 @@ class _Primary:
 
     state: AgentStateV1
     search: SearchExecutionGrounding | None = None
+    selection: SelectionGrounding | None = None
     product_detail: GroundedProduct | None = None
     comparison: ProductComparisonResult | None = None
     failure: TurnFailure | None = None
@@ -653,7 +659,9 @@ class CustomerTurnCoordinator:
         bundle_references: BundleReferenceResolver,
         optimizer: BundleOptimizer,
         dimensions: DimensionSemantics,
+        taxonomy: CommerceTaxonomy,
     ) -> None:
+        self._taxonomy = taxonomy
         self._decisions = decisions
         self._query_understanding = query_understanding
         self._composer = composer
@@ -711,10 +719,49 @@ class CustomerTurnCoordinator:
         self._log(decision, pre_turn, final_state, primary, interaction, started)
         return CustomerTurnResult(
             state=final_state,
+            selected_kinds=await self._chosen_kinds(final_state, turn),
             decision=decision,
             grounding=grounding,
+            selection_added=bool(
+                set(final_state.product_interaction.selected_product_ids)
+                - set(pre_turn.product_interaction.selected_product_ids)
+            ),
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
+        )
+
+    async def _chosen_kinds(
+        self, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> tuple[str, ...]:
+        """What kinds of thing they have chosen, in the order they chose them.
+
+        Read fresh, like every other product fact: a kind taken from state
+        would be a classification that was true when they picked it. One entry
+        per choice, so the kinds and the count cannot disagree.
+
+        A choice the catalog no longer returns yields nothing, which makes the
+        lists shorter than the selection - so the projection carries kinds only
+        when it has one for every choice, and otherwise carries none. A partial
+        list read as a whole one is how "a sofa and a table" became "2 sofas".
+        """
+        chosen = state.product_interaction.selected_product_ids
+        if not chosen:
+            return ()
+        try:
+            products = await self._hydration.hydrate_ids(chosen, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("chosen_kinds_unavailable", store_id=turn.context.store_id)
+            return ()
+        if len(products) != len(chosen):
+            return ()
+        kinds = tuple(
+            customer_words_or_none(
+                product.commerce.subcategory or product.commerce.category
+            )
+            for product in products
+        )
+        return () if any(kind is None for kind in kinds) else tuple(
+            kind for kind in kinds if kind is not None
         )
 
     async def _visible_cards(
@@ -768,11 +815,66 @@ class CustomerTurnCoordinator:
             # that does not depend on it still runs (locked M11A).
             return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
 
+        if not await self._is_the_kind_they_named(decision.interaction, outcome, context):
+            clarification, failure = _reference_outcome(
+                ReferenceFailureReason.KIND_MISMATCH,
+                BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+            )
+            return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
+
         update = _interaction_update(decision.interaction.op, outcome.product_id, pre_turn)
         return _Interaction(
             state=apply_update(pre_turn, AgentStateUpdate(product_interaction=update)),
             applied=True,
         )
+
+    async def _is_the_kind_they_named(
+        self,
+        intent: ProductInteractionIntent,
+        outcome: ResolvedProductReference,
+        context: RetailerContext,
+    ) -> bool:
+        """Whether the position resolved to the kind of thing they said it was.
+
+        "Sofa five" carries a position *and* a kind. The position alone
+        resolved perfectly against a list of five centre tables that had
+        replaced the sofas behind the conversation, and a coffee table was
+        selected for a customer talking about a sofa (M15 2).
+
+        So the kind is checked against the catalog rather than trusted. An
+        unapproved value is treated as no expectation at all: the model must
+        never introduce a taxonomy value (CLAUDE.md 14.3), and refusing a
+        reference over one it invented would punish the customer for our
+        model's slip. What it can never do is *pass* a check against a value
+        the registry does not contain.
+
+        No expectation means no check - "the second one" names no kind, and
+        inventing one from the active search would refuse references the
+        customer never contradicted.
+        """
+        named = intent.expected_subcategory
+        if named is None:
+            return True
+        if not self._taxonomy.is_subcategory(named):
+            logger.info("interaction_kind_unapproved", store_id=context.store_id)
+            return True
+
+        products = await self._hydration.hydrate_ids((outcome.product_id,), context)
+        if not products:
+            # Unreadable, not mismatched. The reference resolver already
+            # verified the product exists; a read that fails here should not
+            # become a claim about what kind it is.
+            return True
+        actual = products[0].commerce.subcategory
+        if actual == named:
+            return True
+        logger.info(
+            "interaction_kind_mismatch",
+            store_id=context.store_id,
+            named=named,
+            actual=actual,
+        )
+        return False
 
     # ── the primary action ──────────────────────────────────────────────────
 
@@ -801,6 +903,65 @@ class CustomerTurnCoordinator:
                 return await self._product_detail(decision, working, pre_turn, turn)
             case AgentAction.COMPARE:
                 return await self._compare(decision, working, pre_turn, turn)
+            case AgentAction.SHOW_SELECTION:
+                return await self._show_selection(working, turn)
+
+    async def _show_selection(
+        self, working: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """The products they have chosen, put back on screen.
+
+        Read fresh from the catalog, in the order they chose them. The session
+        records which products; what they cost today comes from the catalog,
+        so a card drawn now shows today's price rather than the price it had
+        when they picked it (CLAUDE.md 61).
+
+        Nothing is searched, ranked or relaxed - there is no query here, only a
+        list the customer already built. So the grounding carries no provenance
+        either: a product they chose has no relaxation depth, and claiming one
+        would describe a search that never ran.
+
+        **It does not become the presented list.** "The second one" still means
+        the second of whatever they were browsing; a list they asked to review
+        is not a new result set, and renumbering their search under them is how
+        an ordinal starts meaning something else (M17 3).
+        """
+        chosen = working.product_interaction.selected_product_ids
+        if not chosen:
+            logger.info("show_selection_empty", store_id=turn.context.store_id)
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=TurnFailureCode.NOTHING_SELECTED),
+            )
+
+        try:
+            products = await self._hydration.hydrate_ids(chosen, turn.context)
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("show_selection_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE),
+            )
+
+        if not products:
+            # Everything they chose has since left the catalog. Reported as
+            # nothing to show rather than as an empty success.
+            logger.info("show_selection_all_stale", store_id=turn.context.store_id)
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE),
+            )
+
+        grounded = tuple(
+            to_grounded_product(
+                product,
+                grounding_ref=position,
+                presented_ordinal=position,
+                relaxation_depth=None,
+            )
+            for position, product in enumerate(products, start=1)
+        )
+        return _Primary(state=working, selection=SelectionGrounding(products=grounded))
 
     # ── refining the room ───────────────────────────────────────────────────
 
@@ -1516,10 +1677,16 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=state,
                 design_handoff=True,
-                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE),
             )
 
-        question = _design_question(turn.message)
+        # Their question, put back together. A question can span turns - "how
+        # big should a rug be?" then "5x5" then "m" - and the last message on
+        # its own is the word **m**, which the specialist answered with nothing
+        # (M16 1). The decision model reads the thread and restates it; the
+        # message itself is used when it asks the whole question by itself.
+        question = _design_question(decision.design_question or turn.message)
         if question is None:
             # Nothing to answer. A message too long to carry as a question is
             # not a design question we can put to the specialist, and passing a
@@ -1528,7 +1695,8 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=state,
                 design_handoff=True,
-                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE),
             )
 
         room = state.room_project
@@ -1547,7 +1715,8 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=state,
                 design_handoff=True,
-                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE),
             )
 
         if not plan.guidance:
@@ -1557,9 +1726,19 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=state,
                 design_handoff=True,
-                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE),
             )
-        return _Primary(state=state, design_handoff=True, design_guidance=plan.guidance)
+        return _Primary(
+            state=state,
+            design_handoff=True,
+            # Applied above, before the specialist was asked, so a room size
+            # stated in the same breath as the question is part of it. Saying
+            # so stops `run` folding them in a second time, which would double
+            # every preference the turn added.
+            proposals_applied=True,
+            design_guidance=plan.guidance,
+        )
 
     async def _advice_anchors(
         self,
@@ -1637,9 +1816,23 @@ class CustomerTurnCoordinator:
                 ),
             )
 
+        # Recorded before anything else is attempted. A complement exists
+        # because they settled on this piece, and until now the piece was used
+        # to ask the specialist and then forgotten - so a customer who chose a
+        # sofa, was offered rugs and chose one of those had *neither* choice
+        # on record, while the agent went on talking as though both were
+        # (M17 1).
+        #
+        # Unconditional: whether the suggestion finds anything is our business,
+        # and their choice is theirs. It survives a specialist that fails, a
+        # retailer with nothing to suggest, and a search that comes back empty.
+        state = self._settle_on(state, product.product_id)
+
         try:
             capabilities = await self._capabilities.capabilities(turn.context)
-            request = self._complement_request(state, turn, capabilities, product)
+            request = await self._complement_request(
+                state, turn, capabilities, product
+            )
             plan = await self._design.plan(request)
         except _HANDLED_DESIGN_FAILURES:
             # Our own idea, and it could not be formed. Reporting it would tell
@@ -1727,6 +1920,29 @@ class CustomerTurnCoordinator:
         )
         return _Primary(state=state, design_handoff=True, proposals_applied=True)
 
+    @staticmethod
+    def _settle_on(state: AgentStateV1, product_id: int) -> AgentStateV1:
+        """Record the piece the customer has settled on.
+
+        Selected *and* focused. Selected because it is one of the things they
+        are buying; focused because it is the one they are talking about, so
+        "show me the one I picked" follows the latest choice rather than the
+        first (M15 3).
+
+        Idempotent - selecting the same product twice is one selection - so a
+        customer who says they like it again loses nothing and gains no
+        duplicate.
+        """
+        return apply_update(
+            state,
+            AgentStateUpdate(
+                product_interaction=ProductInteractionUpdate(
+                    selected_product_ids=AddItems(items=(product_id,)),
+                    focused_product_id=product_id,
+                )
+            ),
+        )
+
     async def _settled_product(
         self, pre_turn: AgentStateV1, turn: CustomerTurnInput
     ) -> ProductCandidate | None:
@@ -1747,20 +1963,30 @@ class CustomerTurnCoordinator:
         products = await self._hydration.hydrate_ids(selected, turn.context)
         return products[0] if products else None
 
-    def _complement_request(
+    async def _complement_request(
         self,
         state: AgentStateV1,
         turn: CustomerTurnInput,
         capabilities: RetailerCatalogCapabilities,
         product: ProductCandidate,
     ) -> InteriorDesignRequest:
-        """What the specialist is told about the piece they settled on.
+        """What the specialist is told about what they already have.
 
-        The anchor carries design facts only - kind, colour, styles, size - and
-        no identity, exactly as a room plan's anchors do. Nothing here says
-        which product it is, what it cost, or where it came from.
+        **Every piece they have chosen**, not only the newest. A complement is
+        what is *missing*, and that cannot be worked out from one product: a
+        customer who had picked a sofa, then picked a centre table, was offered
+        sofas - because the table was the only anchor and nothing said a sofa
+        was already settled (M19 1).
+
+        The piece they just settled on comes first, so the specialist reads it
+        as the one in question and the rest as context.
+
+        Anchors carry design facts only - kind, colour, styles, size - and no
+        identity, exactly as a room plan's anchors do. Nothing here says which
+        product it is, what it cost, or where it came from.
         """
         room = state.room_project
+        chosen = await self._chosen_alongside(product, state, turn)
         return InteriorDesignRequest(
             task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
             design_brief=_design_brief(turn.message),
@@ -1769,12 +1995,40 @@ class CustomerTurnCoordinator:
             regular_seating_count=room.regular_seating_count if room else None,
             catalog_capabilities=capabilities,
             anchors=project_anchors(
-                [product],
+                chosen,
                 dimensions=self._dimensions,
-                locked_product_ids=[product.product_id],
-                quantities={product.product_id: 1},
+                locked_product_ids=[p.product_id for p in chosen],
+                quantities={p.product_id: 1 for p in chosen},
             ),
         )
+
+    async def _chosen_alongside(
+        self,
+        product: ProductCandidate,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> list[ProductCandidate]:
+        """The piece in question, then everything else they have chosen.
+
+        Read fresh, like every anchor: describing a product from remembered
+        state would assert facts nobody checked. A selection the catalog no
+        longer returns simply produces no anchor.
+        """
+        others = tuple(
+            product_id
+            for product_id in state.product_interaction.selected_product_ids
+            if product_id != product.product_id
+        )
+        if not others:
+            return [product]
+        try:
+            alongside = await self._hydration.hydrate_ids(others, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            # Context, not the answer. Losing it means a weaker suggestion,
+            # never a wrong one.
+            logger.warning("complement_context_unavailable", store_id=turn.context.store_id)
+            return [product]
+        return [product, *alongside]
 
     async def _revision_constraints(
         self,
@@ -2422,7 +2676,26 @@ class CustomerTurnCoordinator:
         if isinstance(comparison, ComparisonUnavailable):
             clarification, failure = _comparison_outcome(comparison)
             return _Primary(state=working, clarification=clarification, failure=failure)
-        return _Primary(state=working, comparison=comparison)
+        # Recorded in column order, so "the second one" can mean the second
+        # column rather than only the second search result. Taken from the
+        # comparison the service actually built, never from the references
+        # asked for: a target that could not be resolved is not a column
+        # (M15 1).
+        return _Primary(
+            state=apply_update(
+                working,
+                AgentStateUpdate(
+                    product_interaction=ProductInteractionUpdate(
+                        # The resolved ids, in the order asked for. A
+                        # successful comparison covers exactly them - it
+                        # refuses outright rather than dropping one - so this
+                        # is the column order the customer is reading.
+                        compared_product_ids=tuple(product_ids)
+                    )
+                ),
+            ),
+            comparison=comparison,
+        )
 
     # ── query understanding ─────────────────────────────────────────────────
 
@@ -2468,6 +2741,7 @@ class CustomerTurnCoordinator:
         asking = decision.clarification is not None or deterministic is not None
         return TurnGrounding(
             search=primary.search,
+            selection=primary.selection,
             product_detail=primary.product_detail,
             comparison=primary.comparison,
             clarification=decision.clarification,
@@ -2550,7 +2824,14 @@ def _interaction_update(
     interaction = state.product_interaction
     match op:
         case ProductInteractionOp.SELECT:
-            return ProductInteractionUpdate(selected_product_ids=AddItems(items=(product_id,)))
+            # The piece they just chose becomes the one under discussion.
+            # Without this, "show me the one I selected" kept resolving through
+            # a focus set turns earlier - so a customer who corrected their
+            # choice was shown the product they had just rejected (M15 3).
+            return ProductInteractionUpdate(
+                selected_product_ids=AddItems(items=(product_id,)),
+                focused_product_id=product_id,
+            )
         case ProductInteractionOp.FOCUS:
             return ProductInteractionUpdate(focused_product_id=product_id)
         case ProductInteractionOp.DESELECT:

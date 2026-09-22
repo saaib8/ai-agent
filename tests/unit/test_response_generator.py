@@ -663,9 +663,13 @@ async def test_the_model_is_never_told_the_side_effect_failed() -> None:
         ),
     )
 
-    payload = client.calls[0]["user_input"]
-    assert "selection" not in payload.lower()
-    assert "failure" not in payload.lower()
+    payload = client.calls[0]["user_input"].lower()
+    # The *failure* is what must not cross. `selection_count` and
+    # `selection_changed` do, and say only what was recorded - never that
+    # something could not be.
+    for forbidden in ("selection_not_updated", "selection_not_removed", "failure"):
+        assert forbidden not in payload, forbidden
+    assert '"selection_changed":false' in payload.replace(" ", "")
 
 
 async def test_an_answer_with_a_failed_side_effect_is_still_answered() -> None:
@@ -772,3 +776,59 @@ async def test_the_turn_state_is_never_touched() -> None:
     await CustomerResponseGenerator(client).generate(_turn(), result)
 
     assert result.state is before
+
+
+# ── one question, in one place ──────────────────────────────────────────────
+
+
+def test_a_question_written_into_both_fields_is_asked_once() -> None:
+    """Straight from a live transcript: the message ended with "What budget
+    would you like to stay within?" and the follow-up field held the same
+    sentence, so a client rendering both asked it twice (M20 2)."""
+    from app.services.response_generator import _asked_once
+
+    trimmed = _asked_once(
+        CustomerResponse(
+            message=(
+                "These give you a useful range of proportions. "
+                "What budget would you like to stay within?"
+            ),
+            follow_up_question="What budget would you like to stay within?",
+        )
+    )
+
+    assert trimmed.message == "These give you a useful range of proportions."
+    assert trimmed.follow_up_question == "What budget would you like to stay within?"
+
+
+def test_a_paraphrase_is_left_alone() -> None:
+    """It trims a repetition it can prove, and never edits prose it is
+    guessing about."""
+    from app.services.response_generator import _asked_once
+
+    response = CustomerResponse(
+        message="These give you a range. What sort of budget did you have in mind?",
+        follow_up_question="What budget would you like to stay within?",
+    )
+
+    assert _asked_once(response).message == response.message
+
+
+def test_a_message_that_is_only_the_question_keeps_it() -> None:
+    """Prose with nothing left is worse than prose that repeats."""
+    from app.services.response_generator import _asked_once
+
+    response = CustomerResponse(
+        message="What budget would you like to stay within?",
+        follow_up_question="What budget would you like to stay within?",
+    )
+
+    assert _asked_once(response).message == response.message
+
+
+def test_a_turn_with_no_follow_up_is_untouched() -> None:
+    from app.services.response_generator import _asked_once
+
+    response = CustomerResponse(message="Here's how those compare.")
+
+    assert _asked_once(response) is response

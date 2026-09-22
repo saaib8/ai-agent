@@ -182,13 +182,40 @@ def test_committing_closes_the_intermediate_in_one_step(
 # ── success, including zero results ─────────────────────────────────────────
 
 
-def test_a_successful_search_clears_focus_and_keeps_selections(
+def test_a_search_keeps_a_focus_on_something_they_chose(
     searched: AgentStateV1,
 ) -> None:
+    """A choice outlives the search that surfaced it.
+
+    The fixture's focus is on product 11, which is also selected. Clearing it
+    left a customer who had picked a sofa, been offered tables and picked one
+    of those with no answer to "show me the one I picked" - the cross-sell
+    search wiped the focus each time (M20 1).
+    """
     final = commit_search_results(_promote(searched, RECLINERS), (20, 21))
 
-    assert final.product_interaction.focused_product_id is None
+    assert final.product_interaction.focused_product_id == 11
     assert final.product_interaction.selected_product_ids == (11,)
+
+
+def test_a_search_still_clears_a_focus_on_the_previous_results(
+    searched: AgentStateV1,
+) -> None:
+    """The other half of the rule, and the reason it existed.
+
+    Product 12 was presented and never chosen, so once new results replace the
+    list it names nothing the customer can see.
+    """
+    browsing = apply_update(
+        searched,
+        AgentStateUpdate(
+            product_interaction=ProductInteractionUpdate(focused_product_id=12)
+        ),
+    )
+
+    final = commit_search_results(_promote(browsing, RECLINERS), (20, 21))
+
+    assert final.product_interaction.focused_product_id is None
 
 
 def test_a_zero_result_search_is_still_a_committed_search(
@@ -204,7 +231,6 @@ def test_a_zero_result_search_is_still_a_committed_search(
     assert final.active_search.revision == before + 1
     assert final.product_interaction.presented_product_ids == ()
     assert final.product_interaction.presented_search_revision == before + 1
-    assert final.product_interaction.focused_product_id is None
     assert final.product_interaction.selected_product_ids == (11,)
 
 

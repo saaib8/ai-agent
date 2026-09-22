@@ -29,6 +29,7 @@ from app.schemas.design import (
     DesignTask,
     GuidanceMeasurement,
     GuidanceTopic,
+    InteriorDesignRequest,
     InteriorDesignResult,
 )
 from app.schemas.discovery import ProductSearchRequest
@@ -163,7 +164,12 @@ async def test_a_design_question_that_cannot_be_answered_says_so() -> None:
     result = await coordinator.run(_turn(_state(), WALNUT))
 
     assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.DESIGN_UNAVAILABLE
+    # Its own code, so the reply can say the *question* went unanswered. A
+    # customer who asked how big a rug should be was told a room plan could
+    # not be put together - an answer to something they never asked (M16 3).
+    assert result.grounding.failure.code is (
+        TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE
+    )
 
 
 async def test_advice_with_no_guidance_is_reported_rather_than_dressed_up() -> None:
@@ -405,3 +411,298 @@ def test_a_reference_outside_a_design_handoff_is_not_an_anchor() -> None:
     )
 
     assert detail.anchor_reference is None
+
+
+# ── a question that spans turns ─────────────────────────────────────────────
+#
+# From a real session:
+#
+#   "How big should a rug be under a sofa?"  -> answered well
+#   "5x5"                                    -> "what unit?"
+#   "m"                                      -> "I wasn't able to put a room
+#                                               plan together just now."
+#
+# Three things were wrong. The specialist was handed the word **m** and had no
+# conversation to recover the question from; the failure borrowed the
+# room-plan wording for a question about a rug; and the turn ended in a dead
+# end rather than offering the step the answer had earned.
+
+
+def test_the_decision_can_restate_a_question_that_spans_turns() -> None:
+    decision = _advice(
+        design_question="how big should a rug be under a sofa in a 5 by 5 metre room"
+    )
+
+    assert decision.design_question is not None
+    assert "5 by 5" in decision.design_question
+
+
+async def test_the_restated_question_is_what_the_specialist_is_asked() -> None:
+    """Not the bare continuation. "m" is not a question."""
+    design = FakeDesign(InteriorDesignResult(guidance=(_guidance(),)))
+    coordinator, _ = _coordinator(
+        _advice(design_question="how big should a rug be for a 5 by 5 metre room"),
+        design=design,
+    )
+
+    await coordinator.run(_turn(_state(), "m"))
+
+    assert design.requests[0].question == (
+        "how big should a rug be for a 5 by 5 metre room"
+    )
+
+
+async def test_the_message_is_used_when_it_asks_the_whole_question() -> None:
+    """The common case, unchanged: most questions arrive whole."""
+    design = FakeDesign(InteriorDesignResult(guidance=(_guidance(),)))
+    coordinator, _ = _coordinator(_advice(), design=design)
+
+    await coordinator.run(_turn(_state(), WALNUT))
+
+    assert design.requests[0].question == WALNUT
+
+
+async def test_an_unanswered_question_does_not_talk_about_a_room_plan() -> None:
+    """The customer asked about a rug. Telling them a room plan failed answers
+    something they never asked."""
+    from app.services.response_wording import FAILURE_WORDING
+
+    coordinator, _ = _coordinator(_advice(), design=FakeDesign(InteriorDesignResult()))
+
+    result = await coordinator.run(_turn(_state(), WALNUT))
+
+    assert result.grounding.failure is not None
+    wording = FAILURE_WORDING[result.grounding.failure.code]
+    assert "room plan" not in wording
+    assert "answer that one" in wording
+
+
+async def test_an_advice_turn_folds_the_customers_facts_in_exactly_once() -> None:
+    """A room size stated in the same breath as the question is part of it, so
+    proposals land before the specialist is asked - and must not then be
+    applied a second time, which would duplicate every preference."""
+    from app.schemas.agent_decision import CustomerStateProposal
+
+    coordinator, _ = _coordinator(
+        _advice(state_proposal=CustomerStateProposal(room_type="living room")),
+        design=FakeDesign(InteriorDesignResult(guidance=(_guidance(),))),
+    )
+
+    result = await coordinator.run(_turn(_state(), WALNUT))
+
+    room = result.state.room_project
+    assert room is not None
+    assert room.room_type == "living room"
+
+
+async def test_the_specialist_sees_facts_stated_in_the_same_message() -> None:
+    from app.schemas.agent_decision import CustomerStateProposal
+
+    design = FakeDesign(InteriorDesignResult(guidance=(_guidance(),)))
+    coordinator, _ = _coordinator(
+        _advice(state_proposal=CustomerStateProposal(room_type="living room")),
+        design=design,
+    )
+
+    await coordinator.run(_turn(_state(), WALNUT))
+
+    assert design.requests[0].room_type == "living room"
+
+
+def test_a_design_answer_may_offer_to_go_and_look() -> None:
+    """The dead end this closes: an answer, and nothing to do with it."""
+    from app.schemas.agent_decision import FollowUpGoal, FollowUpPolicy
+
+    decision = _advice(
+        follow_up_policy=FollowUpPolicy.OPTIONAL,
+        follow_up_goal=FollowUpGoal.PRODUCT_SEARCH,
+    )
+
+    assert decision.follow_up_goal is FollowUpGoal.PRODUCT_SEARCH
+
+
+def test_the_agent_is_told_to_offer_rather_than_deliver() -> None:
+    """They asked a question. Searching anyway answers one they did not ask."""
+    from app.prompts.customer_commerce.v1 import INSTRUCTIONS
+
+    flat = " ".join(INSTRUCTIONS.split())
+
+    assert "A DESIGN ANSWER SHOULD LEAD SOMEWHERE" in flat
+    assert "Offer; do not deliver" in flat
+    assert "A CONTINUED QUESTION IS STILL THE QUESTION" in flat
+
+
+# ── an agent has to be able to see the question it asked ────────────────────
+
+
+def test_the_follow_up_question_is_stored_as_part_of_what_was_said() -> None:
+    """The defect behind "yes please" meaning nothing.
+
+    The agent offered to look for rugs, the offer lived only in
+    `follow_up_question`, and only `message` was written to history - so the
+    next turn saw an answer to a question that was not there and asked what
+    kind of furniture they wanted (M16 5).
+
+    Two fields on the wire, one utterance to the person reading it.
+    """
+    from app.core.config import SessionSettings
+    from app.schemas.agent_turn import CustomerResponse
+    from app.schemas.chat import ChatRequest
+    from app.schemas.session import new_session
+    from app.services.chat_runtime import ChatRuntime, LoadedSession
+
+    runtime = ChatRuntime(None, None, None, SessionSettings())  # type: ignore[arg-type]
+    loaded = LoadedSession(envelope=new_session(), loaded_revision=0, existed=False)
+
+    conversation = runtime.next_conversation(
+        loaded,
+        ChatRequest(session_id="s", store_id=50, message="how big should a rug be?"),
+        CustomerResponse(
+            message="As a rule, about 15-30 cm beyond each end of the sofa.",
+            follow_up_question="Would you like me to look for rugs that size?",
+        ),
+    )
+
+    said = conversation.messages[-1].content
+    assert "15-30 cm beyond" in said
+    assert "Would you like me to look for rugs that size?" in said
+
+
+def test_a_turn_with_no_question_stores_only_the_prose() -> None:
+    from app.core.config import SessionSettings
+    from app.schemas.agent_turn import CustomerResponse
+    from app.schemas.chat import ChatRequest
+    from app.schemas.session import new_session
+    from app.services.chat_runtime import ChatRuntime, LoadedSession
+
+    runtime = ChatRuntime(None, None, None, SessionSettings())  # type: ignore[arg-type]
+    loaded = LoadedSession(envelope=new_session(), loaded_revision=0, existed=False)
+
+    conversation = runtime.next_conversation(
+        loaded,
+        ChatRequest(session_id="s", store_id=50, message="thanks"),
+        CustomerResponse(message="Happy to help."),
+    )
+
+    assert conversation.messages[-1].content == "Happy to help."
+
+
+# ── a complement is something else ──────────────────────────────────────────
+#
+# From a real session: "I want 6 dining chairs, I like the first one". The
+# specialist proposed dining chairs and chairs - more of what they had just
+# chosen - and put a seating capacity of 6 on them, reading a quantity as a
+# per-chair capacity. Both searches returned nothing, so the turn had no cards
+# and the reply became a receipt: "I've got that as your choice for the 6
+# dining chairs." (M18)
+
+
+def _anchor(subcategory: str = "dining-chair", category: str = "seating") -> Any:
+    from app.schemas.design import AnchorProduct
+
+    return AnchorProduct(
+        commerce_category=category,
+        commerce_subcategory=subcategory,
+        main_color="Beige",
+        styles=("Modern",),
+        locked=True,
+        quantity=1,
+    )
+
+
+def _complement_request(
+    anchor_subcategory: str = "dining-chair",
+) -> InteriorDesignRequest:
+    from tests.unit.test_design_revision import _capabilities
+
+    return InteriorDesignRequest(
+        task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
+        design_brief="I like the first one",
+        anchors=(_anchor(anchor_subcategory),),
+        # Everything the tests below propose is stocked, so what survives is
+        # decided by the anchor rule rather than by capability filtering.
+        catalog_capabilities=_capabilities(
+            ("seating", "dining-chair"),
+            ("seating", "stool"),
+            ("tables", "dining-table"),
+            ("decor", "carpet"),
+        ),
+    )
+
+
+def _validated(
+    needs: list[DesignCategoryNeed], request: InteriorDesignRequest
+) -> InteriorDesignResult:
+    from app.services.interior_design import InteriorDesignAgent
+
+    agent = object.__new__(InteriorDesignAgent)
+    agent._taxonomy = __import__(
+        "app.taxonomy.registry", fromlist=["load_taxonomy"]
+    ).load_taxonomy()
+    return agent._complementary(InteriorDesignResult(needs=tuple(needs)), request)
+
+
+def test_the_anchors_own_kind_is_never_proposed() -> None:
+    """They chose a dining chair. Offering dining chairs answers nothing."""
+    kept = _validated(
+        [_need("dining-chair", "seating"), _need("dining-table")],
+        _complement_request(),
+    )
+
+    assert [n.commerce_subcategory for n in kept.needs] == ["dining-table"]
+
+
+def test_a_different_kind_of_seating_is_still_allowed() -> None:
+    """Matched on the pair, so a chair does not block every kind of seating -
+    only chairs. A dining set may genuinely want a bench beside it."""
+    kept = _validated(
+        [_need("stool", "seating"), _need("dining-table")], _complement_request()
+    )
+
+    assert {n.commerce_subcategory for n in kept.needs} == {"stool", "dining-table"}
+
+
+def test_with_no_anchor_nothing_is_filtered() -> None:
+    """A room plan has no single anchor to be beside."""
+    from tests.unit.test_design_revision import _capabilities
+
+    request = InteriorDesignRequest(
+        task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
+        design_brief="what goes here?",
+        anchors=(_anchor(),),
+        catalog_capabilities=_capabilities(("tables", "dining-table")),
+    )
+    kept = _validated([_need("dining-table")], request)
+
+    assert len(kept.needs) == 1
+
+
+def test_dropping_the_anchors_kind_can_leave_nothing() -> None:
+    """The real failure, reduced: every proposal was the same kind as the
+    anchor, so the shortlist empties - and the turn shows nothing rather than
+    running a search for what they already have."""
+    kept = _validated([_need("dining-chair", "seating")], _complement_request())
+
+    assert kept.needs == ()
+
+
+def test_the_specialist_is_told_a_quantity_is_not_a_product_type() -> None:
+    """"Six dining chairs" is a quantity. It is not a request for a second
+    kind of thing, and it is not a capacity for any one chair."""
+    from app.prompts.interior_design.v1 import build_instructions
+    from app.taxonomy.registry import load_taxonomy
+
+    flat = " ".join(build_instructions(load_taxonomy()).split())
+
+    assert "A complement is a *different* kind of thing" in flat
+    assert "has given you a quantity, not a second product type" in flat
+    assert "never how many of it the room wants" in flat
+
+
+def test_the_reply_is_told_not_to_stop_at_a_receipt() -> None:
+    from app.prompts.customer_commerce.response_v1 import INSTRUCTIONS
+
+    flat = " ".join(INSTRUCTIONS.split())
+
+    assert "Never end on the acknowledgement alone" in flat
+    assert "acknowledge in a clause, not a sentence" in flat

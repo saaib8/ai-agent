@@ -65,7 +65,10 @@ class PineconeSemanticIndex:
         # ModuleNotFoundError naming a package the operator never mentioned;
         # now it says which install is missing (CLAUDE.md 21).
         try:
-            from pinecone import Pinecone  # type: ignore[import-not-found]
+            # Both codes: the import resolves where the `semantic` extra is
+            # installed and not where it is absent, and a type check must pass
+            # in either environment.
+            from pinecone import Pinecone  # type: ignore[import-not-found, unused-ignore]
         except ImportError as exc:
             raise ConfigurationError(
                 detail=(

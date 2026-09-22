@@ -105,6 +105,14 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         "grounding",
         "bundle_outcome",
         "bundle_change",
+        # M17: whether this turn recorded a product they settled on. A bool
+        # about what happened, computed from the state before and after, so a
+        # reply cannot claim a choice that was never kept.
+        "selection_added",
+        # M19: what kinds of thing those choices are, read fresh. Without it
+        # the reply had a count and no nouns, and called a sofa and a centre
+        # table "2 sofas".
+        "selected_kinds",
     }
 
 
@@ -471,6 +479,7 @@ def test_the_provider_structure_stays_intact_as_the_schema_grows() -> None:
 
     members = {
         "PresentedOrdinal",
+        "ComparedOrdinal",
         "FocusedProduct",
         "SoleSelectedProduct",
         "PresentedAttributeMatch",

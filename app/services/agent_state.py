@@ -109,10 +109,29 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         product_interaction=ProductInteractionState(
             presented_product_ids=product_ids,
             presented_search_revision=revision,
-            # The customer has not seen these products yet, so a focus on the
-            # previous result set no longer refers to anything they can see.
-            focused_product_id=None,
+            # A focus on the *previous results* no longer refers to anything
+            # the customer can see, so it goes. A focus on something they
+            # **chose** does not: a choice outlives the search that surfaced
+            # it, which is exactly why the resolver treats focus as needing no
+            # presentation lineage.
+            #
+            # The difference showed as a customer picking a sofa, being
+            # offered tables, picking one, and then having no answer to "show
+            # me the one I picked" - both choices were recorded and neither
+            # was in focus, because the cross-sell search cleared it each time
+            # (M20 1).
+            focused_product_id=(
+                interaction.focused_product_id
+                if interaction.focused_product_id in interaction.selected_product_ids
+                else None
+            ),
             selected_product_ids=interaction.selected_product_ids,
+            # Carried across the new results deliberately. A comparison stays
+            # on screen while fresh results arrive behind it, and "the one from
+            # the comparison" has to keep meaning the same product - which is
+            # exactly what failed when a cross-sell search replaced the sofas a
+            # customer was still counting (M15 1).
+            compared_product_ids=interaction.compared_product_ids,
         ),
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
@@ -184,6 +203,14 @@ def _interaction(
         presented_search_revision=current.presented_search_revision,
         focused_product_id=focus,
         selected_product_ids=apply_items(current.selected_product_ids, update.selected_product_ids),
+        # Replaced wholesale, never merged: a comparison is one table, and two
+        # sets of columns at once would restore the ambiguity it exists to
+        # remove. `None` keeps the table already on screen.
+        compared_product_ids=(
+            current.compared_product_ids
+            if update.compared_product_ids is None
+            else update.compared_product_ids
+        ),
     )
 
 

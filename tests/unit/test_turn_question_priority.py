@@ -264,10 +264,15 @@ def test_a_search_for_alternatives_with_a_proposal_is_rejected() -> None:
         )
 
 
-def test_no_new_action_and_no_motive_routing_were_introduced() -> None:
+def test_the_motive_still_routes_nothing() -> None:
+    """The action set has grown once since - M17 added `show_selection`, a
+    deterministic way to put the customer's own choices back on screen, which
+    is a capability rather than a new way to search. What this guards is that
+    no *motive* routes: an upsell and a plain request are still both a search.
+    """
     from app.schemas.agent_decision import CommercialReason
 
-    assert len(AgentAction) == 8
+    assert len(AgentAction) == 9
     for reason in CommercialReason:
         decision = CustomerAgentDecision(
             action=AgentAction.SEARCH, commercial_reason=reason

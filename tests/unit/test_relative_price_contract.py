@@ -176,15 +176,38 @@ def test_a_relative_operation_cannot_also_state_a_bound() -> None:
         )
 
 
-def test_a_relative_operation_cannot_carry_exclusivity() -> None:
-    with pytest.raises(ValidationError, match="strictness comes from the relation"):
+def test_a_relative_operation_ignores_exclusivity_rather_than_failing() -> None:
+    """Strictness comes from the relation, so a flag beside it says nothing.
+
+    It used to raise. The provider's strict schema sends both booleans on every
+    price refinement, and a relative operation carries no amount for either to
+    qualify - so the flag could never have changed anything, and refusing it
+    only cost the customer the turn.
+    """
+    refinement = PriceRefinement(
+        op=PriceRefinementOp.SET_RELATIVE,
+        relative=RelativePriceRefinement(
+            relation=PriceRelation.CHEAPER_THAN,
+            reference=PresentedOrdinal(position=2),
+        ),
+        max_exclusive=True,
+    )
+
+    assert refinement.max_exclusive is False
+    assert refinement.relative is not None
+
+
+def test_a_relative_operation_still_refuses_an_amount() -> None:
+    """The check that matters is untouched: a bound stated here would be the
+    model doing arithmetic that belongs to services with real prices."""
+    with pytest.raises(ValidationError, match="relative price"):
         PriceRefinement(
             op=PriceRefinementOp.SET_RELATIVE,
             relative=RelativePriceRefinement(
                 relation=PriceRelation.CHEAPER_THAN,
                 reference=PresentedOrdinal(position=2),
             ),
-            max_exclusive=True,
+            max_amount="4000",
         )
 
 

@@ -489,7 +489,7 @@ def test_the_result_is_a_fully_revalidated_state() -> None:
     )
 
     assert isinstance(state, AgentStateV1)
-    assert state.schema_version == "agent_state_v4"
+    assert state.schema_version == "agent_state_v5"
 
 
 def test_a_first_search_without_a_request_is_refused() -> None:

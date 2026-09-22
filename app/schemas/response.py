@@ -67,6 +67,13 @@ class ResponseOutcomeKind(StrEnum):
     frame, so it is answered deterministically instead.
     """
 
+    SELECTION = "selection"
+    """The customer's own choices, shown again.
+
+    Not `SEARCH_RESULTS`: nothing was searched for, so a reply must not talk
+    about what it found or how it narrowed (M17 3).
+    """
+
     DESIGN_ADVICE = "design_advice"
     """A design question, answered from the specialist's reasoning.
 
@@ -336,6 +343,37 @@ class ResponseGroundingView(BaseModel):
     have failed.
     """
 
+    selected_count: int = Field(default=0, ge=0)
+    """How many products the customer has settled on, after this turn.
+
+    Fact, not memory. Asked "what have I selected?", the reply used to answer
+    from the conversation - and told a customer they had chosen a sofa and a
+    rug when only the sofa was ever recorded (M17 2).
+
+    A count, so it names no product: which ones they are is rendered from
+    verified records when they ask to see them.
+    """
+
+    selected_kinds: tuple[str, ...] = ()
+    """What kinds of thing those choices are, in customer words.
+
+    A count alone is not sayable. Given "2 choices" and a screen full of sofas,
+    the reply said **"you now have 2 sofas recorded"** when it was one sofa and
+    one centre table - the model had a number and no nouns, so it borrowed the
+    nearest ones (M19 2).
+
+    One entry per choice, in the order they were chosen, so a repeated kind
+    appears twice and the count and the kinds always agree. Registry words,
+    never keys, and never a product name.
+    """
+
+    selection_changed: bool = False
+    """Whether this turn added one.
+
+    The difference between "I've got that as your choice" and a claim with
+    nothing behind it. A turn that recorded nothing may not say it did.
+    """
+
     seating_requirement_known: bool = False
     """Whether the customer has already said how many people use the room.
 
@@ -420,11 +458,16 @@ class ResponseGroundingView(BaseModel):
         if (self.kind is ResponseOutcomeKind.ROOM_BUNDLE) != (self.bundle is not None):
             raise ValueError("a room bundle outcome carries its bundle, and only it does")
 
+        if self.selected_kinds and len(self.selected_kinds) != self.selected_count:
+            raise ValueError("every choice is one kind, so the two counts agree")
+
         if (self.kind is ResponseOutcomeKind.DESIGN_ADVICE) != bool(self.guidance):
             raise ValueError("design advice carries guidance, and only it does")
 
         if self.kind is ResponseOutcomeKind.ZERO_RESULTS and self.presented_count:
             raise ValueError("a zero-result search presents nothing")
+        if self.kind is ResponseOutcomeKind.SELECTION and not self.presented_count:
+            raise ValueError("a selection outcome shows something")
         if self.kind is ResponseOutcomeKind.SEARCH_RESULTS and not self.presented_count:
             raise ValueError("a results outcome presents something")
 

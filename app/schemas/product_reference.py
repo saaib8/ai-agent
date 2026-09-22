@@ -39,6 +39,26 @@ class PresentedOrdinal(BaseModel):
     position: int = Field(ge=1)
 
 
+class ComparedOrdinal(BaseModel):
+    """"the second one" - a column in the comparison they are looking at.
+
+    A comparison creates a numbering of its own. Sofas three and five of a list
+    of five are columns one and two, and a customer who has been reading a
+    two-column table counts in that table. Without this, "the second one" could
+    only mean the second of the underlying list - which is how a customer who
+    said "I meant the second one from the comparison" was given a product they
+    had not compared (M15 1).
+
+    Its positions are the comparison's, never the result list's, so the two can
+    never be confused by whoever resolves them.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["compared_ordinal"] = "compared_ordinal"
+    position: int = Field(ge=1)
+
+
 class FocusedProduct(BaseModel):
     """"it", "that one", "this sofa"."""
 
@@ -94,6 +114,7 @@ def _must_declare_its_kind(value: Any) -> Any:
 
 ProductReferenceSelector = Annotated[
     PresentedOrdinal
+    | ComparedOrdinal
     | FocusedProduct
     | SoleSelectedProduct
     | PresentedAttributeMatch

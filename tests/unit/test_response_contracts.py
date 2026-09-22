@@ -300,6 +300,9 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         "comparison",
         "room_bundle",
         "design_advice",
+        # M17: the customer's own choices, shown again. Not a search - nothing
+        # was looked for, so the reply must not describe finding anything.
+        "selection",
         "deterministic_clarification",
     }
     for absent in ("clarify", "failure", "design_handoff", "handled_failure"):
@@ -847,11 +850,25 @@ def test_a_branch_with_no_grounded_products_offers_no_refs(
 
 def test_refs_are_never_derived_from_product_identity() -> None:
     """A ref means something because a rendered item carries it, not because a
-    product exists."""
-    source = (APP / "services/response_view.py").read_text()
+    product exists.
 
-    assert "product_id" not in source
+    The module counts selections now, so `selected_product_ids` appears - a
+    length, never an element. What must stay absent is any path from an id to
+    a ref, so the check is on the refs themselves.
+    """
+    import ast
+
+    source = (APP / "services/response_view.py").read_text()
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "grounding_ref":
+            # Read off a grounded item, never computed.
+            assert isinstance(node.value, ast.Name | ast.Attribute)
+
     assert "grounding_ref" in source
+    for forbidden in ("product_id=", ".product_id", "product_ids[", "product_ids)["):
+        assert forbidden not in source, forbidden
 
 
 # ── a turn can succeed and still owe a question ─────────────────────────────
@@ -1151,6 +1168,13 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "commerce_subcategory",
         "exact_match_count",
         "search_was_suggested",
+        # M17: what the customer has actually settled on, and whether this
+        # turn added to it. Counts and a bool - no product, no identity - so a
+        # reply can answer "what have I chosen?" from fact instead of from the
+        # conversation, which is how it once reported a rug nobody kept.
+        "selected_count",
+        "selected_kinds",
+        "selection_changed",
         "seating_requirement_known",
         "follow_up_goal",
         "was_relaxed",

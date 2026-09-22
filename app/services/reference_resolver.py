@@ -36,6 +36,7 @@ from app.schemas.agent_decision import (
 )
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.product import ProductRow
+from app.schemas.product_reference import ComparedOrdinal
 from app.schemas.resolution import (
     ReferenceFailureReason,
     ReferenceOutcome,
@@ -90,6 +91,8 @@ class ProductReferenceResolver:
         match selector:
             case PresentedOrdinal():
                 return await self._by_ordinal(selector, state, context)
+            case ComparedOrdinal():
+                return await self._by_compared_ordinal(selector, state, context)
             case FocusedProduct():
                 return await self._focused(state, context)
             case SoleSelectedProduct():
@@ -114,6 +117,29 @@ class ProductReferenceResolver:
             return _unresolved(ReferenceFailureReason.ORDINAL_OUT_OF_RANGE)
         # Their counting, not ours: position one is the first thing shown.
         return await self._verify(presented[selector.position - 1], context)
+
+    async def _by_compared_ordinal(
+        self,
+        selector: ComparedOrdinal,
+        state: AgentStateV1,
+        context: RetailerContext,
+    ) -> ReferenceOutcome:
+        """A column of the comparison, counted the way the table reads.
+
+        Resolved against the comparison rather than the result list behind it,
+        which is the whole point: sofas three and five are columns one and two,
+        and a customer reading the table counts in the table (M15 1).
+
+        Needs no presentation lineage. A comparison stays on screen while a
+        later search replaces the results underneath it, and the products it
+        holds were verified when it was built.
+        """
+        compared = state.product_interaction.compared_product_ids
+        if not compared:
+            return _unresolved(ReferenceFailureReason.NO_COMPARISON)
+        if selector.position > len(compared):
+            return _unresolved(ReferenceFailureReason.COMPARED_ORDINAL_OUT_OF_RANGE)
+        return await self._verify(compared[selector.position - 1], context)
 
     # ── conversational memory ───────────────────────────────────────────────
 

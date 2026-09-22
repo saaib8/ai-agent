@@ -285,6 +285,7 @@ def customer_turn_coordinator(
         BundleReferenceResolver(app_resources.taxonomy),
         BundleOptimizer(),
         app_resources.dimensions,
+        app_resources.taxonomy,
     )
 
 

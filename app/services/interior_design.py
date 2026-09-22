@@ -19,6 +19,7 @@ and a type this retailer cannot supply is dropped rather than proposed.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 
 from app.core.exceptions import LLMResponseInvalidError, TaxonomyValidationError
 from app.core.logging import get_logger
@@ -189,7 +190,8 @@ class InteriorDesignAgent:
         wanted and stocked.
         """
         fulfillable = self._fulfillable(result, request)
-        kept = fulfillable.needs[:MAX_COMPLEMENTARY_NEEDS]
+        beside = self._not_the_anchors_own_kind(fulfillable.needs, request)
+        kept = beside[:MAX_COMPLEMENTARY_NEEDS]
         if len(fulfillable.needs) > len(kept):
             logger.info(
                 "interior_design_complement_trimmed",
@@ -197,6 +199,45 @@ class InteriorDesignAgent:
                 kept=len(kept),
             )
         return InteriorDesignResult(guidance=fulfillable.guidance, needs=kept)
+
+    @staticmethod
+    def _not_the_anchors_own_kind(
+        needs: Sequence[DesignCategoryNeed], request: InteriorDesignRequest
+    ) -> tuple[DesignCategoryNeed, ...]:
+        """Roles the piece they chose does not already fill.
+
+        A complement is what goes *beside* something. A customer who picked a
+        dining chair and was offered dining chairs has been shown the thing
+        they already decided on, and the search behind it was doomed anyway -
+        the need carried a seating capacity meant for a room, which no single
+        chair satisfies, so it returned nothing and the turn died (M18 1).
+
+        Deterministic rather than left to the specialist, which is told this
+        and did it anyway. Matched on the pair, so a chair does not block every
+        kind of seating - only chairs.
+
+        More of the same is a real request, and it is a different one: "another
+        like this" is a search for alternatives, which the customer asks for in
+        their own words.
+        """
+        if not request.anchors:
+            return tuple(needs)
+        already = {
+            (anchor.commerce_category, anchor.commerce_subcategory)
+            for anchor in request.anchors
+        }
+        beside = tuple(
+            need
+            for need in needs
+            if (need.commerce_category, need.commerce_subcategory) not in already
+        )
+        if len(beside) != len(needs):
+            logger.info(
+                "complement_dropped_the_anchors_own_kind",
+                proposed=len(needs),
+                kept=len(beside),
+            )
+        return beside
 
     def _fulfillable(
         self, result: InteriorDesignResult, request: InteriorDesignRequest

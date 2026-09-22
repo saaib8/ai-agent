@@ -80,6 +80,23 @@ class TurnFailureCode(StrEnum):
     """
 
     DESIGN_UNAVAILABLE = "design_unavailable"
+
+    NOTHING_SELECTED = "nothing_selected"
+    """They asked to see their choices and there are none on record.
+
+    Not a malfunction - an honest answer to an honest question, and the one
+    the agent could not give while it was answering from the conversation
+    instead of from state (M17 3).
+    """
+
+    DESIGN_ADVICE_UNAVAILABLE = "design_advice_unavailable"
+    """A design *question* went unanswered.
+
+    Separate from a room plan failing, because the customer hears the
+    difference: someone who asked how big a rug should be was told a room plan
+    could not be put together, which is an answer to a question they never
+    asked (M16 3).
+    """
     """No authoritative room plan could be produced.
 
     Infrastructure, not inventory: the capability lookup, the design provider
@@ -185,6 +202,33 @@ class DroppedConstraint(BaseModel):
 
     role: DimensionRole | None = None
     reason: UnsupportedDimensionReason
+
+
+class SelectionGrounding(BaseModel):
+    """The products the customer has chosen, put back on screen.
+
+    Not a search, and deliberately not shaped like one. A searched product
+    carries the depth at which it became eligible, because a reply may owe the
+    customer an explanation of what was widened to find it; a product they
+    picked themselves has no such story, and `SearchExecutionGrounding` is
+    right to refuse one without it (M17 3).
+
+    So this carries products and nothing else. No eligible count, no stop
+    reason, no relaxation - there was no query to describe.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    products: tuple[GroundedProduct, ...] = ()
+
+    @model_validator(mode="after")
+    def _positions_are_a_list_they_can_count(self) -> Self:
+        positions = [product.presented_ordinal for product in self.products]
+        if any(position is None for position in positions):
+            raise ValueError("a shown selection numbers every product")
+        if positions != list(range(1, len(positions) + 1)):
+            raise ValueError("a shown selection is numbered 1..n with no holes")
+        return self
 
 
 class SearchExecutionGrounding(BaseModel):

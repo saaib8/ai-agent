@@ -114,8 +114,8 @@ def room(state: AgentStateV1) -> RoomProjectState:
 
 
 def test_the_state_contract_is_v3() -> None:
-    assert AGENT_STATE_VERSION == "agent_state_v4"
-    assert AgentStateV1().schema_version == "agent_state_v4"
+    assert AGENT_STATE_VERSION == "agent_state_v5"
+    assert AgentStateV1().schema_version == "agent_state_v5"
 
 
 @pytest.mark.parametrize("older", ["agent_state_v1", "agent_state_v2"])

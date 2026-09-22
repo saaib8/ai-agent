@@ -45,7 +45,7 @@ from app.schemas.query import (
     validate_dimension_correspondence,
 )
 
-AGENT_STATE_VERSION: Literal["agent_state_v4"] = "agent_state_v4"
+AGENT_STATE_VERSION: Literal["agent_state_v5"] = "agent_state_v5"
 """The state contract. Change the shape, change this.
 
 V2 replaced the room bundle's two id tuples with typed lines. V3 made the
@@ -163,7 +163,27 @@ class ProductInteractionState(BaseModel):
     focused_product_id: int | None = None
     selected_product_ids: tuple[int, ...] = ()
 
-    @field_validator("presented_product_ids", "selected_product_ids")
+    compared_product_ids: tuple[int, ...] = ()
+    """The products of the comparison currently on screen, in column order.
+
+    A comparison puts a **second numbering** in front of the customer. Sofas 3
+    and 5 of a list of five become columns one and two, and "the second one"
+    then has two truthful answers. Recorded separately because it has to be
+    separately addressable: without it, a column can only be named by its
+    position in the underlying list, which is not the number the customer is
+    looking at (M15 1).
+
+    It outlives the list it was drawn from on purpose. A comparison stays on
+    screen while a later search replaces the results behind it, and "the one
+    from the comparison" has to keep meaning the same product when it does.
+
+    Cleared when a new comparison replaces it, never merged: two comparisons
+    at once would recreate the ambiguity this exists to remove.
+    """
+
+    @field_validator(
+        "presented_product_ids", "selected_product_ids", "compared_product_ids"
+    )
     @classmethod
     def _unique(cls, value: tuple[int, ...]) -> tuple[int, ...]:
         return _no_duplicates(value, "product id list")
@@ -172,13 +192,17 @@ class ProductInteractionState(BaseModel):
     def _focus_is_known(self) -> Self:
         """A focus on a product nobody has seen cannot be resolved.
 
-        Selected products count as known: a customer may reach one by a path
-        other than the current result list, so selection is deliberately not
+        Selected and compared products count as known: a customer may reach
+        one by a path other than the current result list, so neither is
         required to be a subset of what is presented.
         """
         if self.focused_product_id is None:
             return self
-        known = set(self.presented_product_ids) | set(self.selected_product_ids)
+        known = (
+            set(self.presented_product_ids)
+            | set(self.selected_product_ids)
+            | set(self.compared_product_ids)
+        )
         if self.focused_product_id not in known:
             raise ValueError("focused_product_id must be a presented or selected product")
         return self
@@ -489,7 +513,7 @@ class AgentStateV1(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: Literal["agent_state_v4"] = AGENT_STATE_VERSION
+    schema_version: Literal["agent_state_v5"] = AGENT_STATE_VERSION
     customer_preferences: CustomerPreferenceState = CustomerPreferenceState()
     active_search: ActiveSearchState | None = None
     product_interaction: ProductInteractionState = ProductInteractionState()

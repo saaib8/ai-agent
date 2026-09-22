@@ -8,6 +8,8 @@ a request to drop it.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from app.schemas.discovery import DimensionConstraintKind, ProductSort
 from app.schemas.query import ConstraintStrength
@@ -105,9 +107,45 @@ def test_an_absent_currency_means_inherit_not_invent() -> None:
     assert refinement.currency is None
 
 
-def test_exclusivity_needs_the_bound_it_excludes() -> None:
+def test_exclusivity_with_nothing_to_qualify_is_dropped_not_refused() -> None:
+    """The live 502: an ordinary "under 3,000" failed the turn.
+
+    The provider's strict schema puts both booleans on every price refinement,
+    so the model sends `min_exclusive` even when it is setting only a maximum.
+    A minimum that does not exist cannot be exclusive, so the flag describes
+    nothing and cannot change the executed query - refusing it cost the
+    customer their answer and bought no safety.
+
+    Cleared, never honoured: the search that runs is exactly the one the
+    amounts describe.
+    """
+    refinement = PriceRefinement(op=SET, max_amount="3000", min_exclusive=True)
+
+    assert refinement.min_exclusive is False
+    assert refinement.max_amount == "3000"
+    assert refinement.min_amount is None
+
+
+def test_exclusivity_beside_a_real_bound_still_means_what_it_says() -> None:
+    """Only the dangling case is dropped."""
+    refinement = PriceRefinement(op=SET, min_amount="1000", min_exclusive=True)
+
+    assert refinement.min_exclusive is True
+
+
+def test_a_price_set_with_no_bound_at_all_is_still_refused() -> None:
+    """A real contradiction, not an artefact: there is nothing to execute."""
+    with pytest.raises(ValidationError, match="needs at least one bound"):
+        PriceRefinement(op=SET, min_exclusive=True)
+
+
+def test_the_internal_constraint_stays_strict() -> None:
+    """`PriceConstraint` is built by application code from resolved facts, so a
+    dangling flag there is our own bug and must still be heard."""
+    from app.schemas.discovery import PriceConstraint
+
     with pytest.raises(ValidationError, match="min_exclusive"):
-        PriceRefinement(op=SET, max_amount="3000", min_exclusive=True)
+        PriceConstraint(currency="SAR", max_amount=Decimal("3000"), min_exclusive=True)
 
 
 def test_strict_cheaper_is_expressible() -> None:

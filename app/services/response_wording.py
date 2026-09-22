@@ -52,6 +52,14 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "I found alternatives, but none of them works alongside the rest of the "
         "room, so I've left your current choice as it is."
     ),
+    TurnFailureCode.NOTHING_SELECTED: (
+        "You haven't picked anything out yet, so there's nothing to show you "
+        "here."
+    ),
+    TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE: (
+        "I wasn't able to answer that one just now. Please try again in a "
+        "moment."
+    ),
     TurnFailureCode.DESIGN_UNAVAILABLE: (
         "I wasn't able to put a room plan together just now. Please try again in a moment."
     ),
@@ -145,6 +153,7 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.ZERO_RESULTS: (
         "I couldn't find anything matching that. It's worth trying a different description."
     ),
+    ResponseOutcomeKind.SELECTION: "Here's what you've picked out so far.",
     ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",
     ResponseOutcomeKind.COMPARISON: "Here's how those compare.",
     ResponseOutcomeKind.DESIGN_ADVICE: (

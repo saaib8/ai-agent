@@ -237,13 +237,21 @@ def _action_reads(parts: dict[str, Any], state: AgentStateV1) -> list[list[int]]
     happens whatever the turn goes on to do - so tests about what an action
     touched subtract it rather than counting it.
 
-    Matched by its exact argument, the presented ids in order, so a genuine
-    second read of the same products would still be visible.
+    Two such reads bracket every turn now. Before the decision, the cards the
+    customer is looking at; after it, the kinds of thing they have chosen, so
+    a reply can name them instead of guessing (M19 2). Both happen whatever
+    the turn goes on to do, so both are subtracted.
+
+    Matched by their exact arguments, so a genuine second read of the same
+    products would still be visible.
     """
     calls = [list(call) for call in parts["hydration"].calls]
     screen = list(state.product_interaction.presented_product_ids)
     if screen and calls and calls[0] == screen:
         calls.pop(0)
+    chosen = list(state.product_interaction.selected_product_ids)
+    if chosen and calls and calls[-1] == chosen:
+        calls.pop()
     return calls
 
 
@@ -411,6 +419,7 @@ def _coordinator(
         BundleReferenceResolver(taxonomy),
         parts["optimizer"],  # type: ignore[arg-type]
         dimensions,
+        taxonomy,
     )
     return coordinator, parts
 

@@ -43,7 +43,7 @@ class FakeIndexHandle:
 
 def _adapter(handle: FakeIndexHandle) -> PineconeSemanticIndex:
     index = object.__new__(PineconeSemanticIndex)
-    index._index = handle
+    index._index = handle  # type: ignore[assignment]
     index._index_name = "ai-agent"
     return index
 

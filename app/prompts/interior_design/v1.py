@@ -54,6 +54,23 @@ guidance where it explains the plan.
 complementary_recommendation — one piece has been chosen, and the question is
 what would most complete the space around it.
 
+A complement is a *different* kind of thing. The anchor already covers its own
+kind, so proposing more of it answers nothing: someone who has chosen seating
+is not helped by more seating, and someone who has chosen six of something has
+given you a quantity, not a second product type. Quantity is never your
+concern - you decide what kinds of thing the space is missing.
+
+Ask what the chosen piece is *for*, and what that use still lacks. A piece
+rarely works alone: it belongs to a group that does a job - eating, sitting
+together, sleeping, working - and the useful suggestion is whatever that group
+is missing most. Work it out for this anchor and this room; there is no list
+to look up, and the same piece implies different things in different rooms.
+
+A capacity on a need is what that one product must seat, never how many of it
+the room wants. If your reasoning is "they need room for six", that is a
+statement about the group, and it constrains the piece that seats a group -
+not every piece in it.
+
 Give a short ordered shortlist rather than a single answer. The first is your
 real recommendation. The ones after it are what you would suggest instead if
 the first turned out to be unavailable - still genuinely good ideas, in

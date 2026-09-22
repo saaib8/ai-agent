@@ -202,6 +202,7 @@ def guidance_figures(guidance: Sequence[DesignGuidance]) -> tuple[Decimal, ...]:
 def build_allowance(
     message: str,
     *,
+    said_earlier: Sequence[str] = (),
     presented_count: int = 0,
     compared_count: int = 0,
     counts: Sequence[int] = (),
@@ -209,13 +210,23 @@ def build_allowance(
 ) -> ResponseNumericAllowance:
     """What this turn's prose is permitted to say in figures.
 
-    Three sources, and no others:
+    Sources, and no others:
 
-    * numbers in the **current** customer message, read lexically. Not from
-      `ResolvedSearch`, because most branches never run query understanding,
-      and not from history, because a figure mentioned three turns ago is not
-      what they are asking about now. The guard needs provenance, not search
-      semantics.
+    * numbers in the customer's **own messages**, read lexically - this turn's
+      and the earlier ones in the conversation. Not from `ResolvedSearch`,
+      because most branches never run query understanding. The guard needs
+      provenance, and a figure the customer typed is the best provenance there
+      is, whichever turn they typed it on.
+
+      History was once excluded on the grounds that an old figure is not what
+      they are asking about now. That is a question of relevance, and this is a
+      check on origin - and it cost a real answer: a customer who said "5x5",
+      was asked the unit, and answered "m" could not be told anything about a
+      5 by 5 room, because the only message in scope was the word "m".
+
+      **Their** messages, never the assistant's. A figure the model produced
+      earlier would otherwise launder itself into an approved source on the
+      next turn, which is precisely what this exists to prevent.
     * the counts the application itself established.
     * ordinal positions within whatever is on screen, so "the second option"
       is sayable and "the fourth" of three is not.
@@ -233,6 +244,8 @@ def build_allowance(
     that already exist somewhere authoritative (CLAUDE.md 14).
     """
     allowed = set(numbers_in(message))
+    for earlier in said_earlier:
+        allowed |= numbers_in(earlier)
     for figure in figures:
         allowed.add(canonical_number(str(figure)) or str(figure))
     for count in (presented_count, compared_count):

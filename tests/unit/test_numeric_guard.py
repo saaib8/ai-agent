@@ -246,3 +246,62 @@ def test_the_guard_is_deterministic() -> None:
     results = {_check(prose, allowance) for _ in range(5)}
 
     assert results == {None}
+
+
+# ── a figure the customer typed earlier is still theirs ─────────────────────
+
+
+def test_a_number_from_an_earlier_customer_turn_is_allowed() -> None:
+    """The live failure: "5x5" then, after a unit question, "m".
+
+    The reply could say nothing about a 5 by 5 room, because the only message
+    in scope was the word "m" - so the answer fell back to an apology while
+    the specialist's answer was sitting right there (M16 6).
+    """
+    allowance = build_allowance("m", said_earlier=("5x5", "how big should a rug be?"))
+
+    assert "5" in allowance
+
+
+def test_a_number_the_assistant_said_is_not_allowed() -> None:
+    """Their words only. Admitting the assistant's would let a figure the
+    model invented become an approved source one turn later - the laundering
+    this guard exists to prevent."""
+    allowance = build_allowance("m", said_earlier=("5x5",))
+
+    assert "5" in allowance
+    assert "30" not in allowance, "an assistant's 15-30 cm is not their figure"
+
+
+def test_the_helper_takes_only_the_customers_turns() -> None:
+    from app.schemas.agent_turn import CustomerTurnInput
+    from app.schemas.conversation import (
+        ConversationContext,
+        ConversationMessage,
+        ConversationRole,
+    )
+    from app.schemas.retailer import RetailerContext
+    from app.services.response_generator import _their_own_words
+
+    turn = CustomerTurnInput(
+        message="m",
+        conversation=ConversationContext(
+            messages=(
+                ConversationMessage(role=ConversationRole.USER, content="5x5"),
+                ConversationMessage(
+                    role=ConversationRole.ASSISTANT, content="about 15-30 cm"
+                ),
+            )
+        ),
+        context=RetailerContext(store_id=50),
+    )
+
+    assert _their_own_words(turn) == ("5x5",)
+
+
+def test_nothing_else_was_widened() -> None:
+    """A figure from nowhere is still a figure from nowhere."""
+    allowance = build_allowance("m", said_earlier=("5x5",))
+
+    assert "4299" not in allowance
+    assert "12000" not in allowance

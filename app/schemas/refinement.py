@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -225,6 +225,42 @@ class PriceRefinement(BaseModel):
     min_strength: ConstraintStrength | None = None
     max_strength: ConstraintStrength | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_exclusivity_with_nothing_to_qualify(cls, data: Any) -> Any:
+        """An exclusivity flag needs a bound to be exclusive about.
+
+        The provider's strict schema puts both booleans on every price
+        refinement, so the model has to send them even when it is setting only
+        a maximum - and a stray `min_exclusive` there qualifies a minimum that
+        does not exist. It describes nothing, it cannot change the executed
+        query, and refusing it turned an ordinary "under 4,000" into a failed
+        turn.
+
+        Cleared rather than honoured, and only where there is genuinely no
+        bound beside it. A flag next to a real amount still means exactly what
+        it says, and every payload that describes an actual contradiction - a
+        set with no bound at all, a relative operation carrying an absolute one
+        - still raises below.
+
+        Tolerated **here** because this shape is authored by a model.
+        `PriceConstraint` is built by application code from resolved facts, so
+        a dangling flag there is our own bug and stays a hard error.
+        """
+        if not isinstance(data, dict):
+            return data
+        dangling = [
+            flag
+            for flag, bound in (
+                ("min_exclusive", "min_amount"),
+                ("max_exclusive", "max_amount"),
+            )
+            if data.get(flag) and data.get(bound) is None
+        ]
+        if not dangling:
+            return data
+        return {**data, **dict.fromkeys(dangling, False)}
+
     @model_validator(mode="after")
     def _payload_matches_the_operation(self) -> Self:
         absolute = ("min_amount", "max_amount", "min_strength", "max_strength")
@@ -233,10 +269,6 @@ class PriceRefinement(BaseModel):
                 raise ValueError("an absolute price operation carries no relation")
             if self.min_amount is None and self.max_amount is None:
                 raise ValueError("a price set operation needs at least one bound")
-            if self.min_exclusive and self.min_amount is None:
-                raise ValueError("min_exclusive needs a min_amount")
-            if self.max_exclusive and self.max_amount is None:
-                raise ValueError("max_exclusive needs a max_amount")
             return self
         if self.op is PriceRefinementOp.SET_RELATIVE:
             if self.relative is None:
@@ -244,16 +276,10 @@ class PriceRefinement(BaseModel):
             # The bound is the application's to compute, so stating one here
             # would be the model doing the arithmetic it must not do.
             _forbid_payload(self, (*absolute, "currency"), "relative price")
-            if self.min_exclusive or self.max_exclusive:
-                raise ValueError(
-                    "strictness comes from the relation, not from a flag"
-                )
             return self
         if self.relative is not None:
             raise ValueError("a price clear operation carries no relation")
         _forbid_payload(self, (*absolute, "currency"), "price clear")
-        if self.min_exclusive or self.max_exclusive:
-            raise ValueError("a price clear operation must not carry exclusivity")
         return self
 
 

@@ -168,6 +168,8 @@ class ChatRuntime:
         products: tuple[GroundedProduct, ...] = ()
         if grounding.search is not None:
             products = grounding.search.products
+        elif grounding.selection is not None:
+            products = grounding.selection.products
         elif grounding.product_detail is not None:
             products = (grounding.product_detail,)
 
@@ -189,11 +191,24 @@ class ChatRuntime:
         recorded as structured facts in the agent state or read fresh from the
         catalog; repeating them here would create a second, ageing copy that a
         later turn could read instead of the truth (M13 11).
+
+        The assistant's turn is stored **as the customer received it**, prose
+        and follow-up together. They are separate fields so a client can render
+        the question its own way; they are one utterance to the person reading
+        them, and storing only the prose left the next turn unable to see the
+        question it was being answered.
+
+        That is what made "yes please" meaningless: the agent had offered to
+        look for rugs, the offer was not in the history, and it asked what kind
+        of furniture they wanted (M16 5).
         """
+        said = response.message
+        if response.follow_up_question:
+            said = f"{said} {response.follow_up_question}"
         messages = (
             *loaded.envelope.conversation.messages,
             ConversationMessage(role=ConversationRole.USER, content=request.message),
-            ConversationMessage(role=ConversationRole.ASSISTANT, content=response.message),
+            ConversationMessage(role=ConversationRole.ASSISTANT, content=said),
         )
         return ConversationContext(messages=_trimmed(messages, self._settings.max_history_messages))
 

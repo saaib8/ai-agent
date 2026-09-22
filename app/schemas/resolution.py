@@ -40,6 +40,22 @@ class ReferenceFailureReason(StrEnum):
     """Nothing has been presented, so there is no list to count into."""
 
     ORDINAL_OUT_OF_RANGE = "ordinal_out_of_range"
+
+    NO_COMPARISON = "no_comparison"
+    """Nothing is being compared, so there are no columns to count into."""
+
+    COMPARED_ORDINAL_OUT_OF_RANGE = "compared_ordinal_out_of_range"
+    """Column four of a two-column table. Distinct from the list being too
+    short, because the customer is counting in a different place."""
+
+    KIND_MISMATCH = "kind_mismatch"
+    """The position resolved, and to the wrong kind of thing.
+
+    "Sofa five" while five centre tables are on screen: the position exists,
+    so nothing was out of range, and the product at it is not what they named.
+    Refused rather than taken, because taking it silently selected a coffee
+    table for a customer who was talking about a sofa (M15 2).
+    """
     NO_FOCUSED_PRODUCT = "no_focused_product"
     NO_SELECTED_PRODUCT = "no_selected_product"
 
@@ -406,6 +422,22 @@ class BundleReferenceFailureReason(StrEnum):
     """There is no room yet, so there is nothing to count into."""
 
     ORDINAL_OUT_OF_RANGE = "ordinal_out_of_range"
+
+    NO_COMPARISON = "no_comparison"
+    """Nothing is being compared, so there are no columns to count into."""
+
+    COMPARED_ORDINAL_OUT_OF_RANGE = "compared_ordinal_out_of_range"
+    """Column four of a two-column table. Distinct from the list being too
+    short, because the customer is counting in a different place."""
+
+    KIND_MISMATCH = "kind_mismatch"
+    """The position resolved, and to the wrong kind of thing.
+
+    "Sofa five" while five centre tables are on screen: the position exists,
+    so nothing was out of range, and the product at it is not what they named.
+    Refused rather than taken, because taking it silently selected a coffee
+    table for a customer who was talking about a sofa (M15 2).
+    """
     UNAPPROVED_COMMERCE_TYPE = "unapproved_commerce_type"
     """A product type the vocabulary does not contain. It names nothing, and is
     refused rather than matched to the nearest thing that looks like it."""

@@ -47,6 +47,10 @@ def test_the_decision_names_a_subject_and_never_the_wording() -> None:
         "use_case",
         "product_preference",
         "room_completion",
+        # M16: a design answer should lead somewhere. "Shall I find rugs that
+        # size?" is the step the answer earns, and ending without it leaves
+        # the customer to start again themselves (CLAUDE.md 45).
+        "product_search",
     }
     for goal in FollowUpGoal:
         assert " " not in goal.value, "a goal is a subject, not a sentence"
@@ -87,7 +91,7 @@ def test_the_seating_requirement_is_durable_state() -> None:
     room = state.room_project
     assert isinstance(room, RoomProjectState)
     assert room.regular_seating_count == 5
-    assert state.schema_version == AGENT_STATE_VERSION == "agent_state_v4"
+    assert state.schema_version == AGENT_STATE_VERSION == "agent_state_v5"
 
 
 def test_it_survives_a_later_unrelated_update() -> None:

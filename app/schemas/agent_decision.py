@@ -31,6 +31,7 @@ from app.schemas.bundle_reference import (
     BundleReferenceSelector,
     DesignNeedCategoryMatch,
 )
+from app.schemas.design import MAX_DESIGN_QUESTION_CHARS
 from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.product_reference import (
     ExtremumDirection,
@@ -71,6 +72,17 @@ class AgentAction(StrEnum):
     own action: the coordinator dispatches on one action per turn, and hiding a
     room mutation inside `ANSWER` would make a state change invisible at the
     branch that decides what a turn does.
+    """
+
+    SHOW_SELECTION = "show_selection"
+    """Put the products they have chosen back on screen.
+
+    "Show me what I've picked" had no route, so the agent answered that their
+    cards were not shown in this turn - a true sentence about a capability gap
+    and a useless one to the customer (M17 3).
+
+    Deterministic: it presents what the session already records, freshly read.
+    It searches for nothing, chooses nothing, and adds nothing.
     """
 
     DESIGN_HANDOFF = "design_handoff"
@@ -145,6 +157,17 @@ class FollowUpGoal(StrEnum):
     """Whether they want help with the rest of the room. Asked only after
     they have shown real interest in something."""
 
+    PRODUCT_SEARCH = "product_search"
+    """Whether to go and find what was just discussed.
+
+    The step a design answer usually earns. Someone told what size rug suits
+    their sofa is one question away from being shown rugs that size, and
+    ending there instead leaves them to start again themselves (CLAUDE.md 45).
+
+    An offer, never a delivery: it asks, and the search happens on their answer
+    (M16 4).
+    """
+
 
 # ── product interactions ────────────────────────────────────────────────────
 
@@ -170,6 +193,30 @@ class ProductInteractionIntent(BaseModel):
 
     op: ProductInteractionOp
     reference: ProductReferenceSelector
+
+    expected_subcategory: str | None = Field(default=None, min_length=1)
+    """What kind of thing the customer named, when they named one.
+
+    "Sofa five" says two things: a position, and a kind. The position alone is
+    what a selector carries, and a position alone is what silently selected a
+    centre table for a customer who was talking about a sofa - the list behind
+    the conversation had been replaced, position five still existed, and
+    nothing noticed it was now a table (M15 2).
+
+    So the kind travels with it and the **application checks it** against the
+    product the position actually resolved to. The model proposes what it
+    understood; the catalog decides whether that is what is there
+    (CLAUDE.md 3.3).
+
+    `None` when they named no kind - "the second one", "that one" - which is
+    the common case and carries no expectation to check. It is never inferred
+    from the active search or from what happens to be on screen: an assumed
+    expectation would refuse references the customer never contradicted.
+
+    Validated against the approved taxonomy by the layer that holds the
+    registry, exactly as every other model-supplied commerce value is
+    (CLAUDE.md 14.3).
+    """
 
 
 class BundleInteractionOp(StrEnum):
@@ -510,6 +557,12 @@ class CustomerStateProposal(BaseModel):
     Only from an explicit statement about who uses the room. Never inferred
     from a room type, a product's seating capacity, or how many pieces are in
     their bundle.
+
+    **And never from a figure that is not about people.** A customer who said
+    "I am looking for under 2000 SAR" was recorded as a household of two, and
+    every recommendation afterwards was sized for two people they had never
+    mentioned. A price, a measurement, a quantity or a date is not a seating
+    requirement, however close the digits look.
     """
 
     clear_regular_seating_count: bool = False
@@ -689,6 +742,25 @@ class CustomerAgentDecision(BaseModel):
     anchor at all. It is the single source of anchor truth - the top-level
     `reference` no longer carries one - so there are never two answers to
     "which piece".
+    """
+
+    design_question: str | None = Field(
+        default=None, min_length=1, max_length=MAX_DESIGN_QUESTION_CHARS
+    )
+    """The design question being asked, when the latest message is not it.
+
+    A question can span turns. "How big should a rug be under a sofa?" ->
+    "5x5" -> "what unit?" -> "m" leaves the specialist being handed the word
+    **m**, which is not a question and which it answered with nothing - and the
+    customer was told a room plan had failed (M16 1).
+
+    So when the current message only continues a question, restate it here in
+    the customer's own terms, carrying the details they have given. `None` when
+    the message asks the whole question by itself, which is the common case.
+
+    Read **only on an advice handoff**. It is the customer's question put back
+    together, never a brief and never an instruction to the specialist: no
+    answer, no preference of yours, and nothing they did not say.
     """
 
     design_scope: DesignScope = DesignScope.WHOLE_ROOM

@@ -33,6 +33,7 @@ from app.schemas.design import DesignGuidance
 from app.schemas.grounding import (
     GroundedProduct,
     SearchExecutionGrounding,
+    SelectionGrounding,
     TurnFailure,
 )
 from app.schemas.resolution import DeterministicClarification
@@ -84,6 +85,8 @@ class TurnGrounding(BaseModel):
     search: SearchExecutionGrounding | None = None
     product_detail: GroundedProduct | None = None
     comparison: ProductComparisonResult | None = None
+    selection: SelectionGrounding | None = None
+    """What they have chosen, when they asked to see it. Never a search."""
 
     clarification: BlockingClarification | None = None
     """What the *model* decided to ask, wording included.
@@ -196,6 +199,27 @@ class CustomerTurnResult(BaseModel):
     Application-only, beside `bundle_outcome` rather than inside it: locking a
     piece produces no `RoomBundle`, and manufacturing one would invent a status
     and a feasibility claim nobody established.
+    """
+
+    selected_kinds: tuple[str, ...] = ()
+    """What kinds of thing the customer has chosen, in the order chosen.
+
+    Customer words, read fresh from the catalog. Carried so the reply can name
+    them instead of guessing: given a bare count and a screen full of sofas it
+    once called a sofa and a centre table "2 sofas" (M19 2).
+    """
+
+    selection_added: bool = False
+    """Whether this turn recorded a product the customer settled on.
+
+    Computed by the coordinator from the state before and after, because a
+    choice can be expressed several ways - an explicit interaction, or
+    settling on the piece a complement is built around - and what the reply
+    needs to know is whether anything was recorded, not which route recorded
+    it.
+
+    It exists so a reply cannot claim a choice that did not happen. One did
+    (M17 2).
     """
 
     bundle_outcome: BundleOptimizationOutcome | None = None

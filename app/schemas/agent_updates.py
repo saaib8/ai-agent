@@ -144,6 +144,15 @@ class ProductInteractionUpdate(BaseModel):
     clear_focus: bool = False
     selected_product_ids: ProductIdListUpdate | None = None
 
+    compared_product_ids: tuple[int, ...] | None = None
+    """The comparison now on screen, in column order, replacing any before it.
+
+    Set by the comparison branch from products it has already verified, never
+    proposed by a model. `None` leaves the previous comparison in place, which
+    is what an unrelated turn should do: a comparison stays on screen until
+    something replaces it.
+    """
+
 
 # ── the room bundle ─────────────────────────────────────────────────────────
 #

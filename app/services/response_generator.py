@@ -46,6 +46,7 @@ from app.schemas.agent_turn import (
     CustomerTurnInput,
     CustomerTurnResult,
 )
+from app.schemas.conversation import ConversationRole
 from app.schemas.response import (
     DeterministicResponse,
     DeterministicResponseKind,
@@ -78,6 +79,51 @@ from app.services.response_wording import (
 )
 
 logger = get_logger(__name__)
+
+
+def _asked_once(response: CustomerResponse) -> CustomerResponse:
+    """One question, in one place.
+
+    The two fields are one utterance to the customer: a client renders the
+    prose and then the follow-up, often as something to tap. When the model
+    writes the question into both, the customer is asked the same thing twice
+    in a row (M20 2).
+
+    The follow-up field is where an optional question belongs, so the
+    duplicate is removed from the prose rather than the other way round -
+    dropping the field would cost a client its chip.
+
+    Removed only on an exact match of the closing sentence, compared with
+    whitespace normalised. A paraphrase is left alone: this trims a repetition
+    it can prove, and never edits prose it is guessing about. A message that is
+    *only* the question keeps it, because prose with nothing left is worse than
+    prose that repeats.
+    """
+    question = response.follow_up_question
+    if question is None:
+        return response
+    message = " ".join(response.message.split())
+    asked = " ".join(question.split())
+    if message == asked or not message.endswith(asked):
+        return response
+    trimmed = message[: -len(asked)].strip()
+    if not trimmed:
+        return response
+    return response.model_copy(update={"message": trimmed})
+
+
+def _their_own_words(turn: CustomerTurnInput) -> tuple[str, ...]:
+    """Everything the customer themselves has said in this conversation.
+
+    Their turns only. An assistant message could carry a figure the model
+    produced, and admitting it would let an invented number become an approved
+    source one turn later - the exact laundering the guard exists to stop.
+    """
+    return tuple(
+        message.content
+        for message in turn.conversation.messages
+        if message.role is ConversationRole.USER
+    )
 
 _HANDLED_PROVIDER_FAILURES = (
     IntegrationUnavailableError,
@@ -114,7 +160,7 @@ class CustomerResponseGenerator:
         route = route_response(result)
 
         response, calls, used_fallback = await self._primary_response(turn, result, route)
-        final = self._with_side_notice(response, route)
+        final = self._with_side_notice(_asked_once(response), route)
 
         self._log(route, calls, used_fallback, started)
         return final
@@ -215,6 +261,7 @@ class CustomerResponseGenerator:
         )
         allowance = build_allowance(
             turn.message,
+            said_earlier=_their_own_words(turn),
             presented_count=view.presented_count,
             compared_count=view.compared_count,
             counts=bundle_counts(view.bundle) if view.bundle else (),
@@ -253,7 +300,9 @@ class CustomerResponseGenerator:
         )
         response, calls = await self._call_and_validate(
             request,
-            allowance=build_allowance(turn.message),
+            allowance=build_allowance(
+                turn.message, said_earlier=_their_own_words(turn)
+            ),
             # Nothing is grounded on this branch, so nothing may be cited.
             refs=frozenset(),
         )

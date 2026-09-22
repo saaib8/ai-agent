@@ -88,6 +88,10 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "bundle_references",
         "optimizer",
         "dimensions",
+        # M15: the approved vocabulary, so the coordinator can check that a
+        # product a reference resolved to is the kind the customer named. A
+        # registry, not a service - it reads no catalog and reaches nothing.
+        "taxonomy",
     ]
 
 

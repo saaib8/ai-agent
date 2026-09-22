@@ -61,6 +61,22 @@ class CommerceTaxonomy:
         except KeyError:
             raise UnknownCommerceCategoryError(category=category) from None
 
+    def is_subcategory(self, subcategory: str) -> bool:
+        """Whether this is an approved subcategory under *any* category.
+
+        Category-free on purpose. It answers "is this a product type ZORY
+        understands", which is what a check on a customer's own word needs -
+        "sofa five" names a kind without naming a family, and requiring the
+        family would mean inferring one.
+
+        Pair validity is a different question, and :meth:`is_pair` is still the
+        only answer to it: nothing here permits a category and subcategory that
+        do not belong together (CLAUDE.md 14.4).
+        """
+        return any(
+            subcategory in self.subcategories(category) for category in self.categories
+        )
+
     def is_pair(self, category: str, subcategory: str) -> bool:
         """True only when the subcategory is approved UNDER that category."""
         return subcategory in self._categories.get(category, frozenset())

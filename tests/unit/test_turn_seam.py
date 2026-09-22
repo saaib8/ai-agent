@@ -313,6 +313,7 @@ def _coordinator(
         BundleReferenceResolver(taxonomy),
         FakeOptimizer(),  # type: ignore[arg-type]
         dimensions,
+        taxonomy,
     )
 
 
