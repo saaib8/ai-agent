@@ -132,6 +132,8 @@ class ChatRuntime:
             conversation=loaded.envelope.conversation,
             state=loaded.envelope.state,
             context=context,
+            bundle_action=request.bundle_action,
+            search_action=request.search_action,
         )
 
     async def run_turn(self, turn: CustomerTurnInput) -> CustomerTurnResult:

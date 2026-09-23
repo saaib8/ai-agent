@@ -15,7 +15,22 @@ function Chip({ children, tone = 'default' }: { children: ReactNode; tone?: 'def
   )
 }
 
-export function ProductCard({ product }: { product: GroundedProduct }) {
+export interface AlternativePick {
+  role: string
+  onPick: (alternativeOrdinal: number) => void
+}
+
+export function ProductCard({
+  product,
+  pick,
+  onExclude,
+}: {
+  product: GroundedProduct
+  pick?: AlternativePick
+  /** Present on a fresh search grid: drops this one and re-runs, so it does
+   *  not come back. Absent while picking a room replacement. */
+  onExclude?: (ordinal: number) => void
+}) {
   const [imgFailed, setImgFailed] = useState(false)
   const { commerce } = product
   const price = money(product.price_amount, product.price_unit)
@@ -79,16 +94,34 @@ export function ProductCard({ product }: { product: GroundedProduct }) {
 
         {dims && <div className="text-[11.5px] text-muted">{dims}</div>}
 
-        {product.product_url && (
-          <a
-            href={product.product_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-auto pt-1 text-xs font-medium text-clay hover:underline"
-          >
-            View product →
-          </a>
-        )}
+        <div className="mt-auto flex flex-col gap-2 pt-1">
+          {pick && (
+            <button
+              onClick={() => pick.onPick(product.presented_ordinal ?? product.grounding_ref)}
+              className="w-full rounded-lg bg-clay px-3 py-2 text-xs font-semibold text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
+            >
+              Use this {pick.role}
+            </button>
+          )}
+          {!pick && onExclude && product.presented_ordinal != null && (
+            <button
+              onClick={() => onExclude(product.presented_ordinal!)}
+              className="w-full rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
+            >
+              Not this one
+            </button>
+          )}
+          {product.product_url && (
+            <a
+              href={product.product_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-medium text-clay hover:underline"
+            >
+              View product →
+            </a>
+          )}
+        </div>
       </div>
     </div>
   )

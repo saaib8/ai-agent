@@ -31,6 +31,7 @@ from app.schemas.design import (
     InteriorDesignResult,
 )
 from app.schemas.design_discovery import DesignNeedSkipReason
+from app.schemas.design_override import DesignNeedSearchOverride
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.discovery import PriceConstraint, SeatingCapacityConstraint
 from app.schemas.geometry import (
@@ -100,10 +101,17 @@ def product_candidate(product_id: int) -> ProductCandidate:
 class FakePipeline:
     """Records every search it is asked to run, and answers with a pool."""
 
-    def __init__(self, pools: dict[str, tuple[int, ...]] | None = None) -> None:
+    def __init__(
+        self,
+        pools: dict[str, tuple[int, ...]] | None = None,
+        forced: dict[int, bool] | None = None,
+    ) -> None:
         self.pools = pools or {}
+        # product_id -> whether the catalog still carries it (default True).
+        self.forced = forced or {}
         self.calls: list[ResolvedSearch] = []
         self.contexts: list[RetailerContext] = []
+        self.forced_calls: list[int] = []
 
     async def execute_candidate_pool(
         self, resolved: ResolvedSearch, context: RetailerContext
@@ -118,6 +126,25 @@ class FakePipeline:
                 for i in ids
             ),
             eligible_count=len(ids),
+            was_relaxed=False,
+            stop_reason=StopReason.EXACT_SUFFICIENT,
+            semantic_used=False,
+        )
+
+    async def execute_forced_pool(
+        self, product_id: int, context: RetailerContext
+    ) -> CandidatePoolResult:
+        self.forced_calls.append(product_id)
+        self.contexts.append(context)
+        present = self.forced.get(product_id, True)
+        candidates = (
+            (RankedProductCandidate(product=product_candidate(product_id), relaxation_depth=0),)
+            if present
+            else ()
+        )
+        return CandidatePoolResult(
+            candidates=candidates,
+            eligible_count=len(candidates),
             was_relaxed=False,
             stop_reason=StopReason.EXACT_SUFFICIENT,
             semantic_used=False,
@@ -423,6 +450,57 @@ async def test_an_unapproved_pair_is_refused_and_never_reaches_a_search() -> Non
     assert pipeline.calls == []
 
 
+# ── a forced product (the customer's own pick) ──────────────────────────────
+
+
+async def test_a_forced_product_skips_the_search_and_is_the_sole_candidate() -> None:
+    """The customer chose a specific product for this role, so there is nothing
+    to search: the role's pool is that product and nothing else."""
+    pipeline = FakePipeline()
+    result = await _service(pipeline).discover(
+        _request(),
+        InteriorDesignResult(needs=(_need(),)),
+        CONTEXT,
+        overrides={0: DesignNeedSearchOverride(need_id=1, forced_product_id=42)},
+    )
+
+    assert pipeline.calls == []  # no ordinary search ran
+    assert pipeline.forced_calls == [42]
+    pool = result.needs[0].pool
+    assert pool is not None
+    assert [c.product.product_id for c in pool.candidates] == [42]
+
+
+async def test_a_forced_product_the_catalog_dropped_leaves_the_role_empty() -> None:
+    """A chosen product the store no longer carries yields an empty pool, never a
+    substitute: the role is searched-but-empty, not skipped (CLAUDE.md 31)."""
+    pipeline = FakePipeline(forced={42: False})
+    result = await _service(pipeline).discover(
+        _request(),
+        InteriorDesignResult(needs=(_need(),)),
+        CONTEXT,
+        overrides={0: DesignNeedSearchOverride(need_id=1, forced_product_id=42)},
+    )
+
+    entry = result.needs[0]
+    assert entry.candidate_count == 0
+    assert entry.pool is not None
+    assert entry.skipped is None
+
+
+async def test_forcing_scope_comes_from_the_context() -> None:
+    """A forced product is hydrated under the request's store, never a caller's."""
+    pipeline = FakePipeline()
+    await _service(pipeline).discover(
+        _request(),
+        InteriorDesignResult(needs=(_need(),)),
+        CONTEXT,
+        overrides={0: DesignNeedSearchOverride(need_id=1, forced_product_id=7)},
+    )
+
+    assert pipeline.contexts == [CONTEXT]
+
+
 # ── scope and authority ─────────────────────────────────────────────────────
 
 
@@ -489,7 +567,7 @@ def test_the_pipeline_is_the_only_search_facade_the_bridge_calls() -> None:
     ]
     attributes = {node.attr for node in awaited if isinstance(node, ast.Attribute)}
 
-    assert attributes == {"execute_candidate_pool", "_for_need"}
+    assert attributes == {"execute_candidate_pool", "execute_forced_pool", "_for_need"}
 
 
 def test_the_bridge_consults_no_model() -> None:

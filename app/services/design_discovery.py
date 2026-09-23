@@ -154,6 +154,16 @@ class DesignDiscoveryService:
                 skipped=DesignNeedSkipReason.RETAILER_CANNOT_SUPPLY,
             )
 
+        if override is not None and override.forced_product_id is not None:
+            # The customer chose a specific product for this role from its own
+            # alternatives, so there is nothing to search: the pool is that one
+            # product, or empty if the catalog no longer carries it. Verifying it
+            # belongs to this need happened before the override was built.
+            pool = await self._pipeline.execute_forced_pool(
+                override.forced_product_id, context
+            )
+            return DesignNeedCandidates(need_index=index, need=need, pool=pool)
+
         pool = await self._pipeline.execute_candidate_pool(
             self._resolve(need, request, override), context
         )

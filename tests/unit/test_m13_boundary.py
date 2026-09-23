@@ -249,7 +249,11 @@ def test_the_public_response_still_carries_what_a_client_needs() -> None:
 
 
 def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
-    """No auth fields before there is authentication to check them."""
+    """No auth fields before there is authentication to check them.
+
+    `bundle_action` and `search_action` are approved structured fields:
+    screen-driven follow-ups that carry only ordinals, never a product id, so
+    they do not widen what a caller may name or reference (CLAUDE.md 6, 3.6)."""
     names = set(ChatRequest.model_fields)
 
     assert names == {
@@ -257,6 +261,8 @@ def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
         "store_id",
         "message",
         "expected_session_revision",
+        "bundle_action",
+        "search_action",
     }
 
 

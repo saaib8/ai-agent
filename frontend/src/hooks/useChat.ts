@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { postChat } from '../api/client'
-import type { ChatResponse, ErrorBody } from '../api/types'
+import type { BundleAction, ChatResponse, ErrorBody, SearchAction } from '../api/types'
 import type { ConsoleConfig } from './useConfig'
 
 export type Turn =
@@ -13,7 +13,11 @@ export interface UseChat {
   sending: boolean
   /** Revision the last committed turn produced; drives expected_session_revision. */
   revision: number | null
-  send: (message: string, config: ConsoleConfig) => Promise<void>
+  send: (
+    message: string,
+    config: ConsoleConfig,
+    action?: { bundle?: BundleAction; search?: SearchAction },
+  ) => Promise<void>
   reset: () => void
 }
 
@@ -28,34 +32,43 @@ export function useChat(): UseChat {
   // re-created on every commit.
   const revisionRef = useRef<number | null>(null)
 
-  const send = useCallback(async (message: string, config: ConsoleConfig) => {
-    const text = message.trim()
-    if (!text) return
+  const send = useCallback(
+    async (
+      message: string,
+      config: ConsoleConfig,
+      action?: { bundle?: BundleAction; search?: SearchAction },
+    ) => {
+      const text = message.trim()
+      if (!text) return
 
-    setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text }])
-    setSending(true)
+      setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text }])
+      setSending(true)
 
-    const result = await postChat(config.apiBase, {
-      session_id: config.sessionId,
-      store_id: config.storeId,
-      message: text,
-      ...(config.sendExpectedRevision && revisionRef.current != null
-        ? { expected_session_revision: revisionRef.current }
-        : {}),
-    })
+      const result = await postChat(config.apiBase, {
+        session_id: config.sessionId,
+        store_id: config.storeId,
+        message: text,
+        ...(config.sendExpectedRevision && revisionRef.current != null
+          ? { expected_session_revision: revisionRef.current }
+          : {}),
+        ...(action?.bundle ? { bundle_action: action.bundle } : {}),
+        ...(action?.search ? { search_action: action.search } : {}),
+      })
 
-    if (result.ok) {
-      revisionRef.current = result.data.session_revision
-      setRevision(result.data.session_revision)
-      setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data: result.data }])
-    } else {
-      setTurns((prev) => [
-        ...prev,
-        { kind: 'error', id: nextId(), status: result.status, error: result.error },
-      ])
-    }
-    setSending(false)
-  }, [])
+      if (result.ok) {
+        revisionRef.current = result.data.session_revision
+        setRevision(result.data.session_revision)
+        setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data: result.data }])
+      } else {
+        setTurns((prev) => [
+          ...prev,
+          { kind: 'error', id: nextId(), status: result.status, error: result.error },
+        ])
+      }
+      setSending(false)
+    },
+    [],
+  )
 
   const reset = useCallback(() => {
     setTurns([])
