@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import type { GroundedProduct } from '../api/types'
 import type { Turn } from '../hooks/useChat'
 import { deriveQuickReplies } from '../lib/quickReplies'
 import { Composer } from './Composer'
@@ -19,7 +20,7 @@ interface ChatPanelProps {
   onSwapStart: (bundleOrdinal: number, role: string) => void
   onPickAlternative: (alternativeOrdinal: number) => void
   onShowMoreOptions: () => void
-  onExcludeProduct: (ordinal: number) => void
+  onExcludeProduct: (product: GroundedProduct) => void
 }
 
 export function ChatPanel({
@@ -59,7 +60,8 @@ export function ChatPanel({
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
             {turns.map((turn) => {
-              if (turn.kind === 'user') return <UserBubble key={turn.id} text={turn.text} />
+              if (turn.kind === 'user')
+                return <UserBubble key={turn.id} text={turn.text} rejected={turn.rejected} />
               if (turn.kind === 'assistant')
                 return (
                   <AssistantBubble

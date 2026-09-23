@@ -3,8 +3,15 @@ import { postChat } from '../api/client'
 import type { BundleAction, ChatResponse, ErrorBody, SearchAction } from '../api/types'
 import type { ConsoleConfig } from './useConfig'
 
+/** A product a "Not this one" tap dismissed, shown on the user's turn so the
+ *  thread makes clear what was passed on rather than a bare line of text. */
+export interface RejectedRef {
+  name: string
+  imageUrl: string
+}
+
 export type Turn =
-  | { kind: 'user'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; rejected?: RejectedRef }
   | { kind: 'assistant'; id: string; data: ChatResponse }
   | { kind: 'error'; id: string; status: number | 'network'; error: ErrorBody }
 
@@ -16,7 +23,7 @@ export interface UseChat {
   send: (
     message: string,
     config: ConsoleConfig,
-    action?: { bundle?: BundleAction; search?: SearchAction },
+    opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
   ) => Promise<void>
   reset: () => void
 }
@@ -36,12 +43,15 @@ export function useChat(): UseChat {
     async (
       message: string,
       config: ConsoleConfig,
-      action?: { bundle?: BundleAction; search?: SearchAction },
+      opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
     ) => {
       const text = message.trim()
       if (!text) return
 
-      setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text }])
+      setTurns((prev) => [
+        ...prev,
+        { kind: 'user', id: nextId(), text, rejected: opts?.rejected },
+      ])
       setSending(true)
 
       const result = await postChat(config.apiBase, {
@@ -51,8 +61,8 @@ export function useChat(): UseChat {
         ...(config.sendExpectedRevision && revisionRef.current != null
           ? { expected_session_revision: revisionRef.current }
           : {}),
-        ...(action?.bundle ? { bundle_action: action.bundle } : {}),
-        ...(action?.search ? { search_action: action.search } : {}),
+        ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
+        ...(opts?.search ? { search_action: opts.search } : {}),
       })
 
       if (result.ok) {

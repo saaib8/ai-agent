@@ -29,7 +29,7 @@ export function ProductCard({
   pick?: AlternativePick
   /** Present on a fresh search grid: drops this one and re-runs, so it does
    *  not come back. Absent while picking a room replacement. */
-  onExclude?: (ordinal: number) => void
+  onExclude?: (product: GroundedProduct) => void
 }) {
   const [imgFailed, setImgFailed] = useState(false)
   const { commerce } = product
@@ -105,7 +105,7 @@ export function ProductCard({
           )}
           {!pick && onExclude && product.presented_ordinal != null && (
             <button
-              onClick={() => onExclude(product.presented_ordinal!)}
+              onClick={() => onExclude(product)}
               className="w-full rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
             >
               Not this one

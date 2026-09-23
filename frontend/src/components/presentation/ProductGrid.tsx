@@ -6,7 +6,7 @@ export interface SearchRefineControls {
   /** Re-run the search, excluding everything on screen — a different page. */
   onShowMore: () => void
   /** Drop one product and re-run, so it does not come back. */
-  onExclude: (ordinal: number) => void
+  onExclude: (product: GroundedProduct) => void
 }
 
 interface ProductGridProps {

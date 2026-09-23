@@ -1,4 +1,5 @@
 import type { ChatResponse } from '../api/types'
+import type { RejectedRef } from '../hooks/useChat'
 import type { QuickReply } from '../lib/quickReplies'
 import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
@@ -8,7 +9,34 @@ import { RoomBundle } from './presentation/RoomBundle'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 
-export function UserBubble({ text }: { text: string }) {
+export function UserBubble({ text, rejected }: { text: string; rejected?: RejectedRef }) {
+  // A "Not this one" tap: show the product that was dismissed, so the thread
+  // makes clear what was passed on rather than a bare line of text.
+  if (rejected) {
+    return (
+      <div className="flex animate-rise justify-end">
+        <div className="flex max-w-[80%] items-center gap-3 rounded-2xl rounded-br-md border border-line bg-surface px-3 py-2.5 shadow-card">
+          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-canvas">
+            {rejected.imageUrl && (
+              <img
+                src={rejected.imageUrl}
+                alt=""
+                className="h-full w-full object-cover opacity-55"
+              />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-muted">
+              Not this one
+            </div>
+            <div className="truncate text-sm text-ink line-through decoration-muted/50">
+              {rejected.name}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="flex animate-rise justify-end">
       <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">

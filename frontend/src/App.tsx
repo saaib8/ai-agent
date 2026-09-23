@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import type { GroundedProduct } from './api/types'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
 import { useChat } from './hooks/useChat'
@@ -69,11 +70,15 @@ export default function App() {
   }, [chat, config.config])
 
   const handleExcludeProduct = useCallback(
-    (ordinal: number) => {
-      if (chat.sending) return
+    (product: GroundedProduct) => {
+      if (chat.sending || product.presented_ordinal == null) return
       setSwap(null)
-      void chat.send('Not this one — show me something else', config.config, {
-        search: { kind: 'exclude', ordinal },
+      // The message names the piece so the conversation record reads clearly;
+      // `rejected` shows it on the user's turn so the thread makes visible which
+      // one was passed on, not just that something was.
+      void chat.send(`Not this one — the ${product.name_english}`, config.config, {
+        search: { kind: 'exclude', ordinal: product.presented_ordinal },
+        rejected: { name: product.name_english, imageUrl: product.image_url },
       })
     },
     [chat, config.config],
