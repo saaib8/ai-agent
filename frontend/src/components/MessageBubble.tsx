@@ -1,9 +1,11 @@
 import type { ChatResponse } from '../api/types'
+import type { QuickReply } from '../lib/quickReplies'
 import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
 import { ProductGrid } from './presentation/ProductGrid'
 import type { SearchRefineControls } from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
+import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 
 export function UserBubble({ text }: { text: string }) {
@@ -33,9 +35,20 @@ interface AssistantBubbleProps {
   pick?: { role: string; onPick: (alternativeOrdinal: number) => void }
   /** Present only on the latest search grid: "different options" and per-card exclude. */
   refine?: SearchRefineControls
+  /** Tappable answers for the follow-up question, on the latest turn only. */
+  quickReplies?: QuickReply[]
+  onQuickReply?: (value: string) => void
 }
 
-export function AssistantBubble({ data, busy, onSwapStart, pick, refine }: AssistantBubbleProps) {
+export function AssistantBubble({
+  data,
+  busy,
+  onSwapStart,
+  pick,
+  refine,
+  quickReplies,
+  onQuickReply,
+}: AssistantBubbleProps) {
   const { response, presentation } = data
   const hasProducts = !!presentation?.products?.length
   const hasComparison = !!presentation?.comparison
@@ -54,6 +67,10 @@ export function AssistantBubble({ data, busy, onSwapStart, pick, refine }: Assis
             <HelpIcon size={16} className="mt-0.5 shrink-0 text-clay" />
             <div className="text-sm leading-relaxed text-ink">{response.follow_up_question}</div>
           </div>
+        )}
+
+        {quickReplies && quickReplies.length > 0 && onQuickReply && (
+          <QuickReplies replies={quickReplies} onPick={onQuickReply} disabled={!!busy} />
         )}
 
         {hasProducts && (

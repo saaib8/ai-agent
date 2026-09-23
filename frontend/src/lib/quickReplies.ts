@@ -62,9 +62,11 @@ export function deriveQuickReplies(message: string, followUp: string | null): Qu
   // Only offer chips for a turn that is actually asking something.
   if (!question.includes('?')) return []
 
-  const haystack = `${followUp ?? ''} ${message}`
+  // Match on the question itself, not the original request. "How many people
+  // to seat?" asked after "…under 6000 SAR" must offer seat counts, not
+  // currencies — the word in the request must not decide the answer options.
   for (const { test, replies } of RULES) {
-    if (test.test(haystack)) return replies
+    if (test.test(question)) return replies
   }
 
   // A plainly phrased yes/no question is the last, safest fallback.

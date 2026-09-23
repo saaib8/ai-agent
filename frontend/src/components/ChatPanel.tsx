@@ -5,7 +5,6 @@ import { Composer } from './Composer'
 import { EmptyState } from './EmptyState'
 import { ErrorCard } from './ErrorCard'
 import { AssistantBubble, UserBubble, ZoryAvatar } from './MessageBubble'
-import { QuickReplies } from './QuickReplies'
 import { TypingIndicator } from './TypingIndicator'
 
 interface ChatPanelProps {
@@ -78,15 +77,12 @@ export function ChatPanel({
                         ? { onShowMore: onShowMoreOptions, onExclude: onExcludeProduct }
                         : undefined
                     }
+                    quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
+                    onQuickReply={onSend}
                   />
                 )
               return <ErrorCard key={turn.id} status={turn.status} error={turn.error} />
             })}
-            {quickReplies.length > 0 && (
-              <div className="pl-11">
-                <QuickReplies replies={quickReplies} onPick={onSend} disabled={sending} />
-              </div>
-            )}
             {sending && (
               <div className="flex animate-rise gap-3">
                 <ZoryAvatar />
