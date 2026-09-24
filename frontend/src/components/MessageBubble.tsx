@@ -1,11 +1,42 @@
 import type { ChatResponse } from '../api/types'
+import type { RejectedRef } from '../hooks/useChat'
+import type { QuickReply } from '../lib/quickReplies'
 import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
 import { ProductGrid } from './presentation/ProductGrid'
+import type { SearchRefineControls } from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
+import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 
-export function UserBubble({ text }: { text: string }) {
+export function UserBubble({ text, rejected }: { text: string; rejected?: RejectedRef }) {
+  // A "Not this one" tap: show the product that was dismissed, so the thread
+  // makes clear what was passed on rather than a bare line of text.
+  if (rejected) {
+    return (
+      <div className="flex animate-rise justify-end">
+        <div className="flex max-w-[80%] items-center gap-3 rounded-2xl rounded-br-md border border-line bg-surface px-3 py-2.5 shadow-card">
+          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-canvas">
+            {rejected.imageUrl && (
+              <img
+                src={rejected.imageUrl}
+                alt=""
+                className="h-full w-full object-cover opacity-55"
+              />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-muted">
+              Not this one
+            </div>
+            <div className="truncate text-sm text-ink line-through decoration-muted/50">
+              {rejected.name}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="flex animate-rise justify-end">
       <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">
@@ -23,7 +54,29 @@ export function ZoryAvatar() {
   )
 }
 
-export function AssistantBubble({ data }: { data: ChatResponse }) {
+interface AssistantBubbleProps {
+  data: ChatResponse
+  busy?: boolean
+  /** Start swapping a room piece: opens the alternatives picker for that role. */
+  onSwapStart?: (bundleOrdinal: number, role: string) => void
+  /** Present only while choosing a replacement: turns product cards into pickers. */
+  pick?: { role: string; onPick: (alternativeOrdinal: number) => void }
+  /** Present only on the latest search grid: "different options" and per-card exclude. */
+  refine?: SearchRefineControls
+  /** Tappable answers for the follow-up question, on the latest turn only. */
+  quickReplies?: QuickReply[]
+  onQuickReply?: (value: string) => void
+}
+
+export function AssistantBubble({
+  data,
+  busy,
+  onSwapStart,
+  pick,
+  refine,
+  quickReplies,
+  onQuickReply,
+}: AssistantBubbleProps) {
   const { response, presentation } = data
   const hasProducts = !!presentation?.products?.length
   const hasComparison = !!presentation?.comparison
@@ -44,9 +97,15 @@ export function AssistantBubble({ data }: { data: ChatResponse }) {
           </div>
         )}
 
-        {hasProducts && <ProductGrid products={presentation!.products} />}
+        {quickReplies && quickReplies.length > 0 && onQuickReply && (
+          <QuickReplies replies={quickReplies} onPick={onQuickReply} disabled={!!busy} />
+        )}
+
+        {hasProducts && (
+          <ProductGrid products={presentation!.products} pick={pick} refine={refine} busy={busy} />
+        )}
         {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}
-        {hasRoom && <RoomBundle room={presentation!.room!} />}
+        {hasRoom && <RoomBundle room={presentation!.room!} onSwapStart={onSwapStart} busy={busy} />}
 
         <RawJson value={data} />
       </div>

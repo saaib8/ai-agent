@@ -1,6 +1,16 @@
 import { useState } from 'react'
 import type { BundleStatus, GroundedBundleItem, GroundedBundlePresentation } from '../../api/types'
 import { humanise, money, toNumber } from '../../lib/format'
+import { SwapIcon } from '../icons'
+
+interface RoomBundleProps {
+  room: GroundedBundlePresentation
+  /** Start swapping this piece: opens the alternatives picker for its role.
+   *  Called with the piece's card position and its role in customer words. */
+  onSwapStart?: (bundleOrdinal: number, role: string) => void
+  /** A turn is in flight — disable per-item actions. */
+  busy?: boolean
+}
 
 const STATUS_META: Record<BundleStatus, { label: string; cls: string }> = {
   complete: { label: 'Complete', cls: 'bg-sage/15 text-sage' },
@@ -39,7 +49,7 @@ function BudgetBar({ spend, budget, within }: { spend: number; budget: number; w
   )
 }
 
-export function RoomBundle({ room }: { room: GroundedBundlePresentation }) {
+export function RoomBundle({ room, onSwapStart, busy = false }: RoomBundleProps) {
   const status = STATUS_META[room.status]
   const t = room.totals
   const spend = toNumber(t.new_spend_total)
@@ -82,6 +92,17 @@ export function RoomBundle({ room }: { room: GroundedBundlePresentation }) {
                   )}
                   {item.acquisition === 'already_owned' && (
                     <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] text-muted">already owned</span>
+                  )}
+                  {onSwapStart && item.acquisition === 'to_buy' && !item.locked && (
+                    <button
+                      onClick={() => onSwapStart(item.grounding_ref, humanise(kind ?? 'item'))}
+                      disabled={busy}
+                      aria-label={`Swap the ${humanise(kind ?? 'item')}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-clay/30 px-2 py-0.5 text-[11px] font-medium text-clay transition hover:border-clay hover:bg-clay hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <SwapIcon size={12} />
+                      Swap
+                    </button>
                   )}
                 </div>
               </div>

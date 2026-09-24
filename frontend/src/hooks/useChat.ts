@@ -1,10 +1,17 @@
 import { useCallback, useRef, useState } from 'react'
 import { postChat } from '../api/client'
-import type { ChatResponse, ErrorBody } from '../api/types'
+import type { BundleAction, ChatResponse, ErrorBody, SearchAction } from '../api/types'
 import type { ConsoleConfig } from './useConfig'
 
+/** A product a "Not this one" tap dismissed, shown on the user's turn so the
+ *  thread makes clear what was passed on rather than a bare line of text. */
+export interface RejectedRef {
+  name: string
+  imageUrl: string
+}
+
 export type Turn =
-  | { kind: 'user'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; rejected?: RejectedRef }
   | { kind: 'assistant'; id: string; data: ChatResponse }
   | { kind: 'error'; id: string; status: number | 'network'; error: ErrorBody }
 
@@ -13,7 +20,11 @@ export interface UseChat {
   sending: boolean
   /** Revision the last committed turn produced; drives expected_session_revision. */
   revision: number | null
-  send: (message: string, config: ConsoleConfig) => Promise<void>
+  send: (
+    message: string,
+    config: ConsoleConfig,
+    opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
+  ) => Promise<void>
   reset: () => void
 }
 
@@ -28,34 +39,46 @@ export function useChat(): UseChat {
   // re-created on every commit.
   const revisionRef = useRef<number | null>(null)
 
-  const send = useCallback(async (message: string, config: ConsoleConfig) => {
-    const text = message.trim()
-    if (!text) return
+  const send = useCallback(
+    async (
+      message: string,
+      config: ConsoleConfig,
+      opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
+    ) => {
+      const text = message.trim()
+      if (!text) return
 
-    setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text }])
-    setSending(true)
-
-    const result = await postChat(config.apiBase, {
-      session_id: config.sessionId,
-      store_id: config.storeId,
-      message: text,
-      ...(config.sendExpectedRevision && revisionRef.current != null
-        ? { expected_session_revision: revisionRef.current }
-        : {}),
-    })
-
-    if (result.ok) {
-      revisionRef.current = result.data.session_revision
-      setRevision(result.data.session_revision)
-      setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data: result.data }])
-    } else {
       setTurns((prev) => [
         ...prev,
-        { kind: 'error', id: nextId(), status: result.status, error: result.error },
+        { kind: 'user', id: nextId(), text, rejected: opts?.rejected },
       ])
-    }
-    setSending(false)
-  }, [])
+      setSending(true)
+
+      const result = await postChat(config.apiBase, {
+        session_id: config.sessionId,
+        store_id: config.storeId,
+        message: text,
+        ...(config.sendExpectedRevision && revisionRef.current != null
+          ? { expected_session_revision: revisionRef.current }
+          : {}),
+        ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
+        ...(opts?.search ? { search_action: opts.search } : {}),
+      })
+
+      if (result.ok) {
+        revisionRef.current = result.data.session_revision
+        setRevision(result.data.session_revision)
+        setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data: result.data }])
+      } else {
+        setTurns((prev) => [
+          ...prev,
+          { kind: 'error', id: nextId(), status: result.status, error: result.error },
+        ])
+      }
+      setSending(false)
+    },
+    [],
+  )
 
   const reset = useCallback(() => {
     setTurns([])

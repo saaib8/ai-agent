@@ -40,6 +40,18 @@ class DesignNeedSearchOverride(BaseModel):
     """New wording for this role, staged. `SET` replaces the persisted phrase
     for this search; `CLEAR` runs it with none."""
 
+    forced_product_id: int | None = Field(default=None, ge=1)
+    """A specific product the customer chose for this role.
+
+    When set, discovery skips the search entirely and returns this product as
+    the sole candidate, so the optimiser selects it — or leaves the role
+    unfilled if the catalog no longer carries it, never a substitute. The
+    customer picked it from this role's own alternatives, so it is a product for
+    this need and not a model's choice; verifying it belongs to the need is the
+    caller's job (CLAUDE.md 31). A price bound or staged wording is meaningless
+    once the product is fixed, so nothing here derives one from the other.
+    """
+
     @model_validator(mode="after")
     def _exclusions_are_bounded_and_distinct(self) -> Self:
         if len(self.exclude_product_ids) != len(set(self.exclude_product_ids)):
