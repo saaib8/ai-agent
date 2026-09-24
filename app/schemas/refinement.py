@@ -23,12 +23,13 @@ deterministic composer's work, not this contract's.
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.numbers import parse_stated_percent
 from app.schemas.discovery import DimensionConstraintKind, ProductSort
 from app.schemas.product_reference import ProductReferenceSelector
 from app.schemas.query import ConstraintStrength
@@ -187,8 +188,10 @@ class RelativePriceRefinement(BaseModel):
         if self.percent is None:
             return None
         try:
-            return Decimal(self.percent.strip())
-        except (InvalidOperation, ValueError):
+            return parse_stated_percent(self.percent)
+        except ValueError:
+            # "NaN" included: it cannot be compared, and a comparison that
+            # raises inside validation would escape as an unhandled error.
             return None
 
 
@@ -378,10 +381,11 @@ class PlanarRefinement(BaseModel):
 class ProposedAttributeValue(BaseModel):
     """A colour or style the customer named, in their words.
 
-    `canonical_value` is set only when the wording names an approved value
-    outright. It stays None for anything else - "warm neutral" is not Beige -
-    and the application validates whatever is claimed against the registry
-    before it can reach SQL (CLAUDE.md 14.3).
+    `canonical_value` is the approved value their words were translated to.
+    One phrase may name several - "dark grey" arrives as two values, Grey and
+    Charcoal, each keeping the same words. It stays None when no approved
+    value fits, and the application validates whatever is claimed against the
+    registry before it can reach SQL (CLAUDE.md 14.3).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -417,7 +421,12 @@ class AttributeRefinement(BaseModel):
             return self
         if not self.values:
             raise ValueError("an attribute set operation needs at least one value")
-        seen = [v.raw_value.casefold() for v in self.values]
+        # One phrase may name several approved values - "dark grey" is Grey
+        # and Charcoal - so a value repeats only when the phrase *and* its
+        # approved reading both do.
+        seen = [
+            (v.raw_value.casefold(), (v.canonical_value or "").casefold()) for v in self.values
+        ]
         if len(set(seen)) != len(seen):
             raise ValueError("an attribute operation must not repeat a value")
         return self

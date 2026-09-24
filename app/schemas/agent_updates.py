@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import BundleItemStatus, PurchaseStage
-from app.schemas.design import DesignPriority
+from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority
 from app.schemas.discovery import PriceConstraint, ProductSearchRequest, SeatingCapacityConstraint
 from app.schemas.geometry import RoomGeometry
 from app.schemas.query import ConstraintSemantics, SemanticPreference
@@ -411,7 +411,9 @@ class RoomProjectUpdate(BaseModel):
     budget: PriceConstraint | None = None
     clear_budget: bool = False
     design_preferences: PreferenceListUpdate | None = None
-    regular_seating_count: int | None = Field(default=None, ge=1, le=30)
+    regular_seating_count: int | None = Field(
+        default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
+    )
     clear_regular_seating_count: bool = False
     bundle_operations: tuple[BundleOperation, ...] = ()
     """Changes to the room bundle, applied in order.

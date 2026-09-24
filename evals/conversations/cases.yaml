@@ -1,0 +1,169 @@
+# Live conversation cases for the "never an error" work (docs/known-issues.md,
+# issue 6 and the colour decisions). Each case is a short conversation; the
+# checks apply to the reply to its LAST message.
+#
+# These call the real model, catalog, index and Redis, so they are an
+# evaluation, never part of pytest. The model is not deterministic: a check
+# that fails once is signal to look at, not proof.
+#
+# Checks:
+#   not_fallback          the reply is not the "didn't catch that" fallback
+#   min_products: N       at least N product cards
+#   max_price: X          every card costs at most X
+#   colors_subset: [...]  every card's colour is one of these
+#   top_colors_any: {n, colors}  at least one of the first n cards has one
+#   min_distinct_colors: N  the cards span at least N colours (no hard filter)
+#   engages               a comparison, products, or a question - not a dead end
+#   new_products          none of the cards repeat the previous turn
+#   drops_previous_card: N  card N of the previous turn is gone, and cards are shown
+#   subcategory: key      every card is this commerce subcategory
+#   admits_no_match       the reply says plainly that nothing matched exactly
+
+cases:
+  - id: B1_only_beige_followup
+    issue: "502 case B1"
+    turns: ["show me sofas", "only beige ones"]
+    checks: {not_fallback: true, min_products: 1, colors_subset: [Beige]}
+
+  - id: dark_grey_followup
+    issue: "issue 2"
+    turns: ["show me sofas", "show me some dark grey shades"]
+    checks:
+      not_fallback: true
+      min_products: 1
+      top_colors_any: {n: 3, colors: [Grey, Charcoal, Black]}
+
+  - id: B3_price_with_comma
+    issue: "502 case B3"
+    turns: ["show me sofas", "under 5,000 SAR please"]
+    checks: {not_fallback: true, min_products: 1, max_price: 5000}
+
+  - id: B4_price_shorthand
+    issue: "502 case B4"
+    turns: ["show me sofas", "anything under 5k SAR?"]
+    checks: {not_fallback: true, min_products: 1, max_price: 5000}
+
+  - id: A2_percent_cheaper
+    issue: "502 case A2"
+    turns: ["show me sofas", "show me something 20% cheaper than the second one"]
+    checks: {not_fallback: true, engages: true}
+
+  - id: A4_compare_one
+    issue: "502 case A4"
+    turns: ["show me sofas", "compare the second one"]
+    checks: {not_fallback: true, engages: true}
+
+  - id: only_reddish_followup
+    issue: "strict colour nothing fits (stage D: closest instead of a dead end)"
+    turns: ["show me sofas", "only reddish ones please"]
+    checks: {not_fallback: true, min_products: 1, admits_no_match: true}
+
+  - id: only_red_new_search
+    issue: "strict colour the store lacks (stage D)"
+    turns: ["only red sofas please, no other colours"]
+    checks: {not_fallback: true, min_products: 1, admits_no_match: true}
+
+  - id: only_purple_followup
+    issue: "strict colour the store lacks (stage D)"
+    turns: ["show me sofas", "only purple ones"]
+    checks: {not_fallback: true, min_products: 1, admits_no_match: true}
+
+  - id: cheapest_beige
+    issue: "matching first with an explicit sort (stage D)"
+    turns: ["show me the cheapest beige sofas"]
+    checks: {min_products: 1, top_colors_any: {n: 1, colors: [Beige]}}
+
+  - id: A1_show_more_typed
+    issue: "issue 7 (typed 'show more options')"
+    turns: ["show me sofas", "show more options"]
+    checks: {not_fallback: true, new_products: true}
+
+  - id: not_this_one_typed
+    issue: "issue 7 (typed 'not this one')"
+    turns: ["show me sofas", "I don't like the second one, show me others"]
+    checks: {not_fallback: true, drops_previous_card: 2}
+
+  - id: A9_take_that_one
+    issue: "502 case A9"
+    turns: ["show me sofas", "I'll take that one"]
+    checks: {not_fallback: true}
+
+  - id: C1_room_budget_shorthand
+    issue: "502 case C1"
+    turns: ["I want to furnish my living room, my budget is 12k SAR"]
+    checks: {not_fallback: true, engages: true}
+
+  - id: C2_room_length_corrected
+    issue: "502 case C2"
+    turns: ["My living room is 4 m long, actually no, 5 m long. Help me plan it, budget 15000 SAR"]
+    checks: {not_fallback: true, engages: true}
+
+  - id: A6_majlis_40_people
+    issue: "502 case A6 (limit raised to 200)"
+    turns: ["we are 40 people, it's for a majlis, show me sofas"]
+    checks: {not_fallback: true}
+
+  - id: darker_new_search
+    issue: "colour set mapping"
+    turns: ["show me darker sofas"]
+    checks:
+      min_products: 1
+      top_colors_any: {n: 3, colors: [Grey, Charcoal, Black, Navy, Espresso, Forest Green, Walnut]}
+
+  - id: warm_tones_new_search
+    issue: "colour set mapping"
+    turns: ["show me sofas in warm tones"]
+    checks:
+      min_products: 1
+      top_colors_any: {n: 3, colors: [Beige, Sand, Taupe, Terracotta, Clay, Mustard, Burnt Orange, Ivory]}
+
+  - id: only_dark_grey_new_search
+    issue: "strict colour set"
+    turns: ["only dark grey sofas, nothing else"]
+    checks: {min_products: 1, colors_subset: [Grey, Charcoal, Black]}
+
+  - id: cozy_lighter_followup
+    issue: "issue 5"
+    turns: ["show me sofas", "something cozy in a lighter shade"]
+    checks: {not_fallback: true, min_products: 1, min_distinct_colors: 2}
+
+  - id: control_sofas_under_5000
+    issue: "control"
+    turns: ["show me sofas under 5000 SAR"]
+    checks: {min_products: 1, max_price: 5000}
+
+  - id: control_coffee_table
+    issue: "control"
+    turns: ["show me a coffee table"]
+    checks: {min_products: 1}
+
+  # ── carry-forward: what the customer already said must survive follow-ups ──
+  - id: carry_budget_through_type_change
+    issue: "carry-forward (budget survives a type change and a sort)"
+    turns: ["show me sofas under 5000 SAR", "show me sectional ones instead", "cheapest first"]
+    checks: {not_fallback: true, min_products: 1, max_price: 5000, subcategory: sectional-sofa}
+
+  - id: carry_colour_through_price_change
+    issue: "carry-forward (strict colour survives a price change)"
+    turns: ["only beige sofas under 5000 SAR", "under 4000 please"]
+    checks: {not_fallback: true, min_products: 1, max_price: 4000, colors_subset: [Beige]}
+
+  - id: carry_colour_after_show_more
+    issue: "carry-forward (colour survives show more, then a price change starts fresh)"
+    turns: ["only beige sofas", "show more options", "under 3000 SAR"]
+    checks: {not_fallback: true, min_products: 1, max_price: 3000, colors_subset: [Beige]}
+
+  - id: carry_mixed_red_or_beige
+    issue: "mixed strict colours (red or beige)"
+    turns: ["only red or beige sofas"]
+    checks: {not_fallback: true, min_products: 1, colors_subset: [Beige, Ruby, Terracotta, Burnt Orange]}
+
+  - id: carry_style_unmatched
+    issue: "strict style no approved value expresses"
+    turns: ["sofas that must be modern and cottagecore"]
+    checks: {not_fallback: true, min_products: 1, admits_no_match: true}
+
+  - id: type_change_red_tables
+    issue: "type change with an unmatched strict colour"
+    turns: ["show me coffee tables", "make them red ones instead"]
+    checks: {not_fallback: true, min_products: 1, admits_no_match: true}

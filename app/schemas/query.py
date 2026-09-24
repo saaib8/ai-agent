@@ -165,10 +165,10 @@ def validate_dimension_correspondence(
 class AttributeInterpretation(BaseModel):
     """One colour or style the customer mentioned, as the model read it.
 
-    `canonical_value` is set only when the customer's wording clearly names an
-    approved value. It stays null for anything the vocabulary does not contain
-    - "red", "warm neutral" - which is preserved rather than forced onto the
-    nearest approved token.
+    `canonical_value` is the approved value the customer's words translate to.
+    A phrase that fits several arrives as several entries - "dark grey" as Grey
+    and Charcoal - each keeping their own words. It stays null only when no
+    approved value fits, and their words are kept for ranking.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -178,8 +178,8 @@ class AttributeInterpretation(BaseModel):
     canonical_value: str | None = Field(
         default=None,
         description=(
-            "The approved value, when their wording names one exactly. Null "
-            "for anything else - never the nearest match."
+            "One approved value their words translate to; use one entry per "
+            "fitting value. Null only when no approved value fits."
         ),
     )
     strength: ConstraintStrength = Field(
@@ -276,9 +276,9 @@ class UnsupportedDimension(BaseModel):
 class SemanticPreference(BaseModel):
     """A colour or style the customer leaned towards without ruling others out.
 
-    Preserved for semantic ranking, which does not exist yet. It is never a
-    filter: excluding every product that is not Beige because someone said
-    they wanted a beige sofa would throw away what they might have chosen.
+    Used for ranking, never as a filter: excluding every product that is not
+    Beige because someone said they wanted a beige sofa would throw away what
+    they might have chosen.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -543,6 +543,16 @@ class ResolvedSearch(BaseModel):
     structured fields keep it and this does not.
     """
 
+    unmatched_strict: tuple[UnresolvedAttribute, ...] = ()
+    """Strict colours or styles no approved value expresses - "only red" when
+    the vocabulary has no red.
+
+    No product can match them, so the search runs without them, as the same
+    last resort as a strict colour nothing in stock carries: the closest
+    products are ranked first (they are also preferences) and the result
+    records the lifted requirement, so the reply says plainly none matched.
+    """
+
     @model_validator(mode="after")
     def _check_dimensions(self) -> Self:
         validate_dimension_correspondence(self.request, self.semantics)
@@ -566,6 +576,9 @@ class UnresolvedStrictRequirement(BaseModel):
     request: ProductSearchRequest
     semantics: ConstraintSemantics = ConstraintSemantics()
     unresolved: tuple[UnresolvedAttribute, ...]
+    semantic_preferences: tuple[SemanticPreference, ...] = ()
+    semantic_text: str | None = None
+    """Kept so a caller that searches anyway loses none of what was said."""
 
     @model_validator(mode="after")
     def _check_dimensions(self) -> Self:

@@ -56,6 +56,11 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "You haven't picked anything out yet, so there's nothing to show you "
         "here."
     ),
+    TurnFailureCode.REQUEST_NOT_UNDERSTOOD: (
+        "Sorry, I didn't quite catch that. Try saying it a little differently - "
+        "for example, the kind of piece you're after, or what you'd like to "
+        "change about what you're looking at."
+    ),
     TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE: (
         "I wasn't able to answer that one just now. Please try again in a "
         "moment."

@@ -426,6 +426,8 @@ def test_the_relaxable_fields_are_the_v1_set() -> None:
         "seating_min",
         "seating_max",
         "dimension",
+        "color",
+        "style",
     }
 
 

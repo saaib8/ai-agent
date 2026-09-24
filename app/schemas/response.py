@@ -315,6 +315,17 @@ class ResponseGroundingView(BaseModel):
     and no taxonomy value can be spelled a second way here.
     """
 
+    wished_colour_matches: int | None = Field(default=None, ge=0)
+    wished_style_matches: int | None = Field(default=None, ge=0)
+    """How many cards on screen carry a colour (or style) the customer asked or
+    wished for. None when they named none.
+
+    Without it, a reply to "make them red" beside black, gold and white tables
+    said red was "the deciding factor": the model had no way to tell that the
+    closest products shown were not the colour asked for. A count is enough to
+    stop that, and says nothing about which product or price.
+    """
+
     exact_match_count: int = Field(default=0, ge=0)
     """How many products satisfied the customer's request *as they made it*.
 

@@ -42,6 +42,7 @@ from app.core.exceptions import (
     TaxonomyValidationError,
 )
 from app.core.logging import get_logger
+from app.prompts.customer_commerce.v1 import describe_unusable
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
     AgentAction,
@@ -143,8 +144,10 @@ from app.schemas.product_reference import PresentedOrdinal, ProductReferenceSele
 from app.schemas.query import (
     ClarificationReason,
     ClarificationRequired,
+    ConstraintStrength,
     QueryInterpretation,
     ResolvedSearch,
+    SemanticPreference,
     UnresolvedStrictRequirement,
     UnsupportedDimensionRequirement,
     UnsupportedRequirement,
@@ -204,6 +207,7 @@ from app.services.relative_price import RelativePriceResolver
 from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.similar_search import SimilarSearchBuilder
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.words import customer_words_or_none
@@ -767,19 +771,111 @@ class CustomerTurnCoordinator:
     async def run(self, turn: CustomerTurnInput) -> CustomerTurnResult:
         """One turn in, the next state and what happened out.
 
-        A decision failure propagates: there is no decision to report and
-        nothing succeeded, so there is no result to build (CLAUDE.md 21).
-
         A turn carrying a `bundle_action` is a screen-driven room edit and takes
         the deterministic path instead: the customer's clicks are the decision,
         so no decision model is consulted (CLAUDE.md 3.6). A `search_action` is
         the same idea for a product search - re-run it, excluding what was shown.
+
+        **Model output we cannot use never reaches the customer as an error.**
+        A reasoning answer that breaks a rule, or a proposal that cannot be
+        read, is our failure to understand, not something the customer did
+        wrong, so it ends as a conversational turn that changes nothing (see
+        `_not_understood`). Only that one exception is recovered here: an
+        outage or an internal invariant violation still propagates, because
+        dressing a real defect as "please rephrase" would hide it.
         """
+        try:
+            return await self._dispatch(turn)
+        except LLMResponseInvalidError as exc:
+            if not self._may_redecide(turn, exc):
+                return self._not_understood(turn, exc)
+            first = exc
+        # A decision that was valid but could not be *applied* - an amount that
+        # is not a number, a colour in the wrong family - gets one corrective
+        # decision, told what could not be applied, and the turn runs again
+        # from the untouched pre-turn state. Only then the fallback.
+        problems = describe_unusable(
+            first.context.get("reason"), first.context.get("violations", ())
+        )
+        logger.warning(
+            "customer_turn_redeciding",
+            store_id=turn.context.store_id,
+            reason=first.context.get("reason"),
+        )
+        try:
+            return await self._run_decided_turn(turn, problems=problems)
+        except LLMResponseInvalidError as exc:
+            return self._not_understood(turn, exc)
+
+    @staticmethod
+    def _may_redecide(turn: CustomerTurnInput, exc: LLMResponseInvalidError) -> bool:
+        """Whether a second decision could fix this.
+
+        Not for a screen action: the customer's tap was the decision, and no
+        model reads it. Not when the decision step or query understanding
+        already spent its own corrective attempt - a turn never costs more
+        than three decisions.
+        """
+        typed = turn.bundle_action is None and turn.search_action is None
+        return typed and exc.context.get("stage") not in ("decision", "interpretation")
+
+    async def _dispatch(self, turn: CustomerTurnInput) -> CustomerTurnResult:
         if turn.bundle_action is not None:
             return await self._run_bundle_action(turn, turn.bundle_action)
         if turn.search_action is not None:
             return await self._run_search_action(turn, turn.search_action)
+        return await self._run_decided_turn(turn)
 
+    def _not_understood(
+        self, turn: CustomerTurnInput, exc: LLMResponseInvalidError
+    ) -> CustomerTurnResult:
+        """A turn we could not act on, answered as conversation.
+
+        **The pre-turn state, untouched.** Everything the turn did before the
+        failure lived only in memory - nothing is persisted until the reply
+        exists - so returning the state the customer started from is exactly
+        "nothing happened". A half-applied selection, preference or search
+        would be a change nobody could explain.
+
+        The decision is a stand-in, like the one a screen-driven action
+        carries: an answer that executes nothing, so the reply is routed by the
+        failure alone and worded deterministically. No question is offered
+        beside it; the reply itself invites them to say it another way.
+        """
+        logger.warning(
+            "customer_turn_not_understood",
+            store_id=turn.context.store_id,
+            reason=exc.context.get("reason"),
+            violations=list(exc.context.get("violations", ())),
+            screen_action=(
+                "bundle"
+                if turn.bundle_action is not None
+                else "search"
+                if turn.search_action is not None
+                else None
+            ),
+        )
+        return CustomerTurnResult(
+            state=turn.state,
+            decision=CustomerAgentDecision(
+                action=AgentAction.ANSWER,
+                commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+                follow_up_policy=FollowUpPolicy.NONE,
+            ),
+            grounding=TurnGrounding(
+                failure=TurnFailure(code=TurnFailureCode.REQUEST_NOT_UNDERSTOOD),
+                follow_up_policy=FollowUpPolicy.NONE,
+            ),
+        )
+
+    async def _run_decided_turn(
+        self, turn: CustomerTurnInput, *, problems: tuple[str, ...] = ()
+    ) -> CustomerTurnResult:
+        """A typed message: the decision model decides, services execute.
+
+        `problems` makes the decision a corrective one - what could not be
+        applied last time this same turn ran.
+        """
         started = time.perf_counter()
         pre_turn = turn.state
 
@@ -788,7 +884,8 @@ class CustomerTurnCoordinator:
                 message=turn.message,
                 conversation=turn.conversation,
                 state_view=project_state(pre_turn, await self._visible_cards(turn)),
-            )
+            ),
+            problems=problems,
         )
 
         proposals = map_proposals(decision.state_proposal, decision.commerce_proposal)
@@ -938,6 +1035,63 @@ class CustomerTurnCoordinator:
                 return _Primary(state=pre_turn, clarification=clarification, failure=failure)
             new_exclusions = (resolved_ref.product_id,)
 
+        return await self._rerun_excluding(active, new_exclusions, pre_turn, turn.context)
+
+    async def _continue_search(
+        self,
+        decision: CustomerAgentDecision,
+        working: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """A typed "show me more" or "not this one", on the buttons' own path.
+
+        The screen actions and these typed requests share `_rerun_excluding`,
+        so the two cannot drift apart again: typing "show more options" once
+        re-ran nothing, while tapping the button showed new products (issue 7).
+
+        Resolved against the pre-turn state, like every reference. With no
+        search in progress there is nothing to show more of, which is a
+        question to ask, not a failure to report.
+        """
+        active = pre_turn.active_search
+        if active is None:
+            return _Primary(
+                state=working,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.NO_SEARCH_TO_REFINE
+                ),
+            )
+        # "I don't like the second one, show me others" sets both: the card
+        # they turned down is left out, and with show_more so is the rest of
+        # what they have already seen.
+        new_exclusions: tuple[int, ...] = (
+            pre_turn.product_interaction.presented_product_ids if decision.show_more else ()
+        )
+        if decision.exclude_reference is not None:
+            outcome = await self._references.resolve(
+                decision.exclude_reference, pre_turn, turn.context
+            )
+            if isinstance(outcome, ReferenceUnresolved):
+                clarification, failure = _reference_outcome(
+                    outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+                )
+                return _Primary(state=working, clarification=clarification, failure=failure)
+            new_exclusions = tuple(dict.fromkeys((*new_exclusions, outcome.product_id)))
+        return await self._rerun_excluding(active, new_exclusions, working, turn.context)
+
+    async def _rerun_excluding(
+        self,
+        active: ActiveSearchState,
+        new_exclusions: tuple[int, ...],
+        working: AgentStateV1,
+        context: RetailerContext,
+    ) -> _Primary:
+        """The search in progress again, with more products left out.
+
+        The widened request replaces the search in progress, so exclusions
+        accumulate across follow-ups and "keep going" keeps moving.
+        """
         merged = _merge_exclusions(active.request.exclude_product_ids, new_exclusions)
         new_request = active.request.model_copy(update={"exclude_product_ids": merged})
         composed = ComposedSearch(
@@ -949,7 +1103,7 @@ class CustomerTurnCoordinator:
                 semantic_text=active.semantic_intent,
             ),
         )
-        return await self._run_search(composed, pre_turn, turn.context)
+        return await self._run_search(composed, working, context)
 
     async def _list_alternatives(
         self,
@@ -1298,6 +1452,8 @@ class CustomerTurnCoordinator:
             case AgentAction.DESIGN_HANDOFF:
                 return await self._design_handoff(decision, working, pre_turn, turn, proposals)
             case AgentAction.SEARCH:
+                if decision.show_more or decision.exclude_reference is not None:
+                    return await self._continue_search(decision, working, pre_turn, turn)
                 if decision.reference is None:
                     return await self._new_search(decision, working, turn)
                 return await self._similar_search_turn(decision.reference, working, pre_turn, turn)
@@ -2772,6 +2928,8 @@ class CustomerTurnCoordinator:
         interpretation = await self._interpret(decision.search_request or turn.message)
         if isinstance(interpretation, TurnFailure):
             return _Primary(state=working, failure=interpretation)
+        if isinstance(interpretation, UnresolvedStrictRequirement):
+            interpretation = _search_despite(interpretation)
         if not isinstance(interpretation, ResolvedSearch):
             return _Primary(
                 state=working, clarification=_interpretation_clarification(interpretation)
@@ -2941,6 +3099,10 @@ class CustomerTurnCoordinator:
         interpretation = await self._interpret(turn.message)
         if isinstance(interpretation, TurnFailure):
             return _Primary(state=working, failure=interpretation)
+        if isinstance(interpretation, UnresolvedStrictRequirement):
+            # Only the product type crosses over from here, so a strict colour
+            # nothing expresses is no reason to stop and ask (see _search_despite).
+            interpretation = _search_despite(interpretation)
         if not isinstance(interpretation, ResolvedSearch):
             return _Primary(
                 state=working,
@@ -3127,9 +3289,23 @@ class CustomerTurnCoordinator:
         """
         try:
             return await self._query_understanding.interpret(message)
-        except _HANDLED_SEARCH_FAILURES:
+        except IntegrationUnavailableError:
             logger.warning("turn_query_understanding_unavailable")
             return TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+        except (LLMResponseInvalidError, TaxonomyValidationError) as exc:
+            # Unusable even after its own corrective attempt. The whole turn is
+            # then not understood - not only its search - so it ends with the
+            # pre-turn state: a selection or budget from the same message must
+            # not be kept while the customer is asked to say it again. Marked
+            # so the turn is not re-decided; interpretation had its retry.
+            logger.warning(
+                "turn_query_understanding_not_understood",
+                error_type=type(exc).__name__,
+                reason=exc.context.get("reason"),
+            )
+            raise LLMResponseInvalidError(
+                reason="interpretation unusable", stage="interpretation"
+            ) from exc
 
     # ── grounding ───────────────────────────────────────────────────────────
 
@@ -3316,6 +3492,45 @@ def _comparison_outcome(
     return (
         DeterministicClarification(reason=BlockingClarificationReason.COMPARISON_TARGETS),
         None,
+    )
+
+
+def _search_despite(unresolved: UnresolvedStrictRequirement) -> ResolvedSearch:
+    """Search anyway when a strict colour or style names no approved value.
+
+    "Only red sofas" when the vocabulary has no red: no product can carry that
+    exact value, so asking "should I show nothing?" only delays the answer the
+    catalog will give. The search runs without it, their words rank the
+    closest first, and `unmatched_strict` makes the result record the lifted
+    requirement so the reply says plainly that nothing matched - the same last
+    resort as a strict colour no product in stock carries.
+    """
+    request = unresolved.request
+    # Colours are alternatives: "only red or beige" is satisfied by beige, so
+    # red is one more alternative, kept as a preference, and not unmatched.
+    # Styles are all required: "Modern and cottagecore" is NOT satisfied by a
+    # Modern-only piece, so an unexpressible style stays unmatched even beside
+    # an approved one, and the reply must say no exact match exists.
+    filtered = {
+        AttributeFamily.COLOR: bool(request.colors_any_of),
+        AttributeFamily.STYLE: False,
+    }
+    return ResolvedSearch(
+        request=request,
+        semantics=unresolved.semantics,
+        semantic_preferences=(
+            *unresolved.semantic_preferences,
+            *(
+                SemanticPreference(
+                    family=attribute.family,
+                    raw_value=attribute.raw_value,
+                    strength=ConstraintStrength.LOCKED,
+                )
+                for attribute in unresolved.unresolved
+            ),
+        ),
+        semantic_text=unresolved.semantic_text,
+        unmatched_strict=tuple(a for a in unresolved.unresolved if not filtered[a.family]),
     )
 
 

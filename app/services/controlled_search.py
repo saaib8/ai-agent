@@ -27,7 +27,9 @@ from app.schemas.discovery import ProductSearchRequest
 from app.schemas.query import ResolvedSearch
 from app.schemas.relaxation import (
     AppliedRelaxation,
+    AttributeRelaxationChange,
     ControlledSearchResult,
+    RelaxableField,
     RelaxationAttempt,
     RelaxedCandidate,
     StopReason,
@@ -35,6 +37,7 @@ from app.schemas.relaxation import (
 from app.schemas.retailer import RetailerContext
 from app.services.discovery import ProductDiscoveryService
 from app.services.relaxation import RelaxationPlanner
+from app.taxonomy.attributes import AttributeFamily
 
 logger = get_logger(__name__)
 
@@ -68,6 +71,9 @@ class ControlledRelaxationService:
         pool: dict[int, RelaxedCandidate] = {}
         attempts: list[RelaxationAttempt] = []
 
+        if resolved.unmatched_strict:
+            return await self._search_unmatchable(resolved, context, pool, attempts, started)
+
         exact_count = await self._attempt(
             original, context, depth=0, changes=(), pool=pool, attempts=attempts
         )
@@ -77,16 +83,6 @@ class ControlledRelaxationService:
             )
 
         planned = self._planner.plan(resolved)
-        if not planned:
-            return self._finish(
-                original,
-                attempts,
-                pool,
-                exact_count,
-                StopReason.NO_RELAXABLE_CONSTRAINTS,
-                started,
-            )
-
         for depth, step in enumerate(planned, start=1):
             await self._attempt(
                 step.request,
@@ -101,9 +97,117 @@ class ControlledRelaxationService:
                     original, attempts, pool, exact_count, StopReason.TARGET_REACHED, started
                 )
 
+        if not pool and await self._lift_attributes(context, pool=pool, attempts=attempts):
+            return self._finish(
+                original, attempts, pool, exact_count, StopReason.ATTRIBUTE_FALLBACK, started
+            )
         return self._finish(
-            original, attempts, pool, exact_count, StopReason.POLICY_EXHAUSTED, started
+            original,
+            attempts,
+            pool,
+            exact_count,
+            StopReason.POLICY_EXHAUSTED if planned else StopReason.NO_RELAXABLE_CONSTRAINTS,
+            started,
         )
+
+    async def _search_unmatchable(
+        self,
+        resolved: ResolvedSearch,
+        context: RetailerContext,
+        pool: dict[int, RelaxedCandidate],
+        attempts: list[RelaxationAttempt],
+        started: float,
+    ) -> ControlledSearchResult:
+        """A strict colour or style no approved value expresses ("only red").
+
+        Its exact search cannot even be written: no product carries a value
+        outside the vocabulary. So the exact attempt is recorded as finding
+        nothing - which is what it would find - and the same last resort as
+        `_lift_attributes` runs at once: the request without that requirement,
+        everything else kept, recorded as a lifted colour or style so the reply
+        says plainly that nothing matched. Planned widening still follows if
+        even that finds too little.
+        """
+        original = resolved.request
+        attempts.append(
+            RelaxationAttempt(depth=0, request=original, changes=(), eligible_count=0)
+        )
+        changes = tuple(
+            AttributeRelaxationChange(field=field, required=words)
+            for field, words in (
+                (
+                    RelaxableField.COLOR,
+                    _words(resolved, AttributeFamily.COLOR),
+                ),
+                (
+                    RelaxableField.STYLE,
+                    _words(resolved, AttributeFamily.STYLE),
+                ),
+            )
+            if words
+        )
+        await self._attempt(
+            original, context, depth=1, changes=changes, pool=pool, attempts=attempts
+        )
+        if len(pool) < self._settings.target_candidates:
+            for depth, step in enumerate(self._planner.plan(resolved), start=2):
+                await self._attempt(
+                    step.request,
+                    context,
+                    depth=depth,
+                    changes=step.changes,
+                    pool=pool,
+                    attempts=attempts,
+                )
+                if len(pool) >= self._settings.target_candidates:
+                    break
+        return self._finish(
+            original,
+            attempts,
+            pool,
+            0,
+            StopReason.ATTRIBUTE_FALLBACK if pool else StopReason.POLICY_EXHAUSTED,
+            started,
+        )
+
+    async def _lift_attributes(
+        self,
+        context: RetailerContext,
+        *,
+        pool: dict[int, RelaxedCandidate],
+        attempts: list[RelaxationAttempt],
+    ) -> bool:
+        """The last resort for a strict colour or style nothing matched.
+
+        Only when the pool is empty after everything policy allowed: a strict
+        requirement that some products meet is never lifted, however few they
+        are. Everything else in the widest request tried so far is kept - the
+        type, the budget, the size - so the customer sees the closest products
+        that still honour the rest of what they asked. Ranking then puts the
+        nearest colours or styles first, and the change is recorded so the
+        reply says plainly that none matched.
+        """
+        widest = attempts[-1].request
+        changes = tuple(
+            AttributeRelaxationChange(field=field, required=values)
+            for field, values in (
+                (RelaxableField.COLOR, widest.colors_any_of),
+                (RelaxableField.STYLE, widest.styles_all_of),
+            )
+            if values
+        )
+        if not changes:
+            return False
+        lifted = widest.model_copy(update={"colors_any_of": (), "styles_all_of": ()})
+        found = await self._attempt(
+            lifted,
+            context,
+            depth=attempts[-1].depth + 1,
+            changes=changes,
+            pool=pool,
+            attempts=attempts,
+        )
+        return found > 0
 
     # ── one executed search ─────────────────────────────────────────────────
 
@@ -195,3 +299,8 @@ class ControlledRelaxationService:
             raise InvalidRequestError(
                 detail=f"controlled search requires a ResolvedSearch, got {type(resolved).__name__}"
             )
+
+
+def _words(resolved: ResolvedSearch, family: AttributeFamily) -> tuple[str, ...]:
+    """The customer's words for one family's unmatchable strict values."""
+    return tuple(a.raw_value for a in resolved.unmatched_strict if a.family is family)

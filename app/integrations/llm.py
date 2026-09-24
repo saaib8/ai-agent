@@ -142,6 +142,8 @@ class OpenAIStructuredClient:
             # below - and it is not an OpenAIError, so without this clause it
             # would escape the adapter as a raw provider-library exception.
             self._reject_as_schema_violation(exc)
+        except ArithmeticError as exc:
+            self._reject_as_unreadable(exc)
         except (APITimeoutError, APIConnectionError) as exc:
             logger.warning("llm_unreachable", error_type=type(exc).__name__)
             raise LLMUnavailableError(provider="openai", reason=type(exc).__name__) from exc
@@ -176,16 +178,72 @@ class OpenAIStructuredClient:
             return schema.model_validate(parsed)
         except ValidationError as exc:
             self._reject_as_schema_violation(exc)
+        except ArithmeticError as exc:
+            self._reject_as_unreadable(exc)
 
     def _reject_as_schema_violation(self, exc: ValidationError) -> NoReturn:
         """The one way a validation failure leaves this adapter.
 
         Both places that validate route here, so a caller can never receive a
-        raw `ValidationError`: the error type is ours, and its message says
-        nothing about which field or value the provider returned.
+        raw `ValidationError`. The error type is ours, and its public message
+        says nothing about which field or value the provider returned.
+
+        *Which* rules were broken travels internally in `violations`: without
+        it, every rejected answer looks the same in the logs and there is no
+        way to tell which rule the model keeps breaking.
         """
-        logger.warning("llm_response_schema_violation", model=self._model)
-        raise LLMResponseInvalidError(reason="schema violation") from exc
+        violations = schema_violations(exc)
+        logger.warning(
+            "llm_response_schema_violation",
+            model=self._model,
+            violations=list(violations),
+        )
+        raise LLMResponseInvalidError(reason="schema violation", violations=violations) from exc
+
+    def _reject_as_unreadable(self, exc: ArithmeticError) -> NoReturn:
+        """A validator that could not even evaluate the answer.
+
+        Pydantic turns only `ValueError` and `AssertionError` from a validator
+        into a `ValidationError`; anything else escapes raw. The realistic case
+        is `decimal` arithmetic on a figure like "NaN" - comparing one raises
+        `InvalidOperation`. Every validator is meant to refuse such figures
+        first, so reaching this is a gap in one of them, logged by type so it
+        can be closed; for the customer it is still just an unusable answer.
+        """
+        logger.error(
+            "llm_response_unreadable",
+            model=self._model,
+            error_type=type(exc).__name__,
+        )
+        raise LLMResponseInvalidError(reason="unreadable figure in model output") from exc
 
     async def close(self) -> None:
         await self._client.close()
+
+
+MAX_REPORTED_VIOLATIONS = 5
+"""Enough to show what went wrong without turning one log line into a dump."""
+
+MAX_VIOLATION_CHARS = 200
+"""A rule broken against an enumeration lists every allowed value; the start
+of the message says which rule it was, and that is what a log needs."""
+
+
+def schema_violations(exc: ValidationError) -> tuple[str, ...]:
+    """Each broken rule as `field.path: message`, never the offending value.
+
+    The messages are either sentences we wrote in our own validators ("a
+    comparison needs at least 2 references") or Pydantic's description of the
+    expected shape ("Input should be less than or equal to 30"). The value the
+    model produced is excluded (`include_input=False`): model output can carry
+    the customer's own words, and those must not reach a log (CLAUDE.md 22).
+
+    An unexpected field is reported at its parent: its key was invented by the
+    model, so it is model text too, and the location of the problem is enough.
+    """
+    lines: list[str] = []
+    for error in exc.errors(include_url=False, include_input=False, include_context=False):
+        location = error["loc"][:-1] if error["type"] == "extra_forbidden" else error["loc"]
+        line = f"{'.'.join(str(part) for part in location) or '<root>'}: {error['msg']}"
+        lines.append(line[:MAX_VIOLATION_CHARS])
+    return tuple(lines[:MAX_REPORTED_VIOLATIONS])

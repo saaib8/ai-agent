@@ -41,6 +41,14 @@ class RelaxableField(StrEnum):
     # There is deliberately no PLANAR_DIMENSION. Carpet pairs are not relaxable
     # in V1, and a member for a widening that cannot happen would suggest it can.
 
+    COLOR = "color"
+    STYLE = "style"
+    """A strict colour or style requirement lifted as a last resort.
+
+    Not widened step by step like a bound: when nothing at all matches, the
+    filter is removed and ranking puts the closest products first. Carried by
+    `AttributeRelaxationChange`, which records what was asked for."""
+
 
 class RelaxationChange(BaseModel):
     """One scalar bound moved, and the permission that allowed it."""
@@ -57,7 +65,28 @@ class RelaxationChange(BaseModel):
         """A measurement needs its role and its kind; this shape carries neither."""
         if self.field is RelaxableField.DIMENSION:
             raise ValueError("a dimension change must use DimensionRelaxationChange")
+        if self.field in (RelaxableField.COLOR, RelaxableField.STYLE):
+            raise ValueError("a colour or style change must use AttributeRelaxationChange")
         return self
+
+
+class AttributeRelaxationChange(BaseModel):
+    """A strict colour or style requirement that nothing in the catalog met.
+
+    The last resort, taken only when the search - after every permitted
+    widening - found nothing at all. The filter is lifted and ranking orders
+    the rest by closeness to what was asked, so the customer sees the nearest
+    alternatives instead of an empty screen. `required` is kept so the reply
+    can say plainly that none matched, and so ranking knows what "closest"
+    means. It is always reported: a lifted requirement the customer is not
+    told about would be a silent substitution.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    field: Literal[RelaxableField.COLOR, RelaxableField.STYLE]
+    required: tuple[str, ...] = Field(min_length=1)
+    strength: ConstraintStrength = ConstraintStrength.LOCKED
 
 
 class DimensionRelaxationChange(BaseModel):
@@ -134,7 +163,7 @@ class DimensionRelaxationChange(BaseModel):
         return self
 
 
-AppliedRelaxation = RelaxationChange | DimensionRelaxationChange
+AppliedRelaxation = RelaxationChange | DimensionRelaxationChange | AttributeRelaxationChange
 """What one attempt recorded. Scalar bounds and measurements record differently
 because they carry different facts; a shared shape would blur both."""
 
@@ -189,6 +218,11 @@ class StopReason(StrEnum):
     POLICY_EXHAUSTED = "policy_exhausted"
     """Every permitted widening was tried and the target was still not met.
     Also a valid outcome: the catalog simply does not hold enough."""
+
+    ATTRIBUTE_FALLBACK = "attribute_fallback"
+    """Nothing matched a strict colour or style even after every permitted
+    widening, so that requirement was lifted and the closest were ranked first.
+    Always surfaced to the customer through the relaxation it records."""
 
 
 class ControlledSearchResult(BaseModel):

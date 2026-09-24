@@ -20,12 +20,13 @@ customer, so it raises.
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import NamedTuple
 
 from pydantic import ValidationError
 
 from app.core.exceptions import LLMResponseInvalidError
+from app.core.numbers import parse_stated_amount, parse_stated_decimal
 from app.schemas.agent_decision import (
     BlockingClarificationReason,
     CustomerStateProposal,
@@ -158,14 +159,18 @@ def _budget(
         return None, DeterministicClarification(
             reason=BlockingClarificationReason.MISSING_PRICE_CURRENCY
         )
-    return (
-        PriceConstraint(
+    try:
+        budget = PriceConstraint(
             currency=currency,
-            min_amount=_amount(proposal.min_amount, field="min_amount"),
-            max_amount=_amount(proposal.max_amount, field="max_amount"),
-        ),
-        None,
-    )
+            min_amount=_amount(proposal.min_amount, field="min_amount", money=True),
+            max_amount=_amount(proposal.max_amount, field="max_amount", money=True),
+        )
+    except ValidationError as exc:
+        # A negative, non-finite or inverted budget. The figures parsed, but
+        # they cannot be what the customer said - a defect in what the model
+        # produced, exactly like an amount that is not a number at all.
+        raise LLMResponseInvalidError(reason="room budget invalid") from exc
+    return budget, None
 
 
 def _geometry(
@@ -188,13 +193,16 @@ def _geometry(
             )
         value = _amount(stated.value, field="room measurement")
         assert value is not None
-        measurements.append(
-            RoomMeasurement(
+        try:
+            measurement = RoomMeasurement(
                 role=stated.role,
                 centimetres=to_centimetres(value, unit),
                 label=stated.label,
             )
-        )
+        except ValidationError as exc:
+            # Zero, negative or non-finite: no room has that length.
+            raise LLMResponseInvalidError(reason="room measurement invalid") from exc
+        measurements.append(measurement)
     try:
         return RoomGeometry(measurements=tuple(measurements)), None
     except ValidationError as exc:
@@ -203,7 +211,7 @@ def _geometry(
         raise LLMResponseInvalidError(reason="room geometry invalid") from exc
 
 
-def _amount(raw: str | None, *, field: str) -> Decimal | None:
+def _amount(raw: str | None, *, field: str, money: bool = False) -> Decimal | None:
     """A stated figure as a decimal, or a defect.
 
     Never asked about: the customer said a number, and our failure to read what
@@ -212,9 +220,9 @@ def _amount(raw: str | None, *, field: str) -> Decimal | None:
     if raw is None:
         return None
     try:
-        return Decimal(raw.strip())
-    except (InvalidOperation, ValueError) as exc:
-        raise LLMResponseInvalidError(reason=f"{field} was not a decimal") from exc
+        return parse_stated_amount(raw) if money else parse_stated_decimal(raw)
+    except ValueError as exc:
+        raise LLMResponseInvalidError(reason=f"{field} was not a usable decimal") from exc
 
 
 def _derived_commerce(

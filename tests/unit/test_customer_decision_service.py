@@ -423,7 +423,10 @@ def test_the_decision_service_mutates_no_state(mutator: str) -> None:
 
 
 def test_the_decision_service_holds_only_a_provider_client() -> None:
-    """One constructor parameter beyond `self`: the thing it reasons through."""
+    """The thing it reasons through, and the read-only vocabulary it may write.
+
+    No repository, pipeline, resolver or state: the colour/style registry is
+    data it is restricted to, not a capability it can use."""
     tree = ast.parse(SERVICE_SOURCE.read_text())
     init = next(
         node
@@ -432,7 +435,7 @@ def test_the_decision_service_holds_only_a_provider_client() -> None:
     )
     parameters = [arg.arg for arg in init.args.args if arg.arg != "self"]
 
-    assert parameters == ["client"]
+    assert parameters == ["client", "attributes"]
 
 
 def test_the_decision_service_requests_no_tools() -> None:

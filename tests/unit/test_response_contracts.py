@@ -1167,6 +1167,10 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "commerce_category",
         "commerce_subcategory",
         "exact_match_count",
+        # Counts of cards in a colour/style the customer asked or wished for,
+        # so a reply cannot call black tables red. Counts, never a value.
+        "wished_colour_matches",
+        "wished_style_matches",
         "search_was_suggested",
         # M17: what the customer has actually settled on, and whether this
         # turn added to it. Counts and a bool - no product, no identity - so a

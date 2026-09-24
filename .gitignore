@@ -11,3 +11,5 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+evals/conversations/last_run.json
+evals/conversations/last_report.txt

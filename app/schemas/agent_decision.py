@@ -21,9 +21,9 @@ so nothing here can grow into a tool loop.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import MAX_SEMANTIC_INTENT_CHARS, PurchaseStage
@@ -31,7 +31,7 @@ from app.schemas.bundle_reference import (
     BundleReferenceSelector,
     DesignNeedCategoryMatch,
 )
-from app.schemas.design import MAX_DESIGN_QUESTION_CHARS
+from app.schemas.design import MAX_DESIGN_QUESTION_CHARS, MAX_REGULAR_SEATING_COUNT
 from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.product_reference import (
     ExtremumDirection,
@@ -43,7 +43,13 @@ from app.schemas.product_reference import (
     SoleSelectedProduct,
 )
 from app.schemas.query import SemanticPreference
-from app.schemas.refinement import SearchRefinementDelta, SemanticIntentRefinement
+from app.schemas.refinement import (
+    AttributeRefinement,
+    ProposedAttributeValue,
+    SearchRefinementDelta,
+    SemanticIntentRefinement,
+)
+from app.taxonomy.attributes import CatalogAttributes
 
 MAX_CLARIFICATION_CHARS = 300
 
@@ -554,7 +560,9 @@ class CustomerStateProposal(BaseModel):
     clear_room_budget: bool = False
     design_preferences: PreferenceProposal | None = None
 
-    regular_seating_count: int | None = Field(default=None, ge=1, le=30)
+    regular_seating_count: int | None = Field(
+        default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
+    )
     """How many people regularly use the room, when they said so.
 
     "Family of five", "we're five people", "seating for four" - the same fact
@@ -744,6 +752,25 @@ class CustomerAgentDecision(BaseModel):
     motive field would make the same decision execute two different ways.
     """
 
+    show_more: bool = False
+    """Show other products for the same request, leaving out the ones already seen.
+
+    "Show more options", "any others?", "what else do you have?". The request
+    itself does not change, so this is not a refinement; the application re-runs
+    the search in progress excluding what was presented - exactly what the
+    "show more" button does, so typing it and tapping it cannot differ.
+
+    Read only on a search.
+    """
+
+    exclude_reference: ProductReferenceSelector | None = None
+    """One product they turned down among the cards - "not this one", "I don't
+    like the third" - left out of the search in progress, which then runs again.
+
+    Pointed at like any other card and resolved by the application. The same
+    path as the "not this one" button. Read only on a search.
+    """
+
     comparison_references: tuple[ProductReferenceSelector, ...] = ()
     clarification: BlockingClarification | None = None
 
@@ -879,6 +906,13 @@ class CustomerAgentDecision(BaseModel):
     def _check_search_payloads(self) -> None:
         if self.new_search is not None and self.action is not AgentAction.SEARCH:
             raise ValueError("only a search may carry a new-search proposal")
+        continuing = self.show_more or self.exclude_reference is not None
+        if continuing and self.action is not AgentAction.SEARCH:
+            raise ValueError("only a search may show more or leave a product out")
+        if continuing and (self.reference is not None or self.new_search is not None):
+            # More of the same request is not a new request, and not a search
+            # for alternatives to one product.
+            raise ValueError("showing more continues the search in progress; it starts none")
         if (
             self.action is AgentAction.SEARCH
             and self.reference is not None
@@ -1038,6 +1072,86 @@ class CustomerAgentDecision(BaseModel):
             raise ValueError("focus cannot accompany a search that replaces results")
 
 
+
+def build_constrained_decision(attributes: CatalogAttributes) -> type[CustomerAgentDecision]:
+    """`CustomerAgentDecision` with every colour and style restricted to the registry.
+
+    The same idea as query understanding's constrained interpretation: an
+    instruction is not a constraint, and a model asked to pick from a list will
+    still, sometimes, write the word the customer used - "Dark Grey" - which no
+    product carries. Restricting the response schema makes an unapproved value
+    unrepresentable rather than merely discouraged.
+
+    Both families share one enumeration because a schema cannot express "a
+    colour when the family is colour"; the composer still checks the value
+    belongs to the family claimed.
+
+    **Transport only.** The provider fills these subclasses; callers convert
+    the result back to the plain contract (`to_plain_decision`) so nothing
+    downstream ever holds a constrained type. Pydantic compares models by class
+    as well as content, and a constrained preference would never equal the
+    plain one stored in state - removing it later would silently do nothing.
+    """
+    approved = tuple(sorted(attributes.colors | attributes.styles))
+    canonical = (Literal[approved] | None, None)
+
+    value = create_model(
+        "ConstrainedProposedAttributeValue",
+        __base__=ProposedAttributeValue,
+        __doc__=ProposedAttributeValue.__doc__,
+        canonical_value=canonical,
+    )
+    refinement = create_model(
+        "ConstrainedAttributeRefinement",
+        __base__=AttributeRefinement,
+        __doc__=AttributeRefinement.__doc__,
+        values=(tuple[value, ...], ()),
+    )
+    delta = create_model(
+        "ConstrainedSearchRefinementDelta",
+        __base__=SearchRefinementDelta,
+        __doc__=SearchRefinementDelta.__doc__,
+        attributes=(tuple[refinement, ...], ()),
+    )
+    preference = create_model(
+        "ConstrainedSemanticPreference",
+        __base__=SemanticPreference,
+        __doc__=SemanticPreference.__doc__,
+        canonical_value=canonical
+    )
+    preferences = create_model(
+        "ConstrainedPreferenceProposal",
+        __base__=PreferenceProposal,
+        __doc__=PreferenceProposal.__doc__,
+        preferences=(tuple[preference, ...], ()),
+    )
+    state = create_model(
+        "ConstrainedCustomerStateProposal",
+        __base__=CustomerStateProposal,
+        __doc__=CustomerStateProposal.__doc__,
+        customer_preferences=(preferences | None, None),
+        design_preferences=(preferences | None, None),
+    )
+    return create_model(
+        "ConstrainedCustomerAgentDecision",
+        __base__=CustomerAgentDecision,
+        __doc__=CustomerAgentDecision.__doc__,
+        refinement=(delta | None, None),
+        state_proposal=(state | None, None),
+    )
+
+
+def to_plain_decision(decision: CustomerAgentDecision) -> CustomerAgentDecision:
+    """The same decision in the plain contract's own classes.
+
+    A constrained subclass carries identical data and passed identical
+    validators, so re-validating the dump cannot fail; it only swaps the
+    classes. A decision that is already plain is returned as it is.
+    """
+    if type(decision) is CustomerAgentDecision:
+        return decision
+    return CustomerAgentDecision.model_validate(decision.model_dump())
+
 __all__ = [
     "MAX_CLARIFICATION_CHARS",
     "MAX_COMPARISON_REFERENCES",
@@ -1066,4 +1180,6 @@ __all__ = [
     "RoomGeometryProposal",
     "RoomMeasurementProposal",
     "SoleSelectedProduct",
+    "build_constrained_decision",
+    "to_plain_decision",
 ]
