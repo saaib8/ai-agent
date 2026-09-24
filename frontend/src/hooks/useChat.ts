@@ -1,7 +1,21 @@
 import { useCallback, useRef, useState } from 'react'
 import { postChat, postFinderPhoto, postFinderPick } from '../api/client'
-import type { ChatResponse, ErrorBody, FinderObject, FinderPhotoResponse } from '../api/types'
+import type {
+  BundleAction,
+  ChatResponse,
+  ErrorBody,
+  FinderObject,
+  FinderPhotoResponse,
+  SearchAction,
+} from '../api/types'
 import type { ConsoleConfig } from './useConfig'
+
+/** A product a "Not this one" tap dismissed, shown on the user's turn so the
+ *  thread makes clear what was passed on rather than a bare line of text. */
+export interface RejectedRef {
+  name: string
+  imageUrl: string
+}
 
 /** A photo the customer shared, as it moves from uploading to pickable. */
 export type PhotoState =
@@ -10,7 +24,7 @@ export type PhotoState =
   | { status: 'error'; httpStatus: number | 'network'; error: ErrorBody }
 
 export type Turn =
-  | { kind: 'user'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; rejected?: RejectedRef }
   | { kind: 'assistant'; id: string; data: ChatResponse }
   | { kind: 'error'; id: string; status: number | 'network'; error: ErrorBody }
   | { kind: 'photo'; id: string; url: string; photo: PhotoState }
@@ -20,7 +34,11 @@ export interface UseChat {
   sending: boolean
   /** Revision the last committed turn produced; drives expected_session_revision. */
   revision: number | null
-  send: (message: string, config: ConsoleConfig) => Promise<void>
+  send: (
+    message: string,
+    config: ConsoleConfig,
+    opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
+  ) => Promise<void>
   /** Share a photo: detect what is in it. Commits nothing to the session. */
   uploadPhoto: (file: File, config: ConsoleConfig) => Promise<void>
   /** Pick an object in a shared photo. A committed turn, like a message. */
@@ -60,24 +78,36 @@ export function useChat(): UseChat {
   const fail = (status: number | 'network', error: ErrorBody) =>
     setTurns((prev) => [...prev, { kind: 'error', id: nextId(), status, error }])
 
-  const send = useCallback(async (message: string, config: ConsoleConfig) => {
-    const text = message.trim()
-    if (!text) return
+  const send = useCallback(
+    async (
+      message: string,
+      config: ConsoleConfig,
+      opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
+    ) => {
+      const text = message.trim()
+      if (!text) return
 
-    setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text }])
-    setSending(true)
+      setTurns((prev) => [
+        ...prev,
+        { kind: 'user', id: nextId(), text, rejected: opts?.rejected },
+      ])
+      setSending(true)
 
-    const result = await postChat(config.apiBase, {
-      session_id: config.sessionId,
-      store_id: config.storeId,
-      message: text,
-      ...expected(config),
-    })
+      const result = await postChat(config.apiBase, {
+        session_id: config.sessionId,
+        store_id: config.storeId,
+        message: text,
+        ...expected(config),
+        ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
+        ...(opts?.search ? { search_action: opts.search } : {}),
+      })
 
-    if (result.ok) commit(result.data)
-    else fail(result.status, result.error)
-    setSending(false)
-  }, [])
+      if (result.ok) commit(result.data)
+      else fail(result.status, result.error)
+      setSending(false)
+    },
+    [],
+  )
 
   const setPhoto = (id: string, photo: PhotoState) =>
     setTurns((prev) => prev.map((t) => (t.id === id && t.kind === 'photo' ? { ...t, photo } : t)))

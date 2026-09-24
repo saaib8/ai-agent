@@ -53,6 +53,7 @@ from app.schemas.relaxation import (
     ControlledSearchResult,
     DimensionRelaxationChange,
     RelaxableField,
+    StopReason,
 )
 from app.schemas.resolution import (
     CandidatePoolResult,
@@ -263,6 +264,36 @@ class ProductSearchPipeline:
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return pool
+
+    async def execute_forced_pool(
+        self, product_id: int, context: RetailerContext
+    ) -> CandidatePoolResult:
+        """A pool of exactly one chosen product, verified present in this store.
+
+        For a deterministic swap where the customer already picked a specific
+        product for a role: there is nothing to search or rank, so this hydrates
+        that one id through the same path :meth:`execute_candidate_pool` uses and
+        returns it as the sole candidate at depth zero. The optimiser will select
+        it because it is the only option.
+
+        If hydration drops it — deactivated, or owned by another retailer — the
+        pool is empty. The caller then treats the role as unfillable rather than
+        inventing a substitute, exactly as a zero-result search would
+        (CLAUDE.md 16.1, 31). Scope is the context's, never the caller's, so a
+        product from another store cannot be forced in.
+        """
+        hydrated = await self._hydration.hydrate_ids((product_id,), context)
+        candidates = tuple(
+            RankedProductCandidate(product=product, relaxation_depth=0)
+            for product in hydrated
+        )
+        return CandidatePoolResult(
+            candidates=candidates,
+            eligible_count=len(candidates),
+            was_relaxed=False,
+            stop_reason=StopReason.EXACT_SUFFICIENT,
+            semantic_used=False,
+        )
 
     def _namespace(self, context: RetailerContext) -> str:
         """Derived from the request's scope, never from anything a caller said."""

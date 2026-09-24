@@ -85,6 +85,15 @@ export const CompareIcon = (p: IconProps) => (
   </Base>
 )
 
+export const SwapIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M7 4 4 7l3 3" />
+    <path d="M4 7h13" />
+    <path d="m17 20 3-3-3-3" />
+    <path d="M20 17H7" />
+  </Base>
+)
+
 export const SparkIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />

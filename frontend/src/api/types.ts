@@ -108,11 +108,41 @@ export interface ChatResponse {
   presentation: ChatPresentation | null
 }
 
+export interface BundleAlternativesAction {
+  kind: 'list_alternatives'
+  /** Position of the room piece to show alternatives for (1-based). */
+  bundle_ordinal: number
+}
+
+export interface BundleSwapAction {
+  kind: 'swap'
+  /** Position of the room piece being replaced (1-based). */
+  bundle_ordinal: number
+  /** Position of the chosen alternative among the products on screen (1-based). */
+  alternative_ordinal: number
+}
+
+export type BundleAction = BundleAlternativesAction | BundleSwapAction
+
+export interface MoreOptionsAction {
+  kind: 'more_options'
+}
+
+export interface ExcludeProductAction {
+  kind: 'exclude'
+  /** Position of the product to drop, among those on screen (1-based). */
+  ordinal: number
+}
+
+export type SearchAction = MoreOptionsAction | ExcludeProductAction
+
 export interface ChatRequest {
   session_id: string
   store_id: number
   message: string
   expected_session_revision?: number
+  bundle_action?: BundleAction
+  search_action?: SearchAction
 }
 
 export interface ErrorBody {

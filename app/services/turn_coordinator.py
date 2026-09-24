@@ -48,7 +48,9 @@ from app.schemas.agent_decision import (
     BlockingClarificationReason,
     BundleInteractionIntent,
     BundleInteractionOp,
+    BundleReplacementIntent,
     BundleReplacementMode,
+    CommercialReason,
     CustomerAgentDecision,
     DesignScope,
     FollowUpPolicy,
@@ -99,6 +101,12 @@ from app.schemas.bundle import (
     RoomBundle,
     UnmetReason,
 )
+from app.schemas.bundle_action import (
+    BundleActionRequest,
+    BundleAlternativesAction,
+    BundleSwapAction,
+)
+from app.schemas.bundle_reference import BundleItemOrdinal
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.composition import (
     ComposedSearch,
@@ -131,7 +139,7 @@ from app.schemas.grounding import (
     TurnFailureCode,
 )
 from app.schemas.product import ProductCandidate
-from app.schemas.product_reference import ProductReferenceSelector
+from app.schemas.product_reference import PresentedOrdinal, ProductReferenceSelector
 from app.schemas.query import (
     ClarificationReason,
     ClarificationRequired,
@@ -166,6 +174,7 @@ from app.schemas.resolution import (
 )
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.schemas.screen import PresentedCardView
+from app.schemas.search_action import MoreOptionsAction, SearchActionRequest
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
@@ -511,6 +520,19 @@ def _with_rejection(room: RoomProjectState, need_id: int, product_id: int) -> tu
     return merged[-MAX_EXCLUDED_PRODUCT_IDS:]
 
 
+def _merge_exclusions(current: tuple[int, ...], added: tuple[int, ...]) -> tuple[int, ...]:
+    """The excluded ids so far, plus the ones a follow-up just added.
+
+    Deduplicated in insertion order and bounded by the same ceiling a request
+    already enforces, so the result is valid by construction - which it must be,
+    because `model_copy` writes it onto the request without re-running the field
+    validator. When the ceiling is reached the oldest exclusions fall away: the
+    products turned down most recently are the ones worth keeping out.
+    """
+    merged = tuple(dict.fromkeys((*current, *added)))
+    return merged[-MAX_EXCLUDED_PRODUCT_IDS:]
+
+
 def _staged_refinements(
     override: DesignNeedSearchOverride | None,
 ) -> tuple[DesignNeedRefinement, ...]:
@@ -595,6 +617,64 @@ def _no_replacement_reason(outcome: BundleOptimizationOutcome) -> TurnFailureCod
     ):
         return TurnFailureCode.REPLACEMENT_NOT_FEASIBLE
     return TurnFailureCode.NO_REPLACEMENT_CANDIDATE
+
+
+def _forced_into(
+    outcome: BundleOptimizationOutcome,
+    need_id: int,
+    product_id: int,
+    state: AgentStateV1,
+) -> bool:
+    """Whether the chosen product actually ended up filling that role.
+
+    A complete room is not enough: the choice may have been dropped because it
+    left the catalog, or the room would not fit around it. Reporting success
+    without it in place would describe a room the customer did not get.
+    """
+    if not isinstance(outcome, RoomBundle) or outcome.status is BundleStatus.INFEASIBLE:
+        return False
+    room = state.room_project
+    if room is None:
+        return False
+    return any(
+        line.need_id == need_id and line.product_id == product_id for line in room.bundle_items
+    )
+
+
+def _bundle_action_decision(action: BundleActionRequest) -> CustomerAgentDecision:
+    """The synthesised decision a screen-driven room edit stands in for.
+
+    The customer's clicks already decided the turn, so no model produced this.
+    Recorded as a product replacement made at their request, which is what routes
+    the finished room to be worded like any other room change. The interaction is
+    carried because the contract requires a refinement to name its change; the
+    response layer routes on the outcome, not on this stand-in.
+    """
+    return CustomerAgentDecision(
+        action=AgentAction.BUNDLE_REFINE,
+        commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+        bundle_interaction=BundleInteractionIntent(
+            op=BundleInteractionOp.REPLACE_PRODUCT,
+            selector=BundleItemOrdinal(ordinal=action.bundle_ordinal),
+            replacement=BundleReplacementIntent(mode=BundleReplacementMode.ALTERNATIVE),
+        ),
+    )
+
+
+def _search_action_decision() -> CustomerAgentDecision:
+    """The synthesised decision a screen-driven search follow-up stands in for.
+
+    The customer's tap already decided the turn, so no model produced this. It
+    is a plain search made at their request - which is what routes the fresh
+    results to be worded like any other search. A search carries no payload of
+    its own here: the query to run is the one already in progress, re-executed
+    with a widened exclusion, and that lives in state, not on the decision
+    (CLAUDE.md 3.6).
+    """
+    return CustomerAgentDecision(
+        action=AgentAction.SEARCH,
+        commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,7 +769,17 @@ class CustomerTurnCoordinator:
 
         A decision failure propagates: there is no decision to report and
         nothing succeeded, so there is no result to build (CLAUDE.md 21).
+
+        A turn carrying a `bundle_action` is a screen-driven room edit and takes
+        the deterministic path instead: the customer's clicks are the decision,
+        so no decision model is consulted (CLAUDE.md 3.6). A `search_action` is
+        the same idea for a product search - re-run it, excluding what was shown.
         """
+        if turn.bundle_action is not None:
+            return await self._run_bundle_action(turn, turn.bundle_action)
+        if turn.search_action is not None:
+            return await self._run_search_action(turn, turn.search_action)
+
         started = time.perf_counter()
         pre_turn = turn.state
 
@@ -731,9 +821,324 @@ class CustomerTurnCoordinator:
             bundle_change=primary.bundle_change,
         )
 
-    async def _chosen_kinds(
-        self, state: AgentStateV1, turn: CustomerTurnInput
-    ) -> tuple[str, ...]:
+    # ── a screen-driven room edit ───────────────────────────────────────────
+
+    async def _run_bundle_action(
+        self, turn: CustomerTurnInput, action: BundleActionRequest
+    ) -> CustomerTurnResult:
+        """A deterministic room edit the customer drove from the screen.
+
+        No decision model and no query understanding: the action names the piece
+        (and the chosen option) by ordinal, and both resolve against verified
+        state. Showing alternatives grounds a search; a swap grounds a room, and
+        each is routed and worded exactly as its ordinary counterpart would be
+        (CLAUDE.md 3.6, 27).
+        """
+        started = time.perf_counter()
+        pre_turn = turn.state
+        if isinstance(action, BundleAlternativesAction):
+            primary = await self._list_alternatives(action, pre_turn, turn)
+        else:
+            primary = await self._apply_swap(action, pre_turn, turn)
+
+        decision = _bundle_action_decision(action)
+        final_state = primary.state
+        result = CustomerTurnResult(
+            state=final_state,
+            selected_kinds=await self._chosen_kinds(final_state, turn),
+            decision=decision,
+            grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
+            selection_added=False,
+            bundle_outcome=primary.bundle_outcome,
+            bundle_change=primary.bundle_change,
+        )
+        logger.info(
+            "bundle_action_completed",
+            store_id=turn.context.store_id,
+            action=action.kind,
+            applied=primary.bundle_outcome is not None or primary.search is not None,
+            failed=primary.failure is not None,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+        return result
+
+    # ── a screen-driven search follow-up ──────────────────────────────────────
+
+    async def _run_search_action(
+        self, turn: CustomerTurnInput, action: SearchActionRequest
+    ) -> CustomerTurnResult:
+        """A deterministic re-run of the search in progress, excluding what was
+        already shown - or the one product the customer turned down.
+
+        No decision model and no query understanding: the query is the one
+        already resolved and held in state, re-executed with a widened
+        exclusion. It grounds and is worded exactly as any other search, so
+        "show me different options" can never be mistaken for a new request or a
+        refinement (CLAUDE.md 3.6, 26).
+        """
+        started = time.perf_counter()
+        pre_turn = turn.state
+        primary = await self._apply_search_action(action, pre_turn, turn)
+
+        decision = _search_action_decision()
+        final_state = primary.state
+        result = CustomerTurnResult(
+            state=final_state,
+            selected_kinds=await self._chosen_kinds(final_state, turn),
+            decision=decision,
+            grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
+            selection_added=False,
+            bundle_outcome=primary.bundle_outcome,
+            bundle_change=primary.bundle_change,
+        )
+        logger.info(
+            "search_action_completed",
+            store_id=turn.context.store_id,
+            action=action.kind,
+            applied=primary.search is not None,
+            failed=primary.failure is not None,
+            clarified=primary.clarification is not None,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+        return result
+
+    async def _apply_search_action(
+        self,
+        action: SearchActionRequest,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """Widen the search in progress by an exclusion, then re-run it.
+
+        There must be a search to re-run: without one there is nothing on screen
+        the follow-up could refer to, so it fails rather than inventing a query.
+        "Show me different options" excludes the whole set just presented; "not
+        this one" resolves a single ordinal against verified state and excludes
+        only that product. Either way the widened request replaces the search in
+        progress, so the exclusion carries into the next follow-up too, and the
+        results are committed like any other search (CLAUDE.md 3.6, 13.5).
+        """
+        active = pre_turn.active_search
+        if active is None:
+            return _Primary(
+                state=pre_turn,
+                failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE),
+            )
+
+        if isinstance(action, MoreOptionsAction):
+            new_exclusions: tuple[int, ...] = pre_turn.product_interaction.presented_product_ids
+        else:
+            resolved_ref = await self._references.resolve(
+                PresentedOrdinal(position=action.ordinal), pre_turn, turn.context
+            )
+            if isinstance(resolved_ref, ReferenceUnresolved):
+                clarification, failure = _reference_outcome(
+                    resolved_ref.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+                )
+                return _Primary(state=pre_turn, clarification=clarification, failure=failure)
+            new_exclusions = (resolved_ref.product_id,)
+
+        merged = _merge_exclusions(active.request.exclude_product_ids, new_exclusions)
+        new_request = active.request.model_copy(update={"exclude_product_ids": merged})
+        composed = ComposedSearch(
+            candidate=active.model_copy(update={"request": new_request}),
+            resolved=ResolvedSearch(
+                request=new_request,
+                semantics=active.semantics,
+                semantic_preferences=active.semantic_preferences,
+                semantic_text=active.semantic_intent,
+            ),
+        )
+        return await self._run_search(composed, pre_turn, turn.context)
+
+    async def _list_alternatives(
+        self,
+        action: BundleAlternativesAction,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """Show the products that could take one room role, for the customer to pick.
+
+        Deterministic all the way: the role is read from the resolved card, its
+        search is the same one the room plan would run for that need, and the
+        results are presented and committed like any other search - so the
+        ordinals the swap will reference are exactly what is on screen. No model
+        interprets anything, so "show me other beds" can never be mistaken for a
+        room refinement (CLAUDE.md 3.6).
+        """
+        room = pre_turn.room_project
+        if room is None or not room.bundle_items:
+            return _unresolved_bundle(BundleReferenceFailureReason.NO_BUNDLE, pre_turn)
+
+        verified = await self._verify_bundle_products(room, turn.context)
+        if verified is None:
+            return _Primary(
+                state=pre_turn,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+
+        card = self._bundle_references.resolve(
+            BundleItemOrdinal(ordinal=action.bundle_ordinal), room, verified
+        )
+        if isinstance(card, BundleReferenceUnresolved):
+            return _unresolved_bundle(card.reason, pre_turn)
+        need_id = _single_need(card)
+        need = (
+            next((n for n in room.design_needs if n.need_id == need_id), None)
+            if need_id is not None
+            else None
+        )
+        if need is None:
+            return _Primary(
+                state=pre_turn,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                    need_reason=DesignNeedFailureReason.CARD_SPANS_SEVERAL_NEEDS,
+                ),
+            )
+
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("alternatives_capabilities_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+            )
+
+        resolved = self._design_discovery.resolve_need(
+            DesignCategoryNeed(
+                commerce_category=need.commerce_category,
+                commerce_subcategory=need.commerce_subcategory,
+                priority=need.priority,
+                quantity=need.quantity,
+                seating_capacity=need.seating_capacity,
+                semantic_intent=need.semantic_intent,
+            ),
+            InteriorDesignRequest(
+                task=DesignTask.ROOM_PLAN,
+                room_type=room.room_type,
+                geometry=room.geometry,
+                budget=room.budget,
+                design_preferences=room.design_preferences,
+                catalog_capabilities=capabilities,
+            ),
+        )
+        composed = self._composer.seed_new_task(
+            resolved,
+            room_preferences=room.design_preferences,
+            customer_defaults=pre_turn.customer_preferences.semantic_preferences,
+            revision=_current_revision(pre_turn),
+        )
+        return await self._run_search(composed, pre_turn, turn.context)
+
+    async def _apply_swap(
+        self, action: BundleSwapAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """Put the chosen product into the named role, then choose the room again.
+
+        Everything is named by ordinal and resolved against the pre-turn room and
+        the products the customer was just shown - never a product id crossing the
+        boundary. The chosen product must be one the role could take, so a
+        mismatched pick is refused rather than forced, and the room is then
+        re-optimised whole, keeping every other piece (CLAUDE.md 27).
+        """
+        room = pre_turn.room_project
+        if room is None or not room.bundle_items:
+            return _unresolved_bundle(BundleReferenceFailureReason.NO_BUNDLE, pre_turn)
+
+        verified = await self._verify_bundle_products(room, turn.context)
+        if verified is None:
+            return _Primary(
+                state=pre_turn,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+
+        card = self._bundle_references.resolve(
+            BundleItemOrdinal(ordinal=action.bundle_ordinal), room, verified
+        )
+        if isinstance(card, BundleReferenceUnresolved):
+            return _unresolved_bundle(card.reason, pre_turn)
+        stale = _stale_reference(pre_turn, card.bundle_revision)
+        if stale is not None:
+            return stale
+        need_id = _single_need(card)
+        if need_id is None:
+            return _Primary(
+                state=pre_turn,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                    need_reason=DesignNeedFailureReason.CARD_SPANS_SEVERAL_NEEDS,
+                ),
+            )
+
+        chosen = await self._references.resolve(
+            PresentedOrdinal(position=action.alternative_ordinal), pre_turn, turn.context
+        )
+        if isinstance(chosen, ReferenceUnresolved):
+            clarification, failure = _reference_outcome(
+                chosen.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            )
+            return _Primary(state=pre_turn, clarification=clarification, failure=failure)
+
+        if not await self._is_product_for_need(need_id, chosen.product_id, room, turn.context):
+            # The chosen option is not a product this role can take. Refused
+            # rather than forced: a lamp does not go where the plan wants a rug.
+            return _Primary(
+                state=pre_turn,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                    need_reason=DesignNeedFailureReason.NO_NEED_MATCH,
+                ),
+            )
+
+        override = DesignNeedSearchOverride(need_id=need_id, forced_product_id=chosen.product_id)
+        refreshed = await self._reoptimise(
+            pre_turn, turn, override=override, released_need_id=need_id
+        )
+        if isinstance(refreshed, _Primary):
+            return refreshed
+        if not _forced_into(refreshed.outcome, need_id, chosen.product_id, refreshed.state):
+            # The choice could not be placed: it left the catalog between being
+            # shown and being picked, or the room would not fit around it.
+            return _Primary(
+                state=pre_turn,
+                failure=TurnFailure(code=_no_replacement_reason(refreshed.outcome)),
+            )
+        self._log_refinement(turn, BundleInteractionOp.REPLACE_PRODUCT, pre_turn, refreshed.state)
+        return _Primary(
+            state=refreshed.state,
+            bundle_outcome=refreshed.outcome,
+            bundle_change=BundleInteractionOp.REPLACE_PRODUCT,
+        )
+
+    async def _is_product_for_need(
+        self,
+        need_id: int,
+        product_id: int,
+        room: RoomProjectState,
+        context: RetailerContext,
+    ) -> bool:
+        """Whether the chosen product is the kind of thing this role calls for.
+
+        Read fresh and matched against the role's own commerce type, so a pick
+        that does not belong is refused rather than forced. Fails closed: a
+        product that cannot be read is treated as not matching, because forcing
+        an unverifiable one would put a guess in the room (CLAUDE.md 31).
+        """
+        need = next((n for n in room.design_needs if n.need_id == need_id), None)
+        if need is None:
+            return False
+        products = await self._hydration.hydrate_ids((product_id,), context)
+        if not products:
+            return False
+        commerce = products[0].commerce
+        if commerce.category != need.commerce_category:
+            return False
+        return (
+            need.commerce_subcategory is None or commerce.subcategory == need.commerce_subcategory
+        )
+
+    async def _chosen_kinds(self, state: AgentStateV1, turn: CustomerTurnInput) -> tuple[str, ...]:
         """What kinds of thing they have chosen, in the order they chose them.
 
         Read fresh, like every other product fact: a kind taken from state
@@ -756,18 +1161,16 @@ class CustomerTurnCoordinator:
         if len(products) != len(chosen):
             return ()
         kinds = tuple(
-            customer_words_or_none(
-                product.commerce.subcategory or product.commerce.category
-            )
+            customer_words_or_none(product.commerce.subcategory or product.commerce.category)
             for product in products
         )
-        return () if any(kind is None for kind in kinds) else tuple(
-            kind for kind in kinds if kind is not None
+        return (
+            ()
+            if any(kind is None for kind in kinds)
+            else tuple(kind for kind in kinds if kind is not None)
         )
 
-    async def _visible_cards(
-        self, turn: CustomerTurnInput
-    ) -> tuple[PresentedCardView, ...]:
+    async def _visible_cards(self, turn: CustomerTurnInput) -> tuple[PresentedCardView, ...]:
         """The products the customer was looking at when they typed.
 
         Read fresh rather than remembered. The session records which products
@@ -907,9 +1310,7 @@ class CustomerTurnCoordinator:
             case AgentAction.SHOW_SELECTION:
                 return await self._show_selection(working, turn)
 
-    async def _show_selection(
-        self, working: AgentStateV1, turn: CustomerTurnInput
-    ) -> _Primary:
+    async def _show_selection(self, working: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
         """The products they have chosen, put back on screen.
 
         Read fresh from the catalog, in the order they chose them. The session
@@ -1831,9 +2232,7 @@ class CustomerTurnCoordinator:
 
         try:
             capabilities = await self._capabilities.capabilities(turn.context)
-            request = await self._complement_request(
-                state, turn, capabilities, product
-            )
+            request = await self._complement_request(state, turn, capabilities, product)
             plan = await self._design.plan(request)
         except _HANDLED_DESIGN_FAILURES:
             # Our own idea, and it could not be formed. Reporting it would tell

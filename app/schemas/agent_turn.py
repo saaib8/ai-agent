@@ -27,6 +27,7 @@ from app.schemas.agent_decision import (
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_view import AgentStateView
 from app.schemas.bundle import BundleOptimizationOutcome
+from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.conversation import ConversationContext
 from app.schemas.design import DesignGuidance
@@ -38,6 +39,7 @@ from app.schemas.grounding import (
 )
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerContext
+from app.schemas.search_action import SearchActionRequest
 
 MAX_RESPONSE_CHARS = 4000
 
@@ -56,6 +58,18 @@ class CustomerTurnInput(BaseModel):
     conversation: ConversationContext = ConversationContext()
     state: AgentStateV1 = AgentStateV1()
     context: RetailerContext
+
+    bundle_action: BundleActionRequest | None = None
+    """A screen-driven room edit, when the turn is one. Present means the turn
+    is deterministic — resolve the ordinals, force the choice, re-optimise — and
+    no decision model runs. `message` is kept for the conversation record only
+    (CLAUDE.md 3.6)."""
+
+    search_action: SearchActionRequest | None = None
+    """A screen-driven search follow-up, when the turn is one. Present means the
+    turn is deterministic — re-run the search in progress while excluding what
+    was already shown, or the one product turned down — and no decision model
+    runs. `message` is kept for the conversation record only (CLAUDE.md 3.6)."""
 
 
 class DecisionInput(BaseModel):
@@ -131,7 +145,6 @@ class TurnGrounding(BaseModel):
     deciding how to answer must look there rather than here (M12E-2).
     """
 
-
     follow_up_policy: FollowUpPolicy = FollowUpPolicy.NONE
 
     @model_validator(mode="after")
@@ -151,10 +164,7 @@ class TurnGrounding(BaseModel):
         """
         if self.clarification is not None and self.deterministic_clarification is not None:
             raise ValueError("a turn asks at most one question")
-        asking = (
-            self.clarification is not None
-            or self.deterministic_clarification is not None
-        )
+        asking = self.clarification is not None or self.deterministic_clarification is not None
         if asking and self.follow_up_policy is not FollowUpPolicy.NONE:
             # Nothing to follow up on: the turn is waiting for an answer.
             raise ValueError("a turn that asks a question offers no follow-up")

@@ -19,13 +19,16 @@ session my screen was drawn from* on the next request.
 from __future__ import annotations
 
 import re
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.agent_turn import CustomerResponse
+from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
+from app.schemas.search_action import SearchActionRequest
 
 MAX_MESSAGE_CHARS = 2000
 """A message, not a transcript. Long enough for a detailed request about a
@@ -52,6 +55,27 @@ class ChatRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=128)
     store_id: int = Field(ge=1)
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+    bundle_action: BundleActionRequest | None = None
+    """A deterministic room edit the customer drove from the screen.
+
+    When present, the turn is a structured action — swap this piece for that
+    option — and no decision model is consulted: the customer's clicks are the
+    decision (CLAUDE.md 3.6). `message` still carries a short human description
+    of the action for the conversation record, but its content does not route
+    the turn.
+    """
+
+    search_action: SearchActionRequest | None = None
+    """A deterministic follow-up on a product search the customer drove from
+    the screen — "show me different options", or "not this one".
+
+    Like `bundle_action`, no decision model is consulted: the customer tapped a
+    control, so the turn re-runs the search in progress while excluding what was
+    already shown (or the one product turned down), giving retrieval a memory it
+    otherwise lacks (CLAUDE.md 3.6). At most one of `bundle_action` and
+    `search_action` is present on a turn.
+    """
 
     expected_session_revision: int | None = Field(default=None, ge=0)
     """The session revision the client's screen was rendered from.
@@ -86,6 +110,18 @@ class ChatRequest(BaseModel):
         if not value.strip():
             raise ValueError("a message cannot be blank")
         return value
+
+    @model_validator(mode="after")
+    def _one_structured_action_at_most(self) -> Self:
+        """A turn is either a room edit or a search follow-up, never both.
+
+        Each takes its own deterministic path, so a turn carrying both would
+        have one silently ignored - a defect the client should hear about at
+        the boundary rather than discover from surprising results.
+        """
+        if self.bundle_action is not None and self.search_action is not None:
+            raise ValueError("a turn carries at most one structured action")
+        return self
 
 
 class ChatPresentation(BaseModel):

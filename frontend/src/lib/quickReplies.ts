@@ -65,15 +65,43 @@ const RULES = [
 
 const YES_NO_START = /^(do|does|did|would|should|is|are|can|could|shall|will|have|has|may)\b/i
 
+// Strip the lead-in of a choice question so the two branches are left bare:
+// "Would you prefer something compact…" -> "compact…".
+const CHOICE_STEM =
+  /^(would you (prefer|like|want|rather)|do you (prefer|want|like)|which (do you prefer|would you prefer|one)|are you (after|looking for))\b[:,]?\s*(something\s+)?/i
+
+const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+
+// "A or B?" is a choice, not a yes/no. Pull out the two sides as chips.
+function choiceReplies(question: string): QuickReply[] {
+  const body = question.replace(/\?+\s*$/, '').replace(CHOICE_STEM, '').trim()
+  const parts = body
+    .split(/\s*,?\s+or\s+/i)
+    .map((p) => p.trim().replace(/[.?]+$/, ''))
+    .filter(Boolean)
+  // Only when it splits cleanly into two short, sensible sides. Otherwise show
+  // nothing rather than a lopsided guess.
+  if (parts.length !== 2 || parts.some((p) => p.length < 2 || p.length > 40)) return []
+  return parts.map((p) => ({ label: capitalise(p), value: capitalise(p) }))
+}
+
 export function deriveQuickReplies(message: string, followUp: string | null): QuickReply[] {
   const question = followUp ?? message
   // Only offer chips for a turn that is actually asking something.
   if (!question.includes('?')) return []
 
-  const haystack = `${followUp ?? ''} ${message}`
+  // Match on the question itself, not the original request. "How many people
+  // to seat?" asked after "…under 6000 SAR" must offer seat counts, not
+  // currencies — the word in the request must not decide the answer options.
   for (const { test, replies } of RULES) {
-    if (test.test(haystack)) return replies
+    if (test.test(question)) return replies
   }
+
+  // An either/or question ("compact… or broader…?") is a choice between two
+  // things, never a yes/no — offering "Yes" to it is meaningless and stalls
+  // the conversation. Offer the two sides; if we cannot split it cleanly, show
+  // nothing rather than the wrong chip.
+  if (/\bor\b/i.test(question)) return choiceReplies(question)
 
   // A plainly phrased yes/no question is the last, safest fallback.
   if (YES_NO_START.test(question.trim())) {
