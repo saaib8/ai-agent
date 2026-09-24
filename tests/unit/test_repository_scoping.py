@@ -88,6 +88,10 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
         ProductSearchRequest(commerce_category="seating"), CONTEXT
     ),
     "supported_commerce_types": lambda repo: repo.supported_commerce_types(CONTEXT),
+    "visual_categories": lambda repo: repo.visual_categories(CONTEXT),
+    "ids_for_visual_matches": lambda repo: repo.ids_for_visual_matches(
+        ["vector-1"], ["https://example.test/1"], CONTEXT
+    ),
 }
 
 
@@ -223,3 +227,9 @@ async def test_the_eligible_pool_cannot_be_asked_for_another_store() -> None:
     assert f"core_product.store_id = {STORE_ID}" in sql
     assert str(OTHER_STORE_ID) not in sql
     assert "limit" not in inspect.signature(ProductRepository.search_eligible_ids).parameters
+
+
+async def test_visual_matches_with_nothing_to_look_up_issue_no_query() -> None:
+    session = RecordingSession()
+    assert await _repository(session).ids_for_visual_matches([], [""], CONTEXT) == ({}, {})
+    assert session.statements == []

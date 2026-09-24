@@ -153,10 +153,14 @@ def test_lifespan_builds_each_agent_client_only_when_configured() -> None:
         and node.func.id == "OpenAIStructuredClient"
     ]
 
-    assert len(constructions) == 4, "query understanding, decision, response, interior design"
+    assert len(constructions) == 5, (
+        "query understanding, decision, response, interior design, finder vision"
+    )
     assert "if decision_model:" in source
     assert "if response_model:" in source
     assert "if design_model:" in source
+    assert "if finder is not None:" in source
+    assert "await finder_vision.close()" in source
 
 
 def test_the_decision_client_is_closed_on_shutdown() -> None:

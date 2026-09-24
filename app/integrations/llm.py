@@ -11,6 +11,8 @@ a typed application error whose message we wrote.
 
 from __future__ import annotations
 
+import base64
+from collections.abc import Sequence
 from typing import Any, NoReturn, Protocol, TypeVar
 
 from openai import (
@@ -90,13 +92,46 @@ class OpenAIStructuredClient:
         user_input: str,
         schema: type[StructuredT],
     ) -> StructuredT:
+        # The customer's words are untrusted DATA, carried in the user turn -
+        # never merged into the instructions (CLAUDE.md 20.1).
+        return await self._request(
+            instructions, [{"role": "user", "content": user_input}], schema
+        )
+
+    async def parse_images(
+        self,
+        *,
+        instructions: str,
+        user_input: str,
+        images: Sequence[bytes],
+        schema: type[StructuredT],
+    ) -> StructuredT:
+        """The same contract as `parse`, with JPEG images in the user turn.
+
+        The images are untrusted data exactly as the words are: they travel in
+        the user turn, and nothing drawn in them is an instruction.
+        """
+        content: list[dict[str, str]] = [{"type": "input_text", "text": user_input}]
+        content.extend(
+            {
+                "type": "input_image",
+                "image_url": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
+            }
+            for image in images
+        )
+        return await self._request(instructions, [{"role": "user", "content": content}], schema)
+
+    async def _request(
+        self,
+        instructions: str,
+        messages: list[dict[str, Any]],
+        schema: type[StructuredT],
+    ) -> StructuredT:
         try:
             response = await self._client.responses.parse(
                 model=self._model,
                 instructions=instructions,
-                # The customer's words are untrusted DATA, carried in the user
-                # turn - never merged into the instructions (CLAUDE.md 20.1).
-                input=[{"role": "user", "content": user_input}],
+                input=messages,  # type: ignore[arg-type]
                 text_format=schema,
                 **self._extra,
             )

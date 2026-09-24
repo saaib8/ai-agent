@@ -84,36 +84,12 @@ class ChatRuntime:
     # ── 1. load ─────────────────────────────────────────────────────────────
 
     async def load_session(self, request: ChatRequest) -> LoadedSession:
-        """The stored conversation, or a fresh one, with staleness settled.
-
-        An absent key is a new conversation **only when the client is not
-        claiming to have seen one**. A request carrying `expected_session_
-        revision=5` against a key that has expired is not starting fresh: its
-        screen shows products from a session that no longer exists, and
-        creating an empty one would then resolve "the second one" against
-        nothing (M13 34).
-        """
-        stored = await self._sessions.load(request.store_id, request.session_id)
-        envelope = stored if stored is not None else new_session()
-        expected = request.expected_session_revision
-
-        if expected is not None and expected != envelope.session_revision:
-            logger.info(
-                "session_revision_stale",
-                store_id=request.store_id,
-                expected_revision=expected,
-                actual_revision=envelope.session_revision,
-                existed=stored is not None,
-            )
-            raise SessionConflictError(
-                expected_revision=expected,
-                actual_revision=envelope.session_revision,
-            )
-
-        return LoadedSession(
-            envelope=envelope,
-            loaded_revision=envelope.session_revision,
-            existed=stored is not None,
+        """The stored conversation, or a fresh one, with staleness settled."""
+        return await load_for_turn(
+            self._sessions,
+            store_id=request.store_id,
+            session_id=request.session_id,
+            expected_revision=request.expected_session_revision,
         )
 
     # ── 2. run the turn ─────────────────────────────────────────────────────
@@ -210,7 +186,9 @@ class ChatRuntime:
             ConversationMessage(role=ConversationRole.USER, content=request.message),
             ConversationMessage(role=ConversationRole.ASSISTANT, content=said),
         )
-        return ConversationContext(messages=_trimmed(messages, self._settings.max_history_messages))
+        return ConversationContext(
+            messages=trim_history(messages, self._settings.max_history_messages)
+        )
 
     async def persist(
         self,
@@ -308,7 +286,49 @@ class ChatRuntime:
         )
 
 
-def _trimmed(
+async def load_for_turn(
+    sessions: SessionStore,
+    *,
+    store_id: int,
+    session_id: str,
+    expected_revision: int | None,
+) -> LoadedSession:
+    """The stored conversation, or a fresh one, with staleness settled.
+
+    Shared by every kind of turn - a message, or a pick in a photo - so a stale
+    screen is refused by one rule wherever the customer acted on it.
+
+    An absent key is a new conversation **only when the client is not
+    claiming to have seen one**. A request carrying `expected_session_
+    revision=5` against a key that has expired is not starting fresh: its
+    screen shows products from a session that no longer exists, and
+    creating an empty one would then resolve "the second one" against
+    nothing (M13 34).
+    """
+    stored = await sessions.load(store_id, session_id)
+    envelope = stored if stored is not None else new_session()
+
+    if expected_revision is not None and expected_revision != envelope.session_revision:
+        logger.info(
+            "session_revision_stale",
+            store_id=store_id,
+            expected_revision=expected_revision,
+            actual_revision=envelope.session_revision,
+            existed=stored is not None,
+        )
+        raise SessionConflictError(
+            expected_revision=expected_revision,
+            actual_revision=envelope.session_revision,
+        )
+
+    return LoadedSession(
+        envelope=envelope,
+        loaded_revision=envelope.session_revision,
+        existed=stored is not None,
+    )
+
+
+def trim_history(
     messages: tuple[ConversationMessage, ...], limit: int
 ) -> tuple[ConversationMessage, ...]:
     """The most recent messages, in order, without orphaning a reply.

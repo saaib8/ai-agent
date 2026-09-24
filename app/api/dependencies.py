@@ -19,6 +19,7 @@ from app.integrations.llm import StructuredLLMClient
 from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
 from app.orchestration.graph import ChatGraphRunner
+from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
@@ -31,9 +32,11 @@ from app.services.controlled_search import ControlledRelaxationService
 from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.discovery import ProductDiscoveryService
+from app.services.furniture_finder import FinderTurnRuntime, FurnitureFinderService
 from app.services.health import HealthService
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
+from app.services.object_description import ObjectDescriber
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
@@ -420,3 +423,60 @@ def chat_graph(app_resources: ResourcesDep) -> ChatGraphRunner:
 
 
 ChatGraphDep = Annotated[ChatGraphRunner, Depends(chat_graph)]
+
+
+# ── Furniture Finder ────────────────────────────────────────────────────────
+
+
+def furniture_finder_service(
+    session: SessionDep, app_resources: ResourcesDep
+) -> FurnitureFinderService:
+    """The finder, or a refusal naming what is missing.
+
+    Requested only by the finder routes. A deployment without it starts and
+    serves chat exactly as before; only a photo finds the capability absent.
+    """
+    settings = app_resources.settings.furniture_finder
+    detector = app_resources.detector
+    vision = app_resources.finder_vision
+    embedder = app_resources.finder_embedder
+    index = app_resources.finder_index
+    if (
+        settings is None
+        or detector is None
+        or vision is None
+        or embedder is None
+        or index is None
+    ):
+        raise ConfigurationError(
+            detail="furniture_finder must be configured to use Furniture Finder",
+            public_message="Furniture Finder is not configured.",
+        )
+    repository = ProductRepository(session)
+    return FurnitureFinderService(
+        detector,
+        ObjectDescriber(vision),
+        embedder,
+        index,
+        FinderPhotoStore(app_resources.redis.client, app_resources.settings.session),
+        repository,
+        ProductHydrationService(repository),
+        settings,
+    )
+
+
+FurnitureFinderServiceDep = Annotated[FurnitureFinderService, Depends(furniture_finder_service)]
+
+
+def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> FinderTurnRuntime:
+    """A pick as a conversation turn: the finder plus the session it commits to."""
+    return FinderTurnRuntime(
+        furniture_finder_service(session, app_resources),
+        session_store(app_resources),
+        app_resources.settings.session,
+        SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
+        SearchRefinementComposer(app_resources.attributes, app_resources.dimensions),
+    )
+
+
+FinderTurnRuntimeDep = Annotated[FinderTurnRuntime, Depends(finder_turn_runtime)]

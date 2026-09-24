@@ -15,6 +15,13 @@ dependencies = [
     "pyyaml>=6.0,<7",
     "openai>=2.0,<3",
     "langgraph>=1.2,<2",
+    # Furniture Finder: photo uploads (multipart), image decoding and cropping,
+    # and the call to the detection endpoint. Plain dependencies rather than an
+    # extra: the upload route is always mounted and refuses cleanly when the
+    # finder is not configured.
+    "python-multipart>=0.0.20,<0.1",
+    "pillow>=11,<13",
+    "httpx>=0.28,<0.29",
 ]
 
 [project.optional-dependencies]

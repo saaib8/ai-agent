@@ -19,6 +19,7 @@ from openai import (
     APITimeoutError,
     AsyncOpenAI,
     OpenAIError,
+    omit,
 )
 
 from app.core.config import LLMSettings
@@ -48,10 +49,27 @@ class OpenAIQueryEmbedder:
     uses; nothing retries forever.
     """
 
-    def __init__(self, settings: LLMSettings) -> None:
-        if not settings.embedding_model:
+    def __init__(
+        self,
+        settings: LLMSettings,
+        *,
+        model: str | None = None,
+        dimensions: int | None = None,
+    ) -> None:
+        """`model` and `dimensions` serve an index built otherwise.
+
+        By default this embeds for the semantic ranking index, with the
+        configured embedding model at its native width. A caller querying
+        another index names that index's model and, when it was built at a
+        reduced width, that width - which is then both requested from the
+        model and the width every answer is checked against.
+        """
+        chosen = model or settings.embedding_model
+        if not chosen:
             raise EmbeddingUnavailableError(reason="no embedding model configured")
-        self._model = settings.embedding_model
+        self._model = chosen
+        self._dimensions = dimensions
+        self._expected = dimensions or EXPECTED_DIMENSION
         self._client = AsyncOpenAI(
             api_key=settings.api_key.get_secret_value(),
             timeout=settings.timeout_s,
@@ -65,7 +83,9 @@ class OpenAIQueryEmbedder:
     async def embed_query(self, text: str) -> tuple[float, ...]:
         try:
             response = await self._client.embeddings.create(
-                model=self._model, input=[text]
+                model=self._model,
+                input=[text],
+                dimensions=omit if self._dimensions is None else self._dimensions,
             )
         except (APITimeoutError, APIConnectionError) as exc:
             logger.warning("embedding_unreachable", error_type=type(exc).__name__)
@@ -84,15 +104,15 @@ class OpenAIQueryEmbedder:
             raise EmbeddingUnavailableError(reason=type(exc).__name__) from exc
 
         vector = tuple(response.data[0].embedding)
-        if len(vector) != EXPECTED_DIMENSION:
+        if len(vector) != self._expected:
             logger.error(
                 "embedding_dimension_mismatch",
                 model=self._model,
                 returned=len(vector),
-                expected=EXPECTED_DIMENSION,
+                expected=self._expected,
             )
             raise EmbeddingUnavailableError(
-                reason=f"expected {EXPECTED_DIMENSION} dimensions, got {len(vector)}"
+                reason=f"expected {self._expected} dimensions, got {len(vector)}"
             )
         return vector
 

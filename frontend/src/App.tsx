@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import type { FinderObject } from './api/types'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
 import { useChat } from './hooks/useChat'
@@ -17,6 +18,22 @@ export default function App() {
       if (!trimmed || chat.sending) return
       void chat.send(trimmed, config.config)
       setDraft('')
+    },
+    [chat, config.config],
+  )
+
+  const handlePhoto = useCallback(
+    (file: File) => {
+      if (chat.sending) return
+      void chat.uploadPhoto(file, config.config)
+    },
+    [chat, config.config],
+  )
+
+  const handlePickObject = useCallback(
+    (photoTurnId: string, imageId: string, object: FinderObject) => {
+      if (chat.sending) return
+      void chat.pickObject(photoTurnId, imageId, object, config.config)
     },
     [chat, config.config],
   )
@@ -43,6 +60,8 @@ export default function App() {
           draft={draft}
           onDraftChange={setDraft}
           onSend={handleSend}
+          onPhoto={handlePhoto}
+          onPickObject={handlePickObject}
         />
       </main>
     </div>

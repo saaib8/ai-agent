@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.errors import register_exception_handlers
 from app.api.middleware import TraceContextMiddleware
 from app.api.routes.chat import router as chat_router
+from app.api.routes.furniture_finder import router as furniture_finder_router
 from app.api.routes.health import router as health_router
 from app.core.config import Settings, get_settings
 from app.core.lifespan import lifespan
@@ -56,4 +57,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Everything a customer touches is versioned, so a later contract change is
     # a new prefix rather than a silent change under the old one.
     app.include_router(chat_router, prefix=settings.api.prefix)
+    app.include_router(furniture_finder_router, prefix=settings.api.prefix)
     return app

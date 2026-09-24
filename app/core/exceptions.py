@@ -106,6 +106,51 @@ class LLMUnavailableError(IntegrationUnavailableError):
     code = "llm_unavailable"
 
 
+class DetectionUnavailableError(IntegrationUnavailableError):
+    """The object detector could not analyse a photo.
+
+    Unlike semantic ranking, there is no degraded answer to fall back to: a
+    photo with no detection has nothing on it to pick, so this reaches the
+    customer as a retryable failure.
+    """
+
+    code = "detection_unavailable"
+    public_message = "We couldn't analyse that photo right now. Please try again shortly."
+
+
+class VisualSearchUnavailableError(IntegrationUnavailableError):
+    """The object crop could not be embedded, or the image index not queried."""
+
+    code = "visual_search_unavailable"
+    public_message = "We couldn't search for that item right now. Please try again shortly."
+
+
+# ── Furniture Finder request errors ─────────────────────────────────────────
+
+
+class ImageRejectedError(InvalidRequestError):
+    """An upload that is not a usable photo: wrong type, too large, too small.
+
+    The public message is chosen by the raiser from a fixed set, because the
+    customer can act on "too small" and cannot act on "invalid".
+    """
+
+    code = "image_rejected"
+    public_message = "That file could not be used. Please upload a JPEG, PNG or WebP photo."
+
+
+class FinderImageNotFoundError(ZoryError):
+    """A pick against a photo this session no longer holds.
+
+    Expired, never uploaded, or uploaded under another store or session - all
+    indistinguishable on purpose, like a product another retailer owns.
+    """
+
+    code = "finder_image_not_found"
+    http_status = HTTPStatus.NOT_FOUND
+    public_message = "That photo is no longer available. Please upload it again."
+
+
 class LLMRequestError(ZoryError):
     """The provider refused our request as invalid.
 

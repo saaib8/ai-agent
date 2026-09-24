@@ -223,6 +223,83 @@ class PineconeSettings(BaseModel):
         return self.namespace_template.format(store_id=store_id)
 
 
+class FurnitureFinderSettings(BaseModel):
+    """Photo-based product finding. Absent when the finder is not configured.
+
+    Three steps, each served by something this service does not own: the
+    object detector deployed on Modal outlines what is in a photo; a vision
+    model describes the picked object in words; and the description is
+    searched in a product index built from **text** documents about each
+    product. The index is text, so the query must be embedded by the model
+    and at the width the index was built with - a vector from anything else
+    is in a different space, and its nearest neighbours would be noise that
+    still looks like an answer.
+
+    The vision and embedding models use the language-model provider's key
+    (`llm.api_key`): same provider, different jobs.
+    """
+
+    detector_url: str = Field(min_length=1)
+    """The synchronous Modal detection endpoint."""
+
+    detector_key: SecretStr
+    detector_secret: SecretStr
+    detector_timeout_s: float = Field(default=150.0, gt=0)
+    """Modal caps a synchronous request at about 150 s; a cold start alone can
+    take 20."""
+
+    detector_confidence: float = Field(default=0.25, gt=0, lt=1)
+
+    vision_model: str = Field(min_length=1)
+    """Describes the picked object. No default: no model identifier belongs in
+    the codebase (CLAUDE.md 31)."""
+
+    vision_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    """Set for a reasoning model, unset for one that rejects it. Kept apart
+    from `llm.reasoning_effort`: describing a crop is a short job, and the
+    customer is waiting on it."""
+
+    vision_timeout_s: float = Field(default=30.0, gt=0)
+
+    embedding_model: str = Field(min_length=1)
+    """The model the product index was built with."""
+
+    embedding_dimensions: int = Field(gt=0)
+    """The width the product index was built at, requested from the model."""
+
+    index_api_key: SecretStr
+    index_name: str = Field(min_length=1)
+    index_namespace: str = Field(min_length=1)
+    """The product index and its namespace. Vectors carry `store_id`,
+    `category` and `product_url` metadata; the category is the catalog's
+    visual category, the same vocabulary the detector labels with."""
+
+    result_limit: int = Field(default=10, gt=0, le=50)
+    """How many products one pick presents."""
+
+    candidate_limit: int = Field(default=40, gt=0, le=200)
+    """How many neighbours are asked of the index before PostgreSQL decides
+    which of them are still sellable here. Larger than `result_limit` so that
+    stale or inactive vectors do not leave the customer with a short list."""
+
+    max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    min_image_side: int = Field(default=300, gt=0)
+    detection_max_side: int = Field(default=1600, gt=0)
+    """Uploads are downscaled to this before detection, and every coordinate
+    the detector returns is in that downscaled image's pixel space - which is
+    the image kept for cropping, so the two can never disagree."""
+
+    medium_crop_padding: float = Field(default=0.15, ge=0, le=1)
+    """Context around the object in the second view the vision model sees, as
+    a share of its longer side."""
+
+    @model_validator(mode="after")
+    def _candidates_cover_results(self) -> FurnitureFinderSettings:
+        if self.candidate_limit < self.result_limit:
+            raise ValueError("furniture_finder candidate_limit must be at least result_limit")
+        return self
+
+
 class RelaxationSettings(BaseModel):
     """Policy for broadening a search that returned too little.
 
@@ -372,6 +449,9 @@ class Settings(BaseSettings):
     # starts and serves deterministic results with no Pinecone configured at
     # all. Absence is the "semantic ranking off" state, not a startup failure.
     pinecone: PineconeSettings | None = None
+    # Optional for the same reason: without it the finder routes refuse and
+    # everything else is unaffected.
+    furniture_finder: FurnitureFinderSettings | None = None
     observability: ObservabilitySettings = ObservabilitySettings()
     aws: AwsSettings = AwsSettings()
 
@@ -429,6 +509,10 @@ class Settings(BaseSettings):
             "decision_configured": self.customer_agent.decision_model is not None,
             "response_configured": self.customer_agent.response_model is not None,
             "interior_design_configured": self.interior_design.model is not None,
+            "furniture_finder_configured": self.furniture_finder is not None,
+            "furniture_finder_index": (
+                self.furniture_finder.index_name if self.furniture_finder else None
+            ),
         }
 
 

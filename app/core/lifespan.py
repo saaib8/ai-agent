@@ -17,7 +17,9 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
 from app.db.catalog_schema import verify_commerce_schema
+from app.integrations.detection import ModalObjectDetector
 from app.integrations.embeddings import OpenAIQueryEmbedder
+from app.integrations.finder_index import FinderIndex, PineconeFinderIndex
 from app.integrations.llm import OpenAIStructuredClient
 from app.integrations.pinecone import PineconeSemanticIndex, SemanticIndex
 from app.integrations.postgres import Database
@@ -58,6 +60,13 @@ class AppResources:
     # client for the same reason as the second and third: the model identifier
     # is fixed at construction (CLAUDE.md 24).
     design_llm: OpenAIStructuredClient | None = None
+    # All four None when Furniture Finder is not configured, and all four
+    # present when it is: the finder is one capability with four providers,
+    # and part of one is not a deployment anybody means.
+    detector: ModalObjectDetector | None = None
+    finder_vision: OpenAIStructuredClient | None = None
+    finder_embedder: OpenAIQueryEmbedder | None = None
+    finder_index: FinderIndex | None = None
 
 
 def get_resources(app: FastAPI) -> AppResources:
@@ -141,6 +150,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         response_llm = OpenAIStructuredClient(
             settings.llm.model_copy(update={"model": response_model})
         )
+    detector: ModalObjectDetector | None = None
+    finder_vision: OpenAIStructuredClient | None = None
+    finder_embedder: OpenAIQueryEmbedder | None = None
+    finder_index: FinderIndex | None = None
+    finder = settings.furniture_finder
+    if finder is not None:
+        detector = ModalObjectDetector(finder)
+        # Same provider and key as every other model client; its own model,
+        # effort and timeout, because the customer is waiting on this one.
+        finder_vision = OpenAIStructuredClient(
+            settings.llm.model_copy(
+                update={
+                    "model": finder.vision_model,
+                    "reasoning_effort": finder.vision_reasoning_effort,
+                    "temperature": None,
+                    "timeout_s": finder.vision_timeout_s,
+                }
+            )
+        )
+        finder_embedder = OpenAIQueryEmbedder(
+            settings.llm, model=finder.embedding_model, dimensions=finder.embedding_dimensions
+        )
+        finder_index = PineconeFinderIndex(finder)
     design_model = settings.interior_design.model
     if design_model:
         design_llm = OpenAIStructuredClient(settings.llm.model_copy(update={"model": design_model}))
@@ -157,6 +189,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedding_model=settings.llm.embedding_model,
         index=settings.pinecone.index_name if settings.pinecone else None,
     )
+    logger.info(
+        "furniture_finder_configured",
+        enabled=detector is not None,
+        index=settings.furniture_finder.index_name if settings.furniture_finder else None,
+    )
     app.state.resources = AppResources(
         settings=settings,
         database=database,
@@ -171,6 +208,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         attributes=attributes,
         dimensions=dimensions,
         chat_graph=chat_graph,
+        detector=detector,
+        finder_vision=finder_vision,
+        finder_embedder=finder_embedder,
+        finder_index=finder_index,
     )
 
     await _check_catalog_schema(database)
@@ -180,6 +221,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         if embedder is not None:
             await embedder.close()
+        if detector is not None:
+            await detector.close()
+        if finder_vision is not None:
+            await finder_vision.close()
+        if finder_embedder is not None:
+            await finder_embedder.close()
         if decision_llm is not None:
             await decision_llm.close()
         if response_llm is not None:
