@@ -109,11 +109,7 @@ export function EmptyState({ storeId, onPick, onPhoto }: EmptyStateProps) {
           <ImageIcon size={22} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-ink">Find furniture from a photo</span>
-          <span className="mt-0.5 block text-xs leading-relaxed text-muted">
-            Share a room photo, tap a piece you like, and I&apos;ll show the closest matches in
-            this catalog.
-          </span>
+          <span className="block text-sm font-semibold text-ink">Find furniture in the image</span>
         </span>
         <SendIcon size={18} className="shrink-0 text-clay transition group-hover:translate-x-0.5" />
       </button>
