@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import type { GroundedProduct } from './api/types'
+import type { FinderObject, GroundedProduct } from './api/types'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
 import { useChat } from './hooks/useChat'
@@ -27,6 +27,24 @@ export default function App() {
       setSwap(null) // a freely typed message ends any swap in progress
       void chat.send(trimmed, config.config)
       setDraft('')
+    },
+    [chat, config.config],
+  )
+
+  const handlePhoto = useCallback(
+    (file: File) => {
+      if (chat.sending) return
+      setSwap(null) // a new photo moves the conversation on, like a message
+      void chat.uploadPhoto(file, config.config)
+    },
+    [chat, config.config],
+  )
+
+  const handlePickObject = useCallback(
+    (photoTurnId: string, imageId: string, object: FinderObject) => {
+      if (chat.sending) return
+      setSwap(null) // a pick replaces the products on screen
+      void chat.pickObject(photoTurnId, imageId, object, config.config)
     },
     [chat, config.config],
   )
@@ -107,6 +125,8 @@ export default function App() {
           draft={draft}
           onDraftChange={setDraft}
           onSend={handleSend}
+          onPhoto={handlePhoto}
+          onPickObject={handlePickObject}
           swapRole={swap?.role ?? null}
           onSwapStart={handleSwapStart}
           onPickAlternative={handlePickAlternative}

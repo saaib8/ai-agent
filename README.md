@@ -59,6 +59,27 @@ There is no module-level `app`: building one would read settings at import
 time, so merely importing `app.main` would demand a configured environment.
 Hence `--factory`.
 
+## Furniture Finder
+
+Find catalog products like something in a photo. Two endpoints:
+
+* `POST /v1/furniture-finder/photos` (multipart: `session_id`, `store_id`, `image`)
+  runs the main platform's object detector (Modal) and returns the objects this
+  store sells something in, with outlines to draw over the photo.
+* `POST /v1/furniture-finder/picks` (`session_id`, `store_id`, `image_id`,
+  `object_id`) describes the picked object with a vision model, embeds the
+  description with the model the product index was built with, searches the
+  index in the object's category for this store, and resolves the neighbours
+  through the store-scoped repository. It answers as a chat turn
+  (`ChatResponse`) and commits the products as the list on screen, so "compare
+  the first two" in the next `/v1/chat` message refers to them.
+
+The product index (`nora-products-v2`) is **text**: one embedded document per
+product (`text-embedding-3-large`, 1024 dims), with `store_id`, `category` and
+`product_url` metadata. Matches join to the catalog by `product_url`. Configure
+with `ZORY_FURNITURE_FINDER__*` (see `.env.example`); requires the `semantic`
+extra.
+
 ## Configuration
 
 Everything runtime-dependent is declared in `app/core/config.py` and nowhere

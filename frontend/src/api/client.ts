@@ -2,6 +2,8 @@ import type {
   ChatRequest,
   ChatResponse,
   ErrorBody,
+  FinderPhotoResponse,
+  FinderPickRequest,
   HealthResponse,
 } from './types'
 
@@ -33,22 +35,83 @@ const NETWORK_ERROR = (base: string): ErrorBody => ({
 })
 
 export async function postChat(base: string, body: ChatRequest): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/chat', body, isChatResponse)
+}
+
+// ── Furniture Finder ─────────────────────────────────────────────────────────
+
+export type PhotoResult =
+  | { ok: true; data: FinderPhotoResponse }
+  | { ok: false; status: number | 'network'; error: ErrorBody }
+
+/** Upload a photo; the answer lists the objects in it the catalog can match. */
+export async function postFinderPhoto(
+  base: string,
+  fields: { sessionId: string; storeId: number; file: File },
+): Promise<PhotoResult> {
+  const form = new FormData()
+  form.append('session_id', fields.sessionId)
+  form.append('store_id', String(fields.storeId))
+  form.append('image', fields.file)
   const root = normaliseBase(base)
+  // No Content-Type header: the browser sets the multipart boundary itself.
+  return send<FinderPhotoResponse>(
+    root,
+    () => fetch(`${root}/v1/furniture-finder/photos`, { method: 'POST', body: form }),
+    (payload) => typeof payload === 'object' && payload !== null && 'image_id' in payload,
+  )
+}
+
+/** Pick one object. The answer is a chat turn, exactly like postChat's. */
+export async function postFinderPick(base: string, body: FinderPickRequest): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/furniture-finder/picks', body, isChatResponse)
+}
+
+// ── transport ────────────────────────────────────────────────────────────────
+
+type Result<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number | 'network'; error: ErrorBody }
+
+function isChatResponse(payload: unknown): boolean {
+  return typeof payload === 'object' && payload !== null && 'response' in payload
+}
+
+function postJson<T>(
+  base: string,
+  path: string,
+  body: unknown,
+  accept: (payload: unknown) => boolean,
+): Promise<Result<T>> {
+  const root = normaliseBase(base)
+  return send<T>(
+    root,
+    () =>
+      fetch(`${root}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    accept,
+  )
+}
+
+async function send<T>(
+  root: string,
+  request: () => Promise<Response>,
+  accept: (payload: unknown) => boolean,
+): Promise<Result<T>> {
   let res: Response
   try {
-    res = await fetch(`${root}/v1/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    res = await request()
   } catch {
     return { ok: false, status: 'network', error: NETWORK_ERROR(root) }
   }
 
   const payload: unknown = await res.json().catch(() => null)
 
-  if (res.ok && payload && typeof payload === 'object' && 'response' in payload) {
-    return { ok: true, data: payload as ChatResponse }
+  if (res.ok && accept(payload)) {
+    return { ok: true, data: payload as T }
   }
 
   const error =

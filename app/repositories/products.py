@@ -471,6 +471,62 @@ class ProductRepository:
         result = await self._session.execute(statement)
         return tuple((row[0], row[1], row[2]) for row in result.all())
 
+    # ── Furniture Finder ────────────────────────────────────────────────────
+
+    async def visual_categories(self, context: RetailerContext) -> frozenset[str]:
+        """The visual categories this store sells something in.
+
+        What a detected object has to be for the finder to offer it: an
+        outline the customer can click that the catalog has nothing in the
+        category of can only ever come back empty.
+        """
+        statement = (
+            select(func.lower(core_product.c.category))
+            .where(*self._scope_clauses(context), core_product.c.category.is_not(None))
+            .distinct()
+        )
+        result = await self._session.execute(statement)
+        return frozenset(value for (value,) in result if value)
+
+    async def ids_for_visual_matches(
+        self,
+        pinecone_ids: Sequence[str],
+        product_urls: Sequence[str],
+        context: RetailerContext,
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """Product ids this store sells, keyed by index vector id and by page.
+
+        Two keys because a product index may have been built from a different
+        copy of the catalog: its vector ids then match nothing here, while the
+        product page it points at still does. Only products in scope
+        are returned, so a vector for another retailer's product resolves to
+        nothing whichever key is tried.
+
+        Where two rows share a key the lowest id wins, so the answer does not
+        depend on row order.
+        """
+        ids = sorted({i for i in pinecone_ids if i})
+        urls = sorted({u for u in product_urls if u})
+        if not ids and not urls:
+            return {}, {}
+        statement = (
+            select(core_product.c.id, core_product.c.pinecone_id, core_product.c.product_url)
+            .where(
+                *self._scope_clauses(context),
+                (core_product.c.pinecone_id.in_(ids) | core_product.c.product_url.in_(urls)),
+            )
+            .order_by(core_product.c.id)
+        )
+        result = await self._session.execute(statement)
+        by_vector: dict[str, int] = {}
+        by_url: dict[str, int] = {}
+        for row in result:
+            if row.pinecone_id:
+                by_vector.setdefault(row.pinecone_id, row.id)
+            if row.product_url:
+                by_url.setdefault(row.product_url, row.id)
+        return by_vector, by_url
+
     async def count_active(self, context: RetailerContext) -> int:
         """How many active products the store has. Backs health and capability checks."""
         statement = (

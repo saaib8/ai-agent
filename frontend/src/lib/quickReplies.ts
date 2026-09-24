@@ -14,6 +14,14 @@ const rule = (test: RegExp, replies: QuickReply[]) => ({ test, replies })
 const simple = (values: string[]): QuickReply[] => values.map((v) => ({ label: v, value: v }))
 
 const RULES = [
+  // Results on screen (a photo pick's offer): follow-ups the chat resolves
+  // against the cards the customer is looking at.
+  rule(/compare any of these|hear more about one/i, [
+    { label: 'Compare the first two', value: 'Compare the first two' },
+    { label: 'More about the first one', value: 'Tell me more about the first one' },
+    { label: 'Anything cheaper?', value: 'Do you have anything cheaper?' },
+  ]),
+
   // Currency — the store is Saudi, so SAR leads.
   rule(/currenc|which (currency|money)|sar|usd|riyal/i, simple(['SAR', 'USD', 'AED', 'EUR'])),
 

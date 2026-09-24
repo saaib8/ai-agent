@@ -135,3 +135,11 @@ export const ExternalIcon = (p: IconProps) => (
     <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
   </Base>
 )
+
+export const ImageIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <circle cx="9" cy="10" r="1.75" />
+    <path d="m21 16-4.6-4.6a1.5 1.5 0 0 0-2.1 0L6 19.5" />
+  </Base>
+)

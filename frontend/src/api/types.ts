@@ -161,3 +161,43 @@ export interface HealthResponse {
   environment: string
   dependencies: Record<string, string>
 }
+
+// ── Furniture Finder ─────────────────────────────────────────────────────────
+
+/** A box in the *stored* photo's pixel space (see FinderPhotoResponse.width/height). */
+export interface ImageBox {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+export interface FinderObject {
+  object_id: number
+  /** The detector's visual class, e.g. "side-table". */
+  label: string
+  /** How a person says it, e.g. "side table". */
+  display_label: string
+  confidence: number
+  box: ImageBox
+  /** Outline points [x, y] in the same space as `box`. */
+  polygon: [number, number][]
+}
+
+export interface FinderPhotoResponse {
+  image_id: string
+  /** The size the backend stored the photo at; outlines are in this space. */
+  width: number
+  height: number
+  /** Only objects this retailer's catalog can match. */
+  objects: FinderObject[]
+  unmatched_count: number
+}
+
+export interface FinderPickRequest {
+  session_id: string
+  store_id: number
+  image_id: string
+  object_id: number
+  expected_session_revision?: number
+}
