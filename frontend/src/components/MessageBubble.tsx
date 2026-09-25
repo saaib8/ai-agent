@@ -81,6 +81,7 @@ export function AssistantBubble({
   const hasProducts = !!presentation?.products?.length
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
+  const seatingBundles = presentation?.seating_bundles ?? []
 
   return (
     <div className="flex animate-rise gap-3">
@@ -106,6 +107,21 @@ export function AssistantBubble({
         )}
         {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}
         {hasRoom && <RoomBundle room={presentation!.room!} onSwapStart={onSwapStart} busy={busy} />}
+
+        {seatingBundles.length > 0 && (
+          <div className="flex flex-col gap-2.5">
+            {seatingBundles.map((bundle, index) => (
+              <RoomBundle
+                key={index}
+                room={bundle}
+                label={
+                  seatingBundles.length > 1 ? `Seating option ${index + 1}` : 'Seating combination'
+                }
+                hideStatus
+              />
+            ))}
+          </div>
+        )}
 
         <RawJson value={data} />
       </div>

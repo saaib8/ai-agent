@@ -68,7 +68,7 @@ class SeatingSolutionPlanner:
         self,
         *,
         target_seats: int,
-        budget_amount: Decimal,
+        budget_amount: Decimal | None,
         currency: str,
         context: RetailerContext,
     ) -> SeatingSolution:
@@ -130,7 +130,7 @@ class SeatingSolutionPlanner:
         shelf: SubcategoryShelf,
         filler: SeatingBundleLine,
         target_seats: int,
-        budget: Decimal,
+        budget: Decimal | None,
         currency: str,
         context: RetailerContext,
     ) -> SeatingBundle | None:
@@ -153,7 +153,7 @@ class SeatingSolutionPlanner:
 
         needed = target_seats - anchor_seats
         total = anchor.unit_price + needed * filler.unit_price
-        if total > budget:
+        if budget is not None and total > budget:
             return None
 
         fillers = filler.model_copy(update={"quantity": needed})
@@ -168,7 +168,7 @@ class SeatingSolutionPlanner:
         self,
         subcategory: str,
         seats: int,
-        budget: Decimal,
+        budget: Decimal | None,
         currency: str,
         context: RetailerContext,
     ) -> SeatingBundleLine | None:
@@ -181,7 +181,7 @@ class SeatingSolutionPlanner:
         request = ProductSearchRequest(
             commerce_category=SEATING_CATEGORY,
             commerce_subcategory=subcategory,
-            price=PriceConstraint.at_most(budget, currency),
+            price=PriceConstraint.at_most(budget, currency) if budget is not None else None,
             seating_capacity=SeatingCapacityConstraint.exactly(seats),
             sort=ProductSort.PRICE_ASC,
         )
@@ -204,7 +204,7 @@ class SeatingSolutionPlanner:
     async def _cheapest_filler(
         self,
         overview: CatalogOverview,
-        budget: Decimal,
+        budget: Decimal | None,
         currency: str,
         context: RetailerContext,
     ) -> SeatingBundleLine | None:
@@ -225,7 +225,7 @@ class SeatingSolutionPlanner:
 
         request = ProductSearchRequest(
             commerce_category=SEATING_CATEGORY,
-            price=PriceConstraint.at_most(budget, currency),
+            price=PriceConstraint.at_most(budget, currency) if budget is not None else None,
             sort=ProductSort.PRICE_ASC,
         )
         rows = await self._repository.search(request, context, limit=FILLER_SCAN_LIMIT)

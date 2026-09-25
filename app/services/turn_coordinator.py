@@ -131,7 +131,11 @@ from app.schemas.design import (
 )
 from app.schemas.design_discovery import DesignDiscoveryResult
 from app.schemas.design_override import DesignNeedSearchOverride
-from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS, PriceConstraint
+from app.schemas.discovery import (
+    MAX_EXCLUDED_PRODUCT_IDS,
+    PriceConstraint,
+    ProductSearchRequest,
+)
 from app.schemas.grounding import (
     GroundedProduct,
     SearchExecutionGrounding,
@@ -178,6 +182,7 @@ from app.schemas.resolution import (
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import MoreOptionsAction, SearchActionRequest
+from app.schemas.seating_solution import SeatingSolution, SeatingSolutionOutcome
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
@@ -206,6 +211,7 @@ from app.services.refinement_composer import SearchRefinementComposer
 from app.services.relative_price import RelativePriceResolver
 from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
+from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionSemantics
@@ -355,6 +361,10 @@ class _Primary:
 
     bundle_outcome: BundleOptimizationOutcome | None = None
     bundle_change: BundleInteractionOp | None = None
+
+    seating_solution: SeatingSolution | None = None
+    """A composed seating combination, when a seat count no single piece could
+    meet was recovered by pairing pieces (CLAUDE.md 4, 27)."""
     """The room edit this turn made, for the deterministic acknowledgement.
 
     Set only when lines actually changed: an operation that asked for a state a
@@ -743,11 +753,13 @@ class CustomerTurnCoordinator:
         design_discovery: DesignDiscoveryService,
         bundle_references: BundleReferenceResolver,
         optimizer: BundleOptimizer,
+        seating_planner: SeatingSolutionPlanner,
         dimensions: DimensionSemantics,
         taxonomy: CommerceTaxonomy,
     ) -> None:
         self._taxonomy = taxonomy
         self._decisions = decisions
+        self._seating_planner = seating_planner
         self._query_understanding = query_understanding
         self._composer = composer
         self._references = references
@@ -916,6 +928,7 @@ class CustomerTurnCoordinator:
             ),
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
+            seating_solution=primary.seating_solution,
         )
 
     # ── a screen-driven room edit ───────────────────────────────────────────
@@ -2450,7 +2463,9 @@ class CustomerTurnCoordinator:
                 ),
                 resolved=resolved,
             )
-            attempt = await self._run_search(composed, state, turn.context)
+            attempt = await self._run_search(
+                composed, state, turn.context, recover_seating=False
+            )
             if attempt.failure is not None:
                 # The catalog, not the idea. Trying the next role would issue
                 # another query against something that just failed.
@@ -2962,6 +2977,60 @@ class CustomerTurnCoordinator:
         )
         return await self._run_search(composed, working, turn.context)
 
+    async def _maybe_compose_seating(
+        self,
+        request: ProductSearchRequest,
+        primary: _Primary,
+        context: RetailerContext,
+    ) -> _Primary:
+        """When a seat count no single piece can meet leaves a search empty,
+        compose a combination instead of handing back a dead end (CLAUDE.md 27).
+
+        Only a zero-result seating search with a stated minimum seat count
+        qualifies. A search that found something is already an answer, and a
+        locked "seats eight" the pipeline could not satisfy is exactly the case a
+        salesperson answers by pairing pieces rather than by saying "we don't
+        have that". The customer's exact request always ran first (in
+        `_run_search`); this is recovery, never a routine broadening.
+
+        Recovery attaches only for outcomes there is something to say about: real
+        combinations, or an honest "the closest I could do is over budget". A
+        single piece that in fact suffices, or a store with no seating, leaves
+        the ordinary zero-result reply untouched.
+        """
+        if primary.search is None or primary.search.products:
+            return primary
+        if request.commerce_category != SEATING_CATEGORY or request.seating_capacity is None:
+            return primary
+        target = request.seating_capacity.min_capacity
+        if target is None:
+            return primary
+
+        if request.price is not None:
+            budget: Decimal | None = request.price.max_amount
+            currency = request.price.currency
+        else:
+            budget = None
+            store_currency = (await self._capabilities.overview(context)).currency
+            if store_currency is None:
+                # Nothing priced in one clean currency: a composed bundle could
+                # not state a trustworthy total, so leave the plain reply.
+                return primary
+            currency = store_currency
+
+        solution = await self._seating_planner.plan(
+            target_seats=target,
+            budget_amount=budget,
+            currency=currency,
+            context=context,
+        )
+        if solution.outcome in (
+            SeatingSolutionOutcome.BUNDLES,
+            SeatingSolutionOutcome.NONE_WITHIN_BUDGET,
+        ):
+            return replace(primary, seating_solution=solution)
+        return primary
+
     async def _similar_search_turn(
         self,
         reference: ProductReferenceSelector,
@@ -3020,6 +3089,8 @@ class CustomerTurnCoordinator:
         composed: ComposedSearch,
         working: AgentStateV1,
         context: RetailerContext,
+        *,
+        recover_seating: bool = True,
     ) -> _Primary:
         """Execute, then promote and commit in one step.
 
@@ -3027,6 +3098,13 @@ class CustomerTurnCoordinator:
         criteria are promoted through the reducer - which carries the current
         revision forward - and `commit_search_results` advances it exactly
         once, atomically with the results it belongs to.
+
+        The seating-combination recovery lives here rather than on any one caller,
+        so a seat count no single piece can meet is answered by pairing pieces
+        whether the customer stated it fresh, refined a budget onto it, or paged
+        (CLAUDE.md 27). `recover_seating=False` opts a caller out - the cross-sell
+        suggestion loop does, because a piece we proposed that finds nothing is
+        withheld, not turned into a bundle the customer never asked for.
         """
         try:
             execution = await self._pipeline.execute(
@@ -3054,10 +3132,13 @@ class CustomerTurnCoordinator:
                 )
             ),
         )
-        return _Primary(
+        primary = _Primary(
             state=commit_search_results(promoted, execution.presented_product_ids),
             search=execution.grounding,
         )
+        if not recover_seating:
+            return primary
+        return await self._maybe_compose_seating(composed.candidate.request, primary, context)
 
     # ── refinement ──────────────────────────────────────────────────────────
 

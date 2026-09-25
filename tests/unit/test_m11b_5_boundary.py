@@ -87,6 +87,10 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "design_discovery",
         "bundle_references",
         "optimizer",
+        # The seating-combination move: a deterministic planner that composes
+        # pieces to meet a seat count no single product can, reusing the same
+        # capability service and repository. Not a second search system.
+        "seating_planner",
         "dimensions",
         # M15: the approved vocabulary, so the coordinator can check that a
         # product a reference resolved to is the kind the customer named. A

@@ -61,6 +61,7 @@ from app.services.numeric_guard import (
     bundle_counts,
     guidance_figures,
     screen_figures,
+    seating_counts,
 )
 from app.services.response_validation import validate_response
 from app.services.response_view import route_response, valid_grounding_refs
@@ -264,7 +265,7 @@ class CustomerResponseGenerator:
             said_earlier=_their_own_words(turn),
             presented_count=view.presented_count,
             compared_count=view.compared_count,
-            counts=bundle_counts(view.bundle) if view.bundle else (),
+            counts=_view_counts(view),
             # Figures the customer can read off the cards beside the reply.
             # Repeating one is reporting what is on screen; the guard still
             # refuses anything that had to be computed (CLAUDE.md 14).
@@ -431,11 +432,30 @@ class CustomerResponseGenerator:
         )
 
 
+def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
+    """The counts this outcome licenses in prose, from whichever shape carries them.
+
+    A whole room and a seating combination each have their own count set, listed
+    field by field rather than swept from the view, so a numeric field added
+    later cannot silently widen what the model may assert. A view carries at
+    most one of the two.
+    """
+    if view.bundle is not None:
+        return bundle_counts(view.bundle)
+    if view.seating is not None:
+        return seating_counts(view.seating)
+    return ()
+
+
 def _reply(message: str) -> CustomerResponse:
     """An application-written reply: no citations, no optional question."""
     return CustomerResponse(message=message)
 
 
 def _fallback(view: ResponseGroundingView) -> str:
-    """This outcome's fixed sentence, bundle status included where it has one."""
-    return fallback_for(view.kind, view.bundle.status if view.bundle else None)
+    """This outcome's fixed sentence, with the status or outcome it needs."""
+    return fallback_for(
+        view.kind,
+        view.bundle.status if view.bundle else None,
+        view.seating.outcome if view.seating else None,
+    )

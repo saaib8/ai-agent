@@ -147,14 +147,30 @@ class ChatPresentation(BaseModel):
     comparison: ProductComparisonResult | None = None
     room: GroundedBundlePresentation | None = None
 
+    seating_bundles: tuple[GroundedBundlePresentation, ...] = ()
+    """Composed seating combinations, when a seat count no single piece met was
+    recovered by pairing pieces (CLAUDE.md 27).
+
+    A tuple rather than one `room`, because the planner offers a few
+    alternatives and a client draws each as its own package. Every one is an
+    existing `GroundedBundlePresentation`, so the same cards, prices and totals
+    render with nothing new to build. Empty when the closest combination was
+    over budget - then the reply owns the shortfall and there is nothing to draw.
+    """
+
     def is_empty(self) -> bool:
         """Whether there is anything to draw.
 
         An answer, a clarification or a design question produces text and no
         cards, and sending an empty object rather than nothing would have every
-        client check the same three fields to discover that.
+        client check the same fields to discover that.
         """
-        return not self.products and self.comparison is None and self.room is None
+        return (
+            not self.products
+            and self.comparison is None
+            and self.room is None
+            and not self.seating_bundles
+        )
 
 
 class ChatResponse(BaseModel):

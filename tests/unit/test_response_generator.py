@@ -62,6 +62,7 @@ from app.schemas.response import (
     SideEffectNotice,
 )
 from app.schemas.retailer import RetailerContext
+from app.schemas.seating_solution import SeatingSolutionOutcome
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_wording import (
     DESIGN_HANDOFF_WORDING,
@@ -593,11 +594,23 @@ def test_every_generated_branch_has_fallback_wording(
     """Total over the outcomes, so a new branch cannot fall through to silence.
 
     A room bundle reads a second table, because one sentence cannot serve a
-    complete package, a partial one and an infeasible one.
+    complete package, a partial one and an infeasible one. A seating combination
+    reads a third: combinations offered and none within budget are different
+    promises.
     """
     if kind is ResponseOutcomeKind.ROOM_BUNDLE:
         for status in BundleStatus:
             wording = fallback_for(kind, status)
+            assert wording
+            assert not any(character.isdigit() for character in wording)
+        return
+
+    if kind is ResponseOutcomeKind.SEATING_COMBINATION:
+        for outcome in (
+            SeatingSolutionOutcome.BUNDLES,
+            SeatingSolutionOutcome.NONE_WITHIN_BUDGET,
+        ):
+            wording = fallback_for(kind, seating=outcome)
             assert wording
             assert not any(character.isdigit() for character in wording)
         return

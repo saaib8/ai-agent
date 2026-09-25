@@ -47,6 +47,7 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.response_generator import CustomerResponseGenerator
+from app.services.seating_presentation import present_seating_solution
 from app.services.turn_coordinator import CustomerTurnCoordinator
 
 logger = get_logger(__name__)
@@ -151,10 +152,16 @@ class ChatRuntime:
         elif grounding.product_detail is not None:
             products = (grounding.product_detail,)
 
+        seating_bundles = (
+            present_seating_solution(result.seating_solution)
+            if result.seating_solution is not None
+            else ()
+        )
         built = ChatPresentation(
             products=products,
             comparison=grounding.comparison,
             room=build_bundle_presentation(result),
+            seating_bundles=seating_bundles,
         )
         return None if built.is_empty() else built
 

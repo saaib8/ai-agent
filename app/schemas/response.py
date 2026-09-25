@@ -43,6 +43,7 @@ from app.schemas.resolution import (
     SearchRequirementClarificationReason,
 )
 from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.seating_solution import SeatingSolutionOutcome
 from app.taxonomy.dimensions import DimensionRole
 
 
@@ -65,6 +66,17 @@ class ResponseOutcomeKind(StrEnum):
 
     Only a real `RoomBundle`. A refusal to compute one carries no package to
     frame, so it is answered deterministically instead.
+    """
+
+    SEATING_COMBINATION = "seating_combination"
+    """No single product met a seat count, so pieces were combined to reach it.
+
+    The salesperson move made a turn: a customer who asked for one sofa that
+    seats eight, where none does, is shown combinations that together do rather
+    than a dead end (CLAUDE.md 27). Only the two outcomes there is something to
+    say about reach here - real combinations, or an honest "the closest is over
+    budget" - so the model always has either cards to frame or a shortfall to
+    own.
     """
 
     SELECTION = "selection"
@@ -270,6 +282,48 @@ class BundleGroundingView(BaseModel):
         return self
 
 
+class SeatingSolutionGroundingView(BaseModel):
+    """What a composed seating combination looks like to the response model.
+
+    Counts and one enum. No price, no total, no per-piece detail and no product:
+    the pieces of each combination and what they cost are rendered by the
+    application, exactly as a whole room's are, so none of it passes through
+    here (CLAUDE.md 20.4).
+
+    `target_seats` is the count the customer asked for, carried so the reply can
+    name it - "a set that seats eight" - without the number being an invention.
+    It is their own figure, and the numeric guard admits it as such.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    outcome: SeatingSolutionOutcome
+    target_seats: int = Field(ge=1)
+    bundle_count: int = Field(default=0, ge=0)
+    """How many combinations are on screen. Zero when none fit the budget - the
+    honest outcome, where the reply owns the shortfall and shows nothing."""
+
+    budget_supplied: bool = False
+
+    @model_validator(mode="after")
+    def _only_the_outcomes_worth_wording(self) -> Self:
+        """Two outcomes reach the model, and each pairs with its evidence.
+
+        `SINGLE_PIECE_SUFFICES` and `NO_SEATING` are handled before a model is
+        ever involved: the first is an ordinary search, the second an ordinary
+        zero result. A view carrying either would ask the model to frame a
+        combination that was never composed.
+        """
+        if self.outcome not in (
+            SeatingSolutionOutcome.BUNDLES,
+            SeatingSolutionOutcome.NONE_WITHIN_BUDGET,
+        ):
+            raise ValueError("only a composed or over-budget outcome reaches the model")
+        if (self.outcome is SeatingSolutionOutcome.BUNDLES) != (self.bundle_count > 0):
+            raise ValueError("combinations are on screen exactly when the outcome is BUNDLES")
+        return self
+
+
 _SEARCH_KINDS = frozenset({ResponseOutcomeKind.SEARCH_RESULTS, ResponseOutcomeKind.ZERO_RESULTS})
 """The two outcomes an executed search produces, either of which may carry
 search provenance. A detail, a comparison or a room ran no search."""
@@ -418,6 +472,9 @@ class ResponseGroundingView(BaseModel):
     bundle: BundleGroundingView | None = None
     """The whole-room outcome, for `ROOM_BUNDLE` and nothing else."""
 
+    seating: SeatingSolutionGroundingView | None = None
+    """The composed combination, for `SEATING_COMBINATION` and nothing else."""
+
     guidance: tuple[DesignGuidance, ...] = ()
     """The design specialist's answer, for `DESIGN_ADVICE`.
 
@@ -468,6 +525,9 @@ class ResponseGroundingView(BaseModel):
 
         if (self.kind is ResponseOutcomeKind.ROOM_BUNDLE) != (self.bundle is not None):
             raise ValueError("a room bundle outcome carries its bundle, and only it does")
+
+        if (self.kind is ResponseOutcomeKind.SEATING_COMBINATION) != (self.seating is not None):
+            raise ValueError("a seating combination carries its solution, and only it does")
 
         if self.selected_kinds and len(self.selected_kinds) != self.selected_count:
             raise ValueError("every choice is one kind, so the two counts agree")

@@ -25,6 +25,7 @@ from app.schemas.response import (
     ResponseOutcomeKind,
     SideEffectNotice,
 )
+from app.schemas.seating_solution import SeatingSolutionOutcome
 
 FAILURE_WORDING: dict[TurnFailureCode, str] = {
     TurnFailureCode.SEARCH_UNAVAILABLE: (
@@ -193,6 +194,24 @@ worth spending a second table to avoid. Digit-free: the figures are rendered
 beside the prose either way.
 """
 
+SEATING_FALLBACK_WORDING: dict[SeatingSolutionOutcome, str] = {
+    SeatingSolutionOutcome.BUNDLES: (
+        "No single piece seats that many, so I've put together a few "
+        "combinations that do - have a look."
+    ),
+    SeatingSolutionOutcome.NONE_WITHIN_BUDGET: (
+        "I couldn't reach that many seats within your budget, even by combining "
+        "pieces. Tell me which matters more and I'll take it from there."
+    ),
+}
+"""What a seating-combination turn says when generation could not be used.
+
+Keyed by outcome rather than by `ResponseOutcomeKind`, for the same reason the
+room fallbacks are keyed by status: the two cases are different promises, and
+offering combinations that are not there is exactly the mistake worth a second
+table. Digit-free: the seats and prices are on the cards either way.
+"""
+
 DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
     DeterministicResponseKind.MODEL_CLARIFICATION: FALLBACK_WORDING[
         ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION
@@ -223,15 +242,24 @@ def compose(*parts: str | None) -> str:
     return " ".join(part.strip() for part in parts if part and part.strip())
 
 
-def fallback_for(view: ResponseOutcomeKind, bundle: BundleStatus | None = None) -> str:
+def fallback_for(
+    view: ResponseOutcomeKind,
+    bundle: BundleStatus | None = None,
+    seating: SeatingSolutionOutcome | None = None,
+) -> str:
     """The sentence a turn falls back to when generation could not be used.
 
     A whole-room turn reads a second table, because `FALLBACK_WORDING` is keyed
     by outcome kind and the three bundle statuses need three different
     sentences: calling a partial room complete is the one mistake this whole
-    layer exists to prevent.
+    layer exists to prevent. A seating combination reads a third for the same
+    reason - offering combinations when none fit the budget is that mistake's
+    twin.
     """
     if view is ResponseOutcomeKind.ROOM_BUNDLE:
         assert bundle is not None, "a room bundle outcome carries its status"
         return BUNDLE_FALLBACK_WORDING[bundle]
+    if view is ResponseOutcomeKind.SEATING_COMBINATION:
+        assert seating is not None, "a seating combination carries its outcome"
+        return SEATING_FALLBACK_WORDING[seating]
     return FALLBACK_WORDING[view]

@@ -45,6 +45,7 @@ from app.services.relaxation import RelaxationPlanner
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.retailer_context import RetailerContextProvider
 from app.services.search_pipeline import ProductSearchPipeline
+from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.turn_coordinator import CustomerTurnCoordinator
@@ -267,6 +268,7 @@ def customer_turn_coordinator(
 
     repository = ProductRepository(session)
     resolver = ProductReferenceResolver(repository, app_resources.attributes)
+    capability = catalog_capability_service(session, app_resources)
     return CustomerTurnCoordinator(
         decisions,
         query_understanding_service(
@@ -282,11 +284,12 @@ def customer_turn_coordinator(
         pipeline,
         product_hydration_service(session),
         SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
-        catalog_capability_service(session, app_resources),
+        capability,
         design,
         design_discovery_service(session, app_resources),
         BundleReferenceResolver(app_resources.taxonomy),
         BundleOptimizer(),
+        SeatingSolutionPlanner(capability, repository),
         app_resources.dimensions,
         app_resources.taxonomy,
     )

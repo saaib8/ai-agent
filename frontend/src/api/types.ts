@@ -93,6 +93,9 @@ export interface ChatPresentation {
   products: GroundedProduct[]
   comparison: ProductComparisonResult | null
   room: GroundedBundlePresentation | null
+  /** Composed seating combinations, when no single piece met the seat count.
+   *  Each renders as its own package; empty when none fit the budget. */
+  seating_bundles: GroundedBundlePresentation[]
 }
 
 export interface CustomerResponse {

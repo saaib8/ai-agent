@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from app.schemas.design import DesignGuidance
-from app.schemas.response import BundleGroundingView
+from app.schemas.response import BundleGroundingView, SeatingSolutionGroundingView
 from app.schemas.screen import CustomerVisibleScreenView
 
 ResponseNumericAllowance = frozenset[str]
@@ -122,6 +122,17 @@ def bundle_counts(bundle: BundleGroundingView) -> tuple[int, ...]:
         bundle.optional_unmet_count,
         bundle.relaxed_line_count,
     )
+
+
+def seating_counts(seating: SeatingSolutionGroundingView) -> tuple[int, ...]:
+    """The counts a seating-combination reply may state, named one by one.
+
+    The seat target is the customer's own figure - "a set that seats eight" -
+    and the number of combinations is one the application established. Neither a
+    price nor a total is here: those are rendered on the cards, and the guard
+    still refuses any figure the model would have had to read off one.
+    """
+    return (seating.target_seats, seating.bundle_count)
 
 
 def screen_figures(screen: CustomerVisibleScreenView) -> tuple[Decimal | int, ...]:

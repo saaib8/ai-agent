@@ -40,6 +40,7 @@ from app.schemas.grounding import (
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerContext
 from app.schemas.search_action import SearchActionRequest
+from app.schemas.seating_solution import SeatingSolution
 
 MAX_RESPONSE_CHARS = 4000
 
@@ -247,6 +248,15 @@ class CustomerTurnResult(BaseModel):
     lose the distinction before anyone could use it. `None` alongside
     `grounding.design_handoff_requested` means execution stopped earlier, and
     `grounding.failure` says why. M12E-3 owns the model-safe projection.
+    """
+
+    seating_solution: SeatingSolution | None = None
+    """A seating combination composed when no single product met a seat count.
+
+    Here rather than on `TurnGrounding` for the same reason as `bundle_outcome`:
+    it carries product ids for the application to render, and the grounding is
+    kept free of ids so prose can only cite a turn-local handle. The response
+    model is given a count-only projection of it, never this (CLAUDE.md 20.4).
     """
 
 

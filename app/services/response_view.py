@@ -35,9 +35,11 @@ from app.schemas.response import (
     ResponseOutcomeKind,
     ResponseRoute,
     ResponseRouting,
+    SeatingSolutionGroundingView,
     SideEffectNotice,
 )
 from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.seating_solution import SeatingSolution
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.screen_view import screen_from_presentation
 from app.taxonomy.attributes import AttributeFamily
@@ -218,6 +220,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             result=result,
             presented_count=len(grounding.selection.products),
         )
+    if result.seating_solution is not None:
+        # A seat count no single piece could meet, recovered by combining pieces.
+        # Checked before the search branch it rides beside: that search matched
+        # nothing, and reporting it as a plain zero result would discard the
+        # combination composed in its place (CLAUDE.md 27).
+        return _seating_combination(result, result.seating_solution, clarification)
     if grounding.search is not None and not lapsed:
         return _search(result, grounding, clarification)
     if result.bundle_change is not None and grounding.failure is not None:
@@ -393,6 +401,39 @@ def _room_bundle(
     )
 
 
+def _seating_combination(
+    result: CustomerTurnResult,
+    solution: SeatingSolution,
+    clarification: DeterministicClarification | None,
+) -> ResponseGroundingView:
+    """One composed seating combination, as the response model may see it.
+
+    Counts and one enum: the pieces of each combination, their prices and the
+    totals are rendered by the application from the same verified solution, so
+    none of it passes through here (CLAUDE.md 20.4). The seat target is the
+    customer's own figure and travels so the reply can name what the
+    combinations achieve.
+
+    Built through `_view` so it inherits the turn-wide guards uniformly - the
+    follow-up subject the decision chose, and what is already on record - because
+    this is a consultative moment: having shown a combination, the agent may ask
+    one warm preference question to tailor it (CLAUDE.md 10). Those guards are
+    what stop it asking for something already given; the seat count in particular
+    is always known here, which `_seating_known` reflects.
+    """
+    return _view(
+        ResponseOutcomeKind.SEATING_COMBINATION,
+        clarification,
+        result=result,
+        seating=SeatingSolutionGroundingView(
+            outcome=solution.outcome,
+            target_seats=solution.target_seats,
+            bundle_count=len(solution.bundles),
+            budget_supplied=solution.budget_amount is not None,
+        ),
+    )
+
+
 def _view(
     kind: ResponseOutcomeKind,
     clarification: DeterministicClarification | None,
@@ -466,9 +507,17 @@ def _selection_changed(result: CustomerTurnResult | None) -> bool:
 
 
 def _seating_known(result: CustomerTurnResult | None) -> bool:
-    """Whether the customer has already said how many people use the room."""
+    """Whether the customer has already said how many people use the room.
+
+    A composed seating combination always knows the target - it was built to
+    seat exactly the number the customer named - so it counts as known even
+    before that number reaches `room_project`. Without this, a tailoring
+    follow-up could ask "how many seats?" right after composing for eight.
+    """
     if result is None:
         return False
+    if result.seating_solution is not None:
+        return True
     room = result.state.room_project
     return room is not None and room.regular_seating_count is not None
 

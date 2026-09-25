@@ -109,7 +109,9 @@ class SeatingSolution(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     target_seats: int = Field(ge=1)
-    budget_amount: Decimal = Field(ge=0)
+    budget_amount: Decimal | None = Field(default=None, ge=0)
+    """The customer's ceiling, when they named one. ``None`` means no budget was
+    given - the combination still composes, it simply has nothing to be within."""
     currency: str = Field(min_length=1)
 
     outcome: SeatingSolutionOutcome
@@ -122,7 +124,7 @@ class SeatingSolution(BaseModel):
         for bundle in self.bundles:
             if bundle.total_seats < self.target_seats:
                 raise ValueError("a proposed bundle seats fewer than the target")
-            if bundle.total_price > self.budget_amount:
+            if self.budget_amount is not None and bundle.total_price > self.budget_amount:
                 raise ValueError("a proposed bundle exceeds the budget")
             if bundle.currency != self.currency:
                 raise ValueError("a proposed bundle is priced in another currency")

@@ -55,14 +55,15 @@ def _present_bundle(bundle: SeatingBundle, solution: SeatingSolution) -> Grounde
         )
         for position, line in enumerate(bundle.lines, start=1)
     )
+    has_budget = solution.budget_amount is not None
     totals = GroundedBundleTotals(
         new_spend_total=bundle.total_price,
         currency=bundle.currency,
         budget_max_amount=solution.budget_amount,
-        budget_currency=solution.currency,
+        budget_currency=solution.currency if has_budget else None,
         budget_max_exclusive=False,
         # The planner never returns a bundle over budget, so a rendered one is
-        # within it by construction.
-        within_budget=True,
+        # within it by construction; with no budget there is nothing to be within.
+        within_budget=True if has_budget else None,
     )
     return GroundedBundlePresentation(status=BundleStatus.COMPLETE, items=items, totals=totals)
