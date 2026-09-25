@@ -1,4 +1,4 @@
-import type { ChatResponse } from '../api/types'
+import type { ChatResponse, RenderView } from '../api/types'
 import type { RejectedRef } from '../hooks/useChat'
 import type { QuickReply } from '../lib/quickReplies'
 import { HelpIcon } from './icons'
@@ -6,6 +6,7 @@ import { ComparisonTable } from './presentation/ComparisonTable'
 import { ProductGrid } from './presentation/ProductGrid'
 import type { SearchRefineControls } from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
+import { RoomRender } from './presentation/RoomRender'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 
@@ -66,6 +67,10 @@ interface AssistantBubbleProps {
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: QuickReply[]
   onQuickReply?: (value: string) => void
+  /** Present on the current room package only: render it from a view. */
+  onVisualize?: (view: RenderView, viewLabel: string) => void
+  /** A render on this turn no longer matches the room package. */
+  renderOutdated?: boolean
 }
 
 export function AssistantBubble({
@@ -76,11 +81,14 @@ export function AssistantBubble({
   refine,
   quickReplies,
   onQuickReply,
+  onVisualize,
+  renderOutdated = false,
 }: AssistantBubbleProps) {
   const { response, presentation } = data
   const hasProducts = !!presentation?.products?.length
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
+  const render = presentation?.render ?? null
 
   return (
     <div className="flex animate-rise gap-3">
@@ -105,7 +113,22 @@ export function AssistantBubble({
           <ProductGrid products={presentation!.products} pick={pick} refine={refine} busy={busy} />
         )}
         {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}
-        {hasRoom && <RoomBundle room={presentation!.room!} onSwapStart={onSwapStart} busy={busy} />}
+        {hasRoom && (
+          <RoomBundle
+            room={presentation!.room!}
+            onSwapStart={onSwapStart}
+            busy={busy}
+            onVisualize={onVisualize}
+          />
+        )}
+        {render && (
+          <RoomRender
+            render={render}
+            outdated={renderOutdated}
+            busy={busy}
+            onRerender={onVisualize}
+          />
+        )}
 
         <RawJson value={data} />
       </div>

@@ -29,6 +29,7 @@ from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
 from app.schemas.search_action import SearchActionRequest
+from app.schemas.visualization import RoomRenderPresentation
 
 MAX_MESSAGE_CHARS = 2000
 """A message, not a transcript. Long enough for a detailed request about a
@@ -146,6 +147,8 @@ class ChatPresentation(BaseModel):
 
     comparison: ProductComparisonResult | None = None
     room: GroundedBundlePresentation | None = None
+    render: RoomRenderPresentation | None = None
+    """A picture of the room package, when this turn made one."""
 
     def is_empty(self) -> bool:
         """Whether there is anything to draw.
@@ -154,7 +157,12 @@ class ChatPresentation(BaseModel):
         cards, and sending an empty object rather than nothing would have every
         client check the same three fields to discover that.
         """
-        return not self.products and self.comparison is None and self.room is None
+        return (
+            not self.products
+            and self.comparison is None
+            and self.room is None
+            and self.render is None
+        )
 
 
 class ChatResponse(BaseModel):

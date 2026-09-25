@@ -31,6 +31,7 @@ from app.core.config import SessionSettings
 from app.core.exceptions import SessionConflictError
 from app.core.logging import get_logger
 from app.repositories.sessions import SessionStore
+from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_turn import (
     CustomerResponse,
     CustomerTurnInput,
@@ -328,6 +329,50 @@ async def load_for_turn(
         loaded_revision=envelope.session_revision,
         existed=stored is not None,
     )
+
+
+async def commit_exchange(
+    sessions: SessionStore,
+    settings: SessionSettings,
+    *,
+    store_id: int,
+    session_id: str,
+    loaded: LoadedSession,
+    state: AgentStateV1,
+    customer_said: str,
+    response: CustomerResponse,
+) -> int:
+    """Persist one exchange that did not come from a typed message.
+
+    For turns driven by a tap rather than words - a pick in a photo, a request
+    to see the room. The history is language only, so the customer's side is
+    recorded as the words `customer_said`, and the assistant's exactly as it
+    was shown, prose and follow-up together.
+
+    Compare-and-set against the revision this turn loaded: a turn that lost
+    the race raises rather than returning a reply about a session that has
+    moved on (M13 18, 33).
+    """
+    said = response.message
+    if response.follow_up_question:
+        said = f"{said} {response.follow_up_question}"
+    messages = (
+        *loaded.envelope.conversation.messages,
+        ConversationMessage(role=ConversationRole.USER, content=customer_said),
+        ConversationMessage(role=ConversationRole.ASSISTANT, content=said),
+    )
+    envelope = loaded.envelope.advanced(
+        state=state,
+        conversation=ConversationContext(
+            messages=trim_history(messages, settings.max_history_messages)
+        ),
+    )
+    committed = await sessions.save_if_revision(
+        store_id, session_id, expected_revision=loaded.loaded_revision, envelope=envelope
+    )
+    if not committed:
+        raise SessionConflictError(expected_revision=loaded.loaded_revision, store_id=store_id)
+    return envelope.session_revision
 
 
 def trim_history(

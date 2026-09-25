@@ -80,6 +80,19 @@ product (`text-embedding-3-large`, 1024 dims), with `store_id`, `category` and
 with `ZORY_FURNITURE_FINDER__*` (see `.env.example`); requires the `semantic`
 extra.
 
+## Room visualisation
+
+`POST /v1/visualizations` (`session_id`, `store_id`, `view`: `corner` |
+`eye_level` | `isometric`) renders the session's current room package - its
+pieces, the room's size and style, all read by the application, never sent by
+the client. Product photos are fetched (https, public hosts only, bounded) and
+sent as references with a versioned prompt (`app/prompts/visualization/v1.py`)
+that asks for exactly those pieces and nothing else. The primary image model
+renders (`gpt-image-2.5-sunburst`), falling back once to the other
+(`gemini-3-pro-image`). The image is stored in S3 and returned as a public URL,
+as a chat turn (`ChatResponse.presentation.render`) that is recorded in the
+history but changes no state. Configure with `ZORY_VISUALIZATION__*`.
+
 ## Configuration
 
 Everything runtime-dependent is declared in `app/core/config.py` and nowhere

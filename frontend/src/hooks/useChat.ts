@@ -1,11 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
-import { postChat, postFinderPhoto, postFinderPick } from '../api/client'
+import { postChat, postFinderPhoto, postFinderPick, postVisualize } from '../api/client'
 import type {
   BundleAction,
   ChatResponse,
   ErrorBody,
   FinderObject,
   FinderPhotoResponse,
+  RenderView,
   SearchAction,
 } from '../api/types'
 import type { ConsoleConfig } from './useConfig'
@@ -29,9 +30,13 @@ export type Turn =
   | { kind: 'error'; id: string; status: number | 'network'; error: ErrorBody }
   | { kind: 'photo'; id: string; url: string; photo: PhotoState }
 
+/** A long-running turn the waiting indicator should name. */
+export type Activity = 'rendering' | null
+
 export interface UseChat {
   turns: Turn[]
   sending: boolean
+  activity: Activity
   /** Revision the last committed turn produced; drives expected_session_revision. */
   revision: number | null
   send: (
@@ -48,6 +53,8 @@ export interface UseChat {
     object: FinderObject,
     config: ConsoleConfig,
   ) => Promise<void>
+  /** Render the room package from a camera view. A committed turn. */
+  visualize: (view: RenderView, viewLabel: string, config: ConsoleConfig) => Promise<void>
   reset: () => void
 }
 
@@ -57,6 +64,7 @@ const nextId = (): string => `t${++counter}`
 export function useChat(): UseChat {
   const [turns, setTurns] = useState<Turn[]>([])
   const [sending, setSending] = useState(false)
+  const [activity, setActivity] = useState<Activity>(null)
   const [revision, setRevision] = useState<number | null>(null)
   // A ref as well as state: send() reads the latest revision without being
   // re-created on every commit.
@@ -174,6 +182,30 @@ export function useChat(): UseChat {
     [],
   )
 
+  const visualize = useCallback(
+    async (view: RenderView, viewLabel: string, config: ConsoleConfig) => {
+      setTurns((prev) => [
+        ...prev,
+        { kind: 'user', id: nextId(), text: `Visualize my room — ${viewLabel.toLowerCase()} view` },
+      ])
+      setSending(true)
+      setActivity('rendering')
+
+      const result = await postVisualize(config.apiBase, {
+        session_id: config.sessionId,
+        store_id: config.storeId,
+        view,
+        ...expected(config),
+      })
+
+      if (result.ok) commit(result.data)
+      else fail(result.status, result.error)
+      setActivity(null)
+      setSending(false)
+    },
+    [],
+  )
+
   const reset = useCallback(() => {
     photoUrls.current.forEach((url) => URL.revokeObjectURL(url))
     photoUrls.current = []
@@ -182,5 +214,5 @@ export function useChat(): UseChat {
     revisionRef.current = null
   }, [])
 
-  return { turns, sending, revision, send, uploadPhoto, pickObject, reset }
+  return { turns, sending, activity, revision, send, uploadPhoto, pickObject, visualize, reset }
 }

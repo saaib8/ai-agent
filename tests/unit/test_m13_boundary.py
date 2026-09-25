@@ -284,16 +284,42 @@ def test_no_archive_or_long_term_memory_is_implemented(forbidden: str) -> None:
         assert not {name for name in names if forbidden in name}, f"{module.name}: {forbidden}"
 
 
+RENDER_STORE = APP / "integrations" / "render_store.py"
+
+
 def test_no_object_store_client_is_imported() -> None:
-    """No S3 conversation archive in V1. boto3 exists for Secrets Manager
-    only, and only in stage and prod."""
+    """No S3 conversation archive in V1.
+
+    One S3 client exists, in the render store: pictures of a room package
+    the customer asked to see, stored by product decision. Every other module
+    stays without one.
+    """
     for module in APP.rglob("*.py"):
+        if module == RENDER_STORE:
+            continue
         tree = ast.parse(module.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and ast.unparse(node).startswith(
                 ("boto3.client('s3'", 'boto3.client("s3"')
             ):
                 pytest.fail(f"{module.name} builds an S3 client")
+
+
+def test_the_render_store_cannot_archive_a_conversation() -> None:
+    """The one S3 client stores image bytes under a key it is given - and has
+    no way to reach the conversation, the session or its store."""
+    imported = {
+        node.module
+        for node in ast.walk(ast.parse(RENDER_STORE.read_text()))
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    for forbidden in (
+        "app.schemas.conversation",
+        "app.schemas.session",
+        "app.schemas.agent_state",
+        "app.repositories.sessions",
+    ):
+        assert forbidden not in imported, forbidden
 
 
 def test_history_is_bounded_without_a_model() -> None:

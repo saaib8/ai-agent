@@ -93,6 +93,43 @@ export interface ChatPresentation {
   products: GroundedProduct[]
   comparison: ProductComparisonResult | null
   room: GroundedBundlePresentation | null
+  /** A picture of the room package, when the turn made one. */
+  render?: RoomRenderPresentation | null
+}
+
+// ── Room visualisation ───────────────────────────────────────────────────────
+
+export type RenderView = 'corner' | 'eye_level' | 'isometric' | 'top_down'
+
+export const RENDER_VIEWS: { value: RenderView; label: string }[] = [
+  { value: 'corner', label: 'Corner' },
+  { value: 'eye_level', label: 'Eye-level' },
+  { value: 'isometric', label: 'Isometric' },
+  { value: 'top_down', label: 'Top-down' },
+]
+
+export interface RoomRenderItem {
+  name_english: string
+  image_url: string
+  product_url: string
+  quantity: number
+}
+
+export interface RoomRenderPresentation {
+  image_url: string
+  width: number
+  height: number
+  view: RenderView
+  view_label: string
+  /** Exactly the pieces the render was asked to show. */
+  items: RoomRenderItem[]
+}
+
+export interface VisualizeRequest {
+  session_id: string
+  store_id: number
+  view: RenderView
+  expected_session_revision?: number
 }
 
 export interface CustomerResponse {

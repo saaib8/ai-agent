@@ -5,6 +5,7 @@ import type {
   FinderPhotoResponse,
   FinderPickRequest,
   HealthResponse,
+  VisualizeRequest,
 } from './types'
 
 // A discriminated result so callers handle failure explicitly rather than
@@ -65,6 +66,11 @@ export async function postFinderPhoto(
 /** Pick one object. The answer is a chat turn, exactly like postChat's. */
 export async function postFinderPick(base: string, body: FinderPickRequest): Promise<ChatResult> {
   return postJson<ChatResponse>(base, '/v1/furniture-finder/picks', body, isChatResponse)
+}
+
+/** Render the session's room package. The answer is a chat turn with a render. */
+export async function postVisualize(base: string, body: VisualizeRequest): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/visualizations', body, isChatResponse)
 }
 
 // ── transport ────────────────────────────────────────────────────────────────

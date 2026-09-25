@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import type { FinderObject, GroundedProduct } from './api/types'
+import type { FinderObject, GroundedProduct, RenderView } from './api/types'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
 import { useChat } from './hooks/useChat'
@@ -102,6 +102,15 @@ export default function App() {
     [chat, config.config],
   )
 
+  const handleVisualize = useCallback(
+    (view: RenderView, viewLabel: string) => {
+      if (chat.sending) return
+      setSwap(null)
+      void chat.visualize(view, viewLabel, config.config)
+    },
+    [chat, config.config],
+  )
+
   const handleNewSession = useCallback(() => {
     config.rotateSession()
     chat.reset()
@@ -121,6 +130,7 @@ export default function App() {
         <ChatPanel
           turns={chat.turns}
           sending={chat.sending}
+          activity={chat.activity}
           storeId={config.config.storeId}
           draft={draft}
           onDraftChange={setDraft}
@@ -132,6 +142,7 @@ export default function App() {
           onPickAlternative={handlePickAlternative}
           onShowMoreOptions={handleShowMoreOptions}
           onExcludeProduct={handleExcludeProduct}
+          onVisualize={handleVisualize}
         />
       </main>
     </div>

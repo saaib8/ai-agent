@@ -44,6 +44,7 @@ from app.services.relative_price import RelativePriceResolver
 from app.services.relaxation import RelaxationPlanner
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.retailer_context import RetailerContextProvider
+from app.services.room_visualization import RoomVisualizer, VisualizationTurnRuntime
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
@@ -480,3 +481,31 @@ def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> Fin
 
 
 FinderTurnRuntimeDep = Annotated[FinderTurnRuntime, Depends(finder_turn_runtime)]
+
+
+# ── Room visualisation ──────────────────────────────────────────────────────
+
+
+def visualization_turn_runtime(
+    session: SessionDep, app_resources: ResourcesDep
+) -> VisualizationTurnRuntime:
+    """A render of the session's room, or a refusal naming what is missing."""
+    settings = app_resources.settings.visualization
+    generator = app_resources.render_generator
+    store = app_resources.render_store
+    photos = app_resources.render_photos
+    if settings is None or generator is None or store is None or photos is None:
+        raise ConfigurationError(
+            detail="visualization must be configured to render rooms",
+            public_message="Room visualisation is not configured.",
+        )
+    return VisualizationTurnRuntime(
+        RoomVisualizer(ProductRepository(session), photos, generator, store, settings),
+        session_store(app_resources),
+        app_resources.settings.session,
+    )
+
+
+VisualizationTurnRuntimeDep = Annotated[
+    VisualizationTurnRuntime, Depends(visualization_turn_runtime)
+]

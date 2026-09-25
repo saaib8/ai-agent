@@ -1,7 +1,14 @@
 import { useState } from 'react'
-import type { BundleStatus, GroundedBundleItem, GroundedBundlePresentation } from '../../api/types'
+import { RENDER_VIEWS } from '../../api/types'
+import type {
+  BundleStatus,
+  GroundedBundleItem,
+  GroundedBundlePresentation,
+  RenderView,
+} from '../../api/types'
 import { humanise, money, toNumber } from '../../lib/format'
-import { SwapIcon } from '../icons'
+import { ImageIcon, SwapIcon } from '../icons'
+import { ViewPicker } from './ViewPicker'
 
 interface RoomBundleProps {
   room: GroundedBundlePresentation
@@ -10,6 +17,8 @@ interface RoomBundleProps {
   onSwapStart?: (bundleOrdinal: number, role: string) => void
   /** A turn is in flight — disable per-item actions. */
   busy?: boolean
+  /** Present on the current package only: render it from a camera view. */
+  onVisualize?: (view: RenderView, viewLabel: string) => void
 }
 
 const STATUS_META: Record<BundleStatus, { label: string; cls: string }> = {
@@ -49,7 +58,7 @@ function BudgetBar({ spend, budget, within }: { spend: number; budget: number; w
   )
 }
 
-export function RoomBundle({ room, onSwapStart, busy = false }: RoomBundleProps) {
+export function RoomBundle({ room, onSwapStart, busy = false, onVisualize }: RoomBundleProps) {
   const status = STATUS_META[room.status]
   const t = room.totals
   const spend = toNumber(t.new_spend_total)
@@ -145,6 +154,32 @@ export function RoomBundle({ room, onSwapStart, busy = false }: RoomBundleProps)
           </div>
         )}
       </div>
+
+      {onVisualize && room.items.length > 0 && <VisualizeBar busy={busy} onVisualize={onVisualize} />}
+    </div>
+  )
+}
+
+function VisualizeBar({
+  busy,
+  onVisualize,
+}: {
+  busy: boolean
+  onVisualize: (view: RenderView, viewLabel: string) => void
+}) {
+  const [view, setView] = useState<RenderView>('corner')
+  const label = RENDER_VIEWS.find((v) => v.value === view)?.label ?? 'Corner'
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-canvas/60 px-4 py-3">
+      <ViewPicker value={view} onChange={setView} disabled={busy} />
+      <button
+        onClick={() => onVisualize(view, label)}
+        disabled={busy}
+        className="inline-flex items-center gap-2 rounded-full bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:bg-line-strong"
+      >
+        <ImageIcon size={16} />
+        Visualize
+      </button>
     </div>
   )
 }

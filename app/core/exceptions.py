@@ -125,6 +125,13 @@ class VisualSearchUnavailableError(IntegrationUnavailableError):
     public_message = "We couldn't search for that item right now. Please try again shortly."
 
 
+class RenderUnavailableError(IntegrationUnavailableError):
+    """No image model could render the room, or the render could not be stored."""
+
+    code = "render_unavailable"
+    public_message = "We couldn't create the visualisation right now. Please try again."
+
+
 # ── Furniture Finder request errors ─────────────────────────────────────────
 
 
@@ -337,3 +344,11 @@ class CatalogSchemaError(ConfigurationError):
     """The live catalog lacks a column this service requires. Fails startup."""
 
     code = "catalog_schema_error"
+
+
+class NothingToVisualizeError(ZoryError):
+    """A visualisation was asked for with no room package in the session."""
+
+    code = "nothing_to_visualize"
+    http_status = HTTPStatus.CONFLICT
+    public_message = "There's no room package to visualise yet. Ask me to furnish a room first."

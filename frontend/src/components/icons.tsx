@@ -143,3 +143,15 @@ export const ImageIcon = (p: IconProps) => (
     <path d="m21 16-4.6-4.6a1.5 1.5 0 0 0-2.1 0L6 19.5" />
   </Base>
 )
+
+export const DownloadIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 4v11M7 10.5 12 15.5 17 10.5M5 20h14" />
+  </Base>
+)
+
+export const ExpandIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />
+  </Base>
+)
