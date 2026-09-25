@@ -18,6 +18,9 @@
 #   drops_previous_card: N  card N of the previous turn is gone, and cards are shown
 #   subcategory: key      every card is this commerce subcategory
 #   admits_no_match       the reply says plainly that nothing matched exactly
+#   mentions: [...]       the reply mentions at least one of these words
+#   max_dimension: {field, value}         every card's field (e.g. length_cm) is at most value
+#   some_dimension_above: {field, value}  at least one card's field is above value
 
 cases:
   - id: B1_only_beige_followup
@@ -167,3 +170,56 @@ cases:
     issue: "type change with an unmatched strict colour"
     turns: ["show me coffee tables", "make them red ones instead"]
     checks: {not_fallback: true, min_products: 1, admits_no_match: true}
+
+  - id: dropped_width_disclosed
+    issue: "a measurement dropped on a type change must be disclosed (sofa sets have no single footprint)"
+    turns: ["show me sofas around 220 cm wide", "make them sofa sets instead"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa-set, mentions: [width, wide, size, space, fit]}
+
+  # ── sizes belong to a product type (they never follow the customer to another) ──
+  - id: side_table_size_not_carried
+    issue: "a side-table size must not limit coffee tables"
+    turns: ["side tables no wider than 50 cm please", "show me coffee tables instead"]
+    checks: {not_fallback: true, min_products: 4, subcategory: center-table, some_dimension_above: {field: length_cm, value: 50}}
+
+  - id: sofa_size_comes_back
+    issue: "a type's size comes back when the customer returns to it, and is mentioned"
+    turns: ["show me sofas no wider than 200 cm", "show me armchairs instead", "ok, back to sofas please"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, max_dimension: {field: length_cm, value: 200}, mentions: [width, wide, size, earlier, limit]}
+
+  - id: sofa_any_size_clears
+    issue: "any size drops the saved limit"
+    turns: ["show me sofas no wider than 200 cm", "show me armchairs instead", "back to sofas, any size is fine"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, some_dimension_above: {field: length_cm, value: 200}}
+
+  - id: sofa_size_kept_on_price_change
+    issue: "control: a size stays while refining the same type"
+    turns: ["show me sofas no wider than 200 cm", "under 5000 SAR please"]
+    checks: {not_fallback: true, min_products: 1, max_price: 5000, max_dimension: {field: length_cm, value: 200}}
+
+  # ── one-seat product types (chairs, stools, single-seater sofas) ─────────────
+  - id: single_seater_type_change
+    issue: "'make them single seater sofas' is a change of type, not a one-seat sofa"
+    turns: ["show me sofas under 5000 SAR", "make them single seater sofas"]
+    checks: {not_fallback: true, min_products: 1, subcategory: single-seater-sofa, max_price: 5000}
+
+  - id: sofa_for_one_new_search
+    issue: "a sofa for one person is the single-seater type"
+    turns: ["I need a sofa for one person"]
+    checks: {not_fallback: true, min_products: 1, subcategory: single-seater-sofa}
+
+  - id: sofa_seats_not_carried_to_single_seaters
+    issue: "a sofa's seat count does not hide every one-seat piece"
+    turns: ["show me sofas for 4 people", "show me single seater sofas instead"]
+    checks: {not_fallback: true, min_products: 3, subcategory: single-seater-sofa}
+
+  # ── zero results always leave a way forward ──────────────────────────────────
+  - id: zero_results_offers_next_step
+    issue: "issue 9: nothing matched everything, so offer what setting one part aside would find"
+    turns: ["show me modern sofas for 4 people under 6000 SAR, around 220 cm wide"]
+    checks: {not_fallback: true, mentions: ["without", "widen", "raise", "drop", "loosen", "relax", "set aside", "?"]}
+
+  - id: zero_results_budget_next_step
+    issue: "issue 9: a budget nothing meets"
+    turns: ["show me sofas under 500 SAR"]
+    checks: {not_fallback: true, mentions: ["start at", "starts at", "from", "?"]}

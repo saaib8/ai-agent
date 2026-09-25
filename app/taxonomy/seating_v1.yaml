@@ -1,0 +1,29 @@
+# How many people a product type seats by its nature. Version v1.
+#
+# Reviewed domain data, not a runtime guess (docs/known-issues.md, issue 4
+# decision). In store 50 not one chair or single-seater sofa records a
+# `seating_capacity`, so without this a seat count could never be answered for
+# them - and every stocked sofa, sofa set, sofa bed and sectional seats two or
+# more.
+#
+# `recliner` and `chaise-lounge` are deliberately in neither list: some seat
+# two or three, and that has not been confirmed. A type in neither list is
+# treated exactly as before.
+version: v1
+
+# Each seats exactly one person, so a seat count is never filtered for them.
+one_seat:
+  - chair
+  - dining-chair
+  - lounge-chair
+  - office-chair
+  - outdoor-chair
+  - stool
+  - single-seater-sofa
+
+# Each seats two or more, so "one seat" of these is a different product type.
+multi_seat:
+  - sofa
+  - sectional-sofa
+  - sofa-set
+  - sofa-bed

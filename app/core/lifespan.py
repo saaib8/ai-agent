@@ -28,6 +28,7 @@ from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
 from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
+from app.taxonomy.seating import SeatingRules, load_seating_rules
 
 logger = get_logger(__name__)
 
@@ -42,6 +43,9 @@ class AppResources:
     attributes: CatalogAttributes
     dimensions: DimensionSemantics
     chat_graph: ChatGraphRunner
+    # Which product types seat one person by nature. Defaulted so a test
+    # building resources by hand constructs exactly as it did before.
+    seating: SeatingRules | None = None
     # Both None when semantic ranking is not configured. Discovery still
     # works; results come back in deterministic order. Defaulted so a
     # deployment without them constructs exactly as it did before.
@@ -115,6 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Validated against the commerce taxonomy: a mapping for an unapproved
     # subcategory is a configuration error, not something to discover later.
     dimensions = load_dimension_semantics(taxonomy=taxonomy)
+    seating = load_seating_rules(taxonomy=taxonomy)
     logger.info(
         "taxonomy_loaded",
         taxonomy_version=taxonomy.version,
@@ -124,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         style_count=len(attributes.styles),
         dimension_semantics_version=dimensions.version,
         dimension_subcategories=len(dimensions.subcategories),
+        seating_version=seating.version,
     )
 
     database = Database.create(settings.db)
@@ -207,6 +213,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         taxonomy=taxonomy,
         attributes=attributes,
         dimensions=dimensions,
+        seating=seating,
         chat_graph=chat_graph,
         detector=detector,
         finder_vision=finder_vision,

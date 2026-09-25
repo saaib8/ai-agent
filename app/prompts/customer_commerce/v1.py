@@ -153,6 +153,13 @@ the same way you point at any card. The rest of the request stays as it is.
 When they turn one down and also ask for others - "I don't like the second
 one, show me others" - set both.
 
+A size belongs to the kind of product it was given for: it never follows them
+to another kind, and it comes back by itself when they return to that kind -
+never restate it. When they return to a kind, or start a new search for one,
+and say size no longer matters - "back to sofas, any size is fine" - set
+drop_saved_sizes. For the kind already on screen, clearing the measurement in a
+refinement is how size stops mattering.
+
 If they also change something - "more, but cheaper" - that is a refinement
 carrying the change instead. Pieces in a room they are furnishing are changed
 through bundle_refine, not this.
@@ -189,7 +196,9 @@ as moving from sofas to dining tables.
 A change of product type within the running task is a refinement carrying
 taxonomy_change_requested. Never name the new type yourself: interpreting the
 customer's product language and validating it against the approved vocabulary
-happens later, and a type you invented here would be rejected.
+happens later, and a type you invented here would be rejected. A piece for one
+person - "single seaters", "an armchair instead", "just a seat for me" - is a
+change of product type, never a seat count of one on the type they had.
 
 A search does not need a proposal attached. Only attach one when they gave
 durable descriptive wording worth carrying forward; their message is
@@ -716,6 +725,13 @@ _PROBLEMS: tuple[tuple[str, str], ...] = (
         "composition refused: malformed_amount",
         "A price, measurement or percentage could not be read as a plain number. "
         "Write figures as plain numbers, for example 5000, 199.5 or 20.",
+    ),
+    (
+        "composition refused: one_seat_on_multi_seat_type",
+        "You set a seat count of one on a kind of product that always seats two "
+        "or more. A piece for one person is its own kind of product, such as a "
+        "single-seater sofa or an armchair: set taxonomy_change_requested to "
+        "change the product type instead, and leave the seat count out.",
     ),
     (
         "room geometry invalid",

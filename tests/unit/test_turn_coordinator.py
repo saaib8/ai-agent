@@ -189,7 +189,12 @@ class FakePipeline:
         self.calls: list[Any] = []
 
     async def execute(
-        self, resolved: Any, context: Any, *, dropped_constraints: Any = ()
+        self,
+        resolved: Any,
+        context: Any,
+        *,
+        dropped_constraints: Any = (),
+        earlier_sizes_applied: bool = False,
     ) -> ProductSearchExecutionResult:
         self.calls.append(resolved)
         if self.error is not None:
@@ -384,12 +389,14 @@ def _coordinator(
     design: Any = _UNSET,
     design_discovery: Any = None,
     optimizer: Any = None,
+    decisions: Any = None,
+    seating: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
     dimensions = load_dimension_semantics(taxonomy=taxonomy)
     parts = {
-        "decisions": FakeDecisions(decision, decision_error),
+        "decisions": decisions or FakeDecisions(decision, decision_error),
         "m7": FakeQueryUnderstanding(interpretation, m7_error),
         "references": references or FakeReferences(),
         "relative_price": relative_price or FakeRelativePrice(None),
@@ -406,7 +413,7 @@ def _coordinator(
     coordinator = CustomerTurnCoordinator(
         parts["decisions"],  # type: ignore[arg-type]
         parts["m7"],  # type: ignore[arg-type]
-        SearchRefinementComposer(attributes, dimensions),
+        SearchRefinementComposer(attributes, dimensions, seating),
         parts["references"],  # type: ignore[arg-type]
         parts["relative_price"],  # type: ignore[arg-type]
         parts["comparison"],  # type: ignore[arg-type]
@@ -2035,6 +2042,8 @@ def test_every_composition_defect_is_accounted_for() -> None:
         "RELATIVE_PRICE_NOT_RESOLVED",
         "UNAPPROVED_ATTRIBUTE_VALUE",
         "MALFORMED_AMOUNT",
+        # Corrected like an unapproved value: a one-seat piece is its own type.
+        "ONE_SEAT_ON_MULTI_SEAT_TYPE",
     }
 
 

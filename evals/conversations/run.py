@@ -120,12 +120,24 @@ def _check(
     if (subcategory := checks.get("subcategory")) and any(
         (p.get("commerce") or {}).get("subcategory") != subcategory for p in products
     ):
-        kinds = sorted({(p.get("commerce") or {}).get("subcategory") for p in products})
+        kinds = sorted({str((p.get("commerce") or {}).get("subcategory")) for p in products})
         failures.append(f"product types {kinds}, expected only {subcategory}")
+    if limit := checks.get("max_dimension"):
+        field, ceiling = limit["field"], Decimal(str(limit["value"]))
+        sizes = [(p.get("dimensions") or {}).get(field) for p in products]
+        if any(v is None or Decimal(str(v)) > ceiling for v in sizes):
+            failures.append(f"{field} {sizes} not all at most {ceiling}")
+    if floor := checks.get("some_dimension_above"):
+        field, bound = floor["field"], Decimal(str(floor["value"]))
+        sizes = [(p.get("dimensions") or {}).get(field) for p in products]
+        if not any(v is not None and Decimal(str(v)) > bound for v in sizes):
+            failures.append(f"{field} {sizes} all at most {bound} - the old limit still applies")
     if checks.get("admits_no_match") and not _NO_MATCH.search(
         turn.message.lower().replace("\u2019", "'")
     ):
         failures.append("reply does not say that nothing matched")
+    if (words := checks.get("mentions")) and not any(w in turn.message.lower() for w in words):
+        failures.append(f"reply mentions none of {words}")
     if checks.get("engages"):
         asks = "?" in turn.message
         if not (products or turn.has_comparison or turn.has_room or asks):

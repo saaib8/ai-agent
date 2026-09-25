@@ -1184,6 +1184,10 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "was_relaxed",
         "relaxed_fields",
         "dropped_roles",
+        # A bool: sizes the customer gave earlier for this type apply again.
+        "earlier_sizes_applied",
+        # Counts per set-aside requirement when nothing matched - no values.
+        "would_find_without",
         "compared_count",
         "comparison_differs_on",
         "bundle",

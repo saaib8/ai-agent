@@ -35,7 +35,7 @@ from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
 from app.schemas.design import DesignGuidance
 from app.schemas.grounding import TurnFailureCode
-from app.schemas.relaxation import RelaxableField
+from app.schemas.relaxation import RelaxableField, SetAsideOption
 from app.schemas.resolution import (
     DeterministicClarification,
     ReferenceFailureReason,
@@ -409,6 +409,16 @@ class ResponseGroundingView(BaseModel):
     relaxation summary. The model says it broadened the search; it does not
     say the numbers (CLAUDE.md 13.4).
     """
+
+    earlier_sizes_applied: bool = False
+    """Sizes the customer gave earlier for this product type were applied
+    again. A flag, not the figures: the customer said them, and the reply only
+    has to remind them the limit is still in force."""
+
+    would_find_without: tuple[SetAsideOption, ...] = ()
+    """Nothing met everything together: how many products each requirement,
+    set aside alone, would find. Counts and a field name - never a product or
+    a bound - so the reply can offer a real next step without inventing one."""
 
     compared_count: int = Field(default=0, ge=0)
     comparison_differs_on: tuple[ComparisonField, ...] = ()
