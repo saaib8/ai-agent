@@ -69,6 +69,10 @@ interface AssistantBubbleProps {
   onQuickReply?: (value: string) => void
   /** Present on the current room package only: render it from a view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void
+  /** Present while this turn's render can be drawn again from another view. */
+  onRerender?: (view: RenderView, viewLabel: string) => void
+  /** A catalogue render: reopen the catalogue with its pieces. */
+  onEditSelection?: () => void
   /** A render on this turn no longer matches the room package. */
   renderOutdated?: boolean
 }
@@ -82,6 +86,8 @@ export function AssistantBubble({
   quickReplies,
   onQuickReply,
   onVisualize,
+  onRerender,
+  onEditSelection,
   renderOutdated = false,
 }: AssistantBubbleProps) {
   const { response, presentation } = data
@@ -126,7 +132,8 @@ export function AssistantBubble({
             render={render}
             outdated={renderOutdated}
             busy={busy}
-            onRerender={onVisualize}
+            onRerender={onRerender}
+            onEdit={onEditSelection}
           />
         )}
 

@@ -1,7 +1,16 @@
 import { useRef } from 'react'
 import type { ComponentType, SVGProps } from 'react'
 import { PHOTO_TYPES } from './Composer'
-import { HelpIcon, ImageIcon, RoomIcon, SearchIcon, SendIcon, SofaIcon, SparkIcon } from './icons'
+import {
+  GridIcon,
+  HelpIcon,
+  ImageIcon,
+  RoomIcon,
+  SearchIcon,
+  SendIcon,
+  SofaIcon,
+  SparkIcon,
+} from './icons'
 import { Pill } from './ui/Pill'
 
 type IconType = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>
@@ -52,9 +61,10 @@ interface EmptyStateProps {
   storeId: number
   onPick: (prompt: string) => void
   onPhoto: (file: File) => void
+  onOpenCatalog: () => void
 }
 
-export function EmptyState({ storeId, onPick, onPhoto }: EmptyStateProps) {
+export function EmptyState({ storeId, onPick, onPhoto, onOpenCatalog }: EmptyStateProps) {
   const fileRef = useRef<HTMLInputElement>(null)
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:py-14">
@@ -110,6 +120,21 @@ export function EmptyState({ storeId, onPick, onPhoto }: EmptyStateProps) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold text-ink">Find furniture in the image</span>
+        </span>
+        <SendIcon size={18} className="shrink-0 text-clay transition group-hover:translate-x-0.5" />
+      </button>
+
+      <button
+        onClick={onOpenCatalog}
+        className="group mt-3 flex w-full items-center gap-4 rounded-2xl border border-line bg-surface p-4 text-left shadow-card transition hover:border-clay/40 hover:bg-surface-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+      >
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-clay-soft/60 text-clay">
+          <GridIcon size={22} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-ink">
+            Browse the catalogue and visualize a room
+          </span>
         </span>
         <SendIcon size={18} className="shrink-0 text-clay transition group-hover:translate-x-0.5" />
       </button>

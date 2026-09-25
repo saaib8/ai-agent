@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { RENDER_VIEWS } from '../../api/types'
 import type { RenderView, RoomRenderPresentation } from '../../api/types'
-import { CloseIcon, DownloadIcon, ExpandIcon, ImageIcon } from '../icons'
+import { CloseIcon, DownloadIcon, ExpandIcon, GridIcon, ImageIcon } from '../icons'
 import { ViewPicker } from './ViewPicker'
 
 interface RoomRenderProps {
@@ -10,15 +10,18 @@ interface RoomRenderProps {
   /** The room package changed after this render was made. */
   outdated: boolean
   busy?: boolean
-  /** Present only while this render still shows the current package. */
+  /** Present only while this render still shows what it pictured. */
   onRerender?: (view: RenderView, viewLabel: string) => void
+  /** A catalogue render: reopen the catalogue with its pieces and room. */
+  onEdit?: () => void
 }
 
 /**
- * A picture of the room package: full-screen on tap, downloadable, and
- * re-renderable from another view while it still matches the package.
+ * A picture of a room: full-screen on tap, downloadable, and re-renderable
+ * from another view while it still shows what it pictured. A catalogue render
+ * can also be reopened in the catalogue to change its pieces.
  */
-export function RoomRender({ render, outdated, busy = false, onRerender }: RoomRenderProps) {
+export function RoomRender({ render, outdated, busy = false, onRerender, onEdit }: RoomRenderProps) {
   const [fullScreen, setFullScreen] = useState(false)
   const firstOther = RENDER_VIEWS.find((v) => v.value !== render.view)?.value ?? render.view
   const [nextView, setNextView] = useState<RenderView>(firstOther)
@@ -64,6 +67,12 @@ export function RoomRender({ render, outdated, busy = false, onRerender }: RoomR
           <DownloadIcon size={14} />
           Download
         </ActionButton>
+        {onEdit && (
+          <ActionButton onClick={onEdit} disabled={busy}>
+            <GridIcon size={14} />
+            Edit selection
+          </ActionButton>
+        )}
 
         {onRerender && !outdated && (
           <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -85,11 +94,20 @@ export function RoomRender({ render, outdated, busy = false, onRerender }: RoomR
   )
 }
 
-function ActionButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+function ActionButton({
+  onClick,
+  disabled = false,
+  children,
+}: {
+  onClick: () => void
+  disabled?: boolean
+  children: ReactNode
+}) {
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition hover:border-line-strong hover:bg-surface-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
+      disabled={disabled}
+      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition hover:border-line-strong hover:bg-surface-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {children}
     </button>

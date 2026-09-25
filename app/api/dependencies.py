@@ -25,6 +25,7 @@ from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
+from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
 from app.services.comparison import ProductComparisonService
@@ -44,7 +45,11 @@ from app.services.relative_price import RelativePriceResolver
 from app.services.relaxation import RelaxationPlanner
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.retailer_context import RetailerContextProvider
-from app.services.room_visualization import RoomVisualizer, VisualizationTurnRuntime
+from app.services.room_visualization import (
+    CatalogVisualizationRuntime,
+    RoomVisualizer,
+    VisualizationTurnRuntime,
+)
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
@@ -486,10 +491,8 @@ FinderTurnRuntimeDep = Annotated[FinderTurnRuntime, Depends(finder_turn_runtime)
 # ── Room visualisation ──────────────────────────────────────────────────────
 
 
-def visualization_turn_runtime(
-    session: SessionDep, app_resources: ResourcesDep
-) -> VisualizationTurnRuntime:
-    """A render of the session's room, or a refusal naming what is missing."""
+def _room_visualizer(session: AsyncSession, app_resources: AppResources) -> RoomVisualizer:
+    """The render pipeline, or a refusal naming what is missing."""
     settings = app_resources.settings.visualization
     generator = app_resources.render_generator
     store = app_resources.render_store
@@ -499,13 +502,49 @@ def visualization_turn_runtime(
             detail="visualization must be configured to render rooms",
             public_message="Room visualisation is not configured.",
         )
+    return RoomVisualizer(ProductRepository(session), photos, generator, store, settings)
+
+
+def visualization_turn_runtime(
+    session: SessionDep, app_resources: ResourcesDep
+) -> VisualizationTurnRuntime:
+    """A render of the session's room package."""
     return VisualizationTurnRuntime(
-        RoomVisualizer(ProductRepository(session), photos, generator, store, settings),
+        _room_visualizer(session, app_resources),
         session_store(app_resources),
         app_resources.settings.session,
+    )
+
+
+def catalog_visualization_runtime(
+    session: SessionDep, app_resources: ResourcesDep
+) -> CatalogVisualizationRuntime:
+    """A render of pieces picked from the catalogue."""
+    return CatalogVisualizationRuntime(
+        _room_visualizer(session, app_resources),
+        session_store(app_resources),
+        app_resources.settings.session,
+        app_resources.settings.effective_catalog(),
+        app_resources.attributes,
+    )
+
+
+def catalog_service(session: SessionDep, app_resources: ResourcesDep) -> CatalogService:
+    """Browsing needs only PostgreSQL and the registries, so it always exists;
+    it says whether a selection can be rendered."""
+    return CatalogService(
+        ProductRepository(session),
+        app_resources.taxonomy,
+        app_resources.attributes,
+        app_resources.settings.effective_catalog(),
+        render_available=app_resources.render_generator is not None,
     )
 
 
 VisualizationTurnRuntimeDep = Annotated[
     VisualizationTurnRuntime, Depends(visualization_turn_runtime)
 ]
+CatalogVisualizationRuntimeDep = Annotated[
+    CatalogVisualizationRuntime, Depends(catalog_visualization_runtime)
+]
+CatalogServiceDep = Annotated[CatalogService, Depends(catalog_service)]

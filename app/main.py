@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_exception_handlers
 from app.api.middleware import TraceContextMiddleware
+from app.api.routes.catalog import router as catalog_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.furniture_finder import router as furniture_finder_router
 from app.api.routes.health import router as health_router
@@ -60,4 +61,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat_router, prefix=settings.api.prefix)
     app.include_router(furniture_finder_router, prefix=settings.api.prefix)
     app.include_router(visualization_router, prefix=settings.api.prefix)
+    app.include_router(catalog_router, prefix=settings.api.prefix)
     return app

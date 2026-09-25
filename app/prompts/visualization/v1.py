@@ -20,9 +20,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.schemas.visualization import RenderView
+from app.schemas.visualization import RenderView, RoomType
 
 VERSION = "visualization/v1"
+
+ROOM_TYPES: dict[RoomType, tuple[str, str]] = {
+    # (what the customer picks, how the prompt names the room)
+    RoomType.LIVING_ROOM: ("Living room", "living room"),
+    RoomType.BEDROOM: ("Bedroom", "bedroom"),
+    RoomType.DINING_ROOM: ("Dining room", "dining room"),
+    RoomType.HOME_OFFICE: ("Home office", "home office"),
+    RoomType.KIDS_ROOM: ("Kids' room", "children's bedroom"),
+    RoomType.MAJLIS: ("Majlis", "majlis (a Gulf-style formal sitting room for receiving guests)"),
+    RoomType.ENTRYWAY: ("Entryway", "entryway"),
+}
 
 VIEWS: dict[RenderView, tuple[str, str]] = {
     RenderView.CORNER: (
@@ -79,6 +90,14 @@ class RenderRoom:
 
 def view_label(view: RenderView) -> str:
     return VIEWS[view][0]
+
+
+def room_type_label(room_type: RoomType) -> str:
+    return ROOM_TYPES[room_type][0]
+
+
+def room_type_words(room_type: RoomType) -> str:
+    return ROOM_TYPES[room_type][1]
 
 
 def build_prompt(room: RenderRoom, pieces: tuple[RenderPiece, ...], view: RenderView) -> str:

@@ -1,10 +1,12 @@
-"""Rendering the room package as a picture.
+"""Rendering a room as a picture.
 
-The render is of the room the session holds - never of products a client
-names. Every piece is read from the catalog through the store-scoped
-repository, so an inactive or foreign product is simply not in the picture;
-the room's size and style are what the customer said. An image model draws
-it, and the picture is stored and served by URL.
+Two kinds of render share one drawing path. A package render is of the room
+the session holds: its pieces, and the size and style the customer said. A
+catalogue render is of pieces the customer picked while browsing, in a room
+they set up. Either way every piece is read from the catalog through the
+store-scoped repository, so an inactive or foreign product is simply not in
+the picture. An image model draws it, and the picture is stored and served by
+URL.
 
 A render is a turn of the conversation, like a pick in a photo: it is
 recorded in the history, in words, so the agent knows the customer has seen
@@ -24,8 +26,13 @@ from typing import Protocol
 
 from PIL import Image, UnidentifiedImageError
 
-from app.core.config import SessionSettings, VisualizationSettings
-from app.core.exceptions import NothingToVisualizeError, RenderUnavailableError
+from app.core.config import CatalogSettings, SessionSettings, VisualizationSettings
+from app.core.exceptions import (
+    NothingToVisualizeError,
+    RenderUnavailableError,
+    SelectionRejectedError,
+    SelectionUnavailableError,
+)
 from app.core.logging import get_logger
 from app.integrations.image_generation import ImageGenerator, ImageReference
 from app.integrations.render_store import RenderStore
@@ -35,18 +42,23 @@ from app.prompts.visualization.v1 import (
     RenderRoom,
     build_prompt,
     reference_caption,
+    room_type_label,
+    room_type_words,
     view_label,
 )
 from app.repositories.products import ProductRepository
 from app.repositories.sessions import SessionStore
 from app.schemas.agent_state import AgentStateV1, RoomProjectState
 from app.schemas.agent_turn import CustomerResponse
+from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
 from app.schemas.chat import ChatPresentation, ChatResponse
 from app.schemas.dimensions import DimensionStatus
 from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.product import ProductCandidate
 from app.schemas.retailer import RetailerContext
 from app.schemas.visualization import (
+    RenderRoomSpec,
+    RenderSource,
     RenderView,
     RoomRenderItem,
     RoomRenderPresentation,
@@ -54,7 +66,7 @@ from app.schemas.visualization import (
 )
 from app.services.chat_runtime import commit_exchange, load_for_turn
 from app.services.discovery import to_candidate
-from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 
 logger = get_logger(__name__)
 
@@ -88,7 +100,7 @@ class RoomVisualizer:
     async def render(
         self, state: AgentStateV1, view: RenderView, context: RetailerContext
     ) -> RoomRenderPresentation:
-        started = time.perf_counter()
+        """The session's room package."""
         room = state.room_project
         if room is None or not room.bundle_items:
             raise NothingToVisualizeError(store_id=context.store_id)
@@ -98,7 +110,47 @@ class RoomVisualizer:
             # Every piece has gone from the catalog since the room was put
             # together. A render of an empty room would be a picture of nothing.
             raise NothingToVisualizeError(store_id=context.store_id, reason="no_available_pieces")
+        return await self._draw(items, _room(room), view, context, RenderSource.PACKAGE, None)
 
+    async def render_selection(
+        self,
+        selection: Sequence[CatalogSelectionItem],
+        spec: RenderRoomSpec,
+        view: RenderView,
+        context: RetailerContext,
+    ) -> RoomRenderPresentation:
+        """Pieces the customer picked from the catalogue, in the room they set up.
+
+        The ids are read back through the store-scoped repository; any the
+        store no longer sells are left out, in the order the customer picked.
+        """
+        rows = await self._repository.get_by_ids([item.product_id for item in selection], context)
+        by_id = {row.id: to_candidate(row) for row in rows}
+        items = [
+            (by_id[item.product_id], item.quantity)
+            for item in selection
+            if item.product_id in by_id
+        ]
+        if not items:
+            raise SelectionUnavailableError(store_id=context.store_id, requested=len(selection))
+        room = RenderRoom(
+            room_label=room_type_words(spec.room_type),
+            style=_style_words(spec.style),
+            length_m=spec.length_m,
+            width_m=spec.width_m,
+        )
+        return await self._draw(items, room, view, context, RenderSource.CATALOG, spec)
+
+    async def _draw(
+        self,
+        items: Sequence[tuple[ProductCandidate, int]],
+        room: RenderRoom,
+        view: RenderView,
+        context: RetailerContext,
+        source: RenderSource,
+        spec: RenderRoomSpec | None,
+    ) -> RoomRenderPresentation:
+        started = time.perf_counter()
         photos = await self._photos_for(items)
         pieces: list[RenderPiece] = []
         references: list[ImageReference] = []
@@ -115,7 +167,7 @@ class RoomVisualizer:
             if photo is not None:
                 references.append(ImageReference(data=photo, caption=reference_caption(piece)))
 
-        prompt = build_prompt(_room(room), tuple(pieces), view)
+        prompt = build_prompt(room, tuple(pieces), view)
         image = await self._generator.generate(prompt, references)
         width, height = _dimensions(image.data)
         key = f"store-{context.store_id}/{datetime.now(UTC):%Y%m%d}/{uuid.uuid4().hex}.jpg"
@@ -124,6 +176,7 @@ class RoomVisualizer:
         logger.info(
             "room_rendered",
             store_id=context.store_id,
+            source=source.value,
             view=view.value,
             piece_count=len(pieces),
             reference_count=len(references),
@@ -146,6 +199,8 @@ class RoomVisualizer:
                 )
                 for product, quantity in items
             ),
+            source=source,
+            room=spec,
         )
 
     async def _pieces(
@@ -224,7 +279,109 @@ class VisualizationTurnRuntime:
         )
 
 
+class CatalogVisualizationRuntime:
+    """A room rendered from catalogue picks, run as one committed turn.
+
+    Like a package render it is recorded in the history in words and changes
+    no state: the selection is the customer's, held on their screen, and does
+    not become the room package.
+    """
+
+    def __init__(
+        self,
+        visualizer: RoomVisualizer,
+        sessions: SessionStore,
+        session_settings: SessionSettings,
+        catalog_settings: CatalogSettings,
+        attributes: CatalogAttributes,
+    ) -> None:
+        self._visualizer = visualizer
+        self._sessions = sessions
+        self._session_settings = session_settings
+        self._catalog = catalog_settings
+        self._attributes = attributes
+
+    async def visualize(
+        self, request: CatalogVisualizeRequest, context: RetailerContext
+    ) -> ChatResponse:
+        """Check, load, render, commit, answer.
+
+        Everything the customer set is checked before the session is loaded,
+        and the revision before an image model is paid.
+        """
+        spec = self._checked_room(request.room)
+        self._check_items(request.items)
+        loaded = await load_for_turn(
+            self._sessions,
+            store_id=request.store_id,
+            session_id=request.session_id,
+            expected_revision=request.expected_session_revision,
+        )
+        render = await self._visualizer.render_selection(request.items, spec, request.view, context)
+
+        room_words = f"{_style_words(spec.style)} {room_type_label(spec.room_type).lower()}"
+        dropped = len(request.items) - len(render.items)
+        message = f"Here's your {room_words}, {_VIEW_PHRASES[request.view]}."
+        if dropped == 1:
+            message += " 1 piece you picked is no longer available, so I left it out."
+        elif dropped:
+            message += f" {dropped} pieces you picked are no longer available, so I left them out."
+        response = CustomerResponse(message=message)
+        units = sum(item.quantity for item in render.items)
+        revision = await commit_exchange(
+            self._sessions,
+            self._session_settings,
+            store_id=request.store_id,
+            session_id=request.session_id,
+            loaded=loaded,
+            state=loaded.envelope.state,
+            customer_said=(
+                f"[Visualised {units} pieces picked from the catalogue in a "
+                f"{spec.length_m:g} x {spec.width_m:g} m {room_words}, "
+                f"{render.view_label.lower()} view]"
+            ),
+            response=response,
+        )
+        return ChatResponse(
+            session_id=request.session_id,
+            session_revision=revision,
+            response=response,
+            presentation=ChatPresentation(render=render),
+        )
+
+    def _checked_room(self, room: RenderRoomSpec) -> RenderRoomSpec:
+        """The room with its style in approved spelling, or a refusal the
+        customer can act on. The style is written into the prompt, so only an
+        approved value may reach it."""
+        low, high = self._catalog.min_room_side_m, self._catalog.max_room_side_m
+        for side in (room.length_m, room.width_m):
+            if not low <= side <= high:
+                raise SelectionRejectedError(
+                    public_message=f"Room sides must be between {low:g} and {high:g} m."
+                )
+        style = self._attributes.canonical(AttributeFamily.STYLE, room.style)
+        if style is None:
+            raise SelectionRejectedError(public_message="Please choose a style from the list.")
+        return room.model_copy(update={"style": style})
+
+    def _check_items(self, items: Sequence[CatalogSelectionItem]) -> None:
+        if len(items) > self._catalog.max_products:
+            raise SelectionRejectedError(
+                public_message=f"Pick at most {self._catalog.max_products} products to visualise."
+            )
+        if any(item.quantity > self._catalog.max_quantity for item in items):
+            raise SelectionRejectedError(
+                public_message=f"At most {self._catalog.max_quantity} of any one product."
+            )
+
+
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def _style_words(style: str) -> str:
+    """An approved style token as prompt and reply words: underscores become
+    spaces and the case is lowered, so a two-word style reads as two words."""
+    return style.replace("_", " ").lower()
 
 
 def _room(room: RoomProjectState) -> RenderRoom:

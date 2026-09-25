@@ -1,4 +1,8 @@
 import type {
+  CatalogFacets,
+  CatalogPage,
+  CatalogQuery,
+  CatalogVisualizeRequest,
   ChatRequest,
   ChatResponse,
   ErrorBody,
@@ -73,7 +77,59 @@ export async function postVisualize(base: string, body: VisualizeRequest): Promi
   return postJson<ChatResponse>(base, '/v1/visualizations', body, isChatResponse)
 }
 
+// ── Browse Catalogue ─────────────────────────────────────────────────────────
+
+export type Fetched<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number | 'network'; error: ErrorBody }
+
+/** The store's filter values with counts, and what a room render allows. */
+export async function getCatalogFacets(base: string, storeId: number): Promise<Fetched<CatalogFacets>> {
+  return getJson<CatalogFacets>(base, '/v1/catalog/facets', { store_id: storeId }, (p) =>
+    typeof p === 'object' && p !== null && 'categories' in p,
+  )
+}
+
+/** One page of the store's catalog. */
+export async function getCatalogProducts(
+  base: string,
+  storeId: number,
+  query: CatalogQuery,
+  signal?: AbortSignal,
+): Promise<Fetched<CatalogPage>> {
+  return getJson<CatalogPage>(
+    base,
+    '/v1/catalog/products',
+    { store_id: storeId, ...query },
+    (p) => typeof p === 'object' && p !== null && 'items' in p,
+    signal,
+  )
+}
+
+/** Render a room from picked products. The answer is a chat turn with a render. */
+export async function postCatalogVisualize(
+  base: string,
+  body: CatalogVisualizeRequest,
+): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/catalog/visualizations', body, isChatResponse)
+}
+
 // ── transport ────────────────────────────────────────────────────────────────
+
+function getJson<T>(
+  base: string,
+  path: string,
+  params: Record<string, string | number | undefined>,
+  accept: (payload: unknown) => boolean,
+  signal?: AbortSignal,
+): Promise<Result<T>> {
+  const root = normaliseBase(base)
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') search.set(key, String(value))
+  }
+  return send<T>(root, () => fetch(`${root}${path}?${search}`, { method: 'GET', signal }), accept)
+}
 
 type Result<T> =
   | { ok: true; data: T }

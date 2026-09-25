@@ -83,7 +83,7 @@ extra.
 ## Room visualisation
 
 `POST /v1/visualizations` (`session_id`, `store_id`, `view`: `corner` |
-`eye_level` | `isometric`) renders the session's current room package - its
+`eye_level` | `isometric` | `top_down`) renders the session's current room package - its
 pieces, the room's size and style, all read by the application, never sent by
 the client. Product photos are fetched (https, public hosts only, bounded) and
 sent as references with a versioned prompt (`app/prompts/visualization/v1.py`)
@@ -92,6 +92,32 @@ renders (`gpt-image-2.5-sunburst`), falling back once to the other
 (`gemini-3-pro-image`). The image is stored in S3 and returned as a public URL,
 as a chat turn (`ChatResponse.presentation.render`) that is recorded in the
 history but changes no state. Configure with `ZORY_VISUALIZATION__*`.
+
+## Browse Catalogue
+
+Pick products straight from the store's catalogue, say how many of each,
+describe the room, and see it rendered. Three endpoints, all scoped to the
+store in the request:
+
+* `GET /v1/catalog/products?store_id=…` pages through the store's active
+  products: `q` (words in the English or Arabic name), `category`,
+  `subcategory`, `color`, `style`, `min_price`/`max_price` with `currency`,
+  `sort` (`featured` | `price_asc` | `price_desc`), `page`, `page_size`.
+  Vocabulary values are checked against the taxonomy and attribute registries
+  before any SQL runs. "Featured" lists floor furniture first. Each item carries
+  its footprint for the fit check, only for floor pieces with a normalised size.
+* `GET /v1/catalog/facets?store_id=…` returns the approved categories,
+  colours, styles and price range this store actually holds, with counts, and
+  the room-setup options and limits (`studio`).
+* `POST /v1/catalog/visualizations` (`items`: product ids and quantities,
+  `room`: type, approved style and side lengths, `view`) reads the pieces
+  back through the store-scoped repository and renders them with the same
+  pipeline and prompt as the package render. It answers as a chat turn and
+  records it in the history, and it does not change the room package.
+
+The fit check (the share of the floor covered, pieces too big for the room) is
+computed in the browser from those footprints. It is advisory only. Configure
+limits with `ZORY_CATALOG__*`.
 
 ## Configuration
 

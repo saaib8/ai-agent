@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type {
+  CatalogSelection,
   FinderObject,
   GroundedBundlePresentation,
   GroundedProduct,
@@ -32,6 +33,11 @@ interface ChatPanelProps {
   onShowMoreOptions: () => void
   onExcludeProduct: (product: GroundedProduct) => void
   onVisualize: (view: RenderView, viewLabel: string) => void
+  onOpenCatalog: () => void
+  /** Draw a catalogue selection again, from another view. */
+  onRerenderSelection: (selection: CatalogSelection, view: RenderView, viewLabel: string) => void
+  /** Reopen the catalogue with a selection's pieces and room. */
+  onEditSelection: (selection: CatalogSelection, view: RenderView) => void
 }
 
 export function ChatPanel({
@@ -50,6 +56,9 @@ export function ChatPanel({
   onShowMoreOptions,
   onExcludeProduct,
   onVisualize,
+  onOpenCatalog,
+  onRerenderSelection,
+  onEditSelection,
 }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -82,11 +91,20 @@ export function ChatPanel({
     room: GroundedBundlePresentation | null,
     render: RoomRenderPresentation | null,
     turnId: string,
+    selection: CatalogSelection | undefined,
   ) => {
     if (room) return turnId === currentRoomId ? { onVisualize } : {}
+    // A catalogue render pictures the customer's own picks, which no later
+    // turn changes: it never goes out of date.
+    if (render && selection)
+      return {
+        onRerender: (view: RenderView, label: string) => onRerenderSelection(selection, view, label),
+        onEditSelection: () => onEditSelection(selection, render.view),
+      }
+    if (render?.source === 'catalog') return {}
     if (render) {
       const outdated = currentRoomKey !== null && renderKey(render) !== currentRoomKey
-      return { renderOutdated: outdated, ...(outdated ? {} : { onVisualize }) }
+      return { renderOutdated: outdated, ...(outdated ? {} : { onRerender: onVisualize }) }
     }
     return {}
   }
@@ -95,7 +113,12 @@ export function ChatPanel({
     <div className="flex h-full min-w-0 flex-col">
       <div className="flex-1 overflow-y-auto">
         {turns.length === 0 && !sending ? (
-          <EmptyState storeId={storeId} onPick={onSend} onPhoto={onPhoto} />
+          <EmptyState
+            storeId={storeId}
+            onPick={onSend}
+            onPhoto={onPhoto}
+            onOpenCatalog={onOpenCatalog}
+          />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
             {turns.map((turn) => {
@@ -120,7 +143,12 @@ export function ChatPanel({
                     }
                     quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
                     onQuickReply={onSend}
-                    {...visualizeProps(turn.data.presentation?.room ?? null, turn.data.presentation?.render ?? null, turn.id)}
+                    {...visualizeProps(
+                      turn.data.presentation?.room ?? null,
+                      turn.data.presentation?.render ?? null,
+                      turn.id,
+                      turn.selection,
+                    )}
                   />
                 )
               if (turn.kind === 'photo')
@@ -159,6 +187,7 @@ export function ChatPanel({
         onChange={onDraftChange}
         onSend={() => onSend(draft)}
         onPhoto={onPhoto}
+        onOpenCatalog={onOpenCatalog}
         disabled={sending}
       />
     </div>

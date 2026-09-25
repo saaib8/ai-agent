@@ -1,7 +1,14 @@
 import { useCallback, useRef, useState } from 'react'
-import { postChat, postFinderPhoto, postFinderPick, postVisualize } from '../api/client'
+import {
+  postCatalogVisualize,
+  postChat,
+  postFinderPhoto,
+  postFinderPick,
+  postVisualize,
+} from '../api/client'
 import type {
   BundleAction,
+  CatalogSelection,
   ChatResponse,
   ErrorBody,
   FinderObject,
@@ -26,7 +33,7 @@ export type PhotoState =
 
 export type Turn =
   | { kind: 'user'; id: string; text: string; rejected?: RejectedRef }
-  | { kind: 'assistant'; id: string; data: ChatResponse }
+  | { kind: 'assistant'; id: string; data: ChatResponse; selection?: CatalogSelection }
   | { kind: 'error'; id: string; status: number | 'network'; error: ErrorBody }
   | { kind: 'photo'; id: string; url: string; photo: PhotoState }
 
@@ -55,6 +62,14 @@ export interface UseChat {
   ) => Promise<void>
   /** Render the room package from a camera view. A committed turn. */
   visualize: (view: RenderView, viewLabel: string, config: ConsoleConfig) => Promise<void>
+  /** Render pieces picked from the catalogue. A committed turn, which keeps
+   *  the selection so it can be drawn again or edited. */
+  visualizeSelection: (
+    selection: CatalogSelection,
+    view: RenderView,
+    summary: string,
+    config: ConsoleConfig,
+  ) => Promise<void>
   reset: () => void
 }
 
@@ -77,10 +92,10 @@ export function useChat(): UseChat {
       ? { expected_session_revision: revisionRef.current }
       : {}
 
-  const commit = (data: ChatResponse) => {
+  const commit = (data: ChatResponse, selection?: CatalogSelection) => {
     revisionRef.current = data.session_revision
     setRevision(data.session_revision)
-    setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data }])
+    setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data, selection }])
   }
 
   const fail = (status: number | 'network', error: ErrorBody) =>
@@ -206,6 +221,28 @@ export function useChat(): UseChat {
     [],
   )
 
+  const visualizeSelection = useCallback(
+    async (selection: CatalogSelection, view: RenderView, summary: string, config: ConsoleConfig) => {
+      setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text: summary }])
+      setSending(true)
+      setActivity('rendering')
+
+      const result = await postCatalogVisualize(config.apiBase, {
+        session_id: config.sessionId,
+        store_id: config.storeId,
+        ...selection,
+        view,
+        ...expected(config),
+      })
+
+      if (result.ok) commit(result.data, selection)
+      else fail(result.status, result.error)
+      setActivity(null)
+      setSending(false)
+    },
+    [],
+  )
+
   const reset = useCallback(() => {
     photoUrls.current.forEach((url) => URL.revokeObjectURL(url))
     photoUrls.current = []
@@ -214,5 +251,16 @@ export function useChat(): UseChat {
     revisionRef.current = null
   }, [])
 
-  return { turns, sending, activity, revision, send, uploadPhoto, pickObject, visualize, reset }
+  return {
+    turns,
+    sending,
+    activity,
+    revision,
+    send,
+    uploadPhoto,
+    pickObject,
+    visualize,
+    visualizeSelection,
+    reset,
+  }
 }

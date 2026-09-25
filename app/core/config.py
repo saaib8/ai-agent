@@ -355,6 +355,42 @@ class VisualizationSettings(BaseModel):
         return self
 
 
+class CatalogSettings(BaseModel):
+    """Browsing the store's catalog and rendering a room from what was picked.
+
+    Browsing reads only PostgreSQL, so it is always available. Rendering a
+    selection also needs `visualization`, and refuses without it.
+    """
+
+    page_size: int = Field(default=24, ge=1)
+    max_page_size: int = Field(default=60, ge=1)
+    max_query_chars: int = Field(default=80, ge=1)
+    """A name search is a few words; anything longer is not a search."""
+
+    max_products: int = Field(default=14, ge=1)
+    """Distinct products in one selection. Each needs a reference photo, so
+    the effective cap is never above `visualization.max_references` (see
+    `Settings.effective_catalog`)."""
+
+    max_quantity: int = Field(default=10, ge=1)
+    """Units of one product: eight dining chairs is a room, forty is a hall."""
+
+    min_room_side_m: float = Field(default=1.5, gt=0)
+    max_room_side_m: float = Field(default=20.0, gt=0)
+
+    crowded_floor_ratio: float = Field(default=0.6, gt=0, le=1)
+    """Share of the floor furniture may cover before the room reads as
+    crowded. Advisory only: the customer is warned, never stopped."""
+
+    @model_validator(mode="after")
+    def _bounds_are_ordered(self) -> CatalogSettings:
+        if self.page_size > self.max_page_size:
+            raise ValueError("catalog page_size cannot exceed max_page_size")
+        if self.min_room_side_m >= self.max_room_side_m:
+            raise ValueError("catalog min_room_side_m must be below max_room_side_m")
+        return self
+
+
 class RelaxationSettings(BaseModel):
     """Policy for broadening a search that returned too little.
 
@@ -509,6 +545,7 @@ class Settings(BaseSettings):
     furniture_finder: FurnitureFinderSettings | None = None
     # And again: without it the Visualize route refuses and nothing else changes.
     visualization: VisualizationSettings | None = None
+    catalog: CatalogSettings = CatalogSettings()
     observability: ObservabilitySettings = ObservabilitySettings()
     aws: AwsSettings = AwsSettings()
 
@@ -539,6 +576,16 @@ class Settings(BaseSettings):
                 "relaxation target_candidates cannot exceed discovery max_candidate_limit"
             )
         return self
+
+    def effective_catalog(self) -> CatalogSettings:
+        """Catalog settings with the selection capped at what one render can
+        take a photo of. A piece beyond it would be drawn from words alone,
+        and look it - so the cap follows `visualization.max_references`
+        rather than failing startup when only one of the two is lowered."""
+        if self.visualization is None:
+            return self.catalog
+        cap = min(self.catalog.max_products, self.visualization.max_references)
+        return self.catalog.model_copy(update={"max_products": cap})
 
     def redacted(self) -> dict[str, Any]:
         """A summary safe to emit at startup: no secret ever renders (22)."""

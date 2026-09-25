@@ -155,3 +155,30 @@ export const ExpandIcon = (p: IconProps) => (
     <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />
   </Base>
 )
+
+export const GridIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+  </Base>
+)
+
+export const MinusIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M5 12h14" />
+  </Base>
+)
+
+export const ChevronLeftIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="m15 18-6-6 6-6" />
+  </Base>
+)
+
+export const ChevronRightIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="m9 18 6-6-6-6" />
+  </Base>
+)

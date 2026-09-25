@@ -115,6 +115,27 @@ export interface RoomRenderItem {
   quantity: number
 }
 
+/** A package render pictures the conversation's room; a catalogue render,
+ *  pieces the customer picked. Only a package render can go out of date. */
+export type RenderSource = 'package' | 'catalog'
+
+export type RoomType =
+  | 'living_room'
+  | 'bedroom'
+  | 'dining_room'
+  | 'home_office'
+  | 'kids_room'
+  | 'majlis'
+  | 'entryway'
+
+export interface RenderRoomSpec {
+  room_type: RoomType
+  /** An approved style value, e.g. "Modern_Classic". */
+  style: string
+  length_m: number
+  width_m: number
+}
+
 export interface RoomRenderPresentation {
   image_url: string
   width: number
@@ -123,6 +144,9 @@ export interface RoomRenderPresentation {
   view_label: string
   /** Exactly the pieces the render was asked to show. */
   items: RoomRenderItem[]
+  source?: RenderSource
+  /** The room a catalogue render was set up with. */
+  room?: RenderRoomSpec | null
 }
 
 export interface VisualizeRequest {
@@ -236,5 +260,94 @@ export interface FinderPickRequest {
   store_id: number
   image_id: string
   object_id: number
+  expected_session_revision?: number
+}
+
+// ── Browse Catalogue ─────────────────────────────────────────────────────────
+
+export type CatalogSort = 'featured' | 'price_asc' | 'price_desc'
+
+export interface CatalogQuery {
+  q?: string
+  category?: string
+  subcategory?: string
+  color?: string
+  style?: string
+  min_price?: string
+  max_price?: string
+  currency?: string
+  sort?: CatalogSort
+  page?: number
+  page_size?: number
+}
+
+export interface CatalogItem {
+  product_id: number
+  name_english: string
+  name_arabic: string
+  price_amount: string
+  price_unit: string
+  image_url: string
+  product_url: string
+  commerce: CommerceClassification
+  dimensions: NormalisedDimensions
+  main_color: string | null
+  styles: string[]
+  /** Furniture that takes up floor; rugs, lighting and decor do not. */
+  stands_on_floor: boolean
+  /** Floor area in cm², for floor-standing pieces of known size only. */
+  footprint_cm2: number | null
+  longest_side_cm: number | null
+}
+
+export interface CatalogPage {
+  items: CatalogItem[]
+  page: number
+  page_size: number
+  total_pages: number
+  count: number
+}
+
+export interface Facet {
+  value: string
+  count: number
+}
+
+export interface CategoryFacet extends Facet {
+  subcategories: Facet[]
+}
+
+export interface StudioOptions {
+  room_types: { value: RoomType; label: string }[]
+  styles: string[]
+  max_products: number
+  max_quantity: number
+  min_room_side_m: number
+  max_room_side_m: number
+  crowded_floor_ratio: number
+  render_available: boolean
+}
+
+export interface CatalogFacets {
+  categories: CategoryFacet[]
+  colors: Facet[]
+  styles: Facet[]
+  price: { currency: string; min_amount: string; max_amount: string } | null
+  studio: StudioOptions
+}
+
+/** What a catalogue render was made from: kept by the client that sent it,
+ *  because chat presentations never carry catalog ids. */
+export interface CatalogSelection {
+  items: { product_id: number; quantity: number }[]
+  room: RenderRoomSpec
+}
+
+export interface CatalogVisualizeRequest {
+  session_id: string
+  store_id: number
+  items: { product_id: number; quantity: number }[]
+  room: RenderRoomSpec
+  view: RenderView
   expected_session_revision?: number
 }
