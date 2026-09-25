@@ -13,6 +13,8 @@ immutable :class:`RetailerContext` resolved by application code
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -115,10 +117,7 @@ def _centimetres(axis: SourceAxis) -> ColumnElement[Any]:
     column = _AXIS_COLUMNS[axis]
     normalised_unit = func.lower(func.btrim(core_product.c.dimension_unit))
     return case(
-        {
-            alias: column * CENTIMETRES_PER_UNIT[unit]
-            for alias, unit in UNIT_ALIASES.items()
-        },
+        {alias: column * CENTIMETRES_PER_UNIT[unit] for alias, unit in UNIT_ALIASES.items()},
         value=normalised_unit,
         else_=None,
     ).cast(Numeric(12, 4))
@@ -203,6 +202,48 @@ def _to_product_row(row: Row[Any]) -> ProductRow:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class CatalogOverviewRow:
+    """One commerce type's row in the catalog-overview aggregation.
+
+    The repository's raw output for :meth:`ProductRepository.catalog_overview`,
+    kept apart from the agent-facing :class:`~app.schemas.catalog_overview.CatalogOverview`
+    so taxonomy approval and the currency decision stay in the service. Ranges
+    and counts, never a product.
+    """
+
+    commerce_category: str
+    commerce_subcategory: str | None
+    active_count: int
+    seat_known: int
+    seat_minimum: int | None
+    seat_maximum: int | None
+    price_minimum: Decimal
+    price_maximum: Decimal
+    colours: tuple[str, ...]
+    price_units: tuple[str, ...]
+
+
+def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
+    """Map one aggregation row, deduplicating and sorting its arrays.
+
+    ``array_agg`` returns NULL, not an empty array, when its filter removes
+    every row, so an absent colour set reads as ``()`` rather than raising.
+    """
+    return CatalogOverviewRow(
+        commerce_category=row.commerce_category,
+        commerce_subcategory=row.commerce_subcategory,
+        active_count=row.active_count,
+        seat_known=row.seat_known,
+        seat_minimum=row.seat_minimum,
+        seat_maximum=row.seat_maximum,
+        price_minimum=row.price_minimum,
+        price_maximum=row.price_maximum,
+        colours=tuple(sorted(row.colours)) if row.colours else (),
+        price_units=tuple(sorted(row.price_units)) if row.price_units else (),
+    )
+
+
 class ProductRepository:
     """Read-only, store-scoped access to the Django-owned product catalog."""
 
@@ -276,9 +317,7 @@ class ProductRepository:
             core_product.c.commerce_category == request.commerce_category,
         ]
         if request.commerce_subcategory is not None:
-            clauses.append(
-                core_product.c.commerce_subcategory == request.commerce_subcategory
-            )
+            clauses.append(core_product.c.commerce_subcategory == request.commerce_subcategory)
 
         price = request.price
         if price is not None:
@@ -288,27 +327,19 @@ class ProductRepository:
             amount = core_product.c.price_amount
             if price.min_amount is not None:
                 clauses.append(
-                    amount > price.min_amount
-                    if price.min_exclusive
-                    else amount >= price.min_amount
+                    amount > price.min_amount if price.min_exclusive else amount >= price.min_amount
                 )
             if price.max_amount is not None:
                 clauses.append(
-                    amount < price.max_amount
-                    if price.max_exclusive
-                    else amount <= price.max_amount
+                    amount < price.max_amount if price.max_exclusive else amount <= price.max_amount
                 )
 
         capacity = request.seating_capacity
         if capacity is not None:
             if capacity.min_capacity is not None:
-                clauses.append(
-                    core_product.c.seating_capacity >= capacity.min_capacity
-                )
+                clauses.append(core_product.c.seating_capacity >= capacity.min_capacity)
             if capacity.max_capacity is not None:
-                clauses.append(
-                    core_product.c.seating_capacity <= capacity.max_capacity
-                )
+                clauses.append(core_product.c.seating_capacity <= capacity.max_capacity)
 
         for axis_constraint in axis_constraints:
             # Part of eligibility, so it is decided before ORDER BY and LIMIT.
@@ -481,6 +512,56 @@ class ProductRepository:
         result = await self._session.execute(statement)
         return tuple((row[0], row[1], row[2]) for row in result.all())
 
+    async def catalog_overview(self, context: RetailerContext) -> tuple[CatalogOverviewRow, ...]:
+        """The shape of this store's shelf, one row per commerce type.
+
+        The same grouped, scoped, active-only scan as
+        :meth:`supported_commerce_types`, widened with the aggregates a
+        salesperson reasons over before deciding a move: how high one piece's
+        seat count reaches, the price band, and the colours a type comes in.
+        Counts and ranges only - no product, no id, no individual price
+        (CLAUDE.md 9).
+
+        Seat aggregates ignore NULLs, so ``seat_known`` is how many pieces carry
+        a confirmed count and ``seat_maximum`` is the true single-piece ceiling;
+        an unverified capacity never inflates it (CLAUDE.md 6.2). Colours drop
+        NULLs and duplicates. The currency question is left to the service, which
+        sees every type's units together.
+        """
+        colours = func.array_agg(core_product.c.main_color.distinct()).filter(
+            core_product.c.main_color.isnot(None)
+        )
+        statement = (
+            select(
+                core_product.c.commerce_category,
+                core_product.c.commerce_subcategory,
+                func.count().label("active_count"),
+                func.count(core_product.c.seating_capacity).label("seat_known"),
+                func.min(core_product.c.seating_capacity).label("seat_minimum"),
+                func.max(core_product.c.seating_capacity).label("seat_maximum"),
+                func.min(core_product.c.price_amount).label("price_minimum"),
+                func.max(core_product.c.price_amount).label("price_maximum"),
+                type_coerce(colours, ARRAY(Text)).label("colours"),
+                type_coerce(
+                    func.array_agg(core_product.c.price_unit.distinct()), ARRAY(Text)
+                ).label("price_units"),
+            )
+            .where(
+                *self._scope_clauses(context),
+                core_product.c.commerce_category.isnot(None),
+            )
+            .group_by(
+                core_product.c.commerce_category,
+                core_product.c.commerce_subcategory,
+            )
+            .order_by(
+                core_product.c.commerce_category,
+                core_product.c.commerce_subcategory,
+            )
+        )
+        result = await self._session.execute(statement)
+        return tuple(_overview_row(row) for row in result.all())
+
     # ── Furniture Finder ────────────────────────────────────────────────────
 
     async def visual_categories(self, context: RetailerContext) -> frozenset[str]:
@@ -540,9 +621,7 @@ class ProductRepository:
     async def count_active(self, context: RetailerContext) -> int:
         """How many active products the store has. Backs health and capability checks."""
         statement = (
-            select(func.count())
-            .select_from(core_product)
-            .where(*self._scope_clauses(context))
+            select(func.count()).select_from(core_product).where(*self._scope_clauses(context))
         )
         result = await self._session.execute(statement)
         return int(result.scalar_one())
