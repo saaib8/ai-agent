@@ -157,7 +157,9 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.ANSWER: "I'm not able to answer that just now.",
     ResponseOutcomeKind.SEARCH_RESULTS: "Here's what I found.",
     ResponseOutcomeKind.ZERO_RESULTS: (
-        "I couldn't find anything matching that. It's worth trying a different description."
+        "I couldn't find anything that matches all of that together. Tell me "
+        "which part matters least - the budget, the size or the colour - and "
+        "I'll widen that one."
     ),
     ResponseOutcomeKind.SELECTION: "Here's what you've picked out so far.",
     ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",

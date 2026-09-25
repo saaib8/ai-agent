@@ -330,6 +330,19 @@ not an alias table and must not be implemented as runtime string mapping.
 
 Do not expand chair subcategories without evidence that the distinction materially changes search/buying intent.
 
+**How many a type seats is reviewed domain data** (`app/taxonomy/seating_v1.yaml`,
+loaded and validated at startup). Every chair type, `stool` and
+`single-seater-sofa` seat one person; `sofa`, `sectional-sofa`, `sofa-set` and
+`sofa-bed` seat two or more. `recliner` and `chaise-lounge` are in neither list
+until confirmed.
+
+- A one-seat type carries no seat filter: the catalog records no capacity for
+  them, so a filter could only ever hide them all. This is the one place a
+  missing capacity is not "unverified" (13.5) - the type itself answers it.
+- A seat count of one on a multi-seat type, set in a turn, is a misreading: the
+  composition is refused and the decision is corrected once to change product
+  type ("make them single seaters").
+
 ---
 
 ## 8. Retailer / Store Context Is First-Class
@@ -852,12 +865,38 @@ Paging ("show me more") excludes products already seen from the same request.
 Any change to the request's criteria starts a fresh set: exclusions from paging
 do not carry into a refined search.
 
+**A size belongs to the product type it was given for.** 60 cm for a side table
+says nothing about a coffee table, so a measurement never follows the customer
+to a different type - not even one the registry could measure the same way.
+Each type's sizes are saved in session state
+(`CustomerPreferenceState.measurements_by_type`) after a search the customer
+asked for has run - a room plan's or a similar-product search never saves, and
+a refinement saves only when it touched a size. Returning to a type, or a new
+search for it that states no size of its own, brings its sizes back and the
+reply says so (`earlier_sizes_applied`); a size stated now is used exactly, not
+blended with the saved one. "Any size is fine" on the way back sets the
+decision's `drop_saved_sizes`. Sizes left behind are reported as
+`dropped_roles`, which the reply mentions only when the new piece takes the old
+one's place (sofa -> sectional), never for a different piece (sofa -> armchair).
+Room measurements are a different fact - they belong to the room and always
+carry.
+
 The original request is preserved unchanged beside the final one, and every
 product records the attempt at which it first became eligible. That depth is
 provenance, not a score - **nothing in relaxation ranks anything**.
 
 Reaching the end of the permitted widenings without meeting the target is a
 valid outcome, not an error. The catalog may simply not hold enough.
+
+**Nothing found is never a dead end.** When even the widest permitted search is
+empty, the relaxation layer also counts what each of the customer's own
+requirements, set aside alone, would find (`set_aside`: price, seats, each
+measurement, a size pair, strict colour, strict style - never the product
+type), and for a budget nothing meets, the nearest real price in their
+currency. Only on a customer search, never for room optimisation. The reply
+offers the most useful one as a question they can say yes to ("sofas here start
+at 990 SAR - shall I show you the most affordable ones?"). Nothing is set aside
+for them: that stays their decision.
 
 ---
 

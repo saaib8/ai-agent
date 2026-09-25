@@ -64,6 +64,7 @@ from app.schemas.agent_state import (
     BundleItemState,
     BundleItemStatus,
     RoomProjectState,
+    SavedMeasurements,
 )
 from app.schemas.agent_turn import (
     CustomerTurnInput,
@@ -187,6 +188,7 @@ from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
     commit_search_results,
+    remember_measurements,
 )
 from app.services.agent_view import project_state
 from app.services.bundle_optimizer import BundleOptimizer
@@ -2973,9 +2975,12 @@ class CustomerTurnCoordinator:
             ),
             customer_defaults=working.customer_preferences.semantic_preferences,
             semantic_intent=(decision.new_search.semantic_intent if decision.new_search else None),
+            saved_measurements=_saved_sizes(
+                decision, working, resolved.request.commerce_subcategory
+            ),
             revision=_current_revision(working),
         )
-        return await self._run_search(composed, working, turn.context)
+        return await self._run_search(composed, working, turn.context, save_sizes=True)
 
     async def _maybe_compose_seating(
         self,
@@ -3090,6 +3095,7 @@ class CustomerTurnCoordinator:
         working: AgentStateV1,
         context: RetailerContext,
         *,
+        save_sizes: bool = False,
         recover_seating: bool = True,
     ) -> _Primary:
         """Execute, then promote and commit in one step.
@@ -3098,6 +3104,11 @@ class CustomerTurnCoordinator:
         criteria are promoted through the reducer - which carries the current
         revision forward - and `commit_search_results` advances it exactly
         once, atomically with the results it belongs to.
+
+        `save_sizes` is set only for a search the customer asked
+        for: its sizes are then saved against its product type. A room plan's
+        or a similar-product search states no size of its own, and letting it
+        save would erase the one the customer gave.
 
         The seating-combination recovery lives here rather than on any one caller,
         so a seat count no single piece can meet is answered by pairing pieces
@@ -3111,6 +3122,7 @@ class CustomerTurnCoordinator:
                 composed.resolved,
                 context,
                 dropped_constraints=composed.dropped_constraints,
+                earlier_sizes_applied=composed.earlier_sizes_applied,
             )
         except _HANDLED_SEARCH_FAILURES:
             logger.warning("turn_search_unavailable", store_id=context.store_id)
@@ -3132,8 +3144,9 @@ class CustomerTurnCoordinator:
                 )
             ),
         )
+        committed = commit_search_results(promoted, execution.presented_product_ids)
         primary = _Primary(
-            state=commit_search_results(promoted, execution.presented_product_ids),
+            state=remember_measurements(committed) if save_sizes else committed,
             search=execution.grounding,
         )
         if not recover_seating:
@@ -3159,8 +3172,14 @@ class CustomerTurnCoordinator:
         if decision.taxonomy_change_requested:
             return await self._refine_taxonomy(decision, delta, working, turn)
 
+        # Only a refinement that touched a size says anything about sizes. A
+        # plain "cheaper ones" after a similar-product search, which stated no
+        # size, must not save that silence over the size they gave earlier.
         return await self._compose_and_run(
-            self._composer.refine(working.active_search, delta), working, turn
+            self._composer.refine(working.active_search, delta),
+            working,
+            turn,
+            save_sizes=bool(delta.dimensions) or delta.planar_dimensions is not None,
         )
 
     async def _refine_taxonomy(
@@ -3195,22 +3214,27 @@ class CustomerTurnCoordinator:
             commerce_category=interpretation.request.commerce_category,
             commerce_subcategory=interpretation.request.commerce_subcategory,
             delta=delta,
+            saved_measurements=_saved_sizes(
+                decision, working, interpretation.request.commerce_subcategory
+            ),
         )
         if isinstance(outcome, NewTaskRequired):
             # A different product family is a different task, so nothing of the
             # old one carries across (CLAUDE.md 13.3).
             return await self._seed_and_execute(interpretation, decision, working, turn)
-        return await self._compose_and_run(outcome, working, turn)
+        return await self._compose_and_run(outcome, working, turn, save_sizes=True)
 
     async def _compose_and_run(
         self,
         outcome: CompositionOutcome,
         working: AgentStateV1,
         turn: CustomerTurnInput,
+        *,
+        save_sizes: bool,
     ) -> _Primary:
         match outcome:
             case ComposedSearch():
-                return await self._run_search(outcome, working, turn.context)
+                return await self._run_search(outcome, working, turn.context, save_sizes=save_sizes)
             case CompositionNeedsClarification():
                 return _Primary(
                     state=working,
@@ -3233,8 +3257,15 @@ class CustomerTurnCoordinator:
             case CompositionFailed():
                 # An unapproved attribute value, an unresolved relative price.
                 # Each means the decision did not match the state it was shown,
-                # which is not a question anyone can put to a customer.
-                logger.error("turn_composition_defect", defect=str(outcome.defect))
+                # which is not a question anyone can put to a customer. A one-seat
+                # misreading is expected model behaviour the correction fixes, so
+                # it is not logged as an error.
+                log = (
+                    logger.warning
+                    if outcome.defect is CompositionDefect.ONE_SEAT_ON_MULTI_SEAT_TYPE
+                    else logger.error
+                )
+                log("turn_composition_defect", defect=str(outcome.defect))
                 raise LLMResponseInvalidError(reason=f"composition refused: {outcome.defect}")
             case NewTaskRequired():  # pragma: no cover - only from refine_taxonomy
                 raise LLMResponseInvalidError(reason="unexpected new-task outcome")
@@ -3459,6 +3490,15 @@ class CustomerTurnCoordinator:
 
 
 # ── pure helpers ────────────────────────────────────────────────────────────
+
+
+def _saved_sizes(
+    decision: CustomerAgentDecision, state: AgentStateV1, subcategory: str | None
+) -> SavedMeasurements | None:
+    """The sizes saved for the type being searched, unless they let go of them."""
+    if decision.drop_saved_sizes:
+        return None
+    return state.customer_preferences.measurements_for(subcategory)
 
 
 def _current_revision(state: AgentStateV1) -> int:

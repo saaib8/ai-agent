@@ -65,6 +65,9 @@ already carries that meaning, because seat counts are recorded separately and \
 are often absent.
 - Only set the seat-count fields when the customer stated a number of seats \
 or people.
+- A piece for one person - a single seater, a seat for one - is its own \
+product type where the taxonomy has one, never a type that seats several \
+with a seat count of one.
 - Only set prices when the customer stated an amount. Record the currency only \
 if they said it; leave it null otherwise and never assume one. Write the \
 currency as its three-letter ISO code - SAR, USD, AED - whatever words they \

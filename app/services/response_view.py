@@ -572,6 +572,8 @@ def _search(
                 dropped.role for dropped in search.dropped_constraints if dropped.role is not None
             )
         ),
+        earlier_sizes_applied=search.earlier_sizes_applied,
+        would_find_without=search.set_aside,
     )
 
 

@@ -1,21 +1,19 @@
-# Reviewed seat counts for seating types the catalog leaves blank, version v1.
+# How many people a seating type seats by its nature. Version v1.
 #
-# A chair or a single-seater sofa seats one person by definition, but the
-# catalog records that capacity as NULL rather than 1. This file is where the
-# reviewed fact lives - versioned domain data, cross-validated against the
-# commerce taxonomy, never guessed in code or by a model (CLAUDE.md 6.2, 31).
+# Reviewed domain data, not a runtime guess (docs/known-issues.md, issue 4
+# decision; CLAUDE.md 6.2, 31). In store 50 not one chair or single-seater sofa
+# records a `seating_capacity`, so without this a seat count could never be
+# answered for them - and every stocked sofa, sofa set, sofa bed and sectional
+# seats two or more.
 #
-# It answers one question: when a product of this type has no recorded seat
-# count, how many does a reviewer say it seats? It never overrides a count the
-# catalog does record.
-#
-# `recliner` is deliberately absent: some recliners seat 2-3, and the review has
-# not settled a single implied value. Absence means unknown, never one.
-#
-# Adding a type: add it here, and only after a reviewer confirms every product
-# of it seats exactly that number.
+# `recliner` and `chaise-lounge` are deliberately in neither list: some seat
+# two or three, and the review has not settled them. Absence means unknown,
+# never one. Adding a type: only after a reviewer confirms every product of it.
 version: v1
 
+# The seat count one piece of each type has when the catalog records none.
+# Never applied over a count the catalog does record. A type here seating one
+# is never given a seat filter, and fills one seat in a combination.
 implied_capacity:
   chair: 1
   dining-chair: 1
@@ -24,3 +22,10 @@ implied_capacity:
   outdoor-chair: 1
   stool: 1
   single-seater-sofa: 1
+
+# Each seats two or more, so "one seat" of these is a different product type.
+multi_seat:
+  - sofa
+  - sectional-sofa
+  - sofa-set
+  - sofa-bed

@@ -771,6 +771,16 @@ class CustomerAgentDecision(BaseModel):
     path as the "not this one" button. Read only on a search.
     """
 
+    drop_saved_sizes: bool = False
+    """Size no longer matters for the kind of product they are asking for now -
+    "back to sofas, any size is fine", "sofas, size doesn't matter".
+
+    Sizes belong to a product type and come back when the search returns to
+    that type, so without this a limit they have just let go of would return
+    with it. Read only on a new search or a change of product type; ignored
+    everywhere else, since dropping a size is never worth refusing a turn.
+    """
+
     comparison_references: tuple[ProductReferenceSelector, ...] = ()
     clarification: BlockingClarification | None = None
 
@@ -926,7 +936,13 @@ class CustomerAgentDecision(BaseModel):
         if self.action is AgentAction.REFINE_SEARCH:
             if self.refinement is None and not self.taxonomy_change_requested:
                 raise ValueError("a refinement needs a delta or a taxonomy change")
-            if self.refinement is not None and self.refinement.is_empty():
+            # An empty delta beside a change of type says "nothing else
+            # changes", which is unambiguous - refusing it only cost a turn.
+            if (
+                self.refinement is not None
+                and self.refinement.is_empty()
+                and not self.taxonomy_change_requested
+            ):
                 raise ValueError("a refinement delta that changes nothing is not one")
         elif self.refinement is not None or self.taxonomy_change_requested:
             raise ValueError("only a refinement may carry a refinement payload")

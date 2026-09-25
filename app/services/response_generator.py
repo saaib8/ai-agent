@@ -265,12 +265,19 @@ class CustomerResponseGenerator:
             said_earlier=_their_own_words(turn),
             presented_count=view.presented_count,
             compared_count=view.compared_count,
-            counts=_view_counts(view),
+            counts=(
+                *_view_counts(view),
+                # What each requirement set aside would find, when nothing met
+                # them all - counted by the application, so sayable.
+                *(option.eligible_count for option in view.would_find_without),
+            ),
             # Figures the customer can read off the cards beside the reply.
             # Repeating one is reporting what is on screen; the guard still
             # refuses anything that had to be computed (CLAUDE.md 14).
             figures=(
                 *screen_figures(view.screen),
+                # The nearest real price to a budget nothing met.
+                *(o.nearest_price for o in view.would_find_without if o.nearest_price is not None),
                 # Rules of thumb the specialist supplied as structured
                 # measurements. Sayable as guidance about rooms in general,
                 # never as a fact about a product (CLAUDE.md 14, 41).

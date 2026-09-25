@@ -77,7 +77,7 @@ class FakeRelaxation:
         self.exact_count = exact_count if exact_count is not None else len(depths)
 
     async def search(
-        self, resolved: ResolvedSearch, context: RetailerContext
+        self, resolved: ResolvedSearch, context: RetailerContext, **_: object
     ) -> ControlledSearchResult:
         request = resolved.request
         return ControlledSearchResult(

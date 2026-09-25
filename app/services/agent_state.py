@@ -31,6 +31,7 @@ from app.schemas.agent_state import (
     ProductInteractionState,
     RoomDesignNeedState,
     RoomProjectState,
+    SavedMeasurements,
 )
 from app.schemas.agent_updates import (
     ActiveSearchUpdate,
@@ -138,6 +139,47 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
     )
 
 
+def remember_measurements(state: AgentStateV1) -> AgentStateV1:
+    """Save the executed search's sizes against its product type.
+
+    **Application-owned**, and called only after a search the customer asked
+    for has run - never for a room plan's or a similar-product search, whose
+    sizes nobody stated. A search with no size forgets that type's entry, which
+    is how "any size" sticks. A search with no product type saves nothing.
+    """
+    search = state.active_search
+    if search is None or search.request.commerce_subcategory is None:
+        return state
+    subcategory = search.request.commerce_subcategory
+    preferences = state.customer_preferences
+    others = tuple(
+        saved
+        for saved in preferences.measurements_by_type
+        if saved.commerce_subcategory != subcategory
+    )
+    request, semantics = search.request, search.semantics
+    if request.dimensions or request.planar_dimensions is not None:
+        others += (
+            SavedMeasurements(
+                commerce_subcategory=subcategory,
+                dimensions=request.dimensions,
+                dimension_semantics=semantics.dimensions,
+                planar_dimensions=request.planar_dimensions,
+                planar_semantics=semantics.planar_dimension,
+            ),
+        )
+    return AgentStateV1(
+        customer_preferences=CustomerPreferenceState(
+            semantic_preferences=preferences.semantic_preferences,
+            measurements_by_type=others,
+        ),
+        active_search=state.active_search,
+        product_interaction=state.product_interaction,
+        room_project=state.room_project,
+        derived_commerce=state.derived_commerce,
+    )
+
+
 # ── per-domain transitions ──────────────────────────────────────────────────
 
 
@@ -147,7 +189,8 @@ def _customer(
     if update is None:
         return current
     return CustomerPreferenceState(
-        semantic_preferences=apply_items(current.semantic_preferences, update.semantic_preferences)
+        semantic_preferences=apply_items(current.semantic_preferences, update.semantic_preferences),
+        measurements_by_type=current.measurements_by_type,
     )
 
 

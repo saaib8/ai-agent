@@ -327,7 +327,11 @@ something, and apply it to related searches. The customer can clear it
 
 ## 4. "Sofa for 8 or 9 people" returns "nothing in the catalog"
 
-**Status:** Open
+**Status:** Open. One-seat part done (2026-09-25): the seating registry
+(`app/taxonomy/seating_v1.yaml`) records chair types, stool and single-seater
+sofa as one seat, so they are never hidden by a seat filter, and "make them
+single seater sofas" now changes type instead of searching for a one-seat sofa
+(live 9/9). Seating bundles for large groups are still open.
 
 **Reported:** Asking for a sofa for eight or nine people returns "I don't have
 anything like this". It should suggest sofa sets, or buying two sofas
@@ -524,6 +528,80 @@ verified on 2026-09-24:
       staging-database timeout (503), and both passed on re-run.
   - Reminder from that run: a database blip still shows the customer an error
     card, which is the "friendly error for outages" item below.
+  - **Saved-session check (2026-09-25, live, reading Redis after every turn):**
+    - A refined search keeps budget + strictness, seats, width + "approximate",
+      colour/style wishes and descriptive words across price changes, a
+      sort, and "show more".
+    - A changed request resets paging exclusions.
+    - A room request saves the budget, household size, room type, style and
+      measurements ("4 by 5 metres" → 400 × 500 cm).
+    - A selection is saved and survives new searches.
+    - "I usually like warm beige" is saved to the profile (Beige, Sand, Taupe)
+      and seeds later searches, e.g. rugs.
+    - A strict colour stays with its own search, and is not forced onto a new
+      product type.
+    - **Gap found and fixed:** a measurement dropped on a type change (e.g.
+      sofa width → sofa sets, which have no single footprint) was never
+      mentioned. The writer received `dropped_roles` but its prompt never used
+      it. Now disclosed.
+    - Still open: wishes stated only inside a search ("beige sofas") do not
+      carry to a new product type - issue 3.
+  - **Dropped-measurement wording** (user disagreed with the first version):
+    no longer blames the catalogue; it offers help instead ("these come in
+    quite different shapes, so I've shown a range rather than holding to one
+    width - tell me the space you have..."). Used for any type a measurement
+    cannot be applied to (sofa sets, sectionals, beds, chairs). Live 3/3.
+  - **Dimension changes parked (2026-09-25, user decision).** A "longer side /
+    shorter side" rule was trialled for sectionals and evaluated for all types,
+    then undone: size filtering stays exactly as committed. Findings kept for
+    later: most furniture stores the longer side consistently; 8 of 15
+    sectionals, 5 beds and 6 mattresses are swapped; chairs are too near-square
+    to tell width from depth; data to review on the Django side - sectional
+    173472 height 159, beds 172972 and 172974, missing bed/mattress heights.
+  - **Sizes belong to a product type (2026-09-25, done).** A product size used
+    to follow the customer to any type in the same family that could be
+    measured the same way: a side-table 60 cm limit carried to coffee tables
+    left 2 of 41, and a coffee-table 100 cm limit left 0 of 16 TV stands.
+    - Now each type keeps its own sizes in the session; they come back (and the
+      reply says so) when the customer returns to that type, and "any size"
+      drops them. Room measurements are separate and always carry.
+    - Checked: unit suite 4277/4277; an independent verification agent drove
+      the real coordinator (all behaviours pass after two fixes it found - a
+      system search erasing a saved size, and a restated size reported as
+      dropped); live 15/15 (side table -> coffee tables not limited 3/3, sofa
+      size comes back and is mentioned 3/3, "any size" clears 3/3, size kept on
+      a price change 3/3, sofa -> sofa sets disclosed 3/3).
+    - Session format stays `agent_state_v5`: the new field has an empty
+      default, so live sessions still load. Rolling back to older code would
+      refuse sessions that hold the new field.
+    - Open, found during the check:
+      - **Existing crash (not caused by this change):** a type change that
+        states a size the new type cannot take - "make them sofa beds under
+        100 cm wide" - sends it to discovery, which raises
+        `UnsupportedDimensionRoleError`, and the turn fails with an error.
+      - Minor: after a similar-product search, restating one size replaces the
+        whole saved entry, so another saved size (e.g. a depth) is forgotten.
+  - **Found in the carry check (2026-09-25):**
+    - Fixed: "make them single seater sofas" searched for a one-seat sofa and
+      found nothing (see issue 4), and a search that found nothing ended the
+      conversation (see issue 9). An independent verification agent checked
+      both against the real turn engine; one defect it found (a saved one-seat
+      sofa search could not be refined) is fixed.
+    - Open: "armchairs" is sometimes read as `lounge-chair` (1 product in
+      store 50) instead of `chair`, which CLAUDE.md 7 says covers armchairs -
+      2 of 3 live runs showed a single card.
+    - Minor: the seating registry accepts any approved subcategory, not only
+      seating ones.
+  - **Unit tests added (2026-09-26)** for the per-type sizes, the seating
+    registry and the zero-results next steps: 60 tests in
+    `tests/unit/test_sizes_per_product_type.py`, `test_seating_rules.py` and
+    `test_zero_result_next_steps.py`, running without the model or database.
+    Each fix was then deliberately broken one at a time (15 breaks) and every
+    break was caught. Full suite 4337 passed; live suite 38/38; the 16-turn
+    saved-session check passes on the final code.
+    - Noted while testing: a colour or style set aside never appears among the
+      next-step counts in practice - when only the colour stood in the way,
+      the colour last resort has already shown those products.
 - Still to do:
   - A friendly frontend error card, plus timeouts and a retry cost budget.
     Worst case today: 3 decision + 4 query-understanding calls before a
@@ -821,7 +899,15 @@ answer can be used.
 
 ## 9. Replies sometimes dead-end the conversation
 
-**Status:** Open
+**Status:** Partly done (2026-09-25).
+- Done: zero results. When nothing matches even after the allowed widening,
+  code counts what setting each requirement aside would find (and, for a
+  budget, where prices actually start), and the reply offers it as a yes/no
+  next step - "Sofas here start at 990 SAR - shall I show you the most
+  affordable ones?", "without the width there are 19 - want to see those?".
+  The fixed zero-results fallback also names a next step now. Live 6/6.
+- Still open: the other fixed fallback sentences, the prompt rebalance ("stop
+  there" -> "always leave a next step") and quick-reply chips.
 
 **Reported:** Sometimes the sales agent writes a message that stops the
 conversation and leaves the user at a dead end, so they have to start

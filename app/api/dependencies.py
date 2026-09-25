@@ -277,7 +277,9 @@ def customer_turn_coordinator(
             app_resources.attributes,
             app_resources.dimensions,
         ),
-        SearchRefinementComposer(app_resources.attributes, app_resources.dimensions),
+        SearchRefinementComposer(
+            app_resources.attributes, app_resources.dimensions, app_resources.seating
+        ),
         resolver,
         RelativePriceResolver(resolver, repository),
         ProductComparisonService(repository, app_resources.dimensions, settings.customer_agent),
@@ -480,7 +482,9 @@ def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> Fin
         session_store(app_resources),
         app_resources.settings.session,
         SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
-        SearchRefinementComposer(app_resources.attributes, app_resources.dimensions),
+        SearchRefinementComposer(
+            app_resources.attributes, app_resources.dimensions, app_resources.seating
+        ),
     )
 
 

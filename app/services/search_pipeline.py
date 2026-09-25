@@ -113,16 +113,18 @@ class ProductSearchPipeline:
         context: RetailerContext,
         *,
         dropped_constraints: tuple[DroppedConstraint, ...] = (),
+        earlier_sizes_applied: bool = False,
     ) -> ProductSearchExecutionResult:
         """Run one search and return what may be committed and explained.
 
-        `dropped_constraints` is carried through from composition: a product
-        type change can make a measurement unanswerable, and the reply has to
-        say so. The pipeline does not discover them.
+        `dropped_constraints` and `earlier_sizes_applied` are carried through
+        from composition: a product type change leaves one type's sizes behind
+        and may bring back another's, and the reply has to be able to say so.
+        The pipeline does not discover them.
         """
         started = time.perf_counter()
 
-        searched, ranked = await self._search_and_rank(resolved, context)
+        searched, ranked = await self._search_and_rank(resolved, context, explain_empty=True)
 
         selected = select_for_presentation(
             ranked.product_ids, limit=self._presentation_limit
@@ -160,6 +162,8 @@ class ProductSearchPipeline:
             relaxations=_summarise(searched),
             stop_reason=searched.stop_reason,
             dropped_constraints=dropped_constraints,
+            earlier_sizes_applied=earlier_sizes_applied,
+            set_aside=searched.set_aside,
             semantic_used=ranked.semantic_used,
             semantic_skip_reason=ranked.skip_reason,
         )
@@ -188,7 +192,11 @@ class ProductSearchPipeline:
         )
 
     async def _search_and_rank(
-        self, resolved: ResolvedSearch, context: RetailerContext
+        self,
+        resolved: ResolvedSearch,
+        context: RetailerContext,
+        *,
+        explain_empty: bool = False,
     ) -> tuple[ControlledSearchResult, SemanticRankingResult]:
         """Eligibility, then order, then the proof that they are the same set.
 
@@ -202,7 +210,7 @@ class ProductSearchPipeline:
         differ, so they stay with the callers rather than being hidden behind a
         flag here.
         """
-        searched = await self._relaxation.search(resolved, context)
+        searched = await self._relaxation.search(resolved, context, explain_empty=explain_empty)
         eligible_ids = tuple(c.product.product_id for c in searched.candidates)
         ranked = await self._ranking.rank(
             _ranking_view(resolved, searched),

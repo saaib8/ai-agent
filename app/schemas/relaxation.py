@@ -225,6 +225,39 @@ class StopReason(StrEnum):
     Always surfaced to the customer through the relaxation it records."""
 
 
+class SetAsideField(StrEnum):
+    """One requirement a customer could let go of, named for the reply."""
+
+    PRICE = "price"
+    SEATS = "seats"
+    DIMENSION = "dimension"
+    SIZE_PAIR = "size_pair"
+    COLOR = "color"
+    STYLE = "style"
+
+
+class SetAsideOption(BaseModel):
+    """How many products there are with one requirement set aside.
+
+    Computed only when nothing met everything together, so the reply can offer
+    a real next step instead of a dead end. A count, never a promise about
+    which products, and never acted on: setting a requirement aside is the
+    customer's decision (CLAUDE.md 13.4).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    field: SetAsideField
+    role: DimensionRole | None = None
+    eligible_count: int = Field(ge=1)
+    nearest_price: Decimal | None = None
+    """Price only: the closest real price to the budget they gave - the lowest
+    when every product costs more, the highest when every one costs less - in
+    the same currency. "Sofas start at 990" is a next step; "there are 173
+    without a budget" is not."""
+    currency: str | None = None
+
+
 class ControlledSearchResult(BaseModel):
     """The outcome of an exact search plus any permitted widening."""
 
@@ -250,6 +283,9 @@ class ControlledSearchResult(BaseModel):
     target_reached: bool
     stop_reason: StopReason
     attempts: tuple[RelaxationAttempt, ...]
+    set_aside: tuple[SetAsideOption, ...] = ()
+    """Only when nothing was found: what each requirement, set aside alone,
+    would find. Empty otherwise."""
 
     @property
     def relaxation_attempt_count(self) -> int:
