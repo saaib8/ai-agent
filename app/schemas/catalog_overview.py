@@ -97,6 +97,15 @@ class SubcategoryShelf(BaseModel):
     """Confirmed seat counts for this type, or ``None`` where the catalog
     records none. Only meaningful for seating; a table shelf leaves it ``None``."""
 
+    implied_seats: int | None = None
+    """The reviewed seat count for one piece of this type when the catalog
+    records none - one for a chair or a single-seater sofa. Reviewed domain data
+    from the seating registry, kept distinct from :attr:`seating` on purpose: a
+    confirmed count and a reviewed default are different kinds of knowledge, and
+    a reply must never present the second as the first (CLAUDE.md 6.2, 31). It
+    is what lets a chair count as a seat in a combination even though its
+    ``seating_capacity`` column is blank."""
+
     colours: tuple[str, ...] = ()
     """The distinct ``main_color`` values this type comes in, in stored form.
 
@@ -116,10 +125,17 @@ class SubcategoryShelf(BaseModel):
 
     @property
     def max_seats(self) -> int | None:
-        """The seat ceiling one piece of this type reaches, or ``None`` when no
-        seat count is recorded. The single number the combination decision turns
-        on."""
-        return self.seating.maximum if self.seating else None
+        """The seat ceiling one piece of this type reaches, or ``None`` when
+        neither a confirmed count nor a reviewed default is known.
+
+        A confirmed count wins over the reviewed default: a sofa uses its real
+        maximum, a chair falls back to its implied one. The single number the
+        combination decision turns on - and the reason a chair can now fill a
+        seat in a bundle where before it counted for nothing.
+        """
+        if self.seating is not None:
+            return self.seating.maximum
+        return self.implied_seats
 
 
 class CatalogOverview(BaseModel):

@@ -225,7 +225,7 @@ def test_the_capability_service_exists_and_owns_no_vocabulary() -> None:
         if name != "self"
     ]
 
-    assert parameters == ["repository", "taxonomy"]
+    assert parameters == ["repository", "taxonomy", "seating"]
 
 
 def test_capabilities_carry_no_products_or_prices() -> None:

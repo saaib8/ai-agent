@@ -40,6 +40,7 @@ from app.services.semantic_ranking import SemanticRankingService
 from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.seating import load_seating_semantics
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 pytestmark = pytest.mark.integration
@@ -47,6 +48,7 @@ pytestmark = pytest.mark.integration
 STORE, OTHER_STORE = 1, 2
 CONTEXT = RetailerContext(store_id=STORE)
 TAXONOMY = load_taxonomy()
+SEATING = load_seating_semantics(taxonomy=TAXONOMY)
 
 SOFA_COUNT = 60
 TABLE_COUNT = 12
@@ -118,7 +120,7 @@ async def _discover(
 ) -> Any:
     async with database.session() as session:
         repository = ProductRepository(session)
-        capabilities = await CatalogCapabilityService(repository, TAXONOMY).capabilities(
+        capabilities = await CatalogCapabilityService(repository, TAXONOMY, SEATING).capabilities(
             CONTEXT
         )
         policy = RelaxationSettings()

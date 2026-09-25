@@ -42,6 +42,7 @@ from app.services.semantic_ranking import SemanticRankingService
 from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.seating import load_seating_semantics
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 pytestmark = pytest.mark.integration
@@ -50,6 +51,7 @@ OURS, THEIRS = 51, 52
 US = RetailerContext(store_id=OURS)
 THEM = RetailerContext(store_id=THEIRS)
 TAXONOMY = load_taxonomy()
+SEATING = load_seating_semantics(taxonomy=TAXONOMY)
 
 OUR_SOFAS = [1, 2, 3]
 THEIR_SOFAS = [101, 102, 103]
@@ -121,7 +123,7 @@ async def _room_for(
     async with database.session() as session:
         repository = ProductRepository(session)
         capabilities = await CatalogCapabilityService(
-            repository, TAXONOMY
+            repository, TAXONOMY, SEATING
         ).capabilities(context)
         request = InteriorDesignRequest(
             task=DesignTask.ROOM_PLAN,
@@ -163,7 +165,7 @@ async def test_capability_describes_only_the_active_retailer(
 ) -> None:
     async with database.session() as session:
         repository = ProductRepository(session)
-        service = CatalogCapabilityService(repository, TAXONOMY)
+        service = CatalogCapabilityService(repository, TAXONOMY, SEATING)
 
         ours = await service.capabilities(US)
         theirs = await service.capabilities(THEM)
@@ -221,7 +223,7 @@ async def test_a_replacement_search_stays_inside_the_retailer(
     async with database.session() as session:
         repository = ProductRepository(session)
         capabilities = await CatalogCapabilityService(
-            repository, TAXONOMY
+            repository, TAXONOMY, SEATING
         ).capabilities(US)
         request = InteriorDesignRequest(
             task=DesignTask.ROOM_PLAN,

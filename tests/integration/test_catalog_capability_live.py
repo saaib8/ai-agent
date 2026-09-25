@@ -20,6 +20,7 @@ from app.repositories.products import ProductRepository
 from app.schemas.retailer import RetailerContext
 from app.services.catalog_capability import CatalogCapabilityService
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.seating import load_seating_semantics
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 pytestmark = pytest.mark.integration
@@ -27,6 +28,7 @@ pytestmark = pytest.mark.integration
 STORE_A, STORE_B = 1, 2
 CONTEXT_A, CONTEXT_B = RetailerContext(store_id=STORE_A), RetailerContext(store_id=STORE_B)
 TAXONOMY = load_taxonomy()
+SEATING = load_seating_semantics(taxonomy=TAXONOMY)
 
 
 def _product(
@@ -73,7 +75,7 @@ async def catalog(writable_engine: AsyncEngine) -> None:
 
 async def _capabilities(database: Database, context: RetailerContext) -> Any:
     async with database.session() as session:
-        service = CatalogCapabilityService(ProductRepository(session), TAXONOMY)
+        service = CatalogCapabilityService(ProductRepository(session), TAXONOMY, SEATING)
         return await service.capabilities(context)
 
 

@@ -332,7 +332,9 @@ def catalog_capability_service(
     session: SessionDep, app_resources: ResourcesDep
 ) -> CatalogCapabilityService:
     """What the active retailer stocks. Deterministic, no configuration."""
-    return CatalogCapabilityService(ProductRepository(session), app_resources.taxonomy)
+    return CatalogCapabilityService(
+        ProductRepository(session), app_resources.taxonomy, app_resources.seating
+    )
 
 
 CatalogCapabilityServiceDep = Annotated[

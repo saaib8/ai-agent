@@ -1,0 +1,26 @@
+# Reviewed seat counts for seating types the catalog leaves blank, version v1.
+#
+# A chair or a single-seater sofa seats one person by definition, but the
+# catalog records that capacity as NULL rather than 1. This file is where the
+# reviewed fact lives - versioned domain data, cross-validated against the
+# commerce taxonomy, never guessed in code or by a model (CLAUDE.md 6.2, 31).
+#
+# It answers one question: when a product of this type has no recorded seat
+# count, how many does a reviewer say it seats? It never overrides a count the
+# catalog does record.
+#
+# `recliner` is deliberately absent: some recliners seat 2-3, and the review has
+# not settled a single implied value. Absence means unknown, never one.
+#
+# Adding a type: add it here, and only after a reviewer confirms every product
+# of it seats exactly that number.
+version: v1
+
+implied_capacity:
+  chair: 1
+  dining-chair: 1
+  lounge-chair: 1
+  office-chair: 1
+  outdoor-chair: 1
+  stool: 1
+  single-seater-sofa: 1

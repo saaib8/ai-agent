@@ -14,8 +14,10 @@ from app.repositories.products import CatalogOverviewRow
 from app.schemas.retailer import RetailerContext
 from app.services.catalog_capability import CatalogCapabilityService
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.seating import load_seating_semantics
 
 TAXONOMY = load_taxonomy()
+SEATING = load_seating_semantics(taxonomy=TAXONOMY)
 CONTEXT = RetailerContext(store_id=50)
 
 
@@ -58,7 +60,7 @@ def _row(
 
 def _service(*rows: CatalogOverviewRow) -> tuple[CatalogCapabilityService, FakeRepository]:
     repository = FakeRepository(tuple(rows))
-    return CatalogCapabilityService(repository, TAXONOMY), repository  # type: ignore[arg-type]
+    return CatalogCapabilityService(repository, TAXONOMY, SEATING), repository  # type: ignore[arg-type]
 
 
 async def test_it_carries_seat_and_price_ranges_and_the_palette() -> None:
@@ -89,16 +91,37 @@ async def test_it_carries_seat_and_price_ranges_and_the_palette() -> None:
     assert sofa.colours == ("Beige", "Charcoal", "Grey")
 
 
-async def test_a_type_with_no_seat_data_has_no_spread() -> None:
-    """Every chair in store 50 has a NULL capacity. That is 'unverified', which
-    the shelf must show as an absent spread - never a zero, never a guess."""
-    service, _ = _service(_row("seating", "chair", seat_known=0))
+async def test_a_type_with_no_seat_knowledge_at_all_has_no_ceiling() -> None:
+    """A non-seating type carries neither a confirmed spread nor a reviewed
+    default, so its ceiling is None - never read as zero, never a guess."""
+    service, _ = _service(_row("tables", "console", seat_known=0))
 
     overview = await service.overview(CONTEXT)
 
-    (chair,) = overview.shelves
-    assert chair.seating is None
-    assert chair.max_seats is None
+    (console,) = overview.shelves
+    assert console.seating is None
+    assert console.implied_seats is None
+    assert console.max_seats is None
+
+
+async def test_implied_seats_let_a_seatless_type_count_as_one() -> None:
+    """Store 50's chairs and single-seaters record no seat count, but a reviewer
+    says each seats one. That reviewed default - kept distinct from a confirmed
+    spread (CLAUDE.md 6.2) - is what lets a chair fill a seat in a combination
+    where before it counted for nothing. A confirmed count still wins over it."""
+    service, _ = _service(
+        _row("seating", "chair", seat_known=0),
+        _row("seating", "sofa", seat_known=5, seat_min=2, seat_max=5),
+    )
+
+    overview = await service.overview(CONTEXT)
+    shelves = {s.commerce_subcategory: s for s in overview.shelves}
+
+    assert shelves["chair"].seating is None
+    assert shelves["chair"].implied_seats == 1
+    assert shelves["chair"].max_seats == 1
+    assert shelves["sofa"].implied_seats is None
+    assert shelves["sofa"].max_seats == 5
 
 
 async def test_max_seats_in_a_family_is_the_single_piece_ceiling() -> None:
@@ -116,14 +139,17 @@ async def test_max_seats_in_a_family_is_the_single_piece_ceiling() -> None:
     assert overview.max_seats_in("tables") is None
 
 
-async def test_max_seats_in_is_none_when_a_family_records_no_counts() -> None:
-    """A family with only unverified capacities has no ceiling - never read as
-    zero, which would wrongly say 'no single piece seats anyone'."""
+async def test_a_family_with_only_implied_counts_still_has_a_ceiling() -> None:
+    """Chairs record no seat count, but each seats one by review - so a
+    chair-only seating family has a ceiling of 1, not None. The reviewed default
+    fills the gap the catalog leaves, which is what makes chairs usable in a
+    combination. A non-seating family, with no default, stays None."""
     service, _ = _service(_row("seating", "chair", seat_known=0))
 
     overview = await service.overview(CONTEXT)
 
-    assert overview.max_seats_in("seating") is None
+    assert overview.max_seats_in("seating") == 1
+    assert overview.max_seats_in("tables") is None
 
 
 async def test_unapproved_pairs_are_dropped_not_surfaced() -> None:

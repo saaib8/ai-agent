@@ -34,6 +34,7 @@ from app.schemas.retailer import (
     RetailerContext,
 )
 from app.taxonomy.registry import CommerceTaxonomy
+from app.taxonomy.seating import SeatingSemantics
 
 logger = get_logger(__name__)
 
@@ -46,9 +47,15 @@ column holds Arabic nouns, numbers or "test" (CLAUDE.md, R3)."""
 class CatalogCapabilityService:
     """Live catalog -> the product types a planner may rely on."""
 
-    def __init__(self, repository: ProductRepository, taxonomy: CommerceTaxonomy) -> None:
+    def __init__(
+        self,
+        repository: ProductRepository,
+        taxonomy: CommerceTaxonomy,
+        seating: SeatingSemantics,
+    ) -> None:
         self._repository = repository
         self._taxonomy = taxonomy
+        self._seating = seating
 
     async def capabilities(self, context: RetailerContext) -> RetailerCatalogCapabilities:
         """What this retailer stocks, in approved vocabulary only.
@@ -113,7 +120,8 @@ class CatalogCapabilityService:
             if not self._is_approved(row.commerce_category, row.commerce_subcategory):
                 rejected.append(f"{row.commerce_category}/{row.commerce_subcategory}")
                 continue
-            shelves.append(_shelf_from_row(row))
+            implied = self._seating.implied_capacity(row.commerce_subcategory)
+            shelves.append(_shelf_from_row(row, implied))
             units.update(row.price_units)
 
         if rejected:
@@ -141,12 +149,15 @@ class CatalogCapabilityService:
         return self._taxonomy.is_pair(category, subcategory)
 
 
-def _shelf_from_row(row: CatalogOverviewRow) -> SubcategoryShelf:
+def _shelf_from_row(row: CatalogOverviewRow, implied_seats: int | None) -> SubcategoryShelf:
     """One aggregation row as an agent-facing shelf.
 
     A seating spread is attached only when the catalog actually recorded seat
     counts for the type; where every piece has a NULL capacity the shelf carries
     no spread, which is the honest "unverified" rather than a zero (CLAUDE.md 6.2).
+    ``implied_seats`` is the reviewed default from the seating registry, kept
+    beside the spread rather than folded into it - the two are different kinds of
+    knowledge and a reply must not present the reviewed default as confirmed.
     """
     seating: SeatingSpread | None = None
     if row.seat_known > 0 and row.seat_minimum is not None and row.seat_maximum is not None:
@@ -162,6 +173,7 @@ def _shelf_from_row(row: CatalogOverviewRow) -> SubcategoryShelf:
         price_minimum=row.price_minimum,
         price_maximum=row.price_maximum,
         seating=seating,
+        implied_seats=implied_seats,
         colours=row.colours,
     )
 
