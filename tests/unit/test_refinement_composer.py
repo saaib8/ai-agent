@@ -773,7 +773,11 @@ def test_an_unapproved_canonical_value_is_refused_not_filtered(
 def test_a_requirement_without_a_canonical_value_is_refused(
     composer: SearchRefinementComposer,
 ) -> None:
-    """"It must be warm neutral" names no approved colour."""
+    """"It must be warm neutral" names no approved colour.
+
+    Not a defect in the model's output, and not a question either: no product
+    can match it, so the search runs without it, their words rank the closest
+    first, and it is recorded as unmatched for the reply to disclose."""
     outcome = composer.refine(
         _state(),
         SearchRefinementDelta(
@@ -787,7 +791,9 @@ def test_a_requirement_without_a_canonical_value_is_refused(
         ),
     )
 
-    assert isinstance(outcome, CompositionFailed)
+    assert isinstance(outcome, ComposedSearch)
+    assert outcome.resolved.request.colors_any_of == ()
+    assert [a.raw_value for a in outcome.resolved.unmatched_strict] == ["warm neutral"]
 
 
 def test_a_preference_keeps_an_out_of_vocabulary_value_verbatim(

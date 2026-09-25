@@ -13,6 +13,10 @@ words rather than our inference.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from app.taxonomy.attributes import CatalogAttributes
+
 VERSION = "customer_decision/v1"
 
 INSTRUCTIONS = """\
@@ -138,13 +142,30 @@ already in front of them, answer: the options they asked for are the ones
 already there, and nothing needs running again. Only if they also named a new
 criterion does that criterion make it a refinement.
 
+Asking for MORE is different. "Show more options", "show me more", "any
+others?", "different ones", "what else do you have?" want other products for
+the same request: a search with show_more set, and nothing else changed. The
+products they have already seen are left out for them.
+
+Turning one card down - "not this one", "I don't like the third", "take the
+second out of these" - is a search with exclude_reference pointing at that card,
+the same way you point at any card. The rest of the request stays as it is.
+When they turn one down and also ask for others - "I don't like the second
+one, show me others" - set both.
+
+If they also change something - "more, but cheaper" - that is a refinement
+carrying the change instead. Pieces in a room they are furnishing are changed
+through bundle_refine, not this.
+
 A refinement always carries the change that makes it one. Never a refinement
 with nothing in it.
 
 ACTION RULES
 Choose exactly one action.
 - answer: answerable from the conversation and what is already known.
-- clarify: nothing can proceed correctly until they answer.
+- clarify: nothing can proceed correctly until they answer. Whether something
+  is in stock, or what to show if it is not, is never a reason to clarify:
+  you cannot see the catalog, so search and let the application answer it.
 - search: a genuinely new product task.
 - refine_search: a change to the product task already running.
 - product_detail: they want a current fact about one product. Never deselect
@@ -614,10 +635,138 @@ write an argument.
 """
 
 
-def build_instructions() -> str:
-    """The decision instructions.
+_ATTRIBUTE_SECTION = """\
+COLOURS AND STYLES
+The catalog records colour and style with a fixed vocabulary, and these are
+the only values that exist:
 
-    A function rather than a bare constant, matching query understanding, so a
-    later version can take arguments without changing every call site.
+  colours: {colors}
+  styles:  {styles}
+
+Whenever the customer describes a colour or a style - asking for it, changing
+what is on screen, or telling you what they like - express it with these
+values. Their words rarely match exactly, so translate the meaning, and choose
+every value that fits rather than only one:
+
+  "dark grey"        -> Grey, Charcoal
+  "something lighter" (beige cards on screen) -> the listed colours clearly
+                        lighter than the ones on screen
+  "earthy tones"     -> the listed colours that read as earthy
+
+Keep their own words as the raw value on each one. Never write a value that is
+not listed; if nothing listed fits, leave the approved value empty and keep
+their words.
+
+Wanting, liking or asking for a colour or style is a preference - set it as a
+preference. Nothing is hidden by a preference; matching products are simply
+shown first. Only a customer who ruled the alternatives out - "only", "must
+be", "nothing else", "no other colours" - is setting a requirement.
+
+A strict colour or style is still a search: run it. Never ask in advance
+whether to show alternatives, whether to show nothing, or which shades count -
+you cannot see what is in stock. The application shows the exact matches, or
+says plainly that none match and shows the closest instead.
+
+  "only red sofas, no other colours" -> a search with a colour requirement
+                                        (the listed reds). Not a question.
+  "only dark grey, nothing else"      -> a search requiring Grey, Charcoal.
+
+A style requirement with several values means every one of them on the same
+piece. So for a strict style choose the single listed value that fits best,
+unless they asked for a combination.
+
+"""
+
+
+def build_instructions(attributes: CatalogAttributes | None = None) -> str:
+    """The decision instructions, with the colour and style vocabulary when given.
+
+    Without a vocabulary the instructions are exactly `INSTRUCTIONS`. With one,
+    a section is added that tells the model to express colour and style only in
+    approved values - the same vocabulary its response schema is restricted to.
     """
-    return INSTRUCTIONS
+    if attributes is None:
+        return INSTRUCTIONS
+    section = _ATTRIBUTE_SECTION.format(
+        colors=", ".join(sorted(attributes.colors)),
+        styles=", ".join(sorted(attributes.styles)),
+    )
+    return INSTRUCTIONS.replace("SAFETY AND AUTHORITY\n", section + "SAFETY AND AUTHORITY\n", 1)
+
+
+_CORRECTION = """\
+
+YOUR PREVIOUS ANSWER FOR THIS TURN COULD NOT BE USED
+It was checked and refused for these reasons:
+{problems}
+
+Decide this same turn again as a fresh answer that avoids them, keeping to
+what the customer actually asked. If their meaning is genuinely unclear, choose
+clarify and ask them one short question rather than guessing. Never mention
+this correction in anything you write.
+"""
+
+_PROBLEMS: tuple[tuple[str, str], ...] = (
+    (
+        "composition refused: unapproved_attribute_value",
+        "A colour or style you gave is not an approved value for its family. Use "
+        "only the listed colours for a colour and only the listed styles for a style.",
+    ),
+    (
+        "composition refused: malformed_amount",
+        "A price, measurement or percentage could not be read as a plain number. "
+        "Write figures as plain numbers, for example 5000, 199.5 or 20.",
+    ),
+    (
+        "room geometry invalid",
+        "The same room measurement was recorded more than once. Record each "
+        "measurement once, using the latest figure the customer gave.",
+    ),
+    (
+        "room measurement invalid",
+        "A room measurement is not a possible size - zero, negative or not a number.",
+    ),
+    (
+        "room budget invalid",
+        "The budget is not possible - negative, or its minimum above its maximum.",
+    ),
+    (
+        "relative price percent malformed",
+        "A percentage could not be read. Write it as a plain number, for example 20.",
+    ),
+    (
+        "no structured output returned",
+        "No decision was returned. Return the structured decision.",
+    ),
+)
+"""Why a decision could not be applied, in words the model can act on.
+
+Keyed on the application's own failure reasons, never on anything the
+customer said, so a correction can only ever repeat our rules back.
+"""
+
+_GENERIC_PROBLEM = "Part of the decision could not be applied as written."
+_FIGURE_PROBLEM = _PROBLEMS[1][1]
+
+
+def describe_unusable(reason: object, violations: Sequence[str] = ()) -> tuple[str, ...]:
+    """The rules a refused decision broke, for the one corrective attempt.
+
+    Schema violations already say which rule, in our own text; anything else
+    is translated from its reason. Unknown reasons get a generic line rather
+    than nothing, so the model still knows the first answer was refused.
+    """
+    if violations:
+        return tuple(violations)
+    text = reason if isinstance(reason, str) else ""
+    for key, problem in _PROBLEMS:
+        if text.startswith(key):
+            return (problem,)
+    if "decimal" in text or "figure" in text:
+        return (_FIGURE_PROBLEM,)
+    return (_GENERIC_PROBLEM,)
+
+
+def build_correction(problems: Sequence[str]) -> str:
+    """The section appended to the instructions for a corrective attempt."""
+    return _CORRECTION.format(problems="\n".join(f"- {problem}" for problem in problems))

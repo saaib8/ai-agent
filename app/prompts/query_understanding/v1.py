@@ -103,10 +103,15 @@ colour - is a single request, however many clauses it has.
 Colours and styles:
 - Record every colour or style they mention, in their own words, whether or \
 not it appears in the lists above.
-- Set the canonical value only when their wording names one of those recorded \
-values outright. Otherwise leave it null - never reach for the nearest one. A \
-shade they name loosely is not the recorded value it resembles, and a mood \
-such as warm or calm names no recorded value at all.
+- Translate what they described into the recorded values that fit it, and \
+choose every value that fits rather than only one: "dark grey" is Grey and \
+Charcoal; "earthy tones" is the recorded colours that read as earthy. Record \
+one entry per value, each keeping their own words as the raw value.
+- Only write a value that is in the lists. When nothing recorded fits, leave \
+the canonical value null and keep their words.
+- A strict style is different: several strict styles must all be on the same \
+piece, so for a style they insist on choose the single recorded value that \
+fits best, unless they asked for a combination.
 - Judge strength by whether they ruled anything out. Wanting, liking or asking \
 for a colour or style is a leaning, so mark it preferred. Mark it locked only \
 when they excluded the alternatives - only this, must be this, nothing else, \
@@ -180,3 +185,27 @@ def build_instructions(
         colors=render_attributes(attributes.colors),
         styles=render_attributes(attributes.styles),
     )
+
+
+_CORRECTION = """
+
+YOUR PREVIOUS ANSWER FOR THIS MESSAGE COULD NOT BE USED
+It was checked and refused for these reasons:
+{problems}
+
+Interpret the same message again, avoiding them.\
+"""
+
+PAIR_PROBLEM = (
+    "The product type you chose is not listed under the category you chose. "
+    "Choose a type from that category's own list, or leave the type null."
+)
+GENERIC_PROBLEM = (
+    "Part of the interpretation could not be used. Use only listed values, and "
+    "write figures as plain numbers, for example 5000 or 220."
+)
+
+
+def build_correction(problems: tuple[str, ...]) -> str:
+    """Appended to the instructions for the one corrective attempt."""
+    return _CORRECTION.format(problems="\n".join(f"- {problem}" for problem in problems))

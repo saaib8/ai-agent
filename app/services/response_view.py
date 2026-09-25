@@ -25,7 +25,7 @@ from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
 from app.schemas.bundle import BundleStatus, BundleUnavailable, RoomBundle
 from app.schemas.comparison import ComparisonStatus
 from app.schemas.design import DesignPriority
-from app.schemas.grounding import GroundedProduct, SearchOutcome
+from app.schemas.grounding import GroundedProduct, SearchOutcome, TurnFailureCode
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
     BundleGroundingView,
@@ -40,6 +40,7 @@ from app.schemas.response import (
 from app.schemas.screen import CustomerVisibleScreenView
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.screen_view import screen_from_presentation
+from app.taxonomy.attributes import AttributeFamily
 
 
 def route_response(result: CustomerTurnResult) -> ResponseRoute:
@@ -120,8 +121,19 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
     outcome. Since M12E-2 it executes, so a handoff with a failure and no
     bundle is a room that did not get built - and the failure owns that turn
     rather than being hidden behind an acknowledgement.
+
+    A turn that was not understood has no primary outcome **whatever its
+    action says**. Its decision is a stand-in that executed nothing; if it
+    counted as an answer, the response model would be asked to word a turn
+    it knows nothing about, and could tell the customer something happened
+    when nothing did.
     """
     grounding = result.grounding
+    if (
+        grounding.failure is not None
+        and grounding.failure.code is TurnFailureCode.REQUEST_NOT_UNDERSTOOD
+    ):
+        return False
     return (
         grounding.search is not None
         or grounding.selection is not None
@@ -504,12 +516,43 @@ def _search(
         # The field that moved, not the bound it moved to: the application
         # renders "I widened your 5,000 to 5,500" from the real summary.
         relaxed_fields=tuple(dict.fromkeys(item.field for item in search.relaxations)),
+        wished_colour_matches=_wished_matches(result, search.products, AttributeFamily.COLOR),
+        wished_style_matches=_wished_matches(result, search.products, AttributeFamily.STYLE),
         dropped_roles=tuple(
             dict.fromkeys(
                 dropped.role for dropped in search.dropped_constraints if dropped.role is not None
             )
         ),
     )
+
+
+def _wished_matches(
+    result: CustomerTurnResult,
+    products: tuple[GroundedProduct, ...],
+    family: AttributeFamily,
+) -> int | None:
+    """Cards on screen in a colour or style the customer asked or wished for.
+
+    What they asked for is the strict filter plus every preference of that
+    family. Preferences in their own words that no approved value expresses
+    ("red" with no red on the list) add nothing any card could carry, so a
+    wish only they can name counts, correctly, as no card matching it.
+    """
+    executed = result.state.active_search
+    if executed is None:
+        return None
+    preferences = [p for p in executed.semantic_preferences if p.family is family]
+    required = (
+        executed.request.colors_any_of
+        if family is AttributeFamily.COLOR
+        else executed.request.styles_all_of
+    )
+    if not preferences and not required:
+        return None
+    wanted = set(required) | {p.canonical_value for p in preferences if p.canonical_value}
+    if family is AttributeFamily.COLOR:
+        return sum(1 for product in products if product.main_color in wanted)
+    return sum(1 for product in products if any(s in wanted for s in product.styles))
 
 
 def _words(value: str | None) -> str | None:

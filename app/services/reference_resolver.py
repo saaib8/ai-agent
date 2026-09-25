@@ -177,13 +177,16 @@ class ProductReferenceResolver:
         context: RetailerContext,
     ) -> ReferenceOutcome:
         """"The beige one" - matched against fresh facts, not remembered ones."""
-        if not self._attributes.is_value(selector.family, selector.value):
+        approved = self._attributes.canonical(selector.family, selector.value)
+        if approved is None:
             return _unresolved(ReferenceFailureReason.UNAPPROVED_ATTRIBUTE_VALUE)
         rows = await self._presented_rows(state, context)
         if isinstance(rows, ReferenceUnresolved):
             return rows
 
-        matches = [row for row in rows if _has_attribute(row, selector)]
+        # Matched in the registry's spelling: "the beige one" finds `Beige`.
+        canonical = selector.model_copy(update={"value": approved})
+        matches = [row for row in rows if _has_attribute(row, canonical)]
         if not matches:
             return _unresolved(ReferenceFailureReason.NO_ATTRIBUTE_MATCH)
         if len(matches) > 1:

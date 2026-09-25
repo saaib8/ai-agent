@@ -24,12 +24,13 @@ third as one.
 from __future__ import annotations
 
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.numbers import parse_stated_decimal
 from app.schemas.design_intent import (
     MAX_DESIGN_INTENT_CHARS,
     normalise_design_intent,
@@ -42,6 +43,16 @@ from app.taxonomy.dimensions import DimensionRole
 from app.taxonomy.registry import CommerceTaxonomy
 
 MAX_DESIGN_QUESTION_CHARS = 500
+
+MAX_REGULAR_SEATING_COUNT = 200
+"""The most people a room's regular seating may be planned for.
+
+A sanity bound on a stated fact, not a design rule. A majlis or a family
+gathering routinely seats forty or more, and a limit below that silently
+dropped what the customer said (the old ceiling was thirty). Two hundred still
+refuses a figure that can only be a misreading, such as a price read as a head
+count.
+"""
 MAX_DESIGN_BRIEF_CHARS = 800
 MAX_GUIDANCE_SUMMARY_CHARS = 600
 MAX_GUIDANCE_LABEL_CHARS = 120
@@ -63,9 +74,11 @@ def _centimetres(raw: str | None) -> Decimal | None:
     if raw is None:
         return None
     try:
-        return Decimal(raw.strip())
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError(f"a guideline bound must be a number: {raw!r}") from exc
+        return parse_stated_decimal(raw)
+    except ValueError as exc:
+        # The offending text is left out: it is model output, and this message
+        # ends up in logs.
+        raise ValueError("a guideline bound must be a usable number") from exc
 
 
 class AnchorDimension(BaseModel):
@@ -306,7 +319,9 @@ class InteriorDesignRequest(BaseModel):
     """Already composed by the locked precedence ladder. The specialist
     receives one settled list and resolves no precedence itself."""
 
-    regular_seating_count: int | None = Field(default=None, ge=1, le=30)
+    regular_seating_count: int | None = Field(
+        default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
+    )
     """How many people regularly use this room, when the customer has said.
 
     A room requirement to design against, and **not a furniture count**. Five

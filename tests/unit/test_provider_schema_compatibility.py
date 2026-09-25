@@ -64,6 +64,7 @@ SELECTOR_MEMBERS = (
 # place the provider would reject a `oneOf`.
 SELECTOR_SITES = (
     "#/properties/reference",
+    "#/properties/exclude_reference",
     "#/properties/comparison_references/items",
     "#/$defs/ProductInteractionIntent/properties/reference",
     "#/$defs/RelativePriceRefinement/properties/reference",

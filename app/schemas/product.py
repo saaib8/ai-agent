@@ -40,7 +40,8 @@ def parse_style_tokens(raw: str | None) -> tuple[str, ...]:
 class EligibleProduct(BaseModel):
     """What ranking needs about a product, and nothing else.
 
-    `price_amount` is here because an explicit sort orders on it. Everything
+    `price_amount` is here because an explicit sort orders on it, and colour
+    and style because a stated preference orders on them. Everything
     a customer sees is re-read from PostgreSQL after presentation selection,
     so carrying whole rows through ranking would duplicate the row the
     hydrator fetches (CLAUDE.md 16.1). Keeping this shape small is what makes
@@ -51,6 +52,10 @@ class EligibleProduct(BaseModel):
 
     product_id: int
     price_amount: Decimal
+    main_color: str | None = None
+    styles: tuple[str, ...] = ()
+    """Colour and style tokens, so ranking can put the products that match what
+    the customer is drawn to first. Facts from the row, never inferred."""
 
 
 

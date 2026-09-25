@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.core.config import SessionSettings
-from app.core.exceptions import LLMResponseInvalidError
+from app.core.exceptions import LLMUnavailableError
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
     AgentAction,
@@ -403,7 +403,7 @@ async def test_a_turn_that_failed_before_a_reply_persists_nothing() -> None:
     def broken_runtime() -> ChatRuntime:
         coordinator, _ = _coordinator(
             a_handoff(),
-            decision_error=LLMResponseInvalidError(reason="provider down"),
+            decision_error=LLMUnavailableError(provider="openai"),
         )
         return ChatRuntime(
             coordinator,

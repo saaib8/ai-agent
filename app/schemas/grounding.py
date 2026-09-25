@@ -89,6 +89,15 @@ class TurnFailureCode(StrEnum):
     instead of from state (M17 3).
     """
 
+    REQUEST_NOT_UNDERSTOOD = "request_not_understood"
+    """The turn could not be turned into anything we can act on.
+
+    The reasoning step's answer was unusable - it broke a rule, or there was
+    none - so nothing was executed and the conversation is left exactly as it
+    was. Not an outage and not the catalog's fault: said as a conversational
+    miss, so the customer rephrases rather than reading an error.
+    """
+
     DESIGN_ADVICE_UNAVAILABLE = "design_advice_unavailable"
     """A design *question* went unanswered.
 

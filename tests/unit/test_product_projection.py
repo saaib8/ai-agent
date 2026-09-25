@@ -122,7 +122,12 @@ def test_an_unclassified_colour_stays_absent() -> None:
 
 
 def test_eligible_product_carries_only_what_ranking_orders_on() -> None:
-    assert set(EligibleProduct.model_fields) == {"product_id", "price_amount"}
+    assert set(EligibleProduct.model_fields) == {
+        "product_id",
+        "price_amount",
+        "main_color",
+        "styles",
+    }
 
 
 def test_eligible_product_is_frozen_and_closed() -> None:

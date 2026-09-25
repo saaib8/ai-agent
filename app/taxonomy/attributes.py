@@ -36,6 +36,9 @@ class CatalogAttributes:
     def __init__(self, version: str, values: Mapping[AttributeFamily, frozenset[str]]) -> None:
         self._version = version
         self._values: Mapping[AttributeFamily, frozenset[str]] = dict(values)
+        self._by_spelling: Mapping[AttributeFamily, Mapping[str, str]] = {
+            family: _spelling_index(family, members) for family, members in self._values.items()
+        }
 
     @property
     def version(self) -> str:
@@ -62,11 +65,44 @@ class CatalogAttributes:
         """Membership in one family only, so a colour can never pass as a style."""
         return value in self._values[family]
 
+    def canonical(self, family: AttributeFamily, value: str) -> str | None:
+        """The approved value this spelling names, or None.
+
+        Spelling only: case, spacing, underscores and hyphens are ignored, so
+        "beige", "light grey" and "modern classic" find `Beige`, `Light Grey`
+        and `Modern_Classic`. A different word is never mapped onto an approved
+        one - "dark grey" finds nothing here, because choosing which approved
+        colours it means is interpretation, not spelling (CLAUDE.md 14.2).
+        """
+        return self._by_spelling[family].get(_spelling_key(value))
+
     def __repr__(self) -> str:
         return (
             f"CatalogAttributes(version={self._version!r}, "
             f"colors={len(self.colors)}, styles={len(self.styles)})"
         )
+
+
+def _spelling_key(value: str) -> str:
+    """One value's spelling with case, spacing and separators set aside."""
+    return " ".join(value.replace("_", " ").replace("-", " ").casefold().split())
+
+
+def _spelling_index(family: AttributeFamily, members: frozenset[str]) -> dict[str, str]:
+    """Spelling key to approved value, refusing two values that read the same.
+
+    Checked here, at load time, so an ambiguous vocabulary is a startup
+    failure rather than a lookup that silently picks one of two.
+    """
+    index: dict[str, str] = {}
+    for member in members:
+        key = _spelling_key(member)
+        if key in index:
+            raise TaxonomyConfigurationError(
+                detail=f"{family} values {index[key]!r} and {member!r} differ only in spelling"
+            )
+        index[key] = member
+    return index
 
 
 def _parse_family(document: Any, key: str, *, source: str) -> frozenset[str]:

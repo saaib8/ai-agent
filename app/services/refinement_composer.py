@@ -29,8 +29,9 @@ lineage (CLAUDE.md 13.2).
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
+from app.core.numbers import parse_stated_amount, parse_stated_decimal
 from app.schemas.agent_decision import (
     BlockingClarificationReason,
     CustomerStateProposal,
@@ -63,6 +64,7 @@ from app.schemas.query import (
     PlanarDimensionSemantics,
     ResolvedSearch,
     SemanticPreference,
+    UnresolvedAttribute,
 )
 from app.schemas.refinement import (
     AttributeRefinement,
@@ -124,8 +126,15 @@ def _defect(defect: CompositionDefect) -> _Refused:
 
 def _decimal(raw: str) -> Decimal:
     try:
-        return Decimal(raw.strip())
-    except (InvalidOperation, ValueError) as exc:
+        return parse_stated_decimal(raw)
+    except ValueError as exc:
+        raise _defect(CompositionDefect.MALFORMED_AMOUNT) from exc
+
+
+def _money(raw: str) -> Decimal:
+    try:
+        return parse_stated_amount(raw)
+    except ValueError as exc:
         raise _defect(CompositionDefect.MALFORMED_AMOUNT) from exc
 
 
@@ -219,6 +228,7 @@ class SearchRefinementComposer:
                 semantic_preferences=preferences,
                 # M7's wording, for this execution only.
                 semantic_text=resolved.semantic_text,
+                unmatched_strict=resolved.unmatched_strict,
             ),
         )
 
@@ -247,7 +257,7 @@ class SearchRefinementComposer:
         planar, planar_semantics = self._planar(
             request, semantics, delta.planar_dimensions
         )
-        colors, styles, preferences = self._attributes(
+        colors, styles, preferences, unmatched = self._attributes(
             request, state.semantic_preferences, delta.attributes
         )
         intent = _apply_intent(state.semantic_intent, delta.semantic_intent)
@@ -261,7 +271,11 @@ class SearchRefinementComposer:
             planar_dimensions=planar,
             colors_any_of=colors,
             styles_all_of=styles,
-            exclude_product_ids=request.exclude_product_ids,
+            # Criteria changed, so this is a fresh set of results: products
+            # left out while paging through the old criteria ("show more") may
+            # be exactly what the new ones find. Keeping them hidden made
+            # "show more" then "under 3000" return nothing.
+            exclude_product_ids=(),
             limit=request.limit,
             sort=_apply_sort(request.sort, delta.sort),
         )
@@ -291,6 +305,7 @@ class SearchRefinementComposer:
                 # A refinement executes on the durable intent, never on a
                 # contextless M7 reading of this turn's words.
                 semantic_text=intent,
+                unmatched_strict=unmatched,
             ),
             dropped_constraints=dropped,
         )
@@ -380,8 +395,8 @@ class SearchRefinementComposer:
         if currency is None:
             raise _clarify(BlockingClarificationReason.MISSING_REFINEMENT_CURRENCY)
 
-        minimum = _decimal(refinement.min_amount) if refinement.min_amount else None
-        maximum = _decimal(refinement.max_amount) if refinement.max_amount else None
+        minimum = _money(refinement.min_amount) if refinement.min_amount else None
+        maximum = _money(refinement.max_amount) if refinement.max_amount else None
         try:
             constraint = PriceConstraint(
                 currency=currency,
@@ -534,8 +549,18 @@ class SearchRefinementComposer:
         request: ProductSearchRequest,
         preferences: tuple[SemanticPreference, ...],
         refinements: tuple[AttributeRefinement, ...],
-    ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[SemanticPreference, ...]]:
+    ) -> tuple[
+        tuple[str, ...],
+        tuple[str, ...],
+        tuple[SemanticPreference, ...],
+        tuple[UnresolvedAttribute, ...],
+    ]:
         """One family's whole position at a time: requirement and preference.
+
+        A strict value no approved value expresses ("only reddish") comes back
+        as unmatched rather than refused: the search runs without it, their
+        words rank the closest first, and the reply says plainly that nothing
+        matched. Approved values in the same operation still filter.
 
         An operation replaces the axis rather than adding to it. `styles_all_of`
         is a conjunction, so adding Japandi to Modern would narrow the search to
@@ -549,6 +574,7 @@ class SearchRefinementComposer:
             AttributeFamily.STYLE: request.styles_all_of,
         }
         kept = list(preferences)
+        unmatched: list[UnresolvedAttribute] = []
 
         for refinement in refinements:
             family = refinement.family
@@ -557,28 +583,64 @@ class SearchRefinementComposer:
             if refinement.op is AttributeRefinementOp.CLEAR:
                 continue
             if refinement.op is AttributeRefinementOp.SET_REQUIREMENT:
+                named = [value for value in refinement.values if value.canonical_value]
                 exact[family] = tuple(
-                    self._approved(family, value.canonical_value)
-                    for value in refinement.values
+                    self._approved(family, value.canonical_value) for value in named
                 )
+                # Colours are alternatives, so an unexpressible one beside an
+                # approved one is just a further wish. Styles are all required,
+                # so an unexpressible style means no exact match is possible
+                # even beside approved ones.
+                lifts = family is AttributeFamily.STYLE or not named
+                for value in refinement.values:
+                    if value.canonical_value:
+                        continue
+                    if lifts:
+                        unmatched.append(
+                            UnresolvedAttribute(family=family, raw_value=value.raw_value)
+                        )
+                    kept.append(
+                        SemanticPreference(
+                            family=family,
+                            raw_value=value.raw_value,
+                            strength=ConstraintStrength.LOCKED,
+                        )
+                    )
                 continue
             kept.extend(
                 SemanticPreference(
                     family=family,
                     raw_value=value.raw_value,
-                    canonical_value=value.canonical_value,
+                    # A preference only steers ranking, so a spelling the
+                    # registry does not know is kept as their words alone
+                    # rather than refused.
+                    canonical_value=(
+                        self._catalog_attributes.canonical(family, value.canonical_value)
+                        if value.canonical_value
+                        else None
+                    ),
                     strength=ConstraintStrength.PREFERRED,
                 )
                 for value in refinement.values
             )
 
-        return exact[AttributeFamily.COLOR], exact[AttributeFamily.STYLE], tuple(kept)
+        return (
+            exact[AttributeFamily.COLOR],
+            exact[AttributeFamily.STYLE],
+            tuple(kept),
+            tuple(unmatched),
+        )
 
     def _approved(self, family: AttributeFamily, value: str | None) -> str:
-        """The registry decides, not the schema that called a field canonical."""
-        if value is None or not self._catalog_attributes.is_value(family, value):
+        """The registry decides, not the schema that called a field canonical.
+
+        Returned in the registry's own spelling, so "beige" filters on `Beige`
+        rather than failing an exact match against the stored value.
+        """
+        approved = self._catalog_attributes.canonical(family, value) if value else None
+        if approved is None:
             raise _defect(CompositionDefect.UNAPPROVED_ATTRIBUTE_VALUE)
-        return value
+        return approved
 
     # ── seeding ─────────────────────────────────────────────────────────────
 

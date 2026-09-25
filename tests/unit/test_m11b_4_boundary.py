@@ -16,6 +16,7 @@ from app.api.dependencies import customer_agent_decision_service
 from app.core.config import CustomerAgentSettings, Settings
 from app.core.exceptions import ConfigurationError
 from app.services.customer_decision import CustomerAgentDecisionService
+from app.taxonomy.attributes import load_catalog_attributes
 
 from tests.conftest import build_settings
 
@@ -55,7 +56,15 @@ def test_this_phase_built_what_it_said(path: str, symbol: str) -> None:
 
 def test_the_decision_service_is_wired_through_dependency_injection() -> None:
     settings = build_settings(customer_agent={"decision_model": "decision-model"})
-    resources = type("R", (), {"settings": settings, "decision_llm": object()})()
+    resources = type(
+        "R",
+        (),
+        {
+            "settings": settings,
+            "decision_llm": object(),
+            "attributes": load_catalog_attributes(),
+        },
+    )()
 
     service = customer_agent_decision_service(resources)
 

@@ -112,7 +112,7 @@ class FakeDecisions:
         self.decision = decision
         self.calls = 0
 
-    async def decide(self, decision_input: Any) -> CustomerAgentDecision:
+    async def decide(self, decision_input: Any, **_: Any) -> CustomerAgentDecision:
         self.calls += 1
         return self.decision
 

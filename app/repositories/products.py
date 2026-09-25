@@ -73,7 +73,12 @@ _SELECTED_COLUMNS = (
 )
 
 
-_POOL_COLUMNS = (core_product.c.id, core_product.c.price_amount)
+_POOL_COLUMNS = (
+    core_product.c.id,
+    core_product.c.price_amount,
+    core_product.c.main_color,
+    core_product.c.styles,
+)
 """What ranking needs, and nothing else. A narrow projection is what makes
 reading the COMPLETE eligible pool affordable (CLAUDE.md 16.1)."""
 
@@ -422,7 +427,12 @@ class ProductRepository:
         ).order_by(*_ORDER_BY[request.sort])
         result = await self._session.execute(statement)
         return [
-            EligibleProduct(product_id=int(row.id), price_amount=row.price_amount)
+            EligibleProduct(
+                product_id=int(row.id),
+                price_amount=row.price_amount,
+                main_color=row.main_color,
+                styles=parse_style_tokens(row.styles),
+            )
             for row in result
         ]
 

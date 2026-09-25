@@ -47,9 +47,10 @@ from app.schemas.grounding import (
     SearchExecutionGrounding,
     SearchOutcome,
 )
-from app.schemas.query import ResolvedSearch
+from app.schemas.query import ConstraintStrength, ResolvedSearch, SemanticPreference
 from app.schemas.relaxation import (
     AppliedRelaxation,
+    AttributeRelaxationChange,
     ControlledSearchResult,
     DimensionRelaxationChange,
     RelaxableField,
@@ -67,6 +68,7 @@ from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.presentation import select_for_presentation
 from app.services.semantic_ranking import SemanticRankingService
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole
 
 logger = get_logger(__name__)
@@ -203,7 +205,10 @@ class ProductSearchPipeline:
         searched = await self._relaxation.search(resolved, context)
         eligible_ids = tuple(c.product.product_id for c in searched.candidates)
         ranked = await self._ranking.rank(
-            resolved, searched.candidates, context, namespace=self._namespace(context)
+            _ranking_view(resolved, searched),
+            searched.candidates,
+            context,
+            namespace=self._namespace(context),
         )
         # Checked before anything is chosen or read, so a violated contract
         # cannot reach the customer as a plausible-looking page of products,
@@ -354,7 +359,50 @@ def _summarise(
     return tuple(_summary_item(change) for change in latest.values())
 
 
+def _ranking_view(resolved: ResolvedSearch, searched: ControlledSearchResult) -> ResolvedSearch:
+    """What ranking orders by, including a strict requirement that was lifted.
+
+    When a colour or style filter had to be removed because nothing matched,
+    what the customer insisted on still defines "closest": it becomes a
+    ranking preference, so the nearest products lead instead of catalog order.
+    Ranking only - eligibility was already settled by the search itself.
+    """
+    known = {
+        word.casefold()
+        for p in resolved.semantic_preferences
+        for word in (p.raw_value, p.canonical_value)
+        if word
+    }
+    lifted = tuple(
+        SemanticPreference(
+            family=AttributeFamily(change.field.value),
+            raw_value=value,
+            canonical_value=value,
+            strength=ConstraintStrength.LOCKED,
+        )
+        for attempt in searched.attempts
+        for change in attempt.changes
+        if isinstance(change, AttributeRelaxationChange)
+        for value in change.required
+        # Words already there - an unmatchable "red" arrives as a preference
+        # of its own - are not repeated in the ranking query.
+        if value.casefold() not in known
+    )
+    if not lifted:
+        return resolved
+    return resolved.model_copy(
+        update={"semantic_preferences": (*resolved.semantic_preferences, *lifted)}
+    )
+
+
 def _summary_item(change: AppliedRelaxation) -> RelaxationSummaryItem:
+    if isinstance(change, AttributeRelaxationChange):
+        return RelaxationSummaryItem(
+            field=change.field,
+            strength=change.strength,
+            original_value=", ".join(change.required),
+            applied_value="closest available",
+        )
     if isinstance(change, DimensionRelaxationChange):
         return RelaxationSummaryItem(
             field=RelaxableField.DIMENSION,

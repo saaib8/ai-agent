@@ -16,15 +16,22 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import NamedTuple
 
 from pydantic import ValidationError
 
-from app.core.exceptions import LLMResponseInvalidError
+from app.core.exceptions import LLMResponseInvalidError, TaxonomyValidationError
 from app.core.logging import get_logger
+from app.core.numbers import parse_stated_amount, parse_stated_decimal
 from app.integrations.llm import StructuredLLMClient
-from app.prompts.query_understanding.v1 import VERSION, build_instructions
+from app.prompts.query_understanding.v1 import (
+    GENERIC_PROBLEM,
+    PAIR_PROBLEM,
+    VERSION,
+    build_correction,
+    build_instructions,
+)
 from app.schemas.dimensions import parse_unit, to_centimetres
 from app.schemas.discovery import (
     DimensionConstraint,
@@ -96,11 +103,19 @@ class _StatedDimensions(NamedTuple):
     planar_semantics: PlanarDimensionSemantics | None
 
 
-def _to_decimal(raw: str, *, field: str) -> Decimal:
+def _to_decimal(raw: str, *, field: str, money: bool = False) -> Decimal:
     try:
-        return Decimal(raw.strip())
-    except (InvalidOperation, ValueError) as exc:
-        raise LLMResponseInvalidError(reason=f"{field} was not a decimal") from exc
+        return parse_stated_amount(raw) if money else parse_stated_decimal(raw)
+    except ValueError as exc:
+        raise LLMResponseInvalidError(reason=f"{field} was not a usable decimal") from exc
+
+
+def _problems(exc: LLMResponseInvalidError | TaxonomyValidationError) -> tuple[str, ...]:
+    """What the refused interpretation got wrong, as rules the model can act on."""
+    if isinstance(exc, TaxonomyValidationError):
+        return (PAIR_PROBLEM,)
+    violations = exc.context.get("violations", ())
+    return tuple(violations) if violations else (GENERIC_PROBLEM,)
 
 
 class QueryUnderstandingService:
@@ -132,14 +147,18 @@ class QueryUnderstandingService:
             )
 
         started = time.perf_counter()
-        interpretation = await self._client.parse(
-            instructions=self._instructions,
-            user_input=text,
-            schema=self._schema,
-        )
+        try:
+            interpretation, outcome = await self._interpret_once(text, ())
+        except (LLMResponseInvalidError, TaxonomyValidationError) as exc:
+            # One corrective attempt, told what was refused - our rule text,
+            # never the message itself. An enumeration cannot stop a valid
+            # category being paired with another category's product type, and
+            # a model told so usually picks correctly the second time.
+            problems = _problems(exc)
+            logger.warning("query_understanding_retrying", problems=list(problems))
+            interpretation, outcome = await self._interpret_once(text, problems)
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
-        outcome = self._resolve(interpretation)
         # Safe operational fields only: no raw customer text, no model response.
         logger.info(
             "query_understanding_completed",
@@ -173,6 +192,20 @@ class QueryUnderstandingService:
             elapsed_ms=elapsed_ms,
         )
         return outcome
+
+    async def _interpret_once(
+        self, text: str, problems: tuple[str, ...]
+    ) -> tuple[CommerceInterpretation, QueryInterpretation]:
+        """One provider call and its validation; corrective when `problems` is set."""
+        instructions = (
+            self._instructions + build_correction(problems) if problems else self._instructions
+        )
+        interpretation = await self._client.parse(
+            instructions=instructions,
+            user_input=text,
+            schema=self._schema,
+        )
+        return interpretation, self._resolve(interpretation)
 
     def _resolve(self, interpretation: CommerceInterpretation) -> QueryInterpretation:
         if interpretation.multiple_product_types:
@@ -269,7 +302,11 @@ class QueryUnderstandingService:
             # They were strict about something no filter can guarantee. Settle
             # that conversationally before anything else happens to the search.
             return UnresolvedStrictRequirement(
-                request=request, semantics=semantics, unresolved=unresolved
+                request=request,
+                semantics=semantics,
+                unresolved=unresolved,
+                semantic_preferences=preferences,
+                semantic_text=(interpretation.semantic_text or "").strip() or None,
             )
         return ResolvedSearch(
             request=request,
@@ -446,12 +483,14 @@ class QueryUnderstandingService:
         unresolved: list[UnresolvedAttribute] = []
 
         for attribute in attributes:
-            canonical = (attribute.canonical_value or "").strip() or None
+            stated = (attribute.canonical_value or "").strip() or None
             # Untrusted model output: a value must belong to the family claimed
-            # for it, so a style can never arrive as a colour.
-            if canonical is not None and not self._attributes.is_value(
-                attribute.family, canonical
-            ):
+            # for it, so a style can never arrive as a colour. Returned in the
+            # registry's spelling, which is what the stored data uses.
+            canonical = (
+                self._attributes.canonical(attribute.family, stated) if stated else None
+            )
+            if stated is not None and canonical is None:
                 raise LLMResponseInvalidError(
                     reason=f"{attribute.family} value outside the approved vocabulary"
                 )
@@ -498,8 +537,12 @@ class QueryUnderstandingService:
         try:
             return PriceConstraint(
                 currency=currency,
-                min_amount=_to_decimal(raw_min, field="price_min") if raw_min else None,
-                max_amount=_to_decimal(raw_max, field="price_max") if raw_max else None,
+                min_amount=(
+                    _to_decimal(raw_min, field="price_min", money=True) if raw_min else None
+                ),
+                max_amount=(
+                    _to_decimal(raw_max, field="price_max", money=True) if raw_max else None
+                ),
             )
         except ValidationError as exc:
             raise LLMResponseInvalidError(reason="price constraint invalid") from exc

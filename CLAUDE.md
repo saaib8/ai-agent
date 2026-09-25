@@ -642,19 +642,47 @@ Matching is exact:
 - style matching is by token, never by substring, so `Modern` must not match
   `Modern_Classic` or `Rustic_Modern`
 
-**A value outside the vocabulary is never mapped onto the nearest approved
-one.** "Red" is not Ruby, and "warm neutral" is not Beige. As a preference it
-is preserved verbatim for semantic ranking. As a strict requirement it can be
-neither filtered nor promised, so it is surfaced as an unresolved strict
-requirement for the conversational layer to settle - softening it to a
-preference would ignore the word "must".
+**Customer words are translated onto the vocabulary by the model, never by
+code.** The model interprets what the customer described and chooses every
+approved value that fits - one-to-many: "dark grey" is Grey and Charcoal,
+"something lighter" is the approved colours lighter than the cards on screen.
+It is given the approved lists and its response schema only admits those
+values (query understanding and the decision model alike), so it cannot write
+a value that does not exist. There are no tone tags and no synonym table:
+customers say "warm", "earthy", "moody", and only the model's reading covers
+that. Application code only normalises spelling (case, spacing, "_", "-") and
+never maps one word onto another.
 
-Exact colour and style requirements are **never relaxed** (13.5). They are not
-relaxable fields, and every derived request carries them unchanged.
+When nothing approved fits, the customer's own words are kept, and:
 
-Semantic preferences are not constraints. Relaxation does not read them, and
-discovery never sees them. They exist for semantic ranking, which is not yet
-implemented.
+- as a preference, they rank by meaning (Pinecone);
+- as a strict requirement, no product can match exactly, so the search runs
+  without it as the last resort below, and the reply says plainly that
+  nothing matched. It is never turned into a question about whether to show
+  alternatives - the catalog, not the customer, answers that.
+
+**Preferences order, they never filter.** Products whose stored colour or style
+matches a preference come first, then semantic similarity. With an explicit
+sort ("the cheapest beige"), matching products come first in price order, then
+the rest in price order - nothing is hidden.
+
+**A strict requirement filters, and is lifted only as a last resort.** If even
+one product matches, only the matches are shown, however few. Only when nothing
+matches - after every other permitted widening (13.5) - is the colour or style
+filter lifted: every other constraint is kept, the requested values rank the
+closest first, the lift is recorded as a `color`/`style` relaxation with an
+exact-match count of zero, and the reply must say plainly that nothing matched
+and that these are the closest. A lifted requirement is never presented as met.
+
+Mixed strict requests follow the matching rules above: in "only red or beige",
+beige satisfies the request (colours are alternatives), so red becomes a
+preference and nothing is disclosed as unmatched; in "Modern and cottagecore",
+a Modern-only piece does not satisfy it (styles are all required), so the
+unexpressible style is reported as unmatched.
+
+The reply is told how many cards on screen carry a colour or style the customer
+asked or wished for. When that count is zero it must say so - it never
+describes the cards as that colour.
 
 ## 13. Constraint Semantics
 
@@ -753,8 +781,10 @@ tables, and no relaxation policy may decide otherwise.
 ### 13.4 Recording is not relaxing
 
 Query understanding records semantics. It does not act on them, and neither
-does discovery. A search that returns nothing returns nothing - no widened
-budget, no dropped capacity, no substituted subcategory.
+does discovery. A search that returns nothing is not silently changed - no
+widened budget, no dropped capacity, no substituted subcategory - except
+through the controlled, disclosed relaxation of 13.5, including the colour and
+style last resort of 12.4.
 
 An approximate bound is executed as the exact bound the customer named, which
 is narrower than their intent and therefore safe: it cannot return something
@@ -802,14 +832,25 @@ What may widen, and by how much:
 - **A measurement widens only where the approved allowlist permits it** (15.2),
   by 5% then 10% of the original, and a target widens symmetrically about its
   figure rather than becoming a ceiling.
+- **A strict colour or style is the one exception to "locked never relaxes",
+  and only as a last resort** (12.4): when the pool is still empty after every
+  permitted widening, that filter alone is lifted, everything else is kept, and
+  the lift is always recorded and disclosed. A requirement some product meets
+  is never lifted. A strict value no approved value expresses cannot match at
+  all, so its exact attempt is recorded as zero and the lift runs at once.
 
 Within one strength, price is offered before seating, and measurements come
 last. With two price steps, one seating step and two dimension steps per
-strength, at most ten widened attempts can follow the exact search.
+strength, at most ten widened attempts can follow the exact search, plus the
+single colour/style last resort.
 
 Only a fully resolved search may be relaxed. A request carrying an unsupported
-requirement, or one awaiting clarification, must be settled conversationally
-first: widening a budget cannot compensate for a colour that was never applied.
+requirement (material, an unreliable measurement), or one awaiting
+clarification, must be settled conversationally first.
+
+Paging ("show me more") excludes products already seen from the same request.
+Any change to the request's criteria starts a fresh set: exclusions from paging
+do not carry into a refined search.
 
 The original request is preserved unchanged beside the final one, and every
 product records the attempt at which it first became eligible. That depth is
@@ -1189,6 +1230,15 @@ similarity only orders products the sort leaves tied. A semantic shortlist
 followed by a price sort is forbidden - measured on store 50, it returned a
 1,250 SAR sofa as "cheapest" when a 990 SAR one was eligible.
 
+**Stated colour and style preferences lead, deterministically.** Within each
+depth bucket, products whose stored `main_color` or style token matches a
+preference come before the rest, then similarity decides. An embedding alone
+can place warm stone above charcoal for "dark grey"; the stored value cannot.
+With an explicit sort, matching products come first in the sort's order, then
+the rest in the same order ("the cheapest beige" is the cheapest of the beige
+ones), so nothing is hidden. The same ordering applies when the index is
+unavailable.
+
 **The query embedding is built from what M7 already produced**, never from a
 second model call. `semantic_text` is the customer's descriptive wording with
 the parts the structured fields already captured left out, because price
@@ -1224,14 +1274,15 @@ Responsibilities:
 
 - own conversation continuity
 - understand current intent
-- interpret the customer's product language into a structured commerce interpretation, using conversation context (section 14.2)
+- interpret the customer's product language into a structured commerce interpretation, using conversation context (section 14.2), expressing colour and style only in approved values (12.4)
+- continue a search in progress when asked - "show me more" leaves out what was already shown, "not this one" leaves out one card - through the same code path as the screen buttons, so typing and tapping cannot differ
 - ask one clarification question rather than inventing a subcategory when the request is genuinely ambiguous (section 14.5)
 - extract/update customer preferences
 - decide whether the request needs design reasoning, product discovery, both, or neither
 - understand purchase stage and objections
 - decide next-best action
 - call approved tools/services
-- explain recommendations and trade-offs
+- explain recommendations and trade-offs - and when a turn puts new products on screen, read positions in the customer's current message ("cheaper than the second one") as the screen they were looking at, never as the new cards
 - handle upsell/cross-sell without violating user constraints
 - produce the final customer response
 
@@ -1461,6 +1512,28 @@ Log internal details with correlation/trace IDs.
 Do not swallow failures with broad `except Exception: pass` patterns.
 
 Use retries only for transient operations and only with bounded configurable retry policy/backoff.
+
+### 21.1 Unusable model output never reaches the customer as an error
+
+Model output that breaks a contract rule, cannot be read, or cannot be applied
+is our failure to understand, not the customer's. It follows one ladder, and
+stops at the first step that works:
+
+1. **Normalise** what can be read without guessing: spelling of approved
+   values, thousands separators and "5k" for money, "20%" for a percentage.
+   Anything ambiguous ("2,5", "5.000" as a price, "1,500 m") is refused, never
+   guessed - a misread figure is worse than a refused one. Every figure from
+   model output goes through one reader (`app/core/numbers.py`).
+2. **One corrective attempt**, told which rules were broken - our own rule text
+   and the approved values, never the customer's words or the refused answer.
+   The model may then ask the customer one question if their meaning is
+   genuinely unclear. A turn costs at most three decisions.
+3. **Fall back** to a fixed, friendly "please say it another way" reply, with
+   the conversation state exactly as it was before the turn. No model call,
+   nothing half-applied.
+
+Only outages (database, provider, index) and genuine defects surface as errors.
+Every rejection is logged with the rule that failed, never the offending value.
 
 ---
 

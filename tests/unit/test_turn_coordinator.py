@@ -129,7 +129,7 @@ class FakeDecisions:
         self.decision, self.error = decision, error
         self.inputs: list[Any] = []
 
-    async def decide(self, decision_input: Any) -> CustomerAgentDecision:
+    async def decide(self, decision_input: Any, **_: Any) -> CustomerAgentDecision:
         self.inputs.append(decision_input)
         if self.error is not None:
             raise self.error
@@ -975,11 +975,9 @@ M7_UNSUPPORTED_CASES: dict[str, tuple[Any, SearchRequirementClarificationReason]
         _unsupported_dimension,
         SearchRequirementClarificationReason.UNSUPPORTED_DIMENSION_REQUIREMENT,
     ),
-    "unresolved strict value": (
-        _unresolved_strict,
-        SearchRequirementClarificationReason.UNRESOLVED_STRICT_REQUIREMENT,
-    ),
 }
+# An unresolved strict colour or style is no longer here: it searches anyway,
+# recorded as a lifted requirement the reply must disclose (stage D).
 
 
 @pytest.mark.parametrize(
@@ -2110,8 +2108,12 @@ async def test_an_unapproved_attribute_value_is_a_defect() -> None:
         )
     )
 
-    with pytest.raises(LLMResponseInvalidError):
-        await coordinator.run(_turn(_state()))
+    state = _state()
+    result = await coordinator.run(_turn(state))
+
+    assert result.grounding.failure is not None
+    assert result.grounding.failure.code is TurnFailureCode.REQUEST_NOT_UNDERSTOOD
+    assert result.state == state, "never filtered on, and nothing else changed"
 
 
 async def test_a_malformed_amount_is_a_defect() -> None:
@@ -2126,12 +2128,19 @@ async def test_a_malformed_amount_is_a_defect() -> None:
         )
     )
 
-    with pytest.raises(LLMResponseInvalidError):
-        await coordinator.run(_turn(_state()))
+    state = _state()
+    result = await coordinator.run(_turn(state))
+
+    assert result.grounding.failure is not None
+    assert result.grounding.failure.code is TurnFailureCode.REQUEST_NOT_UNDERSTOOD
+    assert result.state == state
 
 
 async def test_a_defect_never_becomes_a_clarification_or_a_failure() -> None:
-    """`CustomerTurnResult` is for handled outcomes, not a defect wrapper."""
+    """A defect is recovered as "not understood", never dressed as a question.
+
+    The customer is not asked to fix our misreading, and nothing the turn
+    started is kept: the state is exactly what they had before."""
     coordinator, _ = _coordinator(
         CustomerAgentDecision(
             action=AgentAction.REFINE_SEARCH,
@@ -2141,8 +2150,11 @@ async def test_a_defect_never_becomes_a_clarification_or_a_failure() -> None:
         )
     )
 
-    with pytest.raises(LLMResponseInvalidError) as caught:
-        await coordinator.run(_turn(_state()))
+    state = _state()
+    result = await coordinator.run(_turn(state))
 
-    assert not isinstance(caught.value, CustomerTurnResult)
-    assert "cheap" not in str(caught.value), "no customer input in the message"
+    assert result.grounding.failure is not None
+    assert result.grounding.failure.code is TurnFailureCode.REQUEST_NOT_UNDERSTOOD
+    assert result.grounding.clarification is None
+    assert result.grounding.deterministic_clarification is None
+    assert result.state == state

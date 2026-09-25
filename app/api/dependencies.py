@@ -234,7 +234,7 @@ def customer_agent_decision_service(
             detail=("customer_agent.decision_model must be set to use the customer agent"),
             public_message="The customer agent is not configured.",
         )
-    return CustomerAgentDecisionService(client)
+    return CustomerAgentDecisionService(client, app_resources.attributes)
 
 
 CustomerAgentDecisionServiceDep = Annotated[
