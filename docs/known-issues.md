@@ -327,7 +327,48 @@ something, and apply it to related searches. The customer can clear it
 
 ## 4. "Sofa for 8 or 9 people" returns "nothing in the catalog"
 
-**Status:** Open
+**Status:** Done on branch `feat/agent-catalog-awareness` (2026-09-26),
+reviewing and reworking a teammate's first version.
+- One-seat part (2026-09-25): chair types, stool and single-seater sofa seat
+  one and are never hidden by a seat filter.
+- Seating combinations: every real combination is worked out - two or three
+  sofas, or sofas with armchairs - holding every piece to the customer's
+  colour, style, wishes and sizes, within budget. "Beige, 8 people, under
+  5000" went from one sofa bed + 5 chairs to a beige 6-seat set + loveseat
+  (3,440), two 3-seaters + a loveseat (3,490), or the set + 2 sofa chairs.
+- The shape is asked first (with real "from" prices, colour if unknown, never
+  budget), once; the answer, "either", or ignoring it all work; "I'll take the
+  second option" saves that combination to their picks.
+- The reply never claims a colour, style or size a combination did not meet.
+- "Show more options" with combinations on screen showed the same three again
+  and called them new; now it shows the next best, never repeats, and says
+  honestly when a shape has run out (offering the other one). "I don't like
+  the second option" replaces just that one. Live: paging and not-this-one
+  6/6, 0 repeated combinations across 6 "show more" turns.
+- Only one product per kind of piece was ever used, so "9 people, dark,
+  under 5000" showed 2 combinations and then "no more" although 6 exist (12
+  dark 3-seaters). Now each layout comes in several real versions, paging
+  looks deeper each time, and all 6 are reached before "no more". Switching
+  shape ("sofas only", "armchairs instead") now works first time at any
+  point (it needed a second model call before).
+- Open: "only dark shades, remove option 3" in one message is still refused
+  (turning a combination down is accepted only on its own) - left as is by
+  the user's choice (2026-09-26).
+- Checked: unit suite 4430; each rule deliberately broken and caught; live
+  seating cases 27/27 (9 cases x 3) plus paging 6/6.
+- Done 2026-09-26 (user decisions): extra seats stay chair, lounge-chair and
+  single-seater sofa; recliner and chaise lounge stay out; a sofa bed is a
+  main piece only when asked for; "a sofa for 6" is shown the sofa set that
+  seats them, as the best fit; over budget, the reply offers the closest real
+  total ("about 3,700 - shall I show it?") and a yes shows the combinations.
+  Live 12/12 on repeat.
+- Still open:
+  - swapping one piece of a chosen combination (needs combinations and room
+    packages unified - agent-loop step);
+  - "Boucle Fabric Swivel Makeup Chair" is classified `chair`, so it can be
+    an extra seat when no colour is asked - a Django data fix;
+  - "armchairs" is often read as `lounge-chair` (1 product) instead of
+    `chair`.
 
 **Reported:** Asking for a sofa for eight or nine people returns "I don't have
 anything like this". It should suggest sofa sets, or buying two sofas
@@ -524,6 +565,80 @@ verified on 2026-09-24:
       staging-database timeout (503), and both passed on re-run.
   - Reminder from that run: a database blip still shows the customer an error
     card, which is the "friendly error for outages" item below.
+  - **Saved-session check (2026-09-25, live, reading Redis after every turn):**
+    - A refined search keeps budget + strictness, seats, width + "approximate",
+      colour/style wishes and descriptive words across price changes, a
+      sort, and "show more".
+    - A changed request resets paging exclusions.
+    - A room request saves the budget, household size, room type, style and
+      measurements ("4 by 5 metres" → 400 × 500 cm).
+    - A selection is saved and survives new searches.
+    - "I usually like warm beige" is saved to the profile (Beige, Sand, Taupe)
+      and seeds later searches, e.g. rugs.
+    - A strict colour stays with its own search, and is not forced onto a new
+      product type.
+    - **Gap found and fixed:** a measurement dropped on a type change (e.g.
+      sofa width → sofa sets, which have no single footprint) was never
+      mentioned. The writer received `dropped_roles` but its prompt never used
+      it. Now disclosed.
+    - Still open: wishes stated only inside a search ("beige sofas") do not
+      carry to a new product type - issue 3.
+  - **Dropped-measurement wording** (user disagreed with the first version):
+    no longer blames the catalogue; it offers help instead ("these come in
+    quite different shapes, so I've shown a range rather than holding to one
+    width - tell me the space you have..."). Used for any type a measurement
+    cannot be applied to (sofa sets, sectionals, beds, chairs). Live 3/3.
+  - **Dimension changes parked (2026-09-25, user decision).** A "longer side /
+    shorter side" rule was trialled for sectionals and evaluated for all types,
+    then undone: size filtering stays exactly as committed. Findings kept for
+    later: most furniture stores the longer side consistently; 8 of 15
+    sectionals, 5 beds and 6 mattresses are swapped; chairs are too near-square
+    to tell width from depth; data to review on the Django side - sectional
+    173472 height 159, beds 172972 and 172974, missing bed/mattress heights.
+  - **Sizes belong to a product type (2026-09-25, done).** A product size used
+    to follow the customer to any type in the same family that could be
+    measured the same way: a side-table 60 cm limit carried to coffee tables
+    left 2 of 41, and a coffee-table 100 cm limit left 0 of 16 TV stands.
+    - Now each type keeps its own sizes in the session; they come back (and the
+      reply says so) when the customer returns to that type, and "any size"
+      drops them. Room measurements are separate and always carry.
+    - Checked: unit suite 4277/4277; an independent verification agent drove
+      the real coordinator (all behaviours pass after two fixes it found - a
+      system search erasing a saved size, and a restated size reported as
+      dropped); live 15/15 (side table -> coffee tables not limited 3/3, sofa
+      size comes back and is mentioned 3/3, "any size" clears 3/3, size kept on
+      a price change 3/3, sofa -> sofa sets disclosed 3/3).
+    - Session format stays `agent_state_v5`: the new field has an empty
+      default, so live sessions still load. Rolling back to older code would
+      refuse sessions that hold the new field.
+    - Open, found during the check:
+      - **Existing crash (not caused by this change):** a type change that
+        states a size the new type cannot take - "make them sofa beds under
+        100 cm wide" - sends it to discovery, which raises
+        `UnsupportedDimensionRoleError`, and the turn fails with an error.
+      - Minor: after a similar-product search, restating one size replaces the
+        whole saved entry, so another saved size (e.g. a depth) is forgotten.
+  - **Found in the carry check (2026-09-25):**
+    - Fixed: "make them single seater sofas" searched for a one-seat sofa and
+      found nothing (see issue 4), and a search that found nothing ended the
+      conversation (see issue 9). An independent verification agent checked
+      both against the real turn engine; one defect it found (a saved one-seat
+      sofa search could not be refined) is fixed.
+    - Open: "armchairs" is sometimes read as `lounge-chair` (1 product in
+      store 50) instead of `chair`, which CLAUDE.md 7 says covers armchairs -
+      2 of 3 live runs showed a single card.
+    - Minor: the seating registry accepts any approved subcategory, not only
+      seating ones.
+  - **Unit tests added (2026-09-26)** for the per-type sizes, the seating
+    registry and the zero-results next steps: 60 tests in
+    `tests/unit/test_sizes_per_product_type.py`, `test_seating_rules.py` and
+    `test_zero_result_next_steps.py`, running without the model or database.
+    Each fix was then deliberately broken one at a time (15 breaks) and every
+    break was caught. Full suite 4337 passed; live suite 38/38; the 16-turn
+    saved-session check passes on the final code.
+    - Noted while testing: a colour or style set aside never appears among the
+      next-step counts in practice - when only the colour stood in the way,
+      the colour last resort has already shown those products.
 - Still to do:
   - A friendly frontend error card, plus timeouts and a retry cost budget.
     Worst case today: 3 decision + 4 query-understanding calls before a
@@ -821,7 +936,15 @@ answer can be used.
 
 ## 9. Replies sometimes dead-end the conversation
 
-**Status:** Open
+**Status:** Partly done (2026-09-25).
+- Done: zero results. When nothing matches even after the allowed widening,
+  code counts what setting each requirement aside would find (and, for a
+  budget, where prices actually start), and the reply offers it as a yes/no
+  next step - "Sofas here start at 990 SAR - shall I show you the most
+  affordable ones?", "without the width there are 19 - want to see those?".
+  The fixed zero-results fallback also names a next step now. Live 6/6.
+- Still open: the other fixed fallback sentences, the prompt rebalance ("stop
+  there" -> "always leave a next step") and quick-reply chips.
 
 **Reported:** Sometimes the sales agent writes a message that stops the
 conversation and leaves the user at a dead end, so they have to start
@@ -1142,7 +1265,51 @@ catalog data rather than AI judgement.
 
 ## F3. Let the customer choose the room's categories before the bundle is built
 
-**Status:** Planned
+**Status:** Built on `feat/agent-catalog-awareness` (2026-09-26), in a different
+shape from the plan below - see "What was built". Uncommitted.
+
+**What was built (agreed with the user 2026-09-26):**
+- **Rooms:** living room and bedroom, from a reviewed registry
+  (`app/taxonomy/room_pieces_v1.yaml`) rather than from the designer's plan.
+  - Tiers: essential (pre-ticked, removable), recommended (pre-ticked),
+    optional (unticked). Only stocked pieces are offered.
+  - Living room: essential sofa, center table, rug; recommended side table, TV
+    table, floor lamp, wall art.
+  - Bedroom: essential bed, nightstands x2; recommended wardrobe, rug, table
+    lamps x2, TV table, wall art; mattress optional.
+- **One question per turn, each once:** budget, pieces (chips with "Design my
+  room" and "Choose for me"), how many will sit (living room), colour. "Just
+  design it" skips the rest. Not the one-step checklist planned below: the
+  user asked for separate turns.
+- **The room is exactly the chosen pieces.** The designer adds only how each
+  piece should feel.
+- **Living-room seating sized to the head count.** A single piece, or a
+  combination, weighed together with the rest of the room within the budget.
+- **Missing pieces named, with a next step.** Fixes the reported reply "4
+  pieces covered... 1 needed piece couldn't be included... remains to be
+  resolved".
+- **Head count confirmed, not assumed.** A head count from an earlier sofa
+  search is confirmed ("is it for the 9 you mentioned?"), never reused
+  silently. Fixes the reported "I did not specify seats": a sofa search for 9
+  had silently sized the room, and the designer then planned an impossible
+  single set for 9.
+- Also: a chair need in a room never carries a seat filter, and room
+  alternatives no longer trigger a seating combination.
+
+- **Swapping one seating piece** keeps the head count: each seating piece
+  carries its seat count, so its alternatives seat the same, and the reply
+  counts real seats - "seating for all nine" only when true, and says so
+  plainly when a room falls short (2026-09-26).
+
+**Still open:**
+- **Recomposing a built room** ("make it Japandi") goes through the designer
+  as before, and does not re-apply the chosen pieces.
+- **Other room types** (dining room, office) still use the designer-planned
+  flow with the model's two opening questions.
+- **The chip picker** has only been type-checked, not viewed in a browser (the
+  browser tool was unavailable).
+
+**Original plan (kept for reference):**
 
 **Requested:** When the customer asks for a whole-room plan, show the
 categories that would go into the bundle and let them choose which to include,

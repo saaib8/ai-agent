@@ -19,11 +19,13 @@ consumes the structured meaning M7 produced and calls M6 with it.
 from __future__ import annotations
 
 import time
+from decimal import Decimal
 
 from app.core.config import RelaxationSettings
 from app.core.exceptions import InvalidRequestError
 from app.core.logging import get_logger
-from app.schemas.discovery import ProductSearchRequest
+from app.schemas.discovery import PriceConstraint, ProductSearchRequest
+from app.schemas.product import EligibleProduct
 from app.schemas.query import ResolvedSearch
 from app.schemas.relaxation import (
     AppliedRelaxation,
@@ -32,12 +34,15 @@ from app.schemas.relaxation import (
     RelaxableField,
     RelaxationAttempt,
     RelaxedCandidate,
+    SetAsideField,
+    SetAsideOption,
     StopReason,
 )
 from app.schemas.retailer import RetailerContext
 from app.services.discovery import ProductDiscoveryService
 from app.services.relaxation import RelaxationPlanner
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.dimensions import DimensionRole
 
 logger = get_logger(__name__)
 
@@ -54,7 +59,11 @@ class ControlledRelaxationService:
         self._settings = settings
 
     async def search(
-        self, resolved: ResolvedSearch, context: RetailerContext
+        self,
+        resolved: ResolvedSearch,
+        context: RetailerContext,
+        *,
+        explain_empty: bool = False,
     ) -> ControlledSearchResult:
         """Run the exact request, then widen only as far as policy allows.
 
@@ -62,7 +71,22 @@ class ControlledRelaxationService:
         requirement or a clarification must be settled conversationally first -
         widening a budget to compensate for a colour we never applied would
         compound one unmet requirement with another.
+
+        `explain_empty` is for a search a customer will read about: when even
+        the widest permitted search finds nothing, it also counts what each
+        requirement set aside alone would find, so the reply can offer a real
+        next step. Nothing is set aside for them.
         """
+        result = await self._search(resolved, context)
+        if not explain_empty or result.candidates:
+            return result
+        return result.model_copy(
+            update={"set_aside": await self._set_aside(result.original_request, context)}
+        )
+
+    async def _search(
+        self, resolved: ResolvedSearch, context: RetailerContext
+    ) -> ControlledSearchResult:
         self._require_resolved(resolved)
         original = resolved.request
         target = self._settings.target_candidates
@@ -209,6 +233,83 @@ class ControlledRelaxationService:
         )
         return found > 0
 
+    async def _set_aside(
+        self, request: ProductSearchRequest, context: RetailerContext
+    ) -> tuple[SetAsideOption, ...]:
+        """What each requirement, set aside on its own, would find.
+
+        Only the customer's own requirements, each from their exact request:
+        the product type is never one of them (CLAUDE.md 13.3). Only options
+        that find something are returned - "without the colour there are none
+        either" is not a way forward.
+        """
+        variants: list[tuple[SetAsideField, DimensionRole | None, ProductSearchRequest]] = []
+        if request.price is not None:
+            # Any price, but still only in their currency: a figure in another
+            # one could not be compared with their budget at all.
+            any_price = PriceConstraint(currency=request.price.currency, min_amount=Decimal(0))
+            variants.append(
+                (SetAsideField.PRICE, None, request.model_copy(update={"price": any_price}))
+            )
+        if request.seating_capacity is not None:
+            variants.append(
+                (SetAsideField.SEATS, None, request.model_copy(update={"seating_capacity": None}))
+            )
+        for constraint in request.dimensions:
+            others = tuple(c for c in request.dimensions if c.role is not constraint.role)
+            variants.append(
+                (
+                    SetAsideField.DIMENSION,
+                    constraint.role,
+                    request.model_copy(update={"dimensions": others}),
+                )
+            )
+        if request.planar_dimensions is not None:
+            variants.append(
+                (
+                    SetAsideField.SIZE_PAIR,
+                    None,
+                    request.model_copy(update={"planar_dimensions": None}),
+                )
+            )
+        if request.colors_any_of:
+            variants.append(
+                (SetAsideField.COLOR, None, request.model_copy(update={"colors_any_of": ()}))
+            )
+        if request.styles_all_of:
+            variants.append(
+                (SetAsideField.STYLE, None, request.model_copy(update={"styles_all_of": ()}))
+            )
+
+        options: list[SetAsideOption] = []
+        for field, role, variant in variants:
+            pool = await self._discovery.eligible_pool(variant, context)
+            if not pool:
+                continue
+            nearest = (
+                _nearest_price(request.price, pool)
+                if field is SetAsideField.PRICE and request.price is not None
+                else None
+            )
+            options.append(
+                SetAsideOption(
+                    field=field,
+                    role=role,
+                    eligible_count=len(pool),
+                    nearest_price=nearest,
+                    currency=(
+                        request.price.currency if nearest is not None and request.price else None
+                    ),
+                )
+            )
+        logger.info(
+            "controlled_search_set_aside",
+            commerce_subcategory=request.commerce_subcategory,
+            checked=len(variants),
+            options=[f"{o.field}:{o.role or ''}={o.eligible_count}" for o in options],
+        )
+        return tuple(options)
+
     # ── one executed search ─────────────────────────────────────────────────
 
     async def _attempt(
@@ -273,11 +374,7 @@ class ControlledRelaxationService:
             target_candidates=target,
             relaxation_attempt_count=result.relaxation_attempt_count,
             relaxed_fields=sorted(
-                {
-                    str(change.field)
-                    for attempt in attempts
-                    for change in attempt.changes
-                }
+                {str(change.field) for attempt in attempts for change in attempt.changes}
             ),
             final_candidate_count=len(candidates),
             max_relaxation_depth=max((c.relaxation_depth for c in candidates), default=0),
@@ -304,3 +401,18 @@ class ControlledRelaxationService:
 def _words(resolved: ResolvedSearch, family: AttributeFamily) -> tuple[str, ...]:
     """The customer's words for one family's unmatchable strict values."""
     return tuple(a.raw_value for a in resolved.unmatched_strict if a.family is family)
+
+
+def _nearest_price(price: PriceConstraint, pool: tuple[EligibleProduct, ...]) -> Decimal | None:
+    """The real price closest to a budget nothing met, or None if it straddles.
+
+    Every product above their ceiling: the cheapest is the nearest. Every one
+    below their floor: the dearest. A mixture means price alone was not what
+    stood in the way, so no single figure would be honest.
+    """
+    amounts = [p.price_amount for p in pool]
+    if price.max_amount is not None and min(amounts) > price.max_amount:
+        return min(amounts)
+    if price.min_amount is not None and max(amounts) < price.min_amount:
+        return max(amounts)
+    return None

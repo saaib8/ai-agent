@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from app.schemas.design import DesignGuidance
-from app.schemas.response import BundleGroundingView
+from app.schemas.response import BundleGroundingView, SeatingSolutionGroundingView
 from app.schemas.screen import CustomerVisibleScreenView
 
 ResponseNumericAllowance = frozenset[str]
@@ -121,7 +121,31 @@ def bundle_counts(bundle: BundleGroundingView) -> tuple[int, ...]:
         bundle.recommended_unmet_count,
         bundle.optional_unmet_count,
         bundle.relaxed_line_count,
+        # The head count the seating was built for - the customer's own figure.
+        *((bundle.seating_for,) if bundle.seating_for else ()),
+        *((bundle.seats_short_of,) if bundle.seats_short_of else ()),
     )
+
+
+def seating_counts(seating: SeatingSolutionGroundingView) -> tuple[int, ...]:
+    """The counts a seating-combination reply may state, named one by one.
+
+    The seat target is the customer's own figure - "a set that seats eight" -
+    and the numbers of combinations and of shapes offered ("two good ways to
+    get there") are ones the application established. Neither a
+    price nor a total is here: those are rendered on the cards, and the guard
+    still refuses any figure the model would have had to read off one.
+    """
+    offered = (len(seating.shape_options),) if seating.shape_options else ()
+    facts = tuple(n for n in (seating.not_size_limited, seating.fully_wished) if n)
+    return (seating.target_seats, seating.bundle_count, *offered, *facts)
+
+
+def seating_figures(seating: SeatingSolutionGroundingView) -> tuple[Decimal, ...]:
+    """The "from" price of each shape a question offers - the lowest real total
+    of that shape, computed by the application from catalog prices."""
+    closest = (seating.closest_total,) if seating.closest_total is not None else ()
+    return (*(option.from_price for option in seating.shape_options), *closest)
 
 
 def screen_figures(screen: CustomerVisibleScreenView) -> tuple[Decimal | int, ...]:

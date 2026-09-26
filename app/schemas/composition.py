@@ -58,6 +58,11 @@ class CompositionDefect(StrEnum):
     MALFORMED_AMOUNT = "malformed_amount"
     """A number arrived as something that is not one."""
 
+    ONE_SEAT_ON_MULTI_SEAT_TYPE = "one_seat_on_multi_seat_type"
+    """A seat count of one on a type that always seats several - "make them
+    single seaters" read as a one-seat sofa. A piece for one person is its own
+    product type, so the decision is corrected rather than executed."""
+
 
 class ComposedSearch(BaseModel):
     """A candidate search, ready to execute but committed to nothing.
@@ -73,11 +78,16 @@ class ComposedSearch(BaseModel):
     candidate: ActiveSearchState
     resolved: ResolvedSearch
     dropped_constraints: tuple[DroppedConstraint, ...] = ()
-    """Requirements a product-type change made impossible to keep.
+    """Sizes the previous product type had that this search does not apply.
 
     Reported rather than dropped quietly: presenting results as satisfying a
     measurement that was never applied would be a false claim.
     """
+
+    earlier_sizes_applied: bool = False
+    """The sizes the customer gave earlier for this product type were applied
+    again, so the reply says so rather than let a forgotten limit surprise
+    them."""
 
 
 class CompositionNeedsClarification(BaseModel):

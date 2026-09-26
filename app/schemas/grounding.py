@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.dimensions import NormalisedDimensions
 from app.schemas.product import CommerceClassification
 from app.schemas.query import ConstraintStrength
-from app.schemas.relaxation import RelaxableField, StopReason
+from app.schemas.relaxation import RelaxableField, SetAsideOption, StopReason
 from app.schemas.semantic import SemanticSkipReason
 from app.taxonomy.dimensions import DimensionRole, UnsupportedDimensionReason
 
@@ -200,17 +200,22 @@ class RelaxationSummaryItem(BaseModel):
 
 
 class DroppedConstraint(BaseModel):
-    """Something the customer asked for that this search could not keep.
+    """A size the previous product type had that this search does not apply.
 
-    Produced when a product type changes and the new one cannot support a
-    measurement the old one did. Surfaced so the reply says so; a silent drop
-    would present results as satisfying a request they do not.
+    Produced when the product type changes. A size belongs to the kind of
+    product it was said about, so it stays with that type rather than following
+    the customer to the next one. Surfaced so the reply can say so when the new
+    piece takes the old one's place; a silent drop would present results as
+    satisfying a request they do not.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     role: DimensionRole | None = None
-    reason: UnsupportedDimensionReason
+    reason: UnsupportedDimensionReason | None = None
+    """Why the new type could not take this size at all, when that is so.
+
+    `None` when it could have: the size simply belongs to the other type."""
 
 
 class SelectionGrounding(BaseModel):
@@ -282,6 +287,8 @@ class SearchExecutionGrounding(BaseModel):
     relaxations: tuple[RelaxationSummaryItem, ...] = ()
     stop_reason: StopReason
     dropped_constraints: tuple[DroppedConstraint, ...] = ()
+    earlier_sizes_applied: bool = False
+    set_aside: tuple[SetAsideOption, ...] = ()
 
     semantic_used: bool = False
     semantic_skip_reason: SemanticSkipReason | None = None

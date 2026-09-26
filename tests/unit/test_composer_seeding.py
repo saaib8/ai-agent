@@ -406,7 +406,7 @@ def test_a_dropped_measurement_takes_its_strength_with_it(
 def test_a_supported_measurement_survives_the_change(
     composer: SearchRefinementComposer,
 ) -> None:
-    """The guard is worthless if every measurement were dropped."""
+    """Re-choosing the type already searched keeps its sizes: nothing changed."""
     height = DimensionConstraint(
         role=DimensionRole.HEIGHT,
         kind=DimensionConstraintKind.MAX,

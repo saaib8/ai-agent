@@ -19,6 +19,12 @@ interface RoomBundleProps {
   busy?: boolean
   /** Present on the current package only: render it from a camera view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void
+  /** Header label. Defaults to "Room package"; a seating combination overrides
+   *  it with "Seating option N". */
+  label?: string
+  /** Hide the complete/partial/infeasible badge. A seating combination is
+   *  complete by construction, so the badge is noise there. */
+  hideStatus?: boolean
 }
 
 const STATUS_META: Record<BundleStatus, { label: string; cls: string }> = {
@@ -58,7 +64,14 @@ function BudgetBar({ spend, budget, within }: { spend: number; budget: number; w
   )
 }
 
-export function RoomBundle({ room, onSwapStart, busy = false, onVisualize }: RoomBundleProps) {
+export function RoomBundle({
+  room,
+  onSwapStart,
+  busy = false,
+  onVisualize,
+  label = 'Room package',
+  hideStatus = false,
+}: RoomBundleProps) {
   const status = STATUS_META[room.status]
   const t = room.totals
   const spend = toNumber(t.new_spend_total)
@@ -69,10 +82,12 @@ export function RoomBundle({ room, onSwapStart, busy = false, onVisualize }: Roo
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
       <div className="flex items-center justify-between border-b border-line bg-canvas/60 px-4 py-3">
-        <span className="text-sm font-semibold text-ink">Room package</span>
-        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${status.cls}`}>
-          {status.label}
-        </span>
+        <span className="text-sm font-semibold text-ink">{label}</span>
+        {!hideStatus && (
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${status.cls}`}>
+            {status.label}
+          </span>
+        )}
       </div>
 
       <ul className="divide-y divide-line">

@@ -95,6 +95,20 @@ export interface ChatPresentation {
   room: GroundedBundlePresentation | null
   /** A picture of the room package, when the turn made one. */
   render?: RoomRenderPresentation | null
+  /** Composed seating combinations, when no single piece met the seat count.
+   *  Each renders as its own package; empty when none fit the budget. */
+  seating_bundles: GroundedBundlePresentation[]
+  /** Ready answers to the question just asked, built by the backend from real
+   *  options (e.g. the seating shapes in stock, with their from prices). */
+  choices?: { label: string; value: string }[]
+  /** A room's pieces as chips to tick, when the room question asks for them. */
+  piece_picker?: PiecePickerData | null
+}
+
+export interface PiecePickerData {
+  pieces: { label: string; selected: boolean; essential: boolean }[]
+  submit_label: string
+  choose_for_me: { label: string; value: string }
 }
 
 // ── Room visualisation ───────────────────────────────────────────────────────

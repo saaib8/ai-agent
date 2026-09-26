@@ -127,6 +127,8 @@ def test_eligible_product_carries_only_what_ranking_orders_on() -> None:
         "price_amount",
         "main_color",
         "styles",
+        # A seating combination groups a type's products by recorded seats.
+        "seating_capacity",
     }
 
 

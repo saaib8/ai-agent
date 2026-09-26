@@ -983,7 +983,15 @@ def test_the_taxonomy_method_cannot_see_m7_wording_at_all(
 
     parameters = set(inspect.signature(composer.refine_taxonomy).parameters)
 
-    assert parameters == {"state", "commerce_category", "commerce_subcategory", "delta"}
+    # `saved_measurements` is typed state the application saved after an
+    # executed search, never this turn's wording.
+    assert parameters == {
+        "state",
+        "commerce_category",
+        "commerce_subcategory",
+        "delta",
+        "saved_measurements",
+    }
 
 
 # ══ I. sort ═════════════════════════════════════════════════════════════════

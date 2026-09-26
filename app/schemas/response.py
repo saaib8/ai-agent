@@ -23,6 +23,7 @@ entirely, so the model-facing enum cannot describe a job the model does not do.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
 from typing import Self
 
@@ -33,16 +34,23 @@ from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
-from app.schemas.design import DesignGuidance
+from app.schemas.design import DesignGuidance, DesignPriority
 from app.schemas.grounding import TurnFailureCode
-from app.schemas.relaxation import RelaxableField
+from app.schemas.relaxation import RelaxableField, SetAsideOption
 from app.schemas.resolution import (
     DeterministicClarification,
     ReferenceFailureReason,
     RelativePriceFailureReason,
     SearchRequirementClarificationReason,
 )
+from app.schemas.room_opener import RoomQuestionKind
 from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.seating_solution import (
+    SeatingShape,
+    SeatingShapeOption,
+    SeatingSolutionOutcome,
+)
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole
 
 
@@ -66,6 +74,21 @@ class ResponseOutcomeKind(StrEnum):
     Only a real `RoomBundle`. A refusal to compute one carries no package to
     frame, so it is answered deterministically instead.
     """
+
+    SEATING_COMBINATION = "seating_combination"
+    """No single product met a seat count, so pieces were combined to reach it.
+
+    The salesperson move made a turn: a customer who asked for one sofa that
+    seats eight, where none does, is shown combinations that together do rather
+    than a dead end (CLAUDE.md 27). Only the two outcomes there is something to
+    say about reach here - real combinations, or an honest "the closest is over
+    budget" - so the model always has either cards to frame or a shortfall to
+    own.
+    """
+
+    ROOM_QUESTION = "room_question"
+    """One question before a room is designed - its budget, its pieces (as
+    chips), how many will sit, or the colours they like (CLAUDE.md 10.1)."""
 
     SELECTION = "selection"
     """The customer's own choices, shown again.
@@ -183,6 +206,21 @@ class DeterministicResponse(BaseModel):
         return self
 
 
+class MissingPieceView(BaseModel):
+    """One piece the room is still without, named so the reply can say which.
+
+    The type is a verified plan value, given in words. `cheapest_price` is set
+    only when the budget stopped it: the lowest real total that would fill it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    piece: str = Field(min_length=1)
+    priority: DesignPriority
+    reason: UnmetReason
+    cheapest_price: Decimal | None = Field(default=None, ge=0)
+
+
 class BundleGroundingView(BaseModel):
     """What one whole-room outcome looks like to the response model.
 
@@ -216,10 +254,21 @@ class BundleGroundingView(BaseModel):
     """Why pieces are missing, deduplicated in first-seen order.
 
     Reason codes, so "the shop stocks none" and "the budget would not stretch"
-    stay different things to say. No need index and no product type: `UnmetNeed`
-    carries neither a category nor a label, and naming the missing piece would
-    mean inventing one.
+    stay different things to say.
     """
+
+    missing_pieces: tuple[MissingPieceView, ...] = ()
+    """Each missing piece by name, with its reason - so the reply says "the rug
+    didn't fit the budget", never "1 needed piece couldn't be included"."""
+
+    seating_for: int | None = Field(default=None, ge=1)
+    """How many people the room's seating seats, when that is exactly the
+    number they gave - counted from the real pieces, so the plan is never
+    sized silently and never claimed for more than it seats."""
+
+    seats_short_of: int | None = Field(default=None, ge=1)
+    """Their head count, when the room's seating seats fewer - so the reply says
+    plainly it is short rather than implying everyone has a seat."""
 
     budget_supplied: bool = False
     within_budget: bool | None = None
@@ -267,6 +316,104 @@ class BundleGroundingView(BaseModel):
             raise ValueError("a package missing a required piece is not complete")
         if self.status is BundleStatus.PARTIAL and not self.required_unmet_count:
             raise ValueError("a partial package is short of a required piece")
+        return self
+
+
+class RoomQuestionGroundingView(BaseModel):
+    """The one room question this turn asks, as the reply may word it.
+
+    Which question is the application's; the words are the model's. The pieces
+    are drawn as chips beside the reply, so only how many start selected
+    travels here.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    room_kind: str = Field(min_length=1)
+    question: RoomQuestionKind
+    earlier_seat_count: int | None = Field(default=None, ge=1)
+    """A head count they gave for a seating search earlier - to confirm, never
+    to assume."""
+
+    pieces_offered: int = Field(default=0, ge=0)
+    pieces_preselected: int = Field(default=0, ge=0)
+
+
+class SeatingSolutionGroundingView(BaseModel):
+    """What a composed seating combination looks like to the response model.
+
+    Counts and one enum. No price, no total, no per-piece detail and no product:
+    the pieces of each combination and what they cost are rendered by the
+    application, exactly as a whole room's are, so none of it passes through
+    here (CLAUDE.md 20.4).
+
+    `target_seats` is the count the customer asked for, carried so the reply can
+    name it - "a set that seats eight" - without the number being an invention.
+    It is their own figure, and the numeric guard admits it as such.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    outcome: SeatingSolutionOutcome
+    target_seats: int = Field(ge=1)
+    bundle_count: int = Field(default=0, ge=0)
+    """How many combinations are on screen. Zero when none fit the budget - the
+    honest outcome, where the reply owns the shortfall and shows nothing."""
+
+    budget_supplied: bool = False
+
+    lifted: tuple[AttributeFamily, ...] = ()
+    """A strict colour or style no combination could meet, set aside as the
+    last resort: the reply must say none matched exactly, never imply it did."""
+    not_size_limited: int = Field(default=0, ge=0)
+    """Combinations on screen that their size did not limit - it was given for
+    another kind of piece. The reply must not claim those are within it."""
+    wishes_given: bool = False
+    fully_wished: int = Field(default=0, ge=0)
+    """Combinations whose every piece is a colour or style they wished for.
+    Only when this equals `bundle_count` may the reply describe them all as
+    their colour or look."""
+
+    shape_options: tuple[SeatingShapeOption, ...] = ()
+    """For a shape question: the ways the store can really reach the seat
+    count, each with its lowest total. Sayable figures, from real products."""
+    currency: str | None = None
+    closest_total: Decimal | None = Field(default=None, ge=0)
+    """When nothing fits the budget: the lowest real total that seats them with
+    the budget set aside - the figure the reply offers as the next step."""
+
+    ask_colour: bool = False
+    already_seen: int = Field(default=0, ge=0)
+    """Combinations shown before and left out. Above zero, every combination on
+    screen is new - "show me more" was answered with ones they have not seen."""
+    exhausted_shape: SeatingShape | None = None
+    """For no_more: the shape they were paging through that has run out."""
+
+    @model_validator(mode="after")
+    def _only_the_outcomes_worth_wording(self) -> Self:
+        """Two outcomes reach the model, and each pairs with its evidence.
+
+        `SINGLE_PIECE_SUFFICES` and `NO_SEATING` are handled before a model is
+        ever involved: the first is an ordinary search, the second an ordinary
+        zero result. A view carrying either would ask the model to frame a
+        combination that was never composed.
+        """
+        if self.outcome not in (
+            SeatingSolutionOutcome.BUNDLES,
+            SeatingSolutionOutcome.NONE_WITHIN_BUDGET,
+            SeatingSolutionOutcome.CHOOSE_SHAPE,
+            SeatingSolutionOutcome.NO_MORE,
+        ):
+            raise ValueError("only a composed, over-budget or question outcome reaches the model")
+        if self.outcome is SeatingSolutionOutcome.CHOOSE_SHAPE and not self.shape_options:
+            raise ValueError("a shape question carries its options")
+        if self.shape_options and self.outcome not in (
+            SeatingSolutionOutcome.CHOOSE_SHAPE,
+            SeatingSolutionOutcome.NO_MORE,
+        ):
+            raise ValueError("only a question or a no-more reply offers shapes")
+        if (self.outcome is SeatingSolutionOutcome.BUNDLES) != (self.bundle_count > 0):
+            raise ValueError("combinations are on screen exactly when the outcome is BUNDLES")
         return self
 
 
@@ -342,6 +489,11 @@ class ResponseGroundingView(BaseModel):
     how many products met it.
     """
 
+    offered_instead_of: str | None = None
+    """The seating type they asked for, in words, when it never seats that
+    many and the cards are another type that does - offered as the best fit,
+    never as a refusal."""
+
     search_was_suggested: bool = False
     """Whether this set is something we proposed rather than something they
     asked for.
@@ -410,6 +562,16 @@ class ResponseGroundingView(BaseModel):
     say the numbers (CLAUDE.md 13.4).
     """
 
+    earlier_sizes_applied: bool = False
+    """Sizes the customer gave earlier for this product type were applied
+    again. A flag, not the figures: the customer said them, and the reply only
+    has to remind them the limit is still in force."""
+
+    would_find_without: tuple[SetAsideOption, ...] = ()
+    """Nothing met everything together: how many products each requirement,
+    set aside alone, would find. Counts and a field name - never a product or
+    a bound - so the reply can offer a real next step without inventing one."""
+
     compared_count: int = Field(default=0, ge=0)
     comparison_differs_on: tuple[ComparisonField, ...] = ()
     """Which fields differ. Never a cell, so "they differ mainly on width" is
@@ -417,6 +579,12 @@ class ResponseGroundingView(BaseModel):
 
     bundle: BundleGroundingView | None = None
     """The whole-room outcome, for `ROOM_BUNDLE` and nothing else."""
+
+    seating: SeatingSolutionGroundingView | None = None
+    """The composed combination, for `SEATING_COMBINATION` and nothing else."""
+
+    room_question: RoomQuestionGroundingView | None = None
+    """What to ask about the room, for `ROOM_QUESTION` and nothing else."""
 
     guidance: tuple[DesignGuidance, ...] = ()
     """The design specialist's answer, for `DESIGN_ADVICE`.
@@ -469,6 +637,12 @@ class ResponseGroundingView(BaseModel):
         if (self.kind is ResponseOutcomeKind.ROOM_BUNDLE) != (self.bundle is not None):
             raise ValueError("a room bundle outcome carries its bundle, and only it does")
 
+        if (self.kind is ResponseOutcomeKind.SEATING_COMBINATION) != (self.seating is not None):
+            raise ValueError("a seating combination carries its solution, and only it does")
+
+        if (self.kind is ResponseOutcomeKind.ROOM_QUESTION) != (self.room_question is not None):
+            raise ValueError("a room question carries its question, and only it does")
+
         if self.selected_kinds and len(self.selected_kinds) != self.selected_count:
             raise ValueError("every choice is one kind, so the two counts agree")
 
@@ -504,7 +678,7 @@ class ResponseGroundingView(BaseModel):
         ):
             raise ValueError("an unwidened search presents only exact matches")
 
-        for words in (self.commerce_category, self.commerce_subcategory):
+        for words in (self.commerce_category, self.commerce_subcategory, self.offered_instead_of):
             # The registry key is an internal identifier; a model shown one
             # writes it back verbatim.
             if words is not None and "-" in words:

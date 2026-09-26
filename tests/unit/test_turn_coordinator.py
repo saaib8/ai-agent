@@ -47,7 +47,11 @@ from app.schemas.agent_state import (
 from app.schemas.agent_turn import CustomerTurnInput, CustomerTurnResult
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
-from app.schemas.discovery import PriceConstraint, ProductSearchRequest
+from app.schemas.discovery import (
+    PriceConstraint,
+    ProductSearchRequest,
+    SeatingCapacityConstraint,
+)
 from app.schemas.grounding import (
     SearchExecutionGrounding,
     SearchOutcome,
@@ -94,6 +98,14 @@ from app.schemas.resolution import (
     SearchRequirementClarificationReason,
 )
 from app.schemas.retailer import RetailerContext
+from app.schemas.seating_solution import (
+    SeatingBundle,
+    SeatingBundleLine,
+    SeatingRequirements,
+    SeatingShape,
+    SeatingSolution,
+    SeatingSolutionOutcome,
+)
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.grounding_builder import to_grounded_product
 from app.services.refinement_composer import SearchRefinementComposer
@@ -189,7 +201,12 @@ class FakePipeline:
         self.calls: list[Any] = []
 
     async def execute(
-        self, resolved: Any, context: Any, *, dropped_constraints: Any = ()
+        self,
+        resolved: Any,
+        context: Any,
+        *,
+        dropped_constraints: Any = (),
+        earlier_sizes_applied: bool = False,
     ) -> ProductSearchExecutionResult:
         self.calls.append(resolved)
         if self.error is not None:
@@ -369,6 +386,49 @@ class FakeOptimizer:
         return self.outcome
 
 
+class FakeSeatingPlanner:
+    """Composes nothing by default, so the seating-recovery hook is a no-op.
+
+    A test that wants a combination injects the solution it expects; every
+    other test gets `NO_SEATING`, which leaves the ordinary zero-result path
+    untouched.
+    """
+
+    def __init__(self, solution: SeatingSolution | None = None) -> None:
+        self.solution = solution
+        self.calls: list[dict[str, Any]] = []
+
+    async def plan(
+        self,
+        *,
+        target_seats: int,
+        budget_amount: Any,
+        currency: str,
+        context: Any,
+        requirements: Any = None,
+        shape: Any = None,
+        exclude: Any = frozenset(),
+    ) -> SeatingSolution:
+        self.calls.append(
+            {
+                "target_seats": target_seats,
+                "budget_amount": budget_amount,
+                "currency": currency,
+                "context": context,
+                "requirements": requirements,
+                "shape": shape,
+                "exclude": exclude,
+            }
+        )
+        if self.solution is not None:
+            return self.solution
+        return SeatingSolution(
+            target_seats=target_seats,
+            currency=currency,
+            outcome=SeatingSolutionOutcome.NO_SEATING,
+        )
+
+
 def _coordinator(
     decision: CustomerAgentDecision,
     *,
@@ -384,12 +444,16 @@ def _coordinator(
     design: Any = _UNSET,
     design_discovery: Any = None,
     optimizer: Any = None,
+    seating_planner: Any = None,
+    decisions: Any = None,
+    seating: Any = None,
+    rooms: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
     dimensions = load_dimension_semantics(taxonomy=taxonomy)
     parts = {
-        "decisions": FakeDecisions(decision, decision_error),
+        "decisions": decisions or FakeDecisions(decision, decision_error),
         "m7": FakeQueryUnderstanding(interpretation, m7_error),
         "references": references or FakeReferences(),
         "relative_price": relative_price or FakeRelativePrice(None),
@@ -402,11 +466,12 @@ def _coordinator(
         "design": FakeDesign() if design is _UNSET else design,
         "design_discovery": design_discovery or FakeDesignDiscovery(),
         "optimizer": optimizer or FakeOptimizer(),
+        "seating_planner": seating_planner or FakeSeatingPlanner(),
     }
     coordinator = CustomerTurnCoordinator(
         parts["decisions"],  # type: ignore[arg-type]
         parts["m7"],  # type: ignore[arg-type]
-        SearchRefinementComposer(attributes, dimensions),
+        SearchRefinementComposer(attributes, dimensions, seating),
         parts["references"],  # type: ignore[arg-type]
         parts["relative_price"],  # type: ignore[arg-type]
         parts["comparison"],  # type: ignore[arg-type]
@@ -418,8 +483,11 @@ def _coordinator(
         parts["design_discovery"],  # type: ignore[arg-type]
         BundleReferenceResolver(taxonomy),
         parts["optimizer"],  # type: ignore[arg-type]
+        parts["seating_planner"],  # type: ignore[arg-type]
         dimensions,
         taxonomy,
+        rooms,
+        seating,
     )
     return coordinator, parts
 
@@ -892,6 +960,213 @@ async def test_a_new_task_drops_the_previous_semantic_intent() -> None:
 
     assert result.state.active_search is not None
     assert result.state.active_search.semantic_intent is None
+
+
+# ── the seating-combination recovery ─────────────────────────────────────────
+
+SEATS_EIGHT = ProductSearchRequest(
+    commerce_category="seating",
+    commerce_subcategory="sofa",
+    seating_capacity=SeatingCapacityConstraint.exactly(8),
+    price=PriceConstraint.at_most(Decimal("5000"), "SAR"),
+)
+"""A seat count no single sofa in the catalog meets, under a budget - the
+flagship case for composing a combination instead of a dead end."""
+
+
+def _seating_bundles(*, target: int = 8, currency: str = "SAR") -> SeatingSolution:
+    anchor = SeatingBundleLine(
+        product_id=1,
+        name="Big Sofa",
+        commerce_subcategory="sofa",
+        unit_price=Decimal("3000"),
+        quantity=1,
+        seats_each=5,
+        seats_are_confirmed=True,
+        image_url="http://example/sofa.jpg",
+        product_url="http://example/sofa",
+    )
+    chairs = SeatingBundleLine(
+        product_id=2,
+        name="Accent Chair",
+        commerce_subcategory="chair",
+        unit_price=Decimal("250"),
+        quantity=3,
+        seats_each=1,
+        seats_are_confirmed=False,
+        image_url="http://example/chair.jpg",
+        product_url="http://example/chair",
+    )
+    bundle = SeatingBundle(
+        shape=SeatingShape.SOFA_WITH_EXTRA_SEATS,
+        lines=(anchor, chairs),
+        total_seats=8,
+        total_price=Decimal("3750"),
+        currency=currency,
+    )
+    return SeatingSolution(
+        target_seats=target,
+        budget_amount=Decimal("5000"),
+        currency=currency,
+        outcome=SeatingSolutionOutcome.BUNDLES,
+        bundles=(bundle,),
+    )
+
+
+async def test_a_zero_result_seat_count_is_recovered_by_a_combination() -> None:
+    """No single sofa seats eight, so the turn composes a combination that does
+    rather than handing back an empty search (CLAUDE.md 27)."""
+    planner = FakeSeatingPlanner(_seating_bundles())
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=_resolved(SEATS_EIGHT),
+        pipeline=FakePipeline(ids=()),
+        seating_planner=planner,
+    )
+
+    result = await coordinator.run(_turn(_state(request=None), "a sofa that seats 8 under 5000"))
+
+    assert result.seating_solution is not None
+    assert result.seating_solution.outcome is SeatingSolutionOutcome.BUNDLES
+    assert planner.calls == [
+        {
+            "target_seats": 8,
+            "budget_amount": Decimal("5000"),
+            "currency": "SAR",
+            "context": CONTEXT,
+            # Nothing beyond seats and budget was asked, so nothing to hold to.
+            "requirements": SeatingRequirements(asked_type="sofa"),
+            # No shape was chosen yet, and nothing has been shown before.
+            "shape": None,
+            "exclude": frozenset(),
+        }
+    ]
+
+
+async def test_a_none_within_budget_outcome_is_still_carried() -> None:
+    """"The closest I could do is over budget" is an honest answer, not a dead
+    end: it reaches the response layer so the reply can own the shortfall."""
+    over_budget = SeatingSolution(
+        target_seats=8,
+        budget_amount=Decimal("5000"),
+        currency="SAR",
+        outcome=SeatingSolutionOutcome.NONE_WITHIN_BUDGET,
+    )
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=_resolved(SEATS_EIGHT),
+        pipeline=FakePipeline(ids=()),
+        seating_planner=FakeSeatingPlanner(over_budget),
+    )
+
+    result = await coordinator.run(_turn(_state(request=None), "a sofa that seats 8 under 5000"))
+
+    assert result.seating_solution is not None
+    assert result.seating_solution.outcome is SeatingSolutionOutcome.NONE_WITHIN_BUDGET
+
+
+async def test_a_single_piece_outcome_leaves_the_plain_zero_result() -> None:
+    """When a single piece would in fact suffice, the combination is not the
+    answer - the ordinary search path is - so nothing is attached."""
+    single = SeatingSolution(
+        target_seats=8,
+        currency="SAR",
+        outcome=SeatingSolutionOutcome.SINGLE_PIECE_SUFFICES,
+    )
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=_resolved(SEATS_EIGHT),
+        pipeline=FakePipeline(ids=()),
+        seating_planner=FakeSeatingPlanner(single),
+    )
+
+    result = await coordinator.run(_turn(_state(request=None)))
+
+    assert result.seating_solution is None
+
+
+async def test_a_found_search_never_triggers_a_combination() -> None:
+    """A seating search that matched products is already an answer; the planner
+    is never consulted."""
+    planner = FakeSeatingPlanner(_seating_bundles())
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=_resolved(SEATS_EIGHT),
+        pipeline=FakePipeline(ids=(20, 21)),
+        seating_planner=planner,
+    )
+
+    result = await coordinator.run(_turn(_state(request=None)))
+
+    assert result.seating_solution is None
+    assert planner.calls == []
+
+
+async def test_a_seat_count_is_needed_before_a_combination_is_considered() -> None:
+    """A zero-result sofa search with no seat count is an ordinary empty search,
+    not a combination case: the planner is never reached."""
+    planner = FakeSeatingPlanner(_seating_bundles())
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=_resolved(SOFAS),
+        pipeline=FakePipeline(ids=()),
+        seating_planner=planner,
+    )
+
+    result = await coordinator.run(_turn(_state(request=None)))
+
+    assert result.seating_solution is None
+    assert planner.calls == []
+
+
+async def test_a_non_seating_zero_result_never_triggers_a_combination() -> None:
+    """A seat count belongs to seating; an empty table search is just empty."""
+    planner = FakeSeatingPlanner(_seating_bundles())
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=_resolved(TABLES),
+        pipeline=FakePipeline(ids=()),
+        seating_planner=planner,
+    )
+
+    result = await coordinator.run(_turn(_state(request=None)))
+
+    assert result.seating_solution is None
+    assert planner.calls == []
+
+
+async def test_a_refined_seat_count_search_still_recovers() -> None:
+    """Tightening a budget onto an existing seat-count search can empty it, and a
+    refinement recovers exactly as a fresh search does.
+
+    The recovery lives on the shared search executor, not the new-search path
+    alone: "a sofa that seats 8" then "make it under 1500" is a refinement, and a
+    customer who narrows the budget into a dead end should still be offered the
+    combination (or told honestly none fits), never a bare "couldn't find".
+    """
+    over_budget = SeatingSolution(
+        target_seats=8,
+        budget_amount=Decimal("1500"),
+        currency="SAR",
+        outcome=SeatingSolutionOutcome.NONE_WITHIN_BUDGET,
+    )
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.REFINE_SEARCH,
+            refinement=SearchRefinementDelta(
+                price=PriceRefinement(
+                    op=PriceRefinementOp.SET, max_amount="1500", currency="SAR"
+                ),
+            ),
+        ),
+        pipeline=FakePipeline(ids=()),
+        seating_planner=FakeSeatingPlanner(over_budget),
+    )
+
+    result = await coordinator.run(_turn(_state(request=SEATS_EIGHT, revision=1)))
+
+    assert result.seating_solution is not None
+    assert result.seating_solution.outcome is SeatingSolutionOutcome.NONE_WITHIN_BUDGET
 
 
 @pytest.mark.parametrize(
@@ -2035,6 +2310,8 @@ def test_every_composition_defect_is_accounted_for() -> None:
         "RELATIVE_PRICE_NOT_RESOLVED",
         "UNAPPROVED_ATTRIBUTE_VALUE",
         "MALFORMED_AMOUNT",
+        # Corrected like an unapproved value: a one-seat piece is its own type.
+        "ONE_SEAT_ON_MULTI_SEAT_TYPE",
     }
 
 

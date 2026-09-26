@@ -18,6 +18,20 @@
 #   drops_previous_card: N  card N of the previous turn is gone, and cards are shown
 #   subcategory: key      every card is this commerce subcategory
 #   admits_no_match       the reply says plainly that nothing matched exactly
+#   mentions: [...]       the reply mentions at least one of these words
+#   max_products: N       at most N product cards (0 = it asked before showing)
+#   min_combinations: N   at least N seating combinations on screen
+#   follow_up_mentions: [...]  the optional follow-up question mentions one of these
+#   new_combinations      none of the combinations repeat the previous turn
+#   drops_previous_combination: N  combination N is gone, the others kept
+#   max_dimension: {field, value}         every card's field (e.g. length_cm) is at most value
+#   some_dimension_above: {field, value}  at least one card's field is above value
+#   piece_picker          the room's pieces are shown as chips
+#   room_status: s        the room package has this status (complete / partial)
+#   room_has: [...]       the room holds each of these subcategories
+#   room_seats: N         the room's seating adds up to exactly N seats
+#   not_mentions: [...]   the reply mentions none of these
+#   combination_excludes: key  no combination uses this subcategory
 
 cases:
   - id: B1_only_beige_followup
@@ -167,3 +181,176 @@ cases:
     issue: "type change with an unmatched strict colour"
     turns: ["show me coffee tables", "make them red ones instead"]
     checks: {not_fallback: true, min_products: 1, admits_no_match: true}
+
+  - id: dropped_width_disclosed
+    issue: "a measurement dropped on a type change must be disclosed (sofa sets have no single footprint)"
+    turns: ["show me sofas around 220 cm wide", "make them sofa sets instead"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa-set, mentions: [width, wide, size, space, fit]}
+
+  # ── sizes belong to a product type (they never follow the customer to another) ──
+  - id: side_table_size_not_carried
+    issue: "a side-table size must not limit coffee tables"
+    turns: ["side tables no wider than 50 cm please", "show me coffee tables instead"]
+    checks: {not_fallback: true, min_products: 4, subcategory: center-table, some_dimension_above: {field: length_cm, value: 50}}
+
+  - id: sofa_size_comes_back
+    issue: "a type's size comes back when the customer returns to it, and is mentioned"
+    turns: ["show me sofas no wider than 200 cm", "show me armchairs instead", "ok, back to sofas please"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, max_dimension: {field: length_cm, value: 200}, mentions: [width, wide, size, earlier, limit]}
+
+  - id: sofa_any_size_clears
+    issue: "any size drops the saved limit"
+    turns: ["show me sofas no wider than 200 cm", "show me armchairs instead", "back to sofas, any size is fine"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, some_dimension_above: {field: length_cm, value: 200}}
+
+  - id: sofa_size_kept_on_price_change
+    issue: "control: a size stays while refining the same type"
+    turns: ["show me sofas no wider than 200 cm", "under 5000 SAR please"]
+    checks: {not_fallback: true, min_products: 1, max_price: 5000, max_dimension: {field: length_cm, value: 200}}
+
+  # ── one-seat product types (chairs, stools, single-seater sofas) ─────────────
+  - id: single_seater_type_change
+    issue: "'make them single seater sofas' is a change of type, not a one-seat sofa"
+    turns: ["show me sofas under 5000 SAR", "make them single seater sofas"]
+    checks: {not_fallback: true, min_products: 1, subcategory: single-seater-sofa, max_price: 5000}
+
+  - id: sofa_for_one_new_search
+    issue: "a sofa for one person is the single-seater type"
+    turns: ["I need a sofa for one person"]
+    checks: {not_fallback: true, min_products: 1, subcategory: single-seater-sofa}
+
+  - id: sofa_seats_not_carried_to_single_seaters
+    issue: "a sofa's seat count does not hide every one-seat piece"
+    turns: ["show me sofas for 4 people", "show me single seater sofas instead"]
+    checks: {not_fallback: true, min_products: 3, subcategory: single-seater-sofa}
+
+  # ── zero results always leave a way forward ──────────────────────────────────
+  - id: zero_results_offers_next_step
+    issue: "issue 9: nothing matched everything, so offer what setting one part aside would find"
+    turns: ["show me modern sofas for 4 people under 6000 SAR, around 220 cm wide"]
+    checks: {not_fallback: true, mentions: ["without", "widen", "raise", "drop", "loosen", "relax", "set aside", "?"]}
+
+  - id: zero_results_budget_next_step
+    issue: "issue 9: a budget nothing meets"
+    turns: ["show me sofas under 500 SAR"]
+    checks: {not_fallback: true, mentions: ["start at", "starts at", "from", "?"]}
+
+  # ── seat counts no single piece meets: ask the shape first, then combine ──────
+  - id: seat_combo_asks_shape_first
+    issue: "issue 4: one question first - which shape, with real from prices, and the colour when unknown"
+    turns: ["I need a sofa for 8 people"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["from"]}
+
+  - id: seat_combo_separate_sofas
+    issue: "issue 4: two sofas together, all in the wished colour, within budget"
+    turns: ["I am looking for a beige sofa under 5000 sar that can fit 8 people", "separate sofas please"]
+    checks: {not_fallback: true, min_combinations: 2}
+
+  - id: seat_combo_either
+    issue: "issue 4: 'either' shows the best of every shape"
+    turns: ["show me sofas for 9 people", "either is fine, show me both"]
+    checks: {not_fallback: true, min_combinations: 2}
+
+  - id: seat_combo_pick_second
+    issue: "issue 4: 'I'll take the second option' saves that combination"
+    turns: ["I need a sofa for 8 people", "separate sofas in beige", "I'll take the second option"]
+    checks: {not_fallback: true, min_products: 2}
+
+  - id: seat_combo_strict_colour_honest
+    issue: "issue 4: a strict colour no combination meets is said plainly"
+    turns: ["only purple sofas for 8 people, no other colour", "either is fine, show me both"]
+    checks: {not_fallback: true, min_combinations: 1, admits_no_match: true}
+
+  # ── one question per reply on ordinary searches ──────────────────────────────
+  - id: follow_up_seats_for_sofas
+    issue: "show me sofas: products plus how many will sit"
+    turns: ["show me sofas"]
+    checks: {not_fallback: true, min_products: 3, follow_up_mentions: ["how many", "seat", "people"]}
+
+  - id: follow_up_style_when_seats_known
+    issue: "seats known: the follow-up is taste, never budget"
+    turns: ["show me sofas for 4 people"]
+    checks: {not_fallback: true, min_products: 3, follow_up_mentions: ["style", "colour", "color", "look", "modern", "soft", "drawn"]}
+
+  - id: need_asks_seats_first
+    issue: "a stated need asks one question first, then the answer searches"
+    turns: ["I need a sofa for the living room"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["how many", "people", "seat"]}
+
+  - id: need_then_answer_searches
+    issue: "the answer to the question finds sofas for that many"
+    turns: ["I need a sofa for the living room", "there are 4 of us"]
+    checks: {not_fallback: true, min_products: 3, subcategory: sofa}
+
+  - id: seat_combo_show_more_is_new
+    issue: "'show more options' with combinations on screen shows new ones, never the same"
+    turns: ["a beige sofa for 8 people under 5000 SAR", "separate sofas please", "show more options"]
+    checks: {not_fallback: true, min_combinations: 1, new_combinations: true}
+
+  - id: seat_combo_not_this_one
+    issue: "'I don't like the second option' replaces only that one"
+    turns: ["a beige sofa for 8 people under 5000 SAR", "separate sofas please", "I don't like the second option"]
+    checks: {not_fallback: true, min_combinations: 2, drops_previous_combination: 2}
+
+  # ── a room of chosen pieces: one question per turn, then the room ────────────
+  - id: room_asks_budget_first
+    issue: "room questions: budget first, nothing built yet"
+    turns: ["I want to design my living room"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["spend", "budget"]}
+
+  - id: room_offers_piece_chips
+    issue: "room questions: after the budget, the pieces as chips"
+    turns: ["I want to design my living room", "Under 12000 SAR"]
+    checks: {not_fallback: true, piece_picker: true}
+
+  - id: room_asks_how_many_after_pieces
+    issue: "room questions: a living room asks how many will sit"
+    turns: ["I want to design my living room", "Under 12000 SAR", "Choose for me"]
+    checks: {not_fallback: true, mentions: ["how many", "people", "sit"]}
+
+  - id: room_built_for_four
+    issue: "room of chosen pieces: seating for exactly four, all chosen pieces"
+    turns: ["I want to design my living room", "Under 12000 SAR", "Choose for me", "4 people", "beige"]
+    checks: {not_fallback: true, room_status: complete, room_seats: 4, room_has: [center-table, carpet, service-table]}
+
+  - id: room_built_for_nine_confirms_earlier
+    issue: "a head count from a sofa search is confirmed, then met exactly"
+    turns: ["I am looking for a sofa for 9 people", "I want to design a living room", "Under 12000 SAR", "Choose for me"]
+    checks: {not_fallback: true, mentions: ["9", "nine"]}
+
+  - id: room_nine_people_seated
+    issue: "nine people seated by a combination inside the room budget"
+    turns: ["Design my living room, budget 12000 SAR, 9 people, grey, choose the pieces for me"]
+    checks: {not_fallback: true, room_seats: 9}
+
+  - id: room_tight_budget_names_missing
+    issue: "a piece the budget cannot reach is named, never counted"
+    turns: ["Design my living room", "3500 SAR", "Choose for me", "5 people", "beige"]
+    checks: {not_fallback: true, not_mentions: ["1 needed piece", "remains to be resolved"]}
+
+  - id: room_just_design_it
+    issue: "'just design it' ends the questions and builds the room"
+    turns: ["Furnish my bedroom, budget 8000 SAR", "just design it"]
+    checks: {not_fallback: true, room_has: [bed, nightstand]}
+
+  # ── the last branch fixes (2026-09-26) ──────────────────────────────────────
+  - id: sofa_for_six_offers_sofa_set
+    issue: "a sofa for 6: the sofa set that seats them, framed as the best fit"
+    turns: ["show me a sofa for 6 people"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa-set, not_mentions: ["none of our", "no sofa", "don't have"]}
+
+  - id: seat_combo_over_budget_says_closest
+    issue: "nothing seats 9 within budget: the closest real total is offered as a question"
+    turns: ["sofas for 9 people under 1500 SAR"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["3,700", "3700"]}
+
+  - id: seat_combo_over_budget_yes_shows
+    issue: "yes to the closest total shows the combinations, no further question"
+    turns: ["sofas for 9 people under 1500 SAR", "yes"]
+    checks: {not_fallback: true, min_combinations: 1}
+
+  - id: seat_combo_no_sofa_bed_unasked
+    issue: "a sofa bed is never a main piece unless asked for"
+    turns: ["show me sofas for 9 people", "either is fine, show me both"]
+    checks: {not_fallback: true, min_combinations: 2, combination_excludes: sofa-bed}
+

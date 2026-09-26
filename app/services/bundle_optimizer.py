@@ -173,6 +173,13 @@ class BundleOptimizer:
                 priority=residual.priority,
                 shortfall=residual.quantity,
                 reason=residual.reason,
+                commerce_category=residual.need.commerce_category,
+                commerce_subcategory=residual.need.commerce_subcategory,
+                cheapest_price=(
+                    residual.minimum_cost
+                    if residual.reason is UnmetReason.BUDGET_EXHAUSTED
+                    else None
+                ),
             )
             for residual in residuals
             if residual.index not in selected
@@ -214,6 +221,8 @@ class BundleOptimizer:
                 priority=entry.need.priority,
                 shortfall=entry.need.quantity - covered.get(entry.need_index, 0),
                 reason=UnmetReason.BUDGET_EXHAUSTED,
+                commerce_category=entry.need.commerce_category,
+                commerce_subcategory=entry.need.commerce_subcategory,
             )
             for entry in request.discovery.needs
             if entry.need.quantity - covered.get(entry.need_index, 0) > 0

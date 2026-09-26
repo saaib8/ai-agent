@@ -34,6 +34,8 @@ from app.schemas.design_intent import (
 )
 from app.schemas.discovery import (
     MAX_EXCLUDED_PRODUCT_IDS,
+    DimensionConstraint,
+    PlanarDimensionConstraint,
     PriceConstraint,
     ProductSearchRequest,
     SeatingCapacityConstraint,
@@ -41,9 +43,13 @@ from app.schemas.discovery import (
 from app.schemas.geometry import RoomGeometry
 from app.schemas.query import (
     ConstraintSemantics,
+    DimensionConstraintSemantics,
+    PlanarDimensionSemantics,
     SemanticPreference,
     validate_dimension_correspondence,
 )
+from app.schemas.room_opener import RoomQuestionKind
+from app.schemas.seating_solution import SeatingShape
 
 AGENT_STATE_VERSION: Literal["agent_state_v5"] = "agent_state_v5"
 """The state contract. Change the shape, change this.
@@ -55,6 +61,10 @@ the room's regular seating requirement, which is a durable customer fact a
 later turn must not have to re-ask for.
 
 Each is a shape change a reader could get wrong, so the version moves with it.
+A new field with an empty default is not: every v5 session still reads exactly
+as it was written, and moving the version would turn each live conversation
+into an unreadable one. `CustomerPreferenceState.measurements_by_type` was
+added that way.
 
 A session written by an older version is refused rather than coerced: the store
 validates through this contract, and an unreadable session is a controlled
@@ -72,6 +82,40 @@ def _no_duplicates(values: tuple[int, ...], field: str) -> tuple[int, ...]:
     return values
 
 
+class SavedMeasurements(BaseModel):
+    """The sizes a customer gave for one product type.
+
+    A measurement belongs to the kind of product it was said about: 60 cm for a
+    side table says nothing about a coffee table, and 220 cm for a sofa nothing
+    about an armchair. So a change of product type leaves the old type's sizes
+    here, and coming back to that type brings them back.
+
+    Kept exactly as the search executed them - constraints beside the strength
+    each was stated with - so a restored size is the same requirement, not a
+    re-reading of it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_subcategory: str = Field(min_length=1)
+    dimensions: tuple[DimensionConstraint, ...] = ()
+    dimension_semantics: tuple[DimensionConstraintSemantics, ...] = ()
+    planar_dimensions: PlanarDimensionConstraint | None = None
+    planar_semantics: PlanarDimensionSemantics | None = None
+
+    @model_validator(mode="after")
+    def _sizes_and_strengths_correspond(self) -> Self:
+        wanted = sorted(constraint.role for constraint in self.dimensions)
+        recorded = sorted(entry.role for entry in self.dimension_semantics)
+        if wanted != recorded:
+            raise ValueError("every saved dimension needs exactly one recorded strength")
+        if (self.planar_dimensions is None) != (self.planar_semantics is None):
+            raise ValueError("a saved planar pair and its strength travel together")
+        if not self.dimensions and self.planar_dimensions is None:
+            raise ValueError("saved measurements must hold at least one size")
+        return self
+
+
 class CustomerPreferenceState(BaseModel):
     """What the customer actually said they like, reusable across tasks.
 
@@ -87,6 +131,33 @@ class CustomerPreferenceState(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     semantic_preferences: tuple[SemanticPreference, ...] = ()
+
+    measurements_by_type: tuple[SavedMeasurements, ...] = ()
+    """At most one entry per product type, written only by the application
+    after a search the customer asked for has run (see
+    `app.services.agent_state.remember_measurements`). No agent proposes it."""
+
+    @field_validator("measurements_by_type")
+    @classmethod
+    def _one_entry_per_type(
+        cls, value: tuple[SavedMeasurements, ...]
+    ) -> tuple[SavedMeasurements, ...]:
+        types = [saved.commerce_subcategory for saved in value]
+        if len(types) != len(set(types)):
+            raise ValueError("measurements_by_type holds one entry per product type")
+        return value
+
+    def measurements_for(self, commerce_subcategory: str | None) -> SavedMeasurements | None:
+        if commerce_subcategory is None:
+            return None
+        return next(
+            (
+                saved
+                for saved in self.measurements_by_type
+                if saved.commerce_subcategory == commerce_subcategory
+            ),
+            None,
+        )
 
 
 class ActiveSearchState(BaseModel):
@@ -394,6 +465,42 @@ class RoomProjectState(BaseModel):
     else about their behaviour.
     """
 
+    room_kind: str | None = Field(default=None, max_length=40)
+    """Which room template this is - a key of the room registry - when it is one
+    the registry knows ("living_room", "bedroom"). `None` for any other room,
+    which is planned the way it always was."""
+
+    pieces: tuple[str, ...] | None = Field(default=None, max_length=30)
+    """The pieces the customer chose for this room, as registry keys.
+
+    `None` until they answer; "choose for me" is recorded as the essential and
+    recommended pieces, so it is an answer like any other. Only keys of this
+    room's template, checked before they are stored (CLAUDE.md 10.3)."""
+
+    questions_asked: tuple[RoomQuestionKind, ...] = ()
+    """The room questions already asked, one per turn. Each is asked once:
+    whatever they leave unanswered is built from what is known, never asked
+    again (CLAUDE.md 10.1)."""
+
+    questions_done: bool = False
+    """They asked to skip the rest - "just design it". No further question."""
+
+    @field_validator("pieces")
+    @classmethod
+    def _pieces_are_distinct(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("a piece is chosen at most once")
+        return value
+
+    @field_validator("questions_asked")
+    @classmethod
+    def _each_question_once(
+        cls, value: tuple[RoomQuestionKind, ...]
+    ) -> tuple[RoomQuestionKind, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("a room question is asked at most once")
+        return value
+
     design_needs: tuple[RoomDesignNeedState, ...] = ()
     """The furnishing plan currently being worked on, in the specialist's own
     order. Empty until a room has been planned."""
@@ -492,6 +599,54 @@ class RoomProjectState(BaseModel):
         return sum(1 for item in self.bundle_items if item.acquisition is acquisition)
 
 
+class OfferedCombinationLine(BaseModel):
+    """One piece of a combination shown to the customer: a reference, and how
+    many. Never a name or a price - those are read fresh (see module docs)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    quantity: int = Field(ge=1)
+
+
+class OfferedCombination(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    shape: SeatingShape
+    lines: tuple[OfferedCombinationLine, ...] = Field(min_length=1)
+
+
+class SeatingOfferState(BaseModel):
+    """A seat count no single piece meets, and what was asked and shown for it.
+
+    The shape question is asked once per seat count: `shape_asked` is what
+    stops it being asked again, whatever the customer does next. Application-
+    owned - the decision can only name which offered shape it heard.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target_seats: int = Field(ge=2, le=MAX_REGULAR_SEATING_COUNT)
+    offered_shapes: tuple[SeatingShape, ...] = ()
+    shape_asked: bool = False
+    chosen_shape: SeatingShape | None = None
+    shown: tuple[OfferedCombination, ...] = ()
+    """The combinations on screen, in order, so "the second option" means
+    what the customer saw."""
+    chosen: OfferedCombination | None = None
+    """The combination they chose, with its quantities - its products are also
+    among their picks, which carry no quantity."""
+    excluded: tuple[OfferedCombination, ...] = Field(default=(), max_length=60)
+    """Combinations already shown and paged past, or turned down, for this
+    seat count - never shown again, so "show more" always means new ones."""
+
+    @model_validator(mode="after")
+    def _choice_was_offered(self) -> Self:
+        if self.chosen_shape is not None and self.chosen_shape not in self.offered_shapes:
+            raise ValueError("a chosen shape must be one that was offered")
+        return self
+
+
 class PurchaseStage(StrEnum):
     EXPLORING = "exploring"
     CONSIDERING = "considering"
@@ -521,6 +676,9 @@ class AgentStateV1(BaseModel):
     product_interaction: ProductInteractionState = ProductInteractionState()
     room_project: RoomProjectState | None = None
     derived_commerce: DerivedCommerceState = DerivedCommerceState()
+    seating_offer: SeatingOfferState | None = None
+    """A seating combination in progress. Defaulted, like
+    `measurements_by_type`, so every saved session still reads."""
 
     @model_validator(mode="after")
     def _presented_matches_the_executed_search(self) -> Self:

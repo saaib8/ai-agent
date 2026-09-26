@@ -29,6 +29,7 @@ from app.schemas.agent_state import (
     AgentStateV1,
     BundleItemStatus,
     RoomProjectState,
+    SeatingOfferState,
 )
 from app.schemas.agent_view import (
     ActiveSearchView,
@@ -41,6 +42,7 @@ from app.schemas.agent_view import (
     PresentedProductsView,
     PriceView,
     RoomProjectView,
+    SeatingOfferView,
 )
 from app.schemas.discovery import PriceConstraint
 from app.schemas.query import ConstraintSemantics, SemanticPreference
@@ -69,6 +71,20 @@ def project_state(
         presented=_presented(state, cards),
         room_project=_room_project(state.room_project),
         purchase_stage=state.derived_commerce.purchase_stage,
+        seating_offer=_seating_offer(state.seating_offer),
+    )
+
+
+def _seating_offer(offer: SeatingOfferState | None) -> SeatingOfferView | None:
+    if offer is None:
+        return None
+    return SeatingOfferView(
+        target_seats=offer.target_seats,
+        offered_shapes=offer.offered_shapes,
+        # Asked and not yet answered or shown: the question is what is on screen.
+        pending_question=offer.shape_asked and offer.chosen_shape is None and not offer.shown,
+        chosen_shape=offer.chosen_shape,
+        combinations_on_screen=len(offer.shown),
     )
 
 
@@ -197,6 +213,13 @@ def _room_project(room: RoomProjectState | None) -> RoomProjectView | None:
         budget=_price(room.budget, ConstraintSemantics()),
         design_preferences=_preferences(room.design_preferences),
         regular_seating_count=room.regular_seating_count,
+        room_kind=room.room_kind,
+        chosen_pieces=room.pieces,
+        last_room_question=(
+            str(room.questions_asked[-1])
+            if room.questions_asked and not room.bundle_items
+            else None
+        ),
         design_needs=tuple(
             DesignNeedReferenceView(
                 commerce_category=need.commerce_category,

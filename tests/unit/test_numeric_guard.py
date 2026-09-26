@@ -11,11 +11,14 @@ It can be this small because the response model never receives a product fact.
 from __future__ import annotations
 
 import pytest
+from app.schemas.response import SeatingSolutionGroundingView
+from app.schemas.seating_solution import SeatingSolutionOutcome
 from app.services.numeric_guard import (
     build_allowance,
     canonical_number,
     check_numeric_policy,
     numbers_in,
+    seating_counts,
 )
 
 
@@ -161,6 +164,21 @@ def test_no_count_means_no_numbers_at_all() -> None:
 
     assert allowance == frozenset()
     assert _check("there are 3", allowance) == "3"
+
+
+def test_a_seat_target_and_combination_count_are_allowed() -> None:
+    """The seat target is the customer's own figure and the combination count
+    is one the application established, so a reply may state both - but nothing
+    a card carries, like a price, comes with them."""
+    view = SeatingSolutionGroundingView(
+        outcome=SeatingSolutionOutcome.BUNDLES, target_seats=8, bundle_count=2
+    )
+    assert seating_counts(view) == (8, 2)
+
+    allowance = build_allowance("a sofa for eight people", counts=seating_counts(view))
+    assert _check("None seats 8 alone, so here are 2 combinations that do", allowance) is None
+    # A per-combination total is on the cards, never in the count set.
+    assert _check("the first comes to 3750", allowance) == "3750"
 
 
 @pytest.mark.parametrize(

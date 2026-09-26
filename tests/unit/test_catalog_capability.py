@@ -18,9 +18,11 @@ from app.schemas.retailer import (
 )
 from app.services.catalog_capability import CatalogCapabilityService
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.seating import load_seating_semantics
 from pydantic import ValidationError
 
 TAXONOMY = load_taxonomy()
+SEATING = load_seating_semantics(taxonomy=TAXONOMY)
 CONTEXT = RetailerContext(store_id=50)
 OTHER = RetailerContext(store_id=60)
 
@@ -49,7 +51,7 @@ def _service(*pairs: tuple[str, str | None]) -> tuple[CatalogCapabilityService, 
     repository = FakeRepository(
         tuple((category, subcategory, STOCK_DEPTH) for category, subcategory in pairs)
     )
-    return CatalogCapabilityService(repository, TAXONOMY), repository  # type: ignore[arg-type]
+    return CatalogCapabilityService(repository, TAXONOMY, SEATING), repository  # type: ignore[arg-type]
 
 
 async def test_it_reports_what_the_store_stocks() -> None:
@@ -202,7 +204,7 @@ async def test_each_type_carries_its_own_depth() -> None:
     repository = FakeRepository(
         (("seating", "sofa", 173), ("seating", "lounge-chair", 1))
     )
-    service = CatalogCapabilityService(repository, TAXONOMY)  # type: ignore[arg-type]
+    service = CatalogCapabilityService(repository, TAXONOMY, SEATING)  # type: ignore[arg-type]
 
     capabilities = await service.capabilities(CONTEXT)
 
@@ -221,7 +223,7 @@ async def test_a_thin_type_is_still_supported() -> None:
     told the retailer has none (CLAUDE.md 9.1).
     """
     repository = FakeRepository((("seating", "lounge-chair", 1),))
-    service = CatalogCapabilityService(repository, TAXONOMY)  # type: ignore[arg-type]
+    service = CatalogCapabilityService(repository, TAXONOMY, SEATING)  # type: ignore[arg-type]
 
     capabilities = await service.capabilities(CONTEXT)
 

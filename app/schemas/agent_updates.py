@@ -33,6 +33,7 @@ from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority
 from app.schemas.discovery import PriceConstraint, ProductSearchRequest, SeatingCapacityConstraint
 from app.schemas.geometry import RoomGeometry
 from app.schemas.query import ConstraintSemantics, SemanticPreference
+from app.schemas.room_opener import RoomQuestionKind
 
 # ── tuple operations ────────────────────────────────────────────────────────
 
@@ -415,6 +416,20 @@ class RoomProjectUpdate(BaseModel):
         default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
     )
     clear_regular_seating_count: bool = False
+    room_kind: str | None = None
+    """A different kind resets the chosen pieces and the opening question: the
+    bedroom's pieces say nothing about a living room."""
+
+    pieces: tuple[str, ...] | None = None
+    """Replaces the chosen pieces. Registry keys already checked by the
+    application; a model's raw keys never land here unchecked."""
+
+    question_asked: RoomQuestionKind | None = None
+    """Application-only: the room question asked this turn."""
+
+    questions_done: bool = False
+    """They asked to skip the remaining room questions."""
+
     bundle_operations: tuple[BundleOperation, ...] = ()
     """Changes to the room bundle, applied in order.
 

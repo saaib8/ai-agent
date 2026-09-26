@@ -303,6 +303,12 @@ def test_customer_state_carries_only_stated_facts() -> None:
         "clear_regular_seating_count",
         "clear_room_budget",
         "design_preferences",
+        # The room they are designing and the pieces they chose for it - their
+        # own answers to the room questions (CLAUDE.md 10.1).
+        "room_kind",
+        "room_pieces",
+        "room_pieces_default",
+        "room_skip_questions",
     }
 
 

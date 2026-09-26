@@ -60,12 +60,29 @@ class TurnResult:
         return list(presentation.get("products") or [])
 
     @property
+    def combinations(self) -> list[dict[str, Any]]:
+        presentation = self.body.get("presentation") or {}
+        return list(presentation.get("seating_bundles") or [])
+
+    @property
+    def follow_up(self) -> str:
+        return str((self.body.get("response") or {}).get("follow_up_question") or "")
+
+    @property
     def has_comparison(self) -> bool:
         return bool((self.body.get("presentation") or {}).get("comparison"))
 
     @property
     def has_room(self) -> bool:
         return bool((self.body.get("presentation") or {}).get("room"))
+
+    @property
+    def room(self) -> dict[str, Any]:
+        return dict((self.body.get("presentation") or {}).get("room") or {})
+
+    @property
+    def has_piece_picker(self) -> bool:
+        return bool((self.body.get("presentation") or {}).get("piece_picker"))
 
 
 @dataclass
@@ -77,6 +94,12 @@ class CaseResult:
     @property
     def last(self) -> TurnResult:
         return self.turns[-1]
+
+
+def _combination_key(combination: dict[str, Any]) -> tuple[tuple[str, int], ...]:
+    return tuple(
+        sorted((str(i.get("product_url")), int(i.get("quantity", 1))) for i in combination["items"])
+    )
 
 
 def _check(
@@ -92,6 +115,29 @@ def _check(
         failures.append("fallback reply")
     if (minimum := checks.get("min_products")) and len(products) < minimum:
         failures.append(f"{len(products)} products < {minimum}")
+    if (most := checks.get("max_products")) is not None and len(products) > most:
+        failures.append(f"{len(products)} products > {most} - it should have asked first")
+    if (least := checks.get("min_combinations")) and len(turn.combinations) < least:
+        failures.append(f"{len(turn.combinations)} combinations < {least}")
+    if checks.get("new_combinations") and previous is not None:
+        before = {_combination_key(c) for c in previous.combinations}
+        repeated = [c for c in turn.combinations if _combination_key(c) in before]
+        if not turn.combinations or repeated:
+            failures.append(f"{len(repeated)} of {len(turn.combinations)} combinations repeat")
+    if (position := checks.get("drops_previous_combination")) and previous is not None:
+        earlier = previous.combinations
+        if len(earlier) < position:
+            failures.append(f"previous turn had no combination {position}")
+        else:
+            gone = _combination_key(earlier[position - 1])
+            kept = [_combination_key(c) for i, c in enumerate(earlier) if i != position - 1]
+            now = {_combination_key(c) for c in turn.combinations}
+            if gone in now or not set(kept) <= now:
+                failures.append(f"combination {position} not replaced, or the others not kept")
+    if (words := checks.get("follow_up_mentions")) and not any(
+        w in turn.follow_up.lower() for w in words
+    ):
+        failures.append(f"follow-up {turn.follow_up!r} mentions none of {words}")
     if (ceiling := checks.get("max_price")) is not None:
         over = [p["price_amount"] for p in products if Decimal(str(p["price_amount"])) > ceiling]
         if over:
@@ -120,16 +166,55 @@ def _check(
     if (subcategory := checks.get("subcategory")) and any(
         (p.get("commerce") or {}).get("subcategory") != subcategory for p in products
     ):
-        kinds = sorted({(p.get("commerce") or {}).get("subcategory") for p in products})
+        kinds = sorted({str((p.get("commerce") or {}).get("subcategory")) for p in products})
         failures.append(f"product types {kinds}, expected only {subcategory}")
+    if limit := checks.get("max_dimension"):
+        field, ceiling = limit["field"], Decimal(str(limit["value"]))
+        sizes = [(p.get("dimensions") or {}).get(field) for p in products]
+        if any(v is None or Decimal(str(v)) > ceiling for v in sizes):
+            failures.append(f"{field} {sizes} not all at most {ceiling}")
+    if floor := checks.get("some_dimension_above"):
+        field, bound = floor["field"], Decimal(str(floor["value"]))
+        sizes = [(p.get("dimensions") or {}).get(field) for p in products]
+        if not any(v is not None and Decimal(str(v)) > bound for v in sizes):
+            failures.append(f"{field} {sizes} all at most {bound} - the old limit still applies")
     if checks.get("admits_no_match") and not _NO_MATCH.search(
         turn.message.lower().replace("\u2019", "'")
     ):
         failures.append("reply does not say that nothing matched")
+    if (words := checks.get("mentions")) and not any(w in turn.message.lower() for w in words):
+        failures.append(f"reply mentions none of {words}")
+    if checks.get("piece_picker") and not turn.has_piece_picker:
+        failures.append("no piece chips shown")
+    if (status := checks.get("room_status")) and turn.room.get("status") != status:
+        failures.append(f"room status {turn.room.get('status')!r}, expected {status!r}")
+    if kinds := checks.get("room_has"):
+        present = {(i.get("commerce") or {}).get("subcategory") for i in turn.room.get("items", [])}
+        if not set(kinds) <= present:
+            failures.append(f"room holds {sorted(map(str, present))}, missing some of {kinds}")
+    if seats := checks.get("room_seats"):
+        items = turn.room.get("items", [])
+        total = sum(
+            int(i.get("quantity", 1)) * int((i.get("commerce") or {}).get("seating_capacity") or 1)
+            for i in items
+            if (i.get("commerce") or {}).get("category") == "seating"
+        )
+        if total != seats:
+            failures.append(f"room seats {total}, expected {seats}")
+    if kind := checks.get("combination_excludes"):
+        used = [
+            (i.get("commerce") or {}).get("subcategory")
+            for c in turn.combinations
+            for i in c.get("items", [])
+        ]
+        if kind in used:
+            failures.append(f"a combination uses {kind}")
+    if (words := checks.get("not_mentions")) and any(w in turn.message.lower() for w in words):
+        failures.append(f"reply mentions one of {words}")
     if checks.get("engages"):
         asks = "?" in turn.message
-        if not (products or turn.has_comparison or turn.has_room or asks):
-            failures.append("dead end: no products, comparison, room or question")
+        if not (products or turn.has_comparison or turn.has_room or turn.has_piece_picker or asks):
+            failures.append("dead end: no products, comparison, room, chips or question")
     return failures
 
 

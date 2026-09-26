@@ -31,13 +31,18 @@ from app.schemas.response import (
     BundleGroundingView,
     DeterministicResponse,
     DeterministicResponseKind,
+    MissingPieceView,
     ResponseGroundingView,
     ResponseOutcomeKind,
     ResponseRoute,
     ResponseRouting,
+    RoomQuestionGroundingView,
+    SeatingSolutionGroundingView,
     SideEffectNotice,
 )
+from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.seating_solution import SeatingSolution, SeatingSolutionOutcome
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.screen_view import screen_from_presentation
 from app.taxonomy.attributes import AttributeFamily
@@ -178,6 +183,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
     clarification = grounding.deterministic_clarification
     lapsed = _suggestion_came_to_nothing(result)
 
+    if result.room_question is not None:
+        # The room's own question, first even over one the decision model
+        # wrote: which question is the application's, only the words are the
+        # model's (CLAUDE.md 10.1).
+        return _room_question(result, result.room_question)
+
     if grounding.clarification is not None:
         # The decision model already wrote this question, and re-wording it
         # could only change what was asked.
@@ -218,6 +229,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             result=result,
             presented_count=len(grounding.selection.products),
         )
+    if result.seating_solution is not None:
+        # A seat count no single piece could meet, recovered by combining pieces.
+        # Checked before the search branch it rides beside: that search matched
+        # nothing, and reporting it as a plain zero result would discard the
+        # combination composed in its place (CLAUDE.md 27).
+        return _seating_combination(result, result.seating_solution, clarification)
     if grounding.search is not None and not lapsed:
         return _search(result, grounding, clarification)
     if result.bundle_change is not None and grounding.failure is not None:
@@ -377,6 +394,32 @@ def _room_bundle(
             recommended_unmet_count=unmet[DesignPriority.RECOMMENDED],
             optional_unmet_count=unmet[DesignPriority.OPTIONAL],
             unmet_reasons=tuple(dict.fromkeys(entry.reason for entry in bundle.unmet)),
+            missing_pieces=tuple(
+                MissingPieceView(
+                    piece=_piece_words(entry.commerce_category, entry.commerce_subcategory),
+                    priority=entry.priority,
+                    reason=entry.reason,
+                    cheapest_price=entry.cheapest_price,
+                )
+                for entry in bundle.unmet
+                if entry.commerce_category is not None
+            ),
+            seating_for=(
+                result.room_seats
+                if room is not None
+                and room.room_kind is not None
+                and result.room_seats == room.regular_seating_count
+                else None
+            ),
+            seats_short_of=(
+                room.regular_seating_count
+                if room is not None
+                and room.room_kind is not None
+                and room.regular_seating_count is not None
+                and result.room_seats is not None
+                and result.room_seats < room.regular_seating_count
+                else None
+            ),
             budget_supplied=budget is not None,
             within_budget=(
                 None if budget is None else bundle.status is not BundleStatus.INFEASIBLE
@@ -390,6 +433,83 @@ def _room_bundle(
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
         relative_price_reason=(clarification.relative_price_reason if clarification else None),
+    )
+
+
+def _room_question(result: CustomerTurnResult, question: RoomQuestion) -> ResponseGroundingView:
+    """One question before the room is built. No clarification rides with it:
+    the room's question is the whole job this turn."""
+    return _view(
+        ResponseOutcomeKind.ROOM_QUESTION,
+        None,
+        result=result,
+        room_question=RoomQuestionGroundingView(
+            room_kind=question.room_kind.replace("_", " "),
+            question=question.kind,
+            earlier_seat_count=question.earlier_seat_count,
+            pieces_offered=len(question.pieces),
+            pieces_preselected=sum(1 for piece in question.pieces if piece.selected),
+        ),
+    )
+
+
+def _piece_words(category: str | None, subcategory: str | None) -> str:
+    """A piece as words - "center table", not a registry key the reply would
+    copy verbatim."""
+    return (subcategory or category or "piece").replace("-", " ")
+
+
+def _seating_combination(
+    result: CustomerTurnResult,
+    solution: SeatingSolution,
+    clarification: DeterministicClarification | None,
+) -> ResponseGroundingView:
+    """One composed seating combination, as the response model may see it.
+
+    Counts and one enum: the pieces of each combination, their prices and the
+    totals are rendered by the application from the same verified solution, so
+    none of it passes through here (CLAUDE.md 20.4). The seat target is the
+    customer's own figure and travels so the reply can name what the
+    combinations achieve.
+
+    Built through `_view` so it inherits the turn-wide guards uniformly - the
+    follow-up subject the decision chose, and what is already on record - because
+    this is a consultative moment: having shown a combination, the agent may ask
+    one warm preference question to tailor it (CLAUDE.md 10). Those guards are
+    what stop it asking for something already given; the seat count in particular
+    is always known here, which `_seating_known` reflects.
+    """
+    return _view(
+        ResponseOutcomeKind.SEATING_COMBINATION,
+        clarification,
+        result=result,
+        seating=SeatingSolutionGroundingView(
+            outcome=solution.outcome,
+            target_seats=solution.target_seats,
+            bundle_count=len(solution.bundles),
+            budget_supplied=solution.budget_amount is not None,
+            shape_options=(
+                solution.options
+                if solution.outcome
+                in (SeatingSolutionOutcome.CHOOSE_SHAPE, SeatingSolutionOutcome.NO_MORE)
+                else ()
+            ),
+            already_seen=solution.already_seen,
+            exhausted_shape=(
+                solution.requested_shape
+                if solution.outcome is SeatingSolutionOutcome.NO_MORE
+                else None
+            ),
+            currency=solution.currency,
+            ask_colour=solution.ask_colour,
+            closest_total=solution.closest_total,
+            lifted=solution.lifted,
+            not_size_limited=sum(1 for bundle in solution.bundles if bundle.sizes_applied is False),
+            wishes_given=solution.wishes_given,
+            fully_wished=sum(
+                1 for bundle in solution.bundles if all(line.matches_wish for line in bundle.lines)
+            ),
+        ),
     )
 
 
@@ -466,9 +586,17 @@ def _selection_changed(result: CustomerTurnResult | None) -> bool:
 
 
 def _seating_known(result: CustomerTurnResult | None) -> bool:
-    """Whether the customer has already said how many people use the room."""
+    """Whether the customer has already said how many people use the room.
+
+    A composed seating combination always knows the target - it was built to
+    seat exactly the number the customer named - so it counts as known even
+    before that number reaches `room_project`. Without this, a tailoring
+    follow-up could ask "how many seats?" right after composing for eight.
+    """
     if result is None:
         return False
+    if result.seating_solution is not None:
+        return True
     room = result.state.room_project
     return room is not None and room.regular_seating_count is not None
 
@@ -505,6 +633,7 @@ def _search(
         presented_count=search.presented_count,
         commerce_category=_words(executed.request.commerce_category if executed else None),
         commerce_subcategory=_words(executed.request.commerce_subcategory if executed else None),
+        offered_instead_of=_words(result.offered_instead_of),
         exact_match_count=search.exact_candidate_count,
         # A search reached through a design handoff is one we proposed: the
         # customer asked what would suit the piece they chose, or said nothing
@@ -523,6 +652,8 @@ def _search(
                 dropped.role for dropped in search.dropped_constraints if dropped.role is not None
             )
         ),
+        earlier_sizes_applied=search.earlier_sizes_applied,
+        would_find_without=search.set_aside,
     )
 
 

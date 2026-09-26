@@ -41,6 +41,7 @@ from app.schemas.agent_decision import (
 )
 from app.schemas.agent_turn import DecisionInput
 from app.taxonomy.attributes import CatalogAttributes
+from app.taxonomy.rooms import RoomPieces
 
 logger = get_logger(__name__)
 
@@ -61,7 +62,10 @@ class CustomerAgentDecisionService:
     """Decides what one customer turn should do. Executes none of it."""
 
     def __init__(
-        self, client: StructuredLLMClient, attributes: CatalogAttributes | None = None
+        self,
+        client: StructuredLLMClient,
+        attributes: CatalogAttributes | None = None,
+        rooms: RoomPieces | None = None,
     ) -> None:
         """`attributes` restricts every colour and style the model can write.
 
@@ -70,7 +74,7 @@ class CustomerAgentDecisionService:
         then fail downstream. Without it, the decision is unconstrained.
         """
         self._client = client
-        self._instructions = build_instructions(attributes)
+        self._instructions = build_instructions(attributes, rooms)
         self._schema: type[CustomerAgentDecision] = (
             _constrained_schema(attributes) if attributes is not None else CustomerAgentDecision
         )

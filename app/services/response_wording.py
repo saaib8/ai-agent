@@ -25,6 +25,8 @@ from app.schemas.response import (
     ResponseOutcomeKind,
     SideEffectNotice,
 )
+from app.schemas.room_opener import RoomQuestionKind
+from app.schemas.seating_solution import SeatingSolutionOutcome
 
 FAILURE_WORDING: dict[TurnFailureCode, str] = {
     TurnFailureCode.SEARCH_UNAVAILABLE: (
@@ -152,15 +154,20 @@ SIDE_NOTICE_WORDING: dict[SideEffectNotice, str] = {
     SideEffectNotice.FOCUS_NOT_CHANGED: "I wasn't able to switch to that product.",
 }
 
+ROOM_QUESTION_DEFAULT = "Let's design your room. What would you like to spend on it overall?"
+
 FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.ANSWER: "I'm not able to answer that just now.",
     ResponseOutcomeKind.SEARCH_RESULTS: "Here's what I found.",
     ResponseOutcomeKind.ZERO_RESULTS: (
-        "I couldn't find anything matching that. It's worth trying a different description."
+        "I couldn't find anything that matches all of that together. Tell me "
+        "which part matters least - the budget, the size or the colour - and "
+        "I'll widen that one."
     ),
     ResponseOutcomeKind.SELECTION: "Here's what you've picked out so far.",
     ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",
     ResponseOutcomeKind.COMPARISON: "Here's how those compare.",
+    ResponseOutcomeKind.ROOM_QUESTION: ROOM_QUESTION_DEFAULT,
     ResponseOutcomeKind.DESIGN_ADVICE: (
         "I wasn't able to put that answer into words just now."
     ),
@@ -193,6 +200,32 @@ worth spending a second table to avoid. Digit-free: the figures are rendered
 beside the prose either way.
 """
 
+SEATING_FALLBACK_WORDING: dict[SeatingSolutionOutcome, str] = {
+    SeatingSolutionOutcome.BUNDLES: (
+        "No single piece seats that many, so I've put together a few "
+        "combinations that do - have a look."
+    ),
+    SeatingSolutionOutcome.CHOOSE_SHAPE: (
+        "No single piece seats that many, but a combination will. Would you "
+        "like separate sofas arranged together, or a sofa with a few armchairs?"
+    ),
+    SeatingSolutionOutcome.NO_MORE: (
+        "Those are all the combinations of that kind I can put together. Would "
+        "you like to see a different arrangement instead?"
+    ),
+    SeatingSolutionOutcome.NONE_WITHIN_BUDGET: (
+        "I couldn't reach that many seats within your budget, even by combining "
+        "pieces. Tell me which matters more and I'll take it from there."
+    ),
+}
+"""What a seating-combination turn says when generation could not be used.
+
+Keyed by outcome rather than by `ResponseOutcomeKind`, for the same reason the
+room fallbacks are keyed by status: the two cases are different promises, and
+offering combinations that are not there is exactly the mistake worth a second
+table. Digit-free: the seats and prices are on the cards either way.
+"""
+
 DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
     DeterministicResponseKind.MODEL_CLARIFICATION: FALLBACK_WORDING[
         ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION
@@ -218,20 +251,48 @@ DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
 clarification with no question on it, for instance."""
 
 
+ROOM_QUESTION_WORDING: dict[RoomQuestionKind, str] = {
+    RoomQuestionKind.BUDGET: ROOM_QUESTION_DEFAULT,
+    RoomQuestionKind.PIECES: (
+        "Here are the pieces I'd put in the room - untick anything you don't "
+        "need, add anything you'd like, or tell me to choose for you."
+    ),
+    RoomQuestionKind.SEATS: "How many people will usually be sitting in the room?",
+    RoomQuestionKind.COLOUR: (
+        "Which colours are you drawn to for the room - or shall I choose for you?"
+    ),
+}
+"""A room question's fixed wording, when generation could not be used. Digit-
+free: an earlier head count is left to the model to confirm."""
+
+
 def compose(*parts: str | None) -> str:
     """One message from several sentences, skipping the ones that are absent."""
     return " ".join(part.strip() for part in parts if part and part.strip())
 
 
-def fallback_for(view: ResponseOutcomeKind, bundle: BundleStatus | None = None) -> str:
+def fallback_for(
+    view: ResponseOutcomeKind,
+    bundle: BundleStatus | None = None,
+    seating: SeatingSolutionOutcome | None = None,
+    room_question: RoomQuestionKind | None = None,
+) -> str:
     """The sentence a turn falls back to when generation could not be used.
 
     A whole-room turn reads a second table, because `FALLBACK_WORDING` is keyed
     by outcome kind and the three bundle statuses need three different
     sentences: calling a partial room complete is the one mistake this whole
-    layer exists to prevent.
+    layer exists to prevent. A seating combination reads a third for the same
+    reason - offering combinations when none fit the budget is that mistake's
+    twin.
     """
     if view is ResponseOutcomeKind.ROOM_BUNDLE:
         assert bundle is not None, "a room bundle outcome carries its status"
         return BUNDLE_FALLBACK_WORDING[bundle]
+    if view is ResponseOutcomeKind.SEATING_COMBINATION:
+        assert seating is not None, "a seating combination carries its outcome"
+        return SEATING_FALLBACK_WORDING[seating]
+    if view is ResponseOutcomeKind.ROOM_QUESTION:
+        assert room_question is not None, "a room question carries its kind"
+        return ROOM_QUESTION_WORDING[room_question]
     return FALLBACK_WORDING[view]

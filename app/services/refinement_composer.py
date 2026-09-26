@@ -9,7 +9,12 @@ Three entry points, because three situations genuinely differ:
 * :meth:`refine` - the search continues, with some axes changed.
 * :meth:`seed_new_task` - a new search begins, and defaults may seed it once.
 * :meth:`refine_taxonomy` - the product type changed within the same family,
-  and compatible constraints survive.
+  and everything but its sizes survives.
+
+**Sizes belong to a product type.** 60 cm for a side table says nothing about a
+coffee table, so a measurement never follows the customer to a different type.
+Each type's sizes are saved in state after its search runs, and a search for
+that type which states no size of its own gets them back.
 
 Two rules run through all of them.
 
@@ -38,7 +43,7 @@ from app.schemas.agent_decision import (
     PreferenceProposal,
     PreferenceProposalOp,
 )
-from app.schemas.agent_state import ActiveSearchState
+from app.schemas.agent_state import ActiveSearchState, SavedMeasurements
 from app.schemas.composition import (
     ComposedSearch,
     CompositionDefect,
@@ -81,7 +86,8 @@ from app.schemas.refinement import (
     SortRefinement,
 )
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.dimensions import DimensionSemantics, UnsupportedDimensionReason
+from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, UnsupportedDimensionReason
+from app.taxonomy.seating import SeatingSemantics
 
 # An unqualified requirement is a requirement (CLAUDE.md 13.1). A bound the
 # customer stated without softening it is locked, here as in M7.
@@ -142,12 +148,16 @@ class SearchRefinementComposer:
     """Deterministic search composition. Injected registries, no file I/O."""
 
     def __init__(
-        self, attributes: CatalogAttributes, dimensions: DimensionSemantics
+        self,
+        attributes: CatalogAttributes,
+        dimensions: DimensionSemantics,
+        seating: SeatingSemantics | None = None,
     ) -> None:
         # Named apart from the `_attributes` and `_dimensions` methods below:
         # the registries are collaborators, the methods are composition steps.
         self._catalog_attributes = attributes
         self._dimension_semantics = dimensions
+        self._seating = seating
 
     # ── entry points ────────────────────────────────────────────────────────
 
@@ -169,8 +179,13 @@ class SearchRefinementComposer:
         commerce_category: str,
         commerce_subcategory: str | None,
         delta: SearchRefinementDelta | None = None,
+        saved_measurements: SavedMeasurements | None = None,
     ) -> CompositionOutcome:
-        """Change the product type, keeping what the new one can support.
+        """Change the product type, keeping everything but its sizes.
+
+        The old type's sizes stay behind; `saved_measurements` - what the
+        customer gave for the new type earlier - take their place, and any size
+        stated in this same message is applied on top.
 
         Takes the approved pair and nothing else. Accepting M7's whole result
         here would put its price, its measurements and above all its transient
@@ -187,6 +202,7 @@ class SearchRefinementComposer:
                 state,
                 delta or SearchRefinementDelta(),
                 subcategory=commerce_subcategory,
+                saved_measurements=saved_measurements,
             )
         except _Refused as refused:
             return refused.outcome
@@ -199,6 +215,7 @@ class SearchRefinementComposer:
         room_preferences: tuple[SemanticPreference, ...] = (),
         customer_defaults: tuple[SemanticPreference, ...] = (),
         semantic_intent: SemanticIntentRefinement | None = None,
+        saved_measurements: SavedMeasurements | None = None,
         revision: int = 0,
     ) -> ComposedSearch:
         """Begin a new search, letting defaults fill the axes it left open.
@@ -208,7 +225,30 @@ class SearchRefinementComposer:
         `semantic_text` is the text this search executes with - a durable
         intent proposed alongside it is a different concept and is not
         appended to it.
+
+        `saved_measurements` are the sizes the customer gave for this product
+        type earlier. They apply only when this request states no size at all:
+        a customer who names a size now gets exactly that size, not a blend
+        with an old one.
         """
+        if self._seats_one(resolved.request.commerce_subcategory) and (
+            resolved.request.seating_capacity is not None
+        ):
+            resolved = resolved.model_copy(
+                update={
+                    "request": resolved.request.model_copy(update={"seating_capacity": None}),
+                    "semantics": resolved.semantics.model_copy(
+                        update={"seating_min": None, "seating_max": None}
+                    ),
+                }
+            )
+        restored = False
+        if not resolved.request.dimensions and resolved.request.planar_dimensions is None:
+            request, semantics = self._restore(
+                resolved.request, resolved.semantics, saved_measurements
+            )
+            restored = request is not resolved.request
+            resolved = resolved.model_copy(update={"request": request, "semantics": semantics})
         preferences = self._seed_preferences(
             resolved.semantic_preferences, proposal, room_preferences, customer_defaults
         )
@@ -230,6 +270,7 @@ class SearchRefinementComposer:
                 semantic_text=resolved.semantic_text,
                 unmatched_strict=resolved.unmatched_strict,
             ),
+            earlier_sizes_applied=restored,
         )
 
     # ── composition ─────────────────────────────────────────────────────────
@@ -240,17 +281,34 @@ class SearchRefinementComposer:
         delta: SearchRefinementDelta,
         *,
         subcategory: str | None | _Unset = _UNSET,
+        saved_measurements: SavedMeasurements | None = None,
     ) -> ComposedSearch:
         request, semantics = state.request, state.semantics
         dropped: tuple[DroppedConstraint, ...] = ()
+        restored: ProductSearchRequest | None = None
 
         if not isinstance(subcategory, _Unset):
-            request, semantics, dropped = self._retype(request, semantics, subcategory)
+            request, semantics, dropped, restored = self._retype(
+                request, semantics, subcategory, saved_measurements
+            )
 
         price, price_min_s, price_max_s = self._price(request, semantics, delta.price)
         capacity, seat_min_s, seat_max_s = self._capacity(
             request, semantics, delta.seating_capacity
         )
+        if self._seats_one(request.commerce_subcategory):
+            # Every one of them seats one person, and the catalog records no
+            # count for them, so a seat filter could only ever hide them all.
+            capacity, seat_min_s, seat_max_s = None, None, None
+        elif (
+            delta.seating_capacity is not None
+            or request.commerce_subcategory != state.request.commerce_subcategory
+        ) and self._one_seat_of_several(request.commerce_subcategory, capacity):
+            # Only when this turn set the seat count or the type. A search that
+            # already holds one (an older session, a misread new search) must
+            # stay refinable - it finds nothing, and the reply offers what
+            # setting the seat count aside would find.
+            raise _defect(CompositionDefect.ONE_SEAT_ON_MULTI_SEAT_TYPE)
         dimensions, dimension_semantics = self._dimensions(
             request, semantics, delta.dimensions
         )
@@ -307,7 +365,8 @@ class SearchRefinementComposer:
                 semantic_text=intent,
                 unmatched_strict=unmatched,
             ),
-            dropped_constraints=dropped,
+            dropped_constraints=_not_restated(dropped, composed),
+            earlier_sizes_applied=_still_applied(restored, composed),
         )
 
     # ── the product type ────────────────────────────────────────────────────
@@ -317,61 +376,135 @@ class SearchRefinementComposer:
         request: ProductSearchRequest,
         semantics: ConstraintSemantics,
         subcategory: str | None,
-    ) -> tuple[ProductSearchRequest, ConstraintSemantics, tuple[DroppedConstraint, ...]]:
+        saved: SavedMeasurements | None,
+    ) -> tuple[
+        ProductSearchRequest,
+        ConstraintSemantics,
+        tuple[DroppedConstraint, ...],
+        ProductSearchRequest | None,
+    ]:
         """Re-point the search at a product type in the same family.
 
-        Measurements are the only thing that can stop being answerable: the
-        registry maps a role per subcategory, so a sofa's width has no meaning
-        for a type whose stored axes were never established. Price, capacity,
-        colour and style are subcategory-independent and always survive.
+        The old type's sizes are left behind - state keeps them for that type -
+        and the new type starts from its own saved sizes, or none. Price,
+        capacity, colour and style are subcategory-independent and always
+        survive. Returns the restored request too, when sizes came back, so the
+        caller can tell whether they are still in force after this turn's own
+        changes.
         """
-        dropped: list[DroppedConstraint] = []
-        kept: list[DimensionConstraint] = []
-        for constraint in request.dimensions:
-            if self._dimension_semantics.source_axis(subcategory, constraint.role) is None:
-                dropped.append(
-                    DroppedConstraint(
-                        role=constraint.role,
-                        reason=self._dimension_semantics.unsupported_reason(
-                            subcategory, constraint.role
-                        ),
-                    )
-                )
-                continue
-            kept.append(constraint)
+        if subcategory == request.commerce_subcategory:
+            return request, semantics, (), None
 
-        planar = request.planar_dimensions
-        if planar is not None and not self._dimension_semantics.supports_planar(subcategory):
+        retyped = request.model_copy(
+            update={
+                "commerce_subcategory": subcategory,
+                "dimensions": (),
+                "planar_dimensions": None,
+            }
+        )
+        bare = semantics.model_copy(
+            update={
+                # They named the new type outright, so it is a requirement.
+                "subcategory": None if subcategory is None else _DEFAULT_STRENGTH,
+                "dimensions": (),
+                "planar_dimension": None,
+            }
+        )
+        restored_request, restored_semantics = self._restore(retyped, bare, saved)
+        restored_roles = {c.role for c in restored_request.dimensions}
+
+        dropped = [
+            DroppedConstraint(role=c.role, reason=self._unsupported(subcategory, c.role))
+            for c in request.dimensions
+            if c.role not in restored_roles
+        ]
+        if request.planar_dimensions is not None and restored_request.planar_dimensions is None:
             dropped.append(
                 DroppedConstraint(
                     role=None,
-                    reason=UnsupportedDimensionReason.UNSUPPORTED_PRODUCT_GEOMETRY,
+                    reason=(
+                        None
+                        if self._dimension_semantics.supports_planar(subcategory)
+                        else UnsupportedDimensionReason.UNSUPPORTED_PRODUCT_GEOMETRY
+                    ),
                 )
             )
-            planar = None
+        return (
+            restored_request,
+            restored_semantics,
+            tuple(dropped),
+            restored_request if restored_request is not retyped else None,
+        )
 
-        kept_roles = {c.role for c in kept}
+    def _seats_one(self, subcategory: str | None) -> bool:
+        return self._seating is not None and self._seating.seats_one(subcategory)
+
+    def _one_seat_of_several(
+        self, subcategory: str | None, capacity: SeatingCapacityConstraint | None
+    ) -> bool:
+        """"A sofa for one" - a seat count no product of this type can meet.
+
+        Refused rather than executed, because it is a misreading and not a
+        search: a piece for one person is its own product type, and the
+        decision is corrected to change type instead.
+        """
+        return (
+            self._seating is not None
+            and self._seating.seats_several(subcategory)
+            and capacity is not None
+            and capacity.max_capacity is not None
+            and capacity.max_capacity < 2
+        )
+
+    def _unsupported(
+        self, subcategory: str | None, role: DimensionRole
+    ) -> UnsupportedDimensionReason | None:
+        if self._dimension_semantics.source_axis(subcategory, role) is not None:
+            return None
+        return self._dimension_semantics.unsupported_reason(subcategory, role)
+
+    def _restore(
+        self,
+        request: ProductSearchRequest,
+        semantics: ConstraintSemantics,
+        saved: SavedMeasurements | None,
+    ) -> tuple[ProductSearchRequest, ConstraintSemantics]:
+        """Apply the sizes saved for this request's product type.
+
+        Returns the very same objects when nothing applies, which is how a
+        caller tells. Each size is re-checked against the registry, so a
+        mapping withdrawn since it was saved is not applied from memory.
+        """
+        subcategory = request.commerce_subcategory
+        if saved is None or subcategory is None or saved.commerce_subcategory != subcategory:
+            return request, semantics
+        dimensions = tuple(
+            c
+            for c in saved.dimensions
+            if self._dimension_semantics.source_axis(subcategory, c.role) is not None
+        )
+        roles = {c.role for c in dimensions}
+        planar_ok = (
+            saved.planar_dimensions is not None
+            and self._dimension_semantics.supports_planar(subcategory)
+        )
+        if not dimensions and not planar_ok:
+            return request, semantics
         return (
             request.model_copy(
                 update={
-                    "commerce_subcategory": subcategory,
-                    "dimensions": tuple(kept),
-                    "planar_dimensions": planar,
+                    "dimensions": dimensions,
+                    "planar_dimensions": saved.planar_dimensions if planar_ok else None,
                 }
             ),
             semantics.model_copy(
                 update={
-                    # They named the new type outright, so it is a requirement.
-                    "subcategory": None if subcategory is None else _DEFAULT_STRENGTH,
                     "dimensions": tuple(
-                        s for s in semantics.dimensions if s.role in kept_roles
+                        s for s in saved.dimension_semantics if s.role in roles
                     ),
-                    "planar_dimension": (
-                        semantics.planar_dimension if planar is not None else None
-                    ),
+                    "planar_dimension": saved.planar_semantics if planar_ok else None,
                 }
             ),
-            tuple(dropped),
         )
 
     # ── price ───────────────────────────────────────────────────────────────
@@ -727,3 +860,41 @@ def _apply_sort(current: ProductSort, refinement: SortRefinement | None) -> Prod
         return ProductSort.DEFAULT
     assert refinement.value is not None  # the contract requires it for a set
     return refinement.value
+
+
+def _still_applied(
+    restored: ProductSearchRequest | None, composed: ProductSearchRequest
+) -> bool:
+    """Whether any size brought back from memory is still in the search.
+
+    A size stated in the same message replaces the saved one for its role, and
+    then nothing restored is left to mention.
+    """
+    if restored is None:
+        return False
+    if any(c in composed.dimensions for c in restored.dimensions):
+        return True
+    return (
+        restored.planar_dimensions is not None
+        and restored.planar_dimensions == composed.planar_dimensions
+    )
+
+
+def _not_restated(
+    dropped: tuple[DroppedConstraint, ...], composed: ProductSearchRequest
+) -> tuple[DroppedConstraint, ...]:
+    """Left-behind sizes, minus any the customer stated again in this message.
+
+    "Coffee tables under 100 cm wide" after a side-table width applies 100 cm;
+    reporting the width as dropped would have the reply say the cards are not
+    held to a width they are held to.
+    """
+    applied = {c.role for c in composed.dimensions}
+    return tuple(
+        d
+        for d in dropped
+        if not (
+            (d.role is not None and d.role in applied)
+            or (d.role is None and composed.planar_dimensions is not None)
+        )
+    )

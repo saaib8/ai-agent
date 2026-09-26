@@ -31,6 +31,7 @@ from app.schemas.agent_state import (
     ProductInteractionState,
     RoomDesignNeedState,
     RoomProjectState,
+    SavedMeasurements,
 )
 from app.schemas.agent_updates import (
     ActiveSearchUpdate,
@@ -74,6 +75,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         product_interaction=interaction,
         room_project=room,
         derived_commerce=commerce,
+        seating_offer=state.seating_offer,
     )
 
 
@@ -135,6 +137,49 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         ),
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
+        seating_offer=state.seating_offer,
+    )
+
+
+def remember_measurements(state: AgentStateV1) -> AgentStateV1:
+    """Save the executed search's sizes against its product type.
+
+    **Application-owned**, and called only after a search the customer asked
+    for has run - never for a room plan's or a similar-product search, whose
+    sizes nobody stated. A search with no size forgets that type's entry, which
+    is how "any size" sticks. A search with no product type saves nothing.
+    """
+    search = state.active_search
+    if search is None or search.request.commerce_subcategory is None:
+        return state
+    subcategory = search.request.commerce_subcategory
+    preferences = state.customer_preferences
+    others = tuple(
+        saved
+        for saved in preferences.measurements_by_type
+        if saved.commerce_subcategory != subcategory
+    )
+    request, semantics = search.request, search.semantics
+    if request.dimensions or request.planar_dimensions is not None:
+        others += (
+            SavedMeasurements(
+                commerce_subcategory=subcategory,
+                dimensions=request.dimensions,
+                dimension_semantics=semantics.dimensions,
+                planar_dimensions=request.planar_dimensions,
+                planar_semantics=semantics.planar_dimension,
+            ),
+        )
+    return AgentStateV1(
+        customer_preferences=CustomerPreferenceState(
+            semantic_preferences=preferences.semantic_preferences,
+            measurements_by_type=others,
+        ),
+        active_search=state.active_search,
+        product_interaction=state.product_interaction,
+        room_project=state.room_project,
+        derived_commerce=state.derived_commerce,
+        seating_offer=state.seating_offer,
     )
 
 
@@ -147,7 +192,8 @@ def _customer(
     if update is None:
         return current
     return CustomerPreferenceState(
-        semantic_preferences=apply_items(current.semantic_preferences, update.semantic_preferences)
+        semantic_preferences=apply_items(current.semantic_preferences, update.semantic_preferences),
+        measurements_by_type=current.measurements_by_type,
     )
 
 
@@ -230,8 +276,28 @@ def _room(
             else (update.regular_seating_count or base.regular_seating_count)
         ),
         design_preferences=apply_items(base.design_preferences, update.design_preferences),
+        **_room_pieces(base, update),
         **_bundle(base, update.bundle_operations),
     )
+
+
+def _room_pieces(base: RoomProjectState, update: RoomProjectUpdate) -> dict[str, object]:
+    """The room's kind, its chosen pieces and the questions already asked.
+
+    A different kind starts over: the pieces chosen for a bedroom say nothing
+    about a living room, and neither does having asked about one.
+    """
+    kind = update.room_kind or base.room_kind
+    fresh = kind != base.room_kind
+    asked = () if fresh else base.questions_asked
+    if update.question_asked is not None and update.question_asked not in asked:
+        asked = (*asked, update.question_asked)
+    return {
+        "room_kind": kind,
+        "pieces": (update.pieces if update.pieces is not None or fresh else base.pieces),
+        "questions_asked": asked,
+        "questions_done": update.questions_done or (not fresh and base.questions_done),
+    }
 
 
 def _bundle(base: RoomProjectState, operations: Sequence[BundleOperation]) -> dict[str, object]:
