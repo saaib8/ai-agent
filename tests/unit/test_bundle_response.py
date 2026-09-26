@@ -395,6 +395,10 @@ def test_the_allowance_names_its_fields_rather_than_sweeping_them() -> None:
         "recommended_unmet_count",
         "optional_unmet_count",
         "relaxed_line_count",
+        # The head count the seating was built for: the customer's own figure.
+        "seating_for",
+        # Their head count again, when the seating seats fewer.
+        "seats_short_of",
     }
     assert "model_fields" not in source
     assert "model_dump" not in source

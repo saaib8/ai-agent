@@ -39,6 +39,7 @@ from app.schemas.grounding import (
 )
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerContext
+from app.schemas.room_opener import RoomQuestion
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingSolution
 
@@ -258,6 +259,18 @@ class CustomerTurnResult(BaseModel):
     kept free of ids so prose can only cite a turn-local handle. The response
     model is given a count-only projection of it, never this (CLAUDE.md 20.4).
     """
+
+    offered_instead_of: str | None = None
+    """The seating type they asked for, when it never seats that many and the
+    cards are another type that does."""
+
+    room_seats: int | None = Field(default=None, ge=1)
+    """How many the room's seating really seats, counted from its pieces - so
+    a reply never says "seating for all nine" about a room that seats eight."""
+
+    room_question: RoomQuestion | None = None
+    """This turn's question about a room being designed, and the pieces offered
+    as chips when it asks for them (CLAUDE.md 10.1)."""
 
 
 class CustomerResponse(BaseModel):

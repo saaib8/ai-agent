@@ -6,6 +6,7 @@ import { ComparisonTable } from './presentation/ComparisonTable'
 import { ProductGrid } from './presentation/ProductGrid'
 import type { SearchRefineControls } from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
+import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 
@@ -66,6 +67,8 @@ interface AssistantBubbleProps {
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: QuickReply[]
   onQuickReply?: (value: string) => void
+  /** The most recent assistant turn: only it offers interactive pickers. */
+  latest?: boolean
 }
 
 export function AssistantBubble({
@@ -76,6 +79,7 @@ export function AssistantBubble({
   refine,
   quickReplies,
   onQuickReply,
+  latest,
 }: AssistantBubbleProps) {
   const { response, presentation } = data
   const hasProducts = !!presentation?.products?.length
@@ -100,6 +104,10 @@ export function AssistantBubble({
 
         {quickReplies && quickReplies.length > 0 && onQuickReply && (
           <QuickReplies replies={quickReplies} onPick={onQuickReply} disabled={!!busy} />
+        )}
+
+        {latest && presentation?.piece_picker && onQuickReply && (
+          <PiecePicker picker={presentation.piece_picker} onSend={onQuickReply} disabled={!!busy} />
         )}
 
         {hasProducts && (

@@ -17,6 +17,7 @@ from app.services.health import HealthService
 from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -45,6 +46,7 @@ def _app(settings: Settings, *, postgres_up: bool, redis_up: bool) -> FastAPI:
         attributes=load_catalog_attributes(),
         dimensions=load_dimension_semantics(taxonomy=load_taxonomy()),
         seating=load_seating_semantics(taxonomy=load_taxonomy()),
+        rooms=load_room_pieces(taxonomy=load_taxonomy()),
     )
     application.dependency_overrides[deps.health_service] = lambda: HealthService(
         database, redis_client

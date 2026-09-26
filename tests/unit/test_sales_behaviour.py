@@ -43,6 +43,8 @@ def test_the_decision_names_a_subject_and_never_the_wording() -> None:
         "budget",
         "room_size",
         "style",
+        # The taste question that most often changes what comes first.
+        "color",
         "seating_requirement",
         "use_case",
         "product_preference",

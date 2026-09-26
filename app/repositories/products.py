@@ -80,8 +80,9 @@ _POOL_COLUMNS = (
     core_product.c.price_amount,
     core_product.c.main_color,
     core_product.c.styles,
+    core_product.c.seating_capacity,
 )
-"""What ranking needs, and nothing else. A narrow projection is what makes
+"""What ranking and seating combinations need, and nothing else. A narrow projection is what makes
 reading the COMPLETE eligible pool affordable (CLAUDE.md 16.1)."""
 
 
@@ -463,6 +464,7 @@ class ProductRepository:
                 price_amount=row.price_amount,
                 main_color=row.main_color,
                 styles=parse_style_tokens(row.styles),
+                seating_capacity=row.seating_capacity,
             )
             for row in result
         ]

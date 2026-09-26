@@ -96,6 +96,11 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # product a reference resolved to is the kind the customer named. A
         # registry, not a service - it reads no catalog and reaches nothing.
         "taxonomy",
+        # The room registry: which pieces a living room or a bedroom may hold.
+        # Reviewed data, not a service - it reads no catalog.
+        "rooms",
+        # Reviewed seat counts, to count a room's real seats. Data, not a service.
+        "seating",
     ]
 
 

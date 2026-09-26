@@ -63,6 +63,7 @@ from app.schemas.response import (
 from app.schemas.seating_solution import (
     SeatingBundle,
     SeatingBundleLine,
+    SeatingShape,
     SeatingSolution,
     SeatingSolutionOutcome,
 )
@@ -305,6 +306,7 @@ def _seating_solution(
     if outcome is SeatingSolutionOutcome.BUNDLES:
         bundles = (
             SeatingBundle(
+                shape=SeatingShape.SOFA_WITH_EXTRA_SEATS,
                 lines=(
                     SeatingBundleLine(
                         product_id=1,
@@ -398,6 +400,9 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # A seat count no single piece met, recovered by combining pieces. The
         # model frames the combinations rather than reporting a dead end.
         "seating_combination",
+        # One question before a room is designed - which one is the
+        # application's, only the words are the model's.
+        "room_question",
         "design_advice",
         # M17: the customer's own choices, shown again. Not a search - nothing
         # was looked for, so the reply must not describe finding anything.
@@ -1266,6 +1271,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "commerce_category",
         "commerce_subcategory",
         "exact_match_count",
+        # The seating type they asked for, in words, when the cards are another
+        # type that seats that many. A type name - no product, no figure.
+        "offered_instead_of",
         # Counts of cards in a colour/style the customer asked or wished for,
         # so a reply cannot call black tables red. Counts, never a value.
         "wished_colour_matches",
@@ -1294,6 +1302,8 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # customer named, and a count of combinations. No price, no total, no
         # product - the same rule as `bundle`.
         "seating",
+        # The room question to word: its kind, and counts of pieces offered.
+        "room_question",
         "guidance",
         "screen",
         "clarification_reason",

@@ -14,6 +14,7 @@ from app.schemas.bundle import BundleStatus
 from app.schemas.seating_solution import (
     SeatingBundle,
     SeatingBundleLine,
+    SeatingShape,
     SeatingSolution,
     SeatingSolutionOutcome,
 )
@@ -50,6 +51,7 @@ def _filler(quantity: int) -> SeatingBundleLine:
 
 def _solution() -> SeatingSolution:
     bundle = SeatingBundle(
+        shape=SeatingShape.SOFA_WITH_EXTRA_SEATS,
         lines=(_anchor(), _filler(3)),
         total_seats=8,
         total_price=Decimal("3700"),

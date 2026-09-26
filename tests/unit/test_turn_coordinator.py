@@ -101,6 +101,8 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.seating_solution import (
     SeatingBundle,
     SeatingBundleLine,
+    SeatingRequirements,
+    SeatingShape,
     SeatingSolution,
     SeatingSolutionOutcome,
 )
@@ -397,7 +399,15 @@ class FakeSeatingPlanner:
         self.calls: list[dict[str, Any]] = []
 
     async def plan(
-        self, *, target_seats: int, budget_amount: Any, currency: str, context: Any
+        self,
+        *,
+        target_seats: int,
+        budget_amount: Any,
+        currency: str,
+        context: Any,
+        requirements: Any = None,
+        shape: Any = None,
+        exclude: Any = frozenset(),
     ) -> SeatingSolution:
         self.calls.append(
             {
@@ -405,6 +415,9 @@ class FakeSeatingPlanner:
                 "budget_amount": budget_amount,
                 "currency": currency,
                 "context": context,
+                "requirements": requirements,
+                "shape": shape,
+                "exclude": exclude,
             }
         )
         if self.solution is not None:
@@ -434,6 +447,7 @@ def _coordinator(
     seating_planner: Any = None,
     decisions: Any = None,
     seating: Any = None,
+    rooms: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -472,6 +486,8 @@ def _coordinator(
         parts["seating_planner"],  # type: ignore[arg-type]
         dimensions,
         taxonomy,
+        rooms,
+        seating,
     )
     return coordinator, parts
 
@@ -982,6 +998,7 @@ def _seating_bundles(*, target: int = 8, currency: str = "SAR") -> SeatingSoluti
         product_url="http://example/chair",
     )
     bundle = SeatingBundle(
+        shape=SeatingShape.SOFA_WITH_EXTRA_SEATS,
         lines=(anchor, chairs),
         total_seats=8,
         total_price=Decimal("3750"),
@@ -1017,6 +1034,11 @@ async def test_a_zero_result_seat_count_is_recovered_by_a_combination() -> None:
             "budget_amount": Decimal("5000"),
             "currency": "SAR",
             "context": CONTEXT,
+            # Nothing beyond seats and budget was asked, so nothing to hold to.
+            "requirements": SeatingRequirements(asked_type="sofa"),
+            # No shape was chosen yet, and nothing has been shown before.
+            "shape": None,
+            "exclude": frozenset(),
         }
     ]
 

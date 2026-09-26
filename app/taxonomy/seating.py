@@ -45,10 +45,14 @@ class SeatingSemantics:
         version: str,
         implied: Mapping[str, int],
         multi_seat: frozenset[str] = frozenset(),
+        combination_extras: frozenset[str] = frozenset(),
+        combination_main: frozenset[str] | None = None,
     ) -> None:
         self._version = version
         self._implied = dict(implied)
         self._multi_seat = multi_seat
+        self._combination_extras = combination_extras
+        self._combination_main = multi_seat if combination_main is None else combination_main
 
     @property
     def version(self) -> str:
@@ -73,6 +77,15 @@ class SeatingSemantics:
     def seats_several(self, subcategory: str | None) -> bool:
         """Every product of this type seats two or more."""
         return subcategory is not None and subcategory in self._multi_seat
+
+    def is_combination_main(self, subcategory: str | None) -> bool:
+        """A multi-seat type a combination may be built around unasked. Any
+        other multi-seat type only when the customer asked for that type."""
+        return subcategory is not None and subcategory in self._combination_main
+
+    def is_combination_extra(self, subcategory: str | None) -> bool:
+        """A one-seat type that may add seats to a seating combination."""
+        return subcategory is not None and subcategory in self._combination_extras
 
     def __repr__(self) -> str:
         return (
@@ -113,14 +126,37 @@ def load_seating_semantics(
         )
 
     implied = _implied_capacity(document.get("implied_capacity"), source, taxonomy)
-    multi_seat = _multi_seat(document.get("multi_seat", []), source, taxonomy)
+    multi_seat = _type_list(document.get("multi_seat", []), "multi_seat", source, taxonomy)
+    extras = _type_list(
+        document.get("combination_extras", []), "combination_extras", source, taxonomy
+    )
+    main = (
+        _type_list(document["combination_main"], "combination_main", source, taxonomy)
+        if "combination_main" in document
+        else None
+    )
+    not_one_seat = sorted(t for t in extras if implied.get(t) != 1)
+    if not_one_seat:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: combination extras {not_one_seat} must each seat one"
+        )
 
     one_seat_and_several = sorted(t for t in multi_seat if implied.get(t) == 1)
     if one_seat_and_several:
         raise TaxonomyConfigurationError(
             detail=f"{source.name}: {one_seat_and_several} cannot seat one and several"
         )
-    return SeatingSemantics(version=version, implied=implied, multi_seat=multi_seat)
+    if main is not None and not main <= multi_seat:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: combination_main {sorted(main - multi_seat)} must seat several"
+        )
+    return SeatingSemantics(
+        version=version,
+        implied=implied,
+        multi_seat=multi_seat,
+        combination_extras=extras,
+        combination_main=main,
+    )
 
 
 def _implied_capacity(
@@ -146,13 +182,15 @@ def _implied_capacity(
     return implied
 
 
-def _multi_seat(raw: Any, source: Path, taxonomy: CommerceTaxonomy | None) -> frozenset[str]:
+def _type_list(
+    raw: Any, key: str, source: Path, taxonomy: CommerceTaxonomy | None
+) -> frozenset[str]:
     if not isinstance(raw, list) or not all(isinstance(v, str) and v for v in raw):
         raise TaxonomyConfigurationError(
-            detail=f"{source.name}: 'multi_seat' must be a list of subcategories"
+            detail=f"{source.name}: '{key}' must be a list of subcategories"
         )
     if len(raw) != len(set(raw)):
-        raise TaxonomyConfigurationError(detail=f"{source.name}: 'multi_seat' repeats a value")
+        raise TaxonomyConfigurationError(detail=f"{source.name}: '{key}' repeats a value")
     for value in raw:
         _require_seating(value, source, taxonomy)
     return frozenset(raw)

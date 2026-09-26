@@ -29,3 +29,20 @@ multi_seat:
   - sectional-sofa
   - sofa-set
   - sofa-bed
+
+# The multi-seat types a seating combination is built around. A sofa bed seats
+# several too, but is only used when the customer asked for sofa beds - nobody
+# asking for sofas for eight wants one they did not mention. Confirmed by the
+# user 2026-09-26.
+combination_main:
+  - sofa
+  - sectional-sofa
+  - sofa-set
+
+# One-seat types that may add seats beside the main pieces, for a living
+# space. Office chairs, stools, dining and outdoor chairs seat one too, but
+# belong in other rooms. Confirmed by the user 2026-09-26.
+combination_extras:
+  - chair
+  - lounge-chair
+  - single-seater-sofa

@@ -435,7 +435,8 @@ def test_the_decision_service_holds_only_a_provider_client() -> None:
     )
     parameters = [arg.arg for arg in init.args.args if arg.arg != "self"]
 
-    assert parameters == ["client", "attributes"]
+    # The room registry is vocabulary too: room kinds and piece keys.
+    assert parameters == ["client", "attributes", "rooms"]
 
 
 def test_the_decision_service_requests_no_tools() -> None:

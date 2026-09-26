@@ -31,15 +31,18 @@ from app.schemas.response import (
     BundleGroundingView,
     DeterministicResponse,
     DeterministicResponseKind,
+    MissingPieceView,
     ResponseGroundingView,
     ResponseOutcomeKind,
     ResponseRoute,
     ResponseRouting,
+    RoomQuestionGroundingView,
     SeatingSolutionGroundingView,
     SideEffectNotice,
 )
+from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import CustomerVisibleScreenView
-from app.schemas.seating_solution import SeatingSolution
+from app.schemas.seating_solution import SeatingSolution, SeatingSolutionOutcome
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.screen_view import screen_from_presentation
 from app.taxonomy.attributes import AttributeFamily
@@ -179,6 +182,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
     grounding = result.grounding
     clarification = grounding.deterministic_clarification
     lapsed = _suggestion_came_to_nothing(result)
+
+    if result.room_question is not None:
+        # The room's own question, first even over one the decision model
+        # wrote: which question is the application's, only the words are the
+        # model's (CLAUDE.md 10.1).
+        return _room_question(result, result.room_question)
 
     if grounding.clarification is not None:
         # The decision model already wrote this question, and re-wording it
@@ -385,6 +394,32 @@ def _room_bundle(
             recommended_unmet_count=unmet[DesignPriority.RECOMMENDED],
             optional_unmet_count=unmet[DesignPriority.OPTIONAL],
             unmet_reasons=tuple(dict.fromkeys(entry.reason for entry in bundle.unmet)),
+            missing_pieces=tuple(
+                MissingPieceView(
+                    piece=_piece_words(entry.commerce_category, entry.commerce_subcategory),
+                    priority=entry.priority,
+                    reason=entry.reason,
+                    cheapest_price=entry.cheapest_price,
+                )
+                for entry in bundle.unmet
+                if entry.commerce_category is not None
+            ),
+            seating_for=(
+                result.room_seats
+                if room is not None
+                and room.room_kind is not None
+                and result.room_seats == room.regular_seating_count
+                else None
+            ),
+            seats_short_of=(
+                room.regular_seating_count
+                if room is not None
+                and room.room_kind is not None
+                and room.regular_seating_count is not None
+                and result.room_seats is not None
+                and result.room_seats < room.regular_seating_count
+                else None
+            ),
             budget_supplied=budget is not None,
             within_budget=(
                 None if budget is None else bundle.status is not BundleStatus.INFEASIBLE
@@ -399,6 +434,29 @@ def _room_bundle(
         reference_reason=clarification.reference_reason if clarification else None,
         relative_price_reason=(clarification.relative_price_reason if clarification else None),
     )
+
+
+def _room_question(result: CustomerTurnResult, question: RoomQuestion) -> ResponseGroundingView:
+    """One question before the room is built. No clarification rides with it:
+    the room's question is the whole job this turn."""
+    return _view(
+        ResponseOutcomeKind.ROOM_QUESTION,
+        None,
+        result=result,
+        room_question=RoomQuestionGroundingView(
+            room_kind=question.room_kind.replace("_", " "),
+            question=question.kind,
+            earlier_seat_count=question.earlier_seat_count,
+            pieces_offered=len(question.pieces),
+            pieces_preselected=sum(1 for piece in question.pieces if piece.selected),
+        ),
+    )
+
+
+def _piece_words(category: str | None, subcategory: str | None) -> str:
+    """A piece as words - "center table", not a registry key the reply would
+    copy verbatim."""
+    return (subcategory or category or "piece").replace("-", " ")
 
 
 def _seating_combination(
@@ -430,6 +488,27 @@ def _seating_combination(
             target_seats=solution.target_seats,
             bundle_count=len(solution.bundles),
             budget_supplied=solution.budget_amount is not None,
+            shape_options=(
+                solution.options
+                if solution.outcome
+                in (SeatingSolutionOutcome.CHOOSE_SHAPE, SeatingSolutionOutcome.NO_MORE)
+                else ()
+            ),
+            already_seen=solution.already_seen,
+            exhausted_shape=(
+                solution.requested_shape
+                if solution.outcome is SeatingSolutionOutcome.NO_MORE
+                else None
+            ),
+            currency=solution.currency,
+            ask_colour=solution.ask_colour,
+            closest_total=solution.closest_total,
+            lifted=solution.lifted,
+            not_size_limited=sum(1 for bundle in solution.bundles if bundle.sizes_applied is False),
+            wishes_given=solution.wishes_given,
+            fully_wished=sum(
+                1 for bundle in solution.bundles if all(line.matches_wish for line in bundle.lines)
+            ),
         ),
     )
 
@@ -554,6 +633,7 @@ def _search(
         presented_count=search.presented_count,
         commerce_category=_words(executed.request.commerce_category if executed else None),
         commerce_subcategory=_words(executed.request.commerce_subcategory if executed else None),
+        offered_instead_of=_words(result.offered_instead_of),
         exact_match_count=search.exact_candidate_count,
         # A search reached through a design handoff is one we proposed: the
         # customer asked what would suit the piece they chose, or said nothing

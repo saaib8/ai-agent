@@ -62,6 +62,7 @@ from app.services.numeric_guard import (
     guidance_figures,
     screen_figures,
     seating_counts,
+    seating_figures,
 )
 from app.services.response_validation import validate_response
 from app.services.response_view import route_response, valid_grounding_refs
@@ -276,6 +277,15 @@ class CustomerResponseGenerator:
             # refuses anything that had to be computed (CLAUDE.md 14).
             figures=(
                 *screen_figures(view.screen),
+                # The lowest real total of each shape a seating question offers.
+                *(seating_figures(view.seating) if view.seating else ()),
+                # The lowest real total that would fill a piece the budget
+                # could not reach - the next step a partial room offers.
+                *(
+                    piece.cheapest_price
+                    for piece in (view.bundle.missing_pieces if view.bundle else ())
+                    if piece.cheapest_price is not None
+                ),
                 # The nearest real price to a budget nothing met.
                 *(o.nearest_price for o in view.would_find_without if o.nearest_price is not None),
                 # Rules of thumb the specialist supplied as structured
@@ -451,6 +461,17 @@ def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
         return bundle_counts(view.bundle)
     if view.seating is not None:
         return seating_counts(view.seating)
+    if view.room_question is not None:
+        question = view.room_question
+        return tuple(
+            n
+            for n in (
+                question.earlier_seat_count,
+                question.pieces_offered,
+                question.pieces_preselected,
+            )
+            if n
+        )
     return ()
 
 
@@ -465,4 +486,5 @@ def _fallback(view: ResponseGroundingView) -> str:
         view.kind,
         view.bundle.status if view.bundle else None,
         view.seating.outcome if view.seating else None,
+        view.room_question.question if view.room_question else None,
     )

@@ -124,6 +124,44 @@ class ChatRequest(BaseModel):
         return self
 
 
+class ReplyChoice(BaseModel):
+    """A ready answer the customer can tap instead of typing.
+
+    Built by the application from real options - a shape the store can build,
+    with its real lowest total - never by a model.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str = Field(min_length=1, max_length=80)
+    value: str = Field(min_length=1, max_length=200)
+
+
+class PieceChoice(BaseModel):
+    """One piece of a room, as a chip the customer ticks or unticks."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str = Field(min_length=1, max_length=40)
+    selected: bool
+    essential: bool = False
+
+
+class PiecePicker(BaseModel):
+    """The pieces a room may hold, to tick and send together.
+
+    Only pieces the store stocks, the usual ones already ticked (CLAUDE.md
+    10.3). Sending it is an ordinary message naming the ticked pieces, so a
+    typed answer and a tapped one take the same path.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pieces: tuple[PieceChoice, ...] = Field(min_length=1)
+    submit_label: str = Field(min_length=1, max_length=40)
+    choose_for_me: ReplyChoice
+
+
 class ChatPresentation(BaseModel):
     """What a client draws beside the assistant's words.
 
@@ -158,6 +196,13 @@ class ChatPresentation(BaseModel):
     over budget - then the reply owns the shortfall and there is nothing to draw.
     """
 
+    choices: tuple[ReplyChoice, ...] = ()
+    """Answers to the question just asked, when the application knows them -
+    the shapes a seating question offers. Empty for every other turn."""
+
+    piece_picker: PiecePicker | None = None
+    """The room's pieces as chips, when the room question asks for them."""
+
     def is_empty(self) -> bool:
         """Whether there is anything to draw.
 
@@ -170,6 +215,8 @@ class ChatPresentation(BaseModel):
             and self.comparison is None
             and self.room is None
             and not self.seating_bundles
+            and not self.choices
+            and self.piece_picker is None
         )
 
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from app.taxonomy.attributes import CatalogAttributes
+from app.taxonomy.rooms import RoomPieces
 
 VERSION = "customer_decision/v1"
 
@@ -63,16 +64,20 @@ that helps and then stops is the normal, finished shape of a turn, not an
 unfinished one, and asking something on every turn is what makes a customer feel
 interrogated rather than helped.
 
-Delivering is doing the thing, not describing it. "Show me", "find me", "I need"
-a product is a search or a refinement that puts products on screen - never a
+Delivering is doing the thing, not describing it. "Show me", "find me" a
+product is a search or a refinement that puts products on screen - never a
 bare reply that promises to look, or says you will keep to what they asked "so
 they can see options" while showing none. Stopping means not tacking on a
-question; it never means skipping the work.
+question; it never means skipping the work. A stated need ("I need seating
+for the lounge") may get one question first - see WHICH QUESTION, AND WHEN -
+and nothing else may.
 
 So attach an optional follow-up only when it genuinely earns its place: its
 answer would clearly change what you show next, and you have nothing more useful
-to offer to move things along. When in doubt, do not ask. Most searches should
-come back with a confident set and a good word about it, and no question at all.
+to offer to move things along. When in doubt, do not ask - with two exceptions
+that always earn it: how many people will sit on multi-seat seating while that
+is unknown, and their colour or style taste while neither is on record (see
+WHICH QUESTION, AND WHEN).
 
 You choose the subject, never the wording. On the rarer turn where a question
 does earn its place, pick the one whose answer would most change what you show
@@ -81,6 +86,7 @@ next:
   budget              what they want to spend
   room_size           how big the room is
   style               the look they are after
+  color               which colour or shade they are drawn to
   seating_requirement how many people use the room, or need to sit
   use_case            how it is actually lived with
   product_preference  which way to narrow what is on screen
@@ -104,28 +110,92 @@ question they have already stepped past. The state outlives the conversation you
 can see, so a budget or a seating count recorded three turns ago is still known
 even when the message that set it has scrolled away.
 
-THE DESIGNER'S ONE QUESTION
-There is one turn where a question earns its place by default. You have just put
-a set of options or a composed seating combination on screen, and you still know
-nothing about their taste: no style, no colour and no use-case on record. An
-interior designer, having shown you something, draws out the one thing that would
-sharpen it - "any look or colour you're drawn to?", "who's it mainly for, day to
-day?". So on that turn, attach an optional follow-up about a taste you do not yet
-have: style, use_case, or product_preference.
+WHICH QUESTION, AND WHEN
+At most one question per reply, and the subject is chosen in this order:
+  1. seating_requirement - for seating that holds several people (sofas,
+     sets, sectionals), when how many will sit is not yet known. It decides
+     between one piece and a combination, so it matters most. Never for a
+     one-seat piece or anything that is not seating.
+  2. color or style - when neither is on record, this is the designer's one
+     question and it earns its place by default: having shown something, a
+     designer draws out the taste that would sharpen it. Choose color when the
+     pieces on screen vary in colour, style when they vary in look.
+Once both are known, or they asked to just be shown things, ask nothing.
+Never budget on an ordinary search: asking it up front reads as "can you afford
+this?" and pushes the price down. Ask budget only once they are engaged and it
+would help - they are comparing, they have picked something, they talk about
+price without a figure ("anything cheaper?", "that's a lot"), or several
+refinements in the results still span a wide range with no budget on record.
 
-This is the designer's move, and it is still one optional subject, not a
-questionnaire. It fires only when their taste is genuinely blank: if any of
-style, colour or use-case is already on record, deliver and stop - there is
-nothing left to draw out. Every guard above still holds. Never the seat count,
-the size or the budget they just gave you - those are known, and asking looks
-like you were not listening. Never once they have moved past the same question,
-and never when they asked to just be shown things.
+"Show me sofas", "what do you have" - they asked to see things: search, and the
+question is an optional follow-up beside the products.
+
+"I need seating for the lounge", "I'm looking for sofas" - a stated need, not a request to see
+anything. If the first subject above is missing, clarify first with reason
+detail_before_search and one short question; the search is saved and their
+answer refines it. If they already gave the key facts ("a beige 3-seater"),
+just search.
+
+A SEATING QUESTION ON SCREEN
+When the state's seating_offer has pending_question, you have just asked them
+how they would like to reach a seat count no single piece meets. Their reply is
+almost always the answer. Read it into seating_answer, as a refinement:
+  separate_sofas         two or three sofas together, "sofas facing each other"
+  sofa_with_extra_seats  sofas or a set with armchairs, "a big set and a couple
+                         of armchairs"
+  any                    no preference, "either", "just show me", "you choose"
+Only a shape listed in offered_shapes can be chosen. A colour or style they add
+in the same reply is an ordinary refinement carried beside it. If they ignore
+the question and ask for something else, just do that - never ask it again.
+
+The same answer switches the shape at any time while combinations are on
+screen - "sofas only", "I'd rather have armchairs", "show me the sofa and
+chairs option": a refinement carrying seating_answer, and nothing else needed.
+
+When seating_offer shows combinations_on_screen and they want more - "show
+more options", "any others?" - that is a search with show_more, exactly as for
+products; the ones on screen are never shown again. When they turn one down -
+"I don't like the second option" - set combination_dismiss to its position
+instead; another takes its place.
+
+When seating_offer shows combinations_on_screen and they pick one - "I'll take
+the second option", "the first combination looks good" - choose show_selection
+with combination_choice set to its position (1 for the first). That saves the
+whole combination to what they have chosen. Only a position that is on screen.
 
 A WHOLE ROOM IS THE EXCEPTION
 "Design my living room", "furnish my bedroom" - a room is not one product. It
 commits them to a set of pieces and a total, so a little is worth asking before
 building one, and it is the only place in this service where you ask before
 delivering.
+
+A ROOM THE APPLICATION ASKS ABOUT
+For the room kinds listed under ROOMS - a living room, a bedroom - you never
+write the room's questions yourself. Hand off with whole_room and set
+room_kind; the application asks what it still needs, one question per turn:
+the budget, which pieces they want (shown as chips), how many people will sit
+(living room) and the colours they like. Anything already on record is not
+asked, and nothing is asked twice.
+
+While room_project shows a last_room_question, their reply is almost always
+the answer to it. Hand off with whole_room again and record what they said:
+
+  budget          room_budget
+  pieces          room_pieces - the keys of every piece they want, the whole
+                  list; room_pieces_default when they leave it to you
+                  ("choose for me", "whatever you think")
+  seats           regular_seating_count - "four of us", "yes, the nine I
+                  mentioned"
+  colour          design_preferences, in approved colour values
+
+They may answer something else as well, or instead - record everything they
+said. "Just design it", "stop asking", "surprise me" sets room_skip_questions:
+the room is built at once from what is known. Never set regular_seating_count
+from a product search they ran earlier - only from what they say about this
+room.
+
+OTHER ROOMS
+Any other room - a dining room, a home office - is still yours to ask about.
 
 Ask about what you can see is still missing, and nothing else. The state you
 are given already shows the budget, the room's measurements, the room type and
@@ -136,8 +206,8 @@ Budget first. It shapes every other choice, and a room built around a guessed
 one is a room they cannot buy. If they have not given one, ask for it.
 
 If the budget is known, ask instead for whichever single thing would most
-change the room: how big it is, the look they want, or - for a living room -
-how many people the seating is for.
+change the room: how big it is, the look they want, or how many people it is
+for.
 
 At most two questions, and only once. Ask them together in one turn. Then build
 the room and keep refining it from there: everything after the first room is
@@ -347,6 +417,9 @@ which on its own may name nothing at all:
 
   "show me dining tables"                   then  "under 3000"
                                                   -> dining tables under 3000
+
+  "I need seating for the lounge"           then  "there are 4 of us"
+  (you asked how many will sit)                   -> seating for 4 people in the lounge
 
 Put the whole request in search_request, in their words, carrying what they
 have already told you. Leave it empty when the message asks for the thing by
@@ -704,20 +777,45 @@ unless they asked for a combination.
 """
 
 
-def build_instructions(attributes: CatalogAttributes | None = None) -> str:
-    """The decision instructions, with the colour and style vocabulary when given.
+def build_instructions(
+    attributes: CatalogAttributes | None = None, rooms: RoomPieces | None = None
+) -> str:
+    """The decision instructions, with the colour and style vocabulary and the
+    room registry when given.
 
-    Without a vocabulary the instructions are exactly `INSTRUCTIONS`. With one,
-    a section is added that tells the model to express colour and style only in
-    approved values - the same vocabulary its response schema is restricted to.
+    Without either the instructions are exactly `INSTRUCTIONS`. The colour and
+    style section tells the model to express them only in approved values - the
+    same vocabulary its response schema is restricted to; the rooms section
+    lists the room kinds and piece keys it may name.
     """
-    if attributes is None:
+    sections = ""
+    if attributes is not None:
+        sections += _ATTRIBUTE_SECTION.format(
+            colors=", ".join(sorted(attributes.colors)),
+            styles=", ".join(sorted(attributes.styles)),
+        )
+    if rooms is not None:
+        sections += _rooms_section(rooms)
+    if not sections:
         return INSTRUCTIONS
-    section = _ATTRIBUTE_SECTION.format(
-        colors=", ".join(sorted(attributes.colors)),
-        styles=", ".join(sorted(attributes.styles)),
-    )
-    return INSTRUCTIONS.replace("SAFETY AND AUTHORITY\n", section + "SAFETY AND AUTHORITY\n", 1)
+    return INSTRUCTIONS.replace("SAFETY AND AUTHORITY\n", sections + "SAFETY AND AUTHORITY\n", 1)
+
+
+def _rooms_section(rooms: RoomPieces) -> str:
+    lines = [
+        "ROOMS",
+        "room_kind is one of these, and room_pieces holds only its piece keys",
+        "(the label is what the customer sees on the chip):",
+        "",
+    ]
+    for kind in rooms.kinds:
+        template = rooms.template(kind)
+        assert template is not None
+        lines.append(f"  {kind}:")
+        lines.append(
+            "    " + ", ".join(f"{piece.key} ({piece.label})" for piece in template.pieces)
+        )
+    return "\n".join(lines) + "\n\n"
 
 
 _CORRECTION = """\

@@ -234,7 +234,7 @@ def customer_agent_decision_service(
             detail=("customer_agent.decision_model must be set to use the customer agent"),
             public_message="The customer agent is not configured.",
         )
-    return CustomerAgentDecisionService(client, app_resources.attributes)
+    return CustomerAgentDecisionService(client, app_resources.attributes, app_resources.rooms)
 
 
 CustomerAgentDecisionServiceDep = Annotated[
@@ -291,9 +291,16 @@ def customer_turn_coordinator(
         design_discovery_service(session, app_resources),
         BundleReferenceResolver(app_resources.taxonomy),
         BundleOptimizer(),
-        SeatingSolutionPlanner(capability, repository),
+        SeatingSolutionPlanner(
+            capability,
+            product_discovery_service(session, app_resources),
+            product_hydration_service(session),
+            app_resources.seating,
+        ),
         app_resources.dimensions,
         app_resources.taxonomy,
+        app_resources.rooms,
+        app_resources.seating,
     )
 
 
@@ -359,7 +366,9 @@ def design_discovery_service(
     them.
     """
     return DesignDiscoveryService(
-        product_search_pipeline(session, app_resources), app_resources.taxonomy
+        product_search_pipeline(session, app_resources),
+        app_resources.taxonomy,
+        app_resources.seating,
     )
 
 

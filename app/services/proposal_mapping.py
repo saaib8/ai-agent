@@ -112,6 +112,8 @@ def _customer_state(
         or proposal.design_preferences is not None
         or proposal.regular_seating_count is not None
         or proposal.clear_regular_seating_count
+        or proposal.room_kind is not None
+        or proposal.room_skip_questions
     )
     room = (
         RoomProjectUpdate(
@@ -124,6 +126,11 @@ def _customer_state(
             design_preferences=_preferences(proposal.design_preferences),
             regular_seating_count=proposal.regular_seating_count,
             clear_regular_seating_count=proposal.clear_regular_seating_count,
+            # The kind is checked against the room registry, and the chosen
+            # pieces resolved to its keys, by the coordinator - which has the
+            # registry this pure mapping deliberately does not.
+            room_kind=proposal.room_kind,
+            questions_done=proposal.room_skip_questions,
         )
         if touches_room
         else None

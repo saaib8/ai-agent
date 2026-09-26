@@ -1,0 +1,60 @@
+# Which pieces a room is made of, and how much each matters. Version v1.
+#
+# Reviewed domain data (CLAUDE.md 10.1, 10.3): the pieces a customer may pick
+# for each room when it is being designed, offered as chips. Only a piece the
+# store actually stocks is offered - this file lists what a room may hold, the
+# live catalog says what can be bought.
+#
+# Tiers:
+#   essential    starts selected; the customer may still remove it
+#   recommended  starts selected
+#   optional     offered, not selected
+# "Choose for me" (or no answer) is every essential and recommended piece.
+# When the budget is short, optional pieces go first, then recommended ones.
+#
+# A piece is one approved type, bought `quantity` times - except the living
+# room's seating, which is built from several types to seat the number of
+# people the customer gives (CLAUDE.md 27.1): the chip reads "Sofa".
+version: v1
+
+rooms:
+  living_room:
+    asks_seats: true
+    pieces:
+      - key: sofa
+        label: Sofa
+        tier: essential
+        seating: [sofa, sectional-sofa, sofa-set, single-seater-sofa, chair]
+      - {key: center-table, label: Center table, category: tables, subcategory: center-table, tier: essential}
+      - {key: rug, label: Rug, category: decor, subcategory: carpet, tier: essential}
+      - {key: side-table, label: Side table, category: tables, subcategory: service-table, tier: recommended}
+      - {key: tv-table, label: TV table, category: tables, subcategory: tv-table, tier: recommended}
+      - {key: floor-lamp, label: Floor lamp, category: lighting, subcategory: floor-lamp, tier: recommended}
+      - {key: wall-art, label: Wall art, category: decor, subcategory: art-canvas, tier: recommended}
+      - {key: accent-chair, label: Accent chair, category: seating, subcategory: chair, tier: optional}
+      - {key: console, label: Console, category: tables, subcategory: console, tier: optional}
+      - {key: table-lamp, label: Table lamp, category: lighting, subcategory: table-lamp, tier: optional}
+      - {key: chandelier, label: Chandelier, category: lighting, subcategory: chandelier, tier: optional}
+      - {key: vase, label: Vase, category: decor, subcategory: vase, tier: optional}
+      - {key: statue, label: Decorative statue, category: decor, subcategory: statue-and-antique, tier: optional}
+      - {key: mirror, label: Mirror, category: decor, subcategory: mirror, tier: optional}
+      - {key: shelf, label: Shelf, category: storage, subcategory: shelve, tier: optional}
+
+  bedroom:
+    asks_seats: false
+    pieces:
+      - {key: bed, label: Bed, category: bedroom, subcategory: bed, tier: essential}
+      - {key: nightstands, label: Nightstands, category: tables, subcategory: nightstand, tier: essential, quantity: 2}
+      - {key: wardrobe, label: Wardrobe, category: bedroom, subcategory: wardrobe, tier: recommended}
+      - {key: rug, label: Rug, category: decor, subcategory: carpet, tier: recommended}
+      - {key: table-lamps, label: Table lamps, category: lighting, subcategory: table-lamp, tier: recommended, quantity: 2}
+      - {key: tv-table, label: TV table, category: tables, subcategory: tv-table, tier: recommended}
+      - {key: wall-art, label: Wall art, category: decor, subcategory: art-canvas, tier: recommended}
+      - {key: mattress, label: Mattress, category: bedding, subcategory: mattresses, tier: optional}
+      - {key: accent-chair, label: Accent chair, category: seating, subcategory: chair, tier: optional}
+      - {key: console, label: Console, category: tables, subcategory: console, tier: optional}
+      - {key: mirror, label: Mirror, category: decor, subcategory: mirror, tier: optional}
+      - {key: floor-lamp, label: Floor lamp, category: lighting, subcategory: floor-lamp, tier: optional}
+      - {key: chandelier, label: Chandelier, category: lighting, subcategory: chandelier, tier: optional}
+      - {key: vase, label: Vase, category: decor, subcategory: vase, tier: optional}
+      - {key: shelf, label: Shelf, category: storage, subcategory: shelve, tier: optional}

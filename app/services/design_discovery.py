@@ -39,12 +39,13 @@ from app.schemas.design_discovery import (
     DesignNeedSkipReason,
 )
 from app.schemas.design_override import DesignNeedSearchOverride
-from app.schemas.discovery import ProductSearchRequest
+from app.schemas.discovery import ProductSearchRequest, SeatingCapacityConstraint
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
 from app.schemas.refinement import SemanticIntentOp
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.services.search_pipeline import ProductSearchPipeline
 from app.taxonomy.registry import CommerceTaxonomy
+from app.taxonomy.seating import SeatingSemantics
 
 logger = get_logger(__name__)
 
@@ -52,9 +53,18 @@ logger = get_logger(__name__)
 class DesignDiscoveryService:
     """A room plan in, verified candidate products per need out."""
 
-    def __init__(self, pipeline: ProductSearchPipeline, taxonomy: CommerceTaxonomy) -> None:
+    def __init__(
+        self,
+        pipeline: ProductSearchPipeline,
+        taxonomy: CommerceTaxonomy,
+        seating: SeatingSemantics | None = None,
+    ) -> None:
         self._pipeline = pipeline
         self._taxonomy = taxonomy
+        self._seating = seating
+        """Reviewed seat counts. A one-seat type never carries a seat filter:
+        the catalog records no capacity for chairs, so one could only hide them
+        all (CLAUDE.md 7)."""
 
     async def discover(
         self,
@@ -169,6 +179,13 @@ class DesignDiscoveryService:
         )
         return DesignNeedCandidates(need_index=index, need=need, pool=pool)
 
+    def _capacity(self, need: DesignCategoryNeed) -> SeatingCapacityConstraint | None:
+        """The need's seat filter - none for a type that seats one by nature,
+        whose catalog rows record no capacity for a filter to match."""
+        if self._seating is not None and self._seating.seats_one(need.commerce_subcategory):
+            return None
+        return need.seating_capacity
+
     def _require_approved(self, need: DesignCategoryNeed) -> None:
         if need.commerce_subcategory is None:
             if not self._taxonomy.is_category(need.commerce_category):
@@ -220,7 +237,7 @@ class DesignDiscoveryService:
             request=ProductSearchRequest(
                 commerce_category=need.commerce_category,
                 commerce_subcategory=need.commerce_subcategory,
-                seating_capacity=need.seating_capacity,
+                seating_capacity=self._capacity(need),
                 # Both come from the application: a price derived from the
                 # product being replaced, and products the customer already
                 # turned down for this role. Neither was authored by a model,
@@ -228,7 +245,7 @@ class DesignDiscoveryService:
                 price=override.price if override else None,
                 exclude_product_ids=(override.exclude_product_ids if override else ()),
             ),
-            semantics=_semantics_for(need),
+            semantics=_semantics_for(need, self._capacity(need)),
             # Colour and style the customer leaned towards, reaching ranking
             # and never SQL. Filtering on them would hide products they never
             # ruled out (CLAUDE.md 12.4).
@@ -239,7 +256,9 @@ class DesignDiscoveryService:
         )
 
 
-def _semantics_for(need: DesignCategoryNeed) -> ConstraintSemantics:
+def _semantics_for(
+    need: DesignCategoryNeed, capacity: SeatingCapacityConstraint | None
+) -> ConstraintSemantics:
     """Everything a design plan states is LOCKED.
 
     A design-derived constraint is a conclusion, not a turn of phrase. "This
@@ -253,7 +272,6 @@ def _semantics_for(need: DesignCategoryNeed) -> ConstraintSemantics:
     subcategory's is recorded as LOCKED and, for now, no policy widens a
     subcategory anyway (CLAUDE.md 13.5).
     """
-    capacity = need.seating_capacity
     return ConstraintSemantics(
         subcategory=(ConstraintStrength.LOCKED if need.commerce_subcategory is not None else None),
         seating_min=(

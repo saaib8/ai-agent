@@ -22,8 +22,45 @@ from app.schemas.bundle_presentation import (
     GroundedBundlePresentation,
     GroundedBundleTotals,
 )
+from app.schemas.chat import ReplyChoice
 from app.schemas.product import CommerceClassification
-from app.schemas.seating_solution import SeatingBundle, SeatingSolution
+from app.schemas.seating_solution import (
+    SeatingBundle,
+    SeatingShape,
+    SeatingSolution,
+    SeatingSolutionOutcome,
+)
+
+_SHAPE_CHOICE: dict[SeatingShape, tuple[str, str]] = {
+    SeatingShape.SEPARATE_SOFAS: ("Separate sofas", "Separate sofas arranged together"),
+    SeatingShape.SOFA_WITH_EXTRA_SEATS: (
+        "Sofa + armchairs",
+        "A sofa with a few armchairs alongside",
+    ),
+}
+
+
+def seating_choices(solution: SeatingSolution) -> tuple[ReplyChoice, ...]:
+    """The shape question's answers as chips: each real shape with its lowest
+    total, and "either". After "no more", the shapes that still have unseen
+    combinations. Nothing otherwise."""
+    if solution.outcome not in (
+        SeatingSolutionOutcome.CHOOSE_SHAPE,
+        SeatingSolutionOutcome.NO_MORE,
+    ):
+        return ()
+    choices = [
+        ReplyChoice(
+            label=f"{_SHAPE_CHOICE[o.shape][0]} · from {o.from_price:,.0f} {solution.currency}",
+            value=_SHAPE_CHOICE[o.shape][1],
+        )
+        for o in solution.options
+    ]
+    if len(choices) > 1:
+        choices.append(
+            ReplyChoice(label="Either - show me both", value="Either is fine, show me both")
+        )
+    return tuple(choices)
 
 
 def present_seating_solution(solution: SeatingSolution) -> tuple[GroundedBundlePresentation, ...]:

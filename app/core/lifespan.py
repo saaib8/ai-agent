@@ -28,6 +28,7 @@ from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
 from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
+from app.taxonomy.rooms import RoomPieces, load_room_pieces
 from app.taxonomy.seating import SeatingSemantics, load_seating_semantics
 
 logger = get_logger(__name__)
@@ -44,6 +45,7 @@ class AppResources:
     dimensions: DimensionSemantics
     seating: SeatingSemantics
     chat_graph: ChatGraphRunner
+    rooms: RoomPieces
     # Both None when semantic ranking is not configured. Discovery still
     # works; results come back in deterministic order. Defaulted so a
     # deployment without them constructs exactly as it did before.
@@ -118,6 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # subcategory is a configuration error, not something to discover later.
     dimensions = load_dimension_semantics(taxonomy=taxonomy)
     seating = load_seating_semantics(taxonomy=taxonomy)
+    rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
     logger.info(
         "taxonomy_loaded",
         taxonomy_version=taxonomy.version,
@@ -128,6 +131,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         dimension_semantics_version=dimensions.version,
         dimension_subcategories=len(dimensions.subcategories),
         seating_version=seating.version,
+        room_pieces_version=rooms.version,
     )
 
     database = Database.create(settings.db)
@@ -213,6 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         dimensions=dimensions,
         seating=seating,
         chat_graph=chat_graph,
+        rooms=rooms,
         detector=detector,
         finder_vision=finder_vision,
         finder_embedder=finder_embedder,

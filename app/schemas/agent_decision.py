@@ -49,6 +49,7 @@ from app.schemas.refinement import (
     SearchRefinementDelta,
     SemanticIntentRefinement,
 )
+from app.schemas.seating_solution import SeatingAnswer
 from app.taxonomy.attributes import CatalogAttributes
 
 MAX_CLARIFICATION_CHARS = 300
@@ -154,6 +155,9 @@ class FollowUpGoal(StrEnum):
 
     ROOM_SIZE = "room_size"
     STYLE = "style"
+    COLOR = "color"
+    """Which colour or shade they are drawn to - the taste question that most
+    often changes which products come first."""
 
     SEATING_REQUIREMENT = "seating_requirement"
     """How many people use the room, or need to sit on the piece. A
@@ -583,8 +587,26 @@ class CustomerStateProposal(BaseModel):
 
     clear_regular_seating_count: bool = False
 
+    room_kind: str | None = Field(default=None, max_length=40)
+    """Which of the room kinds you are shown this room is, when it is one of
+    them. Any other room leaves it empty."""
+
+    room_pieces: tuple[str, ...] | None = Field(default=None, max_length=30)
+    """The pieces they want in the room, as the piece keys you are shown - the
+    whole list, replacing any earlier one. Only when they said which pieces."""
+
+    room_pieces_default: bool = False
+    """They left the pieces to us - "choose for me", "whatever you think",
+    "the usual". The room gets its standard pieces."""
+
+    room_skip_questions: bool = False
+    """They want the room now, without more questions - "just design it",
+    "surprise me", "stop asking". Whatever is still missing is chosen for them."""
+
     @model_validator(mode="after")
     def _setting_and_clearing_are_exclusive(self) -> Self:
+        if self.room_pieces is not None and self.room_pieces_default:
+            raise ValueError("room_pieces and room_pieces_default are exclusive")
         if self.clear_room_type and self.room_type is not None:
             raise ValueError("room_type cannot be set and cleared in one turn")
         if self.clear_room_budget and self.room_budget is not None:
@@ -687,6 +709,14 @@ class BlockingClarificationReason(StrEnum):
     is built from what is known (CLAUDE.md 10).
     """
 
+    DETAIL_BEFORE_SEARCH = "detail_before_search"
+    """They stated a need - "I need a sofa", "I'm looking for seating" - without
+    asking to see anything, and one detail would change what to show: how many
+    people will sit, for a sofa, sectional, sofa set or sofa bed; otherwise the
+    colour or style. One question first; the search is saved, not run, so
+    their answer refines it. Never asked for "show me", never about budget.
+    """
+
     CONTRADICTORY_ROOM_INSTRUCTIONS = "contradictory_room_instructions"
     """Two things they asked for in one turn cannot both hold.
 
@@ -769,6 +799,25 @@ class CustomerAgentDecision(BaseModel):
 
     Pointed at like any other card and resolved by the application. The same
     path as the "not this one" button. Read only on a search.
+    """
+
+    seating_answer: SeatingAnswer | None = None
+    """Their answer to the seating question - which way to reach a seat count
+    no single piece meets: separate sofas together, a sofa with extra seats, or
+    any. Only when that question is pending (the state shows it); a refinement
+    may carry just this. Code checks it against what was actually offered.
+    """
+
+    combination_choice: int | None = Field(default=None, ge=1, le=3)
+    """Which seating combination on screen they chose - "I'll take the second
+    option". Only with show_selection, and only when combinations are on
+    screen (the state shows how many); code checks it against what was shown.
+    """
+
+    combination_dismiss: int | None = Field(default=None, ge=1, le=3)
+    """A seating combination on screen they turned down - "I don't like the
+    second option". Only with search: it is left out and another takes its
+    place. For more of them all, set show_more instead.
     """
 
     drop_saved_sizes: bool = False
@@ -906,6 +955,7 @@ class CustomerAgentDecision(BaseModel):
     def _payload_matches_the_action(self) -> Self:
         self._check_search_payloads()
         self._check_reference_payloads()
+        self._check_combination_choice()
         self._check_clarification()
         self._check_follow_up()
         self._check_interaction()
@@ -934,7 +984,11 @@ class CustomerAgentDecision(BaseModel):
             # decide how. Refused rather than silently dropping one of them.
             raise ValueError("a search for alternatives carries no new-search proposal")
         if self.action is AgentAction.REFINE_SEARCH:
-            if self.refinement is None and not self.taxonomy_change_requested:
+            if (
+                self.refinement is None
+                and not self.taxonomy_change_requested
+                and self.seating_answer is None
+            ):
                 raise ValueError("a refinement needs a delta or a taxonomy change")
             # An empty delta beside a change of type says "nothing else
             # changes", which is unambiguous - refusing it only cost a turn.
@@ -946,6 +1000,12 @@ class CustomerAgentDecision(BaseModel):
                 raise ValueError("a refinement delta that changes nothing is not one")
         elif self.refinement is not None or self.taxonomy_change_requested:
             raise ValueError("only a refinement may carry a refinement payload")
+
+    def _check_combination_choice(self) -> None:
+        if self.combination_choice is not None and self.action is not AgentAction.SHOW_SELECTION:
+            raise ValueError("choosing a combination shows what they have chosen")
+        if self.combination_dismiss is not None and self.action is not AgentAction.SEARCH:
+            raise ValueError("turning a combination down searches for another")
 
     def _check_reference_payloads(self) -> None:
         if self.action is AgentAction.PRODUCT_DETAIL and self.reference is None:
