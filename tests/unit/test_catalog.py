@@ -57,7 +57,6 @@ from tests.unit.test_room_visualization import (
     FakeCatalog,
     FakePhotos,
     RecordingGenerator,
-    RecordingStore,
     viz_settings,
 )
 
@@ -360,13 +359,11 @@ def a_visualizer(
         ),
         "photos": FakePhotos(),
         "generator": RecordingGenerator(),
-        "store": RecordingStore(),
     }
     visualizer = RoomVisualizer(
         parts["catalog"],
         parts["photos"],
         parts["generator"],
-        parts["store"],
         viz_settings(max_references=14),
     )
     return visualizer, parts

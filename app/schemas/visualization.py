@@ -101,6 +101,9 @@ class RoomRenderPresentation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     image_url: str
+    """A `data:image/jpeg;base64,` URL. Renders are not stored anywhere, so the
+    picture itself is the only copy, and it lives on the customer's screen."""
+
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     view: RenderView

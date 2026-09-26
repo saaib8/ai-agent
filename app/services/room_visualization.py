@@ -5,8 +5,9 @@ the session holds: its pieces, and the size and style the customer said. A
 catalogue render is of pieces the customer picked while browsing, in a room
 they set up. Either way every piece is read from the catalog through the
 store-scoped repository, so an inactive or foreign product is simply not in
-the picture. An image model draws it, and the picture is stored and served by
-URL.
+the picture. An image model draws it, and the picture is returned inside the
+reply as a data URL. Nothing is stored: the render lives on the customer's
+screen, like the rest of the conversation they are looking at.
 
 A render is a turn of the conversation, like a pick in a photo: it is
 recorded in the history, in words, so the agent knows the customer has seen
@@ -17,10 +18,9 @@ picture is not a fact about the room.
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
-import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from io import BytesIO
 from typing import Protocol
 
@@ -35,7 +35,6 @@ from app.core.exceptions import (
 )
 from app.core.logging import get_logger
 from app.integrations.image_generation import ImageGenerator, ImageReference
-from app.integrations.render_store import RenderStore
 from app.prompts.visualization.v1 import (
     VERSION,
     RenderPiece,
@@ -88,13 +87,11 @@ class RoomVisualizer:
         repository: ProductRepository,
         photos: PhotoFetcher,
         generator: ImageGenerator,
-        store: RenderStore,
         settings: VisualizationSettings,
     ) -> None:
         self._repository = repository
         self._photos = photos
         self._generator = generator
-        self._store = store
         self._settings = settings
 
     async def render(
@@ -169,9 +166,7 @@ class RoomVisualizer:
 
         prompt = build_prompt(room, tuple(pieces), view)
         image = await self._generator.generate(prompt, references)
-        width, height = _dimensions(image.data)
-        key = f"store-{context.store_id}/{datetime.now(UTC):%Y%m%d}/{uuid.uuid4().hex}.jpg"
-        url = await self._store.save(key, image.data, image.mime)
+        jpeg, width, height = _as_jpeg(image.data, self._settings.jpeg_quality)
 
         logger.info(
             "room_rendered",
@@ -181,11 +176,12 @@ class RoomVisualizer:
             piece_count=len(pieces),
             reference_count=len(references),
             provider=image.provider,
+            image_bytes=len(jpeg),
             prompt_version=VERSION,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return RoomRenderPresentation(
-            image_url=url,
+            image_url="data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
             width=width,
             height=height,
             view=view,
@@ -428,10 +424,20 @@ def _size(product: ProductCandidate) -> tuple[float, ...]:
     return tuple(float(value) for value in (dims.length_cm, dims.width_cm, dims.height_cm) if value)
 
 
-def _dimensions(data: bytes) -> tuple[int, int]:
-    """The rendered image's size - and proof it is an image at all."""
+def _as_jpeg(data: bytes, quality: int) -> tuple[bytes, int, int]:
+    """The render as JPEG bytes, with its size - and proof it is an image at all.
+
+    A JPEG is passed through untouched. Anything else (a model may answer in
+    PNG whatever it was asked for) is re-encoded, because the picture travels
+    inside the reply and a lossless 2K image is several megabytes.
+    """
     try:
         with Image.open(BytesIO(data)) as image:
-            return image.size
+            width, height = image.size
+            if image.format == "JPEG":
+                return data, width, height
+            buffer = BytesIO()
+            image.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
+            return buffer.getvalue(), width, height
     except (UnidentifiedImageError, OSError) as exc:
         raise RenderUnavailableError(reason="undecodable_image") from exc

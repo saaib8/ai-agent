@@ -147,30 +147,19 @@ function Lightbox({ render, onClose }: { render: RoomRenderPresentation; onClose
 }
 
 /**
- * Save the render. Fetched as a blob so the browser downloads it rather than
- * navigating; if the image host refuses a cross-origin read, fall back to
- * opening it, where it can be saved by hand.
- *
- * `no-store` is load-bearing: the <img> already fetched this URL without an
- * Origin, and the browser would otherwise answer this CORS request from that
- * cached copy - which carries no CORS headers, so the read is refused. The
- * <img> itself stays a plain request, so the picture still shows on origins
- * the bucket's CORS list does not name.
+ * Save the render. The picture arrived inside the reply as a data URL, so
+ * nothing is fetched from a server: it is turned into a blob and saved. A blob
+ * rather than the data URL itself, because browsers refuse to download very
+ * long data URLs from a link.
  */
 async function download(render: RoomRenderPresentation): Promise<void> {
-  const filename = `zory-room-${render.view}.jpg`
-  try {
-    const response = await fetch(render.image_url, { mode: 'cors', cache: 'no-store' })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const url = URL.createObjectURL(await response.blob())
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-  } catch {
-    window.open(render.image_url, '_blank', 'noopener')
-  }
+  const blob = await (await fetch(render.image_url)).blob()
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `zory-room-${render.view}.jpg`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }

@@ -89,9 +89,10 @@ the client. Product photos are fetched (https, public hosts only, bounded) and
 sent as references with a versioned prompt (`app/prompts/visualization/v1.py`)
 that asks for exactly those pieces and nothing else. The primary image model
 renders (`gpt-image-2.5-sunburst`), falling back once to the other
-(`gemini-3-pro-image`). The image is stored in S3 and returned as a public URL,
-as a chat turn (`ChatResponse.presentation.render`) that is recorded in the
-history but changes no state. Configure with `ZORY_VISUALIZATION__*`.
+(`gemini-3-pro-image`). Nothing is stored: the image comes back inside the
+reply as a JPEG data URL, as a chat turn (`ChatResponse.presentation.render`)
+that is recorded in the history but changes no state. It lasts as long as the
+customer's browser session. Configure with `ZORY_VISUALIZATION__*`.
 
 ## Browse Catalogue
 
