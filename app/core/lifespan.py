@@ -31,7 +31,6 @@ from app.integrations.pinecone import PineconeSemanticIndex, SemanticIndex
 from app.integrations.postgres import Database
 from app.integrations.product_images import ProductImageFetcher
 from app.integrations.redis import RedisClient
-from app.integrations.render_store import RenderStore, S3RenderStore
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
@@ -79,9 +78,8 @@ class AppResources:
     finder_vision: OpenAIStructuredClient | None = None
     finder_embedder: OpenAIQueryEmbedder | None = None
     finder_index: FinderIndex | None = None
-    # All three None when room visualisation is not configured.
+    # Both None when room visualisation is not configured.
     render_generator: ImageGenerator | None = None
-    render_store: RenderStore | None = None
     render_photos: ProductImageFetcher | None = None
 
 
@@ -194,7 +192,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         finder_index = PineconeFinderIndex(finder)
     render_generator: ImageGenerator | None = None
-    render_store: RenderStore | None = None
     render_photos: ProductImageFetcher | None = None
     closables: list[OpenAIImageGenerator | GeminiImageGenerator | ProductImageFetcher] = []
     visualization = settings.visualization
@@ -211,7 +208,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (g for name, g in generators.items() if name != visualization.primary), None
         )
         render_generator = FallbackImageGenerator(primary, fallback)
-        render_store = S3RenderStore(visualization)
         render_photos = ProductImageFetcher(
             timeout_s=visualization.reference_timeout_s,
             max_bytes=visualization.reference_max_bytes,
@@ -267,7 +263,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finder_embedder=finder_embedder,
         finder_index=finder_index,
         render_generator=render_generator,
-        render_store=render_store,
         render_photos=render_photos,
     )
 

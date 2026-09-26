@@ -40,7 +40,6 @@ from app.integrations.image_generation import (
     OpenAIImageGenerator,
 )
 from app.integrations.product_images import ProductImageFetcher, _is_public
-from app.integrations.render_store import S3RenderStore
 from app.prompts.visualization.v1 import RenderPiece, RenderRoom, build_prompt
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import (
@@ -76,10 +75,6 @@ def viz_settings(**overrides: Any) -> VisualizationSettings:
         "openai_model": "image-model-a",
         "gemini_model": "image-model-b",
         "gemini_api_key": "google-test",
-        "store_bucket": "renders-bucket",
-        "store_region": "ap-south-1",
-        "store_prefix": "ai-agent-renders/test",
-        "public_base_url": "https://cdn.example.test/",
         "max_references": 3,
     }
     values.update(overrides)
@@ -104,9 +99,16 @@ class TestSettings:
         with pytest.raises(ValidationError):
             viz_settings(gemini_api_key=None)
 
-    def test_the_public_base_must_be_https(self) -> None:
-        with pytest.raises(ValidationError):
-            viz_settings(public_base_url="http://cdn.example.test")
+    def test_retired_storage_settings_do_not_stop_startup(self) -> None:
+        """Renders used to be stored in S3. A deployment whose environment
+        still carries those settings must start, not fail on unknown keys."""
+        settings = viz_settings(
+            store_bucket="renders-bucket",
+            store_region="ap-south-1",
+            store_prefix="ai-agent-renders/stage",
+            public_base_url="https://cdn.example.test",
+        )
+        assert not hasattr(settings, "store_bucket")
 
     def test_no_secret_reaches_the_startup_summary(self) -> None:
         settings = build_settings(
@@ -323,38 +325,7 @@ class TestFallback:
             await FallbackImageGenerator(primary, None).generate("p", ())
 
 
-# ── storage and photos ══════════════════════════════════════════════════════
-
-
-class FakeS3:
-    def __init__(self, error: Exception | None = None) -> None:
-        self.puts: list[dict[str, Any]] = []
-        self.error = error
-
-    def put_object(self, **kwargs: Any) -> None:
-        if self.error:
-            raise self.error
-        self.puts.append(kwargs)
-
-
-class TestS3Store:
-    async def test_it_writes_under_the_prefix_and_returns_the_public_url(self) -> None:
-        s3 = FakeS3()
-        url = await S3RenderStore(viz_settings(), client=s3).save(
-            "store-50/x.jpg", b"img", "image/jpeg"
-        )
-        assert url == "https://cdn.example.test/ai-agent-renders/test/store-50/x.jpg"
-        (put,) = s3.puts
-        assert put["Bucket"] == "renders-bucket"
-        assert put["Key"] == "ai-agent-renders/test/store-50/x.jpg"
-        assert put["ContentType"] == "image/jpeg"
-        assert "immutable" in put["CacheControl"]
-
-    async def test_a_storage_failure_is_ours(self) -> None:
-        store = S3RenderStore(viz_settings(), client=FakeS3(RuntimeError("AccessDenied: arn")))
-        with pytest.raises(RenderUnavailableError) as raised:
-            await store.save("k.jpg", b"img", "image/jpeg")
-        assert "arn" not in raised.value.public_message
+# ── product photos ══════════════════════════════════════════════════════════
 
 
 def a_fetcher(handler: Any, **overrides: Any) -> ProductImageFetcher:
@@ -449,23 +420,27 @@ class FakePhotos:
 
 
 class RecordingGenerator:
-    def __init__(self) -> None:
+    def __init__(self, image: bytes | None = None) -> None:
         self.prompts: list[str] = []
         self.references: list[Sequence[ImageReference]] = []
+        self.image = image if image is not None else a_jpeg(1536, 1024)
 
     async def generate(self, prompt: str, references: Sequence[ImageReference]) -> GeneratedImage:
         self.prompts.append(prompt)
         self.references.append(references)
-        return GeneratedImage(a_jpeg(1536, 1024), "image/jpeg", "openai")
+        return GeneratedImage(self.image, "image/jpeg", "openai")
 
 
-class RecordingStore:
-    def __init__(self) -> None:
-        self.keys: list[str] = []
+def a_png(width: int = 1536, height: int = 1024) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGBA", (width, height), (120, 90, 60, 255)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
-    async def save(self, key: str, data: bytes, mime: str) -> str:
-        self.keys.append(key)
-        return f"https://cdn.example.test/{key}"
+
+def decoded(data_url: str) -> bytes:
+    prefix = "data:image/jpeg;base64,"
+    assert data_url.startswith(prefix)
+    return base64.b64decode(data_url[len(prefix) :])
 
 
 def a_room_state(lines: Sequence[tuple[int, int]] = ((10, 1), (11, 2), (10, 1))) -> AgentStateV1:
@@ -506,19 +481,20 @@ def a_room_state(lines: Sequence[tuple[int, int]] = ((10, 1), (11, 2), (10, 1)))
 
 
 def a_visualizer(
-    rows: Sequence[ProductRow] = (), photos: FakePhotos | None = None, **settings: Any
+    rows: Sequence[ProductRow] = (),
+    photos: FakePhotos | None = None,
+    generator: RecordingGenerator | None = None,
+    **settings: Any,
 ) -> tuple[RoomVisualizer, dict[str, Any]]:
     parts: dict[str, Any] = {
         "catalog": FakeCatalog(rows or [a_row(10, name="Oak Bed"), a_row(11, name="Nightstand")]),
         "photos": photos or FakePhotos(),
-        "generator": RecordingGenerator(),
-        "store": RecordingStore(),
+        "generator": generator or RecordingGenerator(),
     }
     visualizer = RoomVisualizer(
         parts["catalog"],
         parts["photos"],
         parts["generator"],
-        parts["store"],
         viz_settings(**settings),
     )
     return visualizer, parts
@@ -541,13 +517,26 @@ class TestVisualizer:
             ("Nightstand", 2),
         ]
 
-    async def test_the_public_key_names_the_store_and_nothing_about_the_customer(self) -> None:
+    async def test_the_picture_travels_in_the_reply_untouched(self) -> None:
+        """Nothing is stored: a JPEG from the model is the reply's picture,
+        byte for byte."""
         visualizer, parts = a_visualizer()
         render = await visualizer.render(a_room_state(), RenderView.CORNER, CONTEXT)
-        (key,) = parts["store"].keys
-        assert key.startswith("store-50/") and key.endswith(".jpg")
-        assert SESSION not in key
-        assert render.image_url.endswith(key)
+        assert decoded(render.image_url) == parts["generator"].image
+
+    async def test_a_picture_in_another_format_is_sent_as_jpeg(self) -> None:
+        png = a_png()
+        visualizer, _ = a_visualizer(generator=RecordingGenerator(png))
+        render = await visualizer.render(a_room_state(), RenderView.CORNER, CONTEXT)
+        jpeg = decoded(render.image_url)
+        with Image.open(BytesIO(jpeg)) as image:
+            assert image.format == "JPEG" and image.size == (1536, 1024)
+        assert (render.width, render.height) == (1536, 1024)
+
+    async def test_something_that_is_not_an_image_is_a_failed_render(self) -> None:
+        visualizer, _ = a_visualizer(generator=RecordingGenerator(b"<html>quota</html>"))
+        with pytest.raises(RenderUnavailableError):
+            await visualizer.render(a_room_state(), RenderView.CORNER, CONTEXT)
 
     async def test_a_missing_photo_is_described_instead_and_numbering_stays_honest(self) -> None:
         photos = FakePhotos(missing={"https://shop.test/10.jpg"})
@@ -702,7 +691,7 @@ class TestRoute:
     async def test_it_refuses_cleanly_when_not_configured(self) -> None:
         class Unconfigured:
             settings = build_settings()
-            render_generator = render_store = render_photos = None
+            render_generator = render_photos = None
 
         app = an_app()
         app.dependency_overrides[resources] = lambda: Unconfigured()

@@ -513,14 +513,13 @@ def _room_visualizer(session: AsyncSession, app_resources: AppResources) -> Room
     """The render pipeline, or a refusal naming what is missing."""
     settings = app_resources.settings.visualization
     generator = app_resources.render_generator
-    store = app_resources.render_store
     photos = app_resources.render_photos
-    if settings is None or generator is None or store is None or photos is None:
+    if settings is None or generator is None or photos is None:
         raise ConfigurationError(
             detail="visualization must be configured to render rooms",
             public_message="Room visualisation is not configured.",
         )
-    return RoomVisualizer(ProductRepository(session), photos, generator, store, settings)
+    return RoomVisualizer(ProductRepository(session), photos, generator, settings)
 
 
 def visualization_turn_runtime(

@@ -151,6 +151,8 @@ export interface RenderRoomSpec {
 }
 
 export interface RoomRenderPresentation {
+  /** A `data:image/jpeg;base64,` URL: renders are not stored anywhere, so the
+   *  picture lives only in this reply and on screen. */
   image_url: string
   width: number
   height: number

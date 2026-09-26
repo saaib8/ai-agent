@@ -308,9 +308,9 @@ class VisualizationSettings(BaseModel):
     primary fails. OpenAI uses the language-model provider's key
     (`llm.api_key`); Gemini has its own.
 
-    Renders are stored in a bucket and served from `public_base_url`, which is
-    a public address by deliberate choice: the link is what the customer
-    downloads and shares.
+    Renders are not stored anywhere. The picture travels in the reply as a
+    data URL and lives only on the customer's screen, like the rest of the
+    conversation they are looking at.
     """
 
     primary: Literal["openai", "gemini"] = "openai"
@@ -334,13 +334,9 @@ class VisualizationSettings(BaseModel):
     reference_timeout_s: float = Field(default=15.0, gt=0)
     reference_max_bytes: int = Field(default=8 * 1024 * 1024, gt=0)
 
-    store_bucket: str = Field(min_length=1)
-    store_region: str = Field(min_length=1)
-    store_prefix: str = Field(min_length=1)
-    """Keeps stage and prod renders apart inside one bucket."""
-
-    public_base_url: str = Field(min_length=1, pattern=r"^https://")
-    """Where a stored render is served from, e.g. the bucket's CloudFront."""
+    jpeg_quality: int = Field(default=88, ge=50, le=95)
+    """Used only when a model answers in another format: the picture travels
+    inside the reply, so a multi-megabyte PNG is re-encoded rather than sent."""
 
     @model_validator(mode="after")
     def _providers_are_usable(self) -> VisualizationSettings:
