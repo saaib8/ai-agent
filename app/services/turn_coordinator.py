@@ -63,8 +63,12 @@ from app.schemas.agent_state import (
     AgentStateV1,
     BundleItemState,
     BundleItemStatus,
+    OfferedCombination,
+    OfferedCombinationLine,
+    ProductInteractionState,
     RoomProjectState,
     SavedMeasurements,
+    SeatingOfferState,
 )
 from app.schemas.agent_turn import (
     CustomerTurnInput,
@@ -124,15 +128,20 @@ from app.schemas.design import (
     AnchorProduct,
     DesignCategoryNeed,
     DesignGuidance,
+    DesignPriority,
     DesignRevisionContext,
     DesignTask,
     ExcludedDesignRole,
     InteriorDesignRequest,
     InteriorDesignResult,
 )
-from app.schemas.design_discovery import DesignDiscoveryResult
+from app.schemas.design_discovery import DesignDiscoveryResult, DesignNeedCandidates
 from app.schemas.design_override import DesignNeedSearchOverride
-from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS, PriceConstraint
+from app.schemas.discovery import (
+    MAX_EXCLUDED_PRODUCT_IDS,
+    PriceConstraint,
+    SeatingCapacityConstraint,
+)
 from app.schemas.grounding import (
     GroundedProduct,
     SearchExecutionGrounding,
@@ -162,6 +171,7 @@ from app.schemas.resolution import (
     _UNAVAILABILITY_REASONS,
     BundleReferenceFailureReason,
     BundleReferenceUnresolved,
+    CandidatePoolResult,
     ComparisonFailureReason,
     ComparisonUnavailable,
     DesignNeedFailureReason,
@@ -177,8 +187,15 @@ from app.schemas.resolution import (
     SimilarSearchUnavailable,
 )
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
+from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import MoreOptionsAction, SearchActionRequest
+from app.schemas.seating_solution import (
+    SeatingArrangement,
+    SeatingRequirements,
+    SeatingSolution,
+    SeatingSolutionOutcome,
+)
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
@@ -201,17 +218,28 @@ from app.services.design_revision import (
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
-from app.services.proposal_mapping import map_proposals
+from app.services.proposal_mapping import MappedProposals, map_proposals
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.relative_price import RelativePriceResolver
+from app.services.room_composition import (
+    PRIORITY_FOR_TIER,
+    chosen_keys,
+    composed_needs,
+    default_pieces,
+    next_question,
+    seating_piece,
+)
 from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
+from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
+from app.taxonomy.rooms import RoomPieces, RoomTemplate
+from app.taxonomy.seating import SeatingSemantics
 from app.taxonomy.words import customer_words_or_none
 
 logger = get_logger(__name__)
@@ -357,6 +385,18 @@ class _Primary:
 
     bundle_outcome: BundleOptimizationOutcome | None = None
     bundle_change: BundleInteractionOp | None = None
+
+    seating_solution: SeatingSolution | None = None
+    """A composed seating combination, when a seat count no single piece could
+    meet was recovered by pairing pieces (CLAUDE.md 4, 27)."""
+
+    offered_instead_of: str | None = None
+    """The seating type they asked for, when it never seats that many and the
+    cards are another type that does - shown as the best fit for them."""
+
+    room_question: RoomQuestion | None = None
+    """This turn's one question about a room being designed, when something it
+    needs is still missing (CLAUDE.md 10.1)."""
     """The room edit this turn made, for the deterministic acknowledgement.
 
     Set only when lines actually changed: an operation that asked for a state a
@@ -745,11 +785,21 @@ class CustomerTurnCoordinator:
         design_discovery: DesignDiscoveryService,
         bundle_references: BundleReferenceResolver,
         optimizer: BundleOptimizer,
+        seating_planner: SeatingSolutionPlanner,
         dimensions: DimensionSemantics,
         taxonomy: CommerceTaxonomy,
+        rooms: RoomPieces | None = None,
+        seating: SeatingSemantics | None = None,
     ) -> None:
         self._taxonomy = taxonomy
+        self._rooms = rooms
+        """The room registry: which pieces a living room or a bedroom may hold.
+        None where rooms are planned without it, as they always were."""
+        self._seating = seating
+        """Reviewed seat counts, to count a room's real seats - a chair records
+        no capacity but seats one by review (CLAUDE.md 7)."""
         self._decisions = decisions
+        self._seating_planner = seating_planner
         self._query_understanding = query_understanding
         self._composer = composer
         self._references = references
@@ -890,7 +940,9 @@ class CustomerTurnCoordinator:
             problems=problems,
         )
 
-        proposals = map_proposals(decision.state_proposal, decision.commerce_proposal)
+        proposals = self._with_room_pieces(
+            decision, map_proposals(decision.state_proposal, decision.commerce_proposal), pre_turn
+        )
         interaction = await self._apply_interaction(decision, pre_turn, turn.context)
         primary = await self._execute(decision, interaction.state, pre_turn, turn, proposals.update)
 
@@ -918,6 +970,10 @@ class CustomerTurnCoordinator:
             ),
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
+            seating_solution=primary.seating_solution,
+            room_question=primary.room_question,
+            room_seats=self._room_seats(primary.bundle_outcome),
+            offered_instead_of=primary.offered_instead_of,
         )
 
     # ── a screen-driven room edit ───────────────────────────────────────────
@@ -950,6 +1006,7 @@ class CustomerTurnCoordinator:
             selection_added=False,
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
+            room_seats=self._room_seats(primary.bundle_outcome),
         )
         logger.info(
             "bundle_action_completed",
@@ -1082,6 +1139,39 @@ class CustomerTurnCoordinator:
             new_exclusions = tuple(dict.fromkeys((*new_exclusions, outcome.product_id)))
         return await self._rerun_excluding(active, new_exclusions, working, turn.context)
 
+    async def _more_combinations(
+        self,
+        decision: CustomerAgentDecision,
+        working: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """ "Show me more" or "not the second option" with combinations on screen.
+
+        The combinations on screen are what they mean, not product cards: the
+        ones paged past, or the one turned down, are remembered and never shown
+        again, and the search runs as before so the builder offers the next
+        best. When none are left, the reply says so instead of repeating.
+        """
+        offer = working.seating_offer
+        active = pre_turn.active_search
+        if offer is None or active is None:
+            return await self._continue_search(decision, working, pre_turn, turn)
+        leaving = list(offer.shown) if decision.show_more else []
+        position = decision.combination_dismiss
+        if position is not None and 1 <= position <= len(offer.shown):
+            leaving.append(offer.shown[position - 1])
+        excluded = tuple(dict.fromkeys((*offer.excluded, *leaving)))[-MAX_EXCLUDED_COMBINATIONS:]
+        remembered = _with_offer(working, offer.model_copy(update={"excluded": excluded}))
+        logger.info(
+            "seating_combinations_paged",
+            store_id=turn.context.store_id,
+            show_more=decision.show_more,
+            dismissed=position,
+            excluded_count=len(excluded),
+        )
+        return await self._rerun_excluding(active, (), remembered, turn.context)
+
     async def _rerun_excluding(
         self,
         active: ActiveSearchState,
@@ -1185,7 +1275,9 @@ class CustomerTurnCoordinator:
             customer_defaults=pre_turn.customer_preferences.semantic_preferences,
             revision=_current_revision(pre_turn),
         )
-        return await self._run_search(composed, pre_turn, turn.context)
+        # Alternatives for one role in a room, never a combination: the room's
+        # seating was already sized to its head count.
+        return await self._run_search(composed, pre_turn, turn.context, recover_seating=False)
 
     async def _apply_swap(
         self, action: BundleSwapAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
@@ -1446,7 +1538,13 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
         proposals: AgentStateUpdate,
     ) -> _Primary:
+        working = _with_seating_answer(working, decision)
         match decision.action:
+            case AgentAction.CLARIFY if _asks_about_the_room(decision):
+                # The room's questions are the application's, asked one at a
+                # time from what is really missing (CLAUDE.md 10.1).
+                asked = await self._room_question(apply_update(working, proposals), turn)
+                return asked if asked is not None else _Primary(state=working)
             case AgentAction.ANSWER | AgentAction.CLARIFY:
                 return _Primary(state=working)
             case AgentAction.BUNDLE_REFINE:
@@ -1454,6 +1552,8 @@ class CustomerTurnCoordinator:
             case AgentAction.DESIGN_HANDOFF:
                 return await self._design_handoff(decision, working, pre_turn, turn, proposals)
             case AgentAction.SEARCH:
+                if _pages_combinations(decision, working):
+                    return await self._more_combinations(decision, working, pre_turn, turn)
                 if decision.show_more or decision.exclude_reference is not None:
                     return await self._continue_search(decision, working, pre_turn, turn)
                 if decision.reference is None:
@@ -2119,6 +2219,12 @@ class CustomerTurnCoordinator:
                 failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
             )
 
+        # A living room or a bedroom asks what it still needs first - one
+        # question per turn, each once (CLAUDE.md 10.1).
+        asked = await self._room_question(state, turn)
+        if asked is not None:
+            return asked
+
         # Everything the customer ruled in or out is resolved and verified
         # before a single lock is written, so a contradiction found late cannot
         # leave an earlier instruction half-applied (M12F 2).
@@ -2177,12 +2283,20 @@ class CustomerTurnCoordinator:
                 failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
             )
 
+        request = self._design_request(state, turn, capabilities, locks, revision.excluded)
+        budget = state.room_project.budget if state.room_project else None
+        locked = tuple(product for _, product in locks)
+        template = self._composed_template(state, request)
         try:
-            discovery = await self._design_discovery.discover(
-                self._design_request(state, turn, capabilities, locks, revision.excluded),
-                plan,
-                turn.context,
-            )
+            if template is not None:
+                plan, discovery, outcome = await self._composed_room(
+                    template, state, turn, request, plan, capabilities, locked
+                )
+            else:
+                discovery = await self._design_discovery.discover(request, plan, turn.context)
+                outcome = self._optimizer.optimize(
+                    BundleOptimizationRequest(discovery=discovery, budget=budget, locked=locked)
+                )
         except _HANDLED_SEARCH_FAILURES:
             # A catalog or index that could not be reached. Never reported as
             # the retailer having nothing suitable: that is a fact about the
@@ -2194,14 +2308,6 @@ class CustomerTurnCoordinator:
                 proposals_applied=True,
                 failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE),
             )
-
-        outcome = self._optimizer.optimize(
-            BundleOptimizationRequest(
-                discovery=discovery,
-                budget=state.room_project.budget if state.room_project else None,
-                locked=tuple(product for _, product in locks),
-            )
-        )
         committed = self._commit(state, plan, outcome)
         self._log_whole_room(turn, state, plan, discovery, outcome, committed, started)
         return _Primary(
@@ -2210,6 +2316,217 @@ class CustomerTurnCoordinator:
             proposals_applied=True,
             bundle_outcome=outcome,
         )
+
+    # ── a room of chosen pieces ─────────────────────────────────────────────
+
+    def _with_room_pieces(
+        self, decision: CustomerAgentDecision, proposals: MappedProposals, pre_turn: AgentStateV1
+    ) -> MappedProposals:
+        """The room kind checked against the registry, and the pieces they named
+        resolved to its keys. A kind or a key the registry does not hold is
+        dropped, never mapped onto a near one (CLAUDE.md 14.3)."""
+        proposal = decision.state_proposal
+        if self._rooms is None or proposal is None:
+            return proposals
+        kind = proposal.room_kind
+        if kind is not None and self._rooms.template(kind) is None:
+            logger.info("room_kind_not_in_registry")
+            kind = None
+        current = pre_turn.room_project.room_kind if pre_turn.room_project else None
+        template = self._rooms.template(kind or current)
+        pieces = (
+            chosen_keys(template, proposal.room_pieces, default=proposal.room_pieces_default)
+            if template is not None
+            else None
+        )
+        room = proposals.update.room_project
+        if room is None and pieces is None:
+            return proposals
+        updated = (room or RoomProjectUpdate()).model_copy(
+            update={"room_kind": kind, "pieces": pieces}
+        )
+        return proposals._replace(
+            update=proposals.update.model_copy(update={"room_project": updated})
+        )
+
+    async def _room_question(self, state: AgentStateV1, turn: CustomerTurnInput) -> _Primary | None:
+        """This turn's one question about the room, or `None` to build it.
+
+        Only for a room the registry knows and not yet built. The question is
+        recorded as asked with it, so it is never asked twice.
+        """
+        room = state.room_project
+        template = self._rooms.template(room.room_kind) if self._rooms and room else None
+        if room is None or template is None:
+            return None
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("room_question_capabilities_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                design_handoff=True,
+                proposals_applied=True,
+                failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
+            )
+        question = next_question(room, template, capabilities, _earlier_seat_count(state, template))
+        if question is None:
+            return None
+        logger.info(
+            "room_question_asked",
+            store_id=turn.context.store_id,
+            room_kind=template.kind,
+            question=str(question.kind),
+            offered_pieces=len(question.pieces),
+        )
+        return _Primary(
+            state=apply_update(
+                state,
+                AgentStateUpdate(room_project=RoomProjectUpdate(question_asked=question.kind)),
+            ),
+            design_handoff=True,
+            proposals_applied=True,
+            room_question=question,
+        )
+
+    def _room_seats(self, outcome: BundleOptimizationOutcome | None) -> int | None:
+        """How many the room's seating really seats, counted from its pieces.
+
+        A recorded capacity, or the reviewed count for a type that seats one.
+        `None` when there is no room, no seating, or a seating piece whose count
+        nobody established - then no seat claim is made at all.
+        """
+        if not isinstance(outcome, RoomBundle) or self._seating is None:
+            return None
+        total = 0
+        for line in outcome.lines:
+            commerce = line.product.commerce
+            if commerce.category != SEATING_CATEGORY:
+                continue
+            seats = commerce.seating_capacity or self._seating.implied_capacity(
+                commerce.subcategory
+            )
+            if seats is None:
+                return None
+            total += seats * line.quantity
+        return total or None
+
+    def _composed_template(
+        self, state: AgentStateV1, request: InteriorDesignRequest
+    ) -> RoomTemplate | None:
+        """The template a new room is built from, when it is one the registry
+        knows. A revision of an existing room keeps its own plan."""
+        room = state.room_project
+        if self._rooms is None or room is None or request.revision is not None:
+            return None
+        return self._rooms.template(room.room_kind)
+
+    async def _composed_room(
+        self,
+        template: RoomTemplate,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+        request: InteriorDesignRequest,
+        designed: InteriorDesignResult,
+        capabilities: RetailerCatalogCapabilities,
+        locked: tuple[LockedBundleProduct, ...],
+    ) -> _ComposedRoom:
+        """The room built from exactly the pieces they chose (CLAUDE.md 10.3).
+
+        Every piece but the seating is one need, searched once. The seating is
+        sized to the head count: each way the store can seat them within the
+        budget is tried with the rest of the room, and the room that keeps all
+        its seats and the most of its pieces wins - so a sofa never crowds out
+        the rug, and the rug never leaves someone standing (CLAUDE.md 27).
+        """
+        room = state.room_project
+        assert room is not None, "a composed room has a room"
+        keys = room.pieces if room.pieces is not None else default_pieces(template)
+        others = InteriorDesignResult(
+            guidance=designed.guidance,
+            needs=tuple(composed_needs(template, keys, capabilities, designed)),
+        )
+        found = await self._design_discovery.discover(request, others, turn.context)
+        seating = seating_piece(template, keys, capabilities)
+        budget = room.budget
+
+        def optimise(
+            seats: Sequence[tuple[DesignCategoryNeed, CandidatePoolResult]],
+        ) -> _ComposedRoom:
+            plan, discovery = _with_seating(others, found, seats)
+            outcome = self._optimizer.optimize(
+                BundleOptimizationRequest(discovery=discovery, budget=budget, locked=locked)
+            )
+            return plan, discovery, outcome
+
+        if seating is None:
+            return optimise(())
+
+        priority = PRIORITY_FOR_TIER[seating.tier]
+        count = room.regular_seating_count
+        arrangements: tuple[SeatingArrangement, ...] = ()
+        if count is not None:
+            arrangements = await self._seating_planner.arrangements(
+                target_seats=count,
+                budget_amount=budget.max_amount if budget else None,
+                # Only read to price a budget; without one nothing is priced.
+                currency=budget.currency if budget else "",
+                context=turn.context,
+                types=frozenset(seating.seating_types),
+                requirements=_room_seating_wishes(room),
+            )
+        if not arrangements:
+            # Nothing seats them within the budget, or no head count was
+            # given: one piece of the main type, which the reply then names
+            # as missing, or as the one sofa it chose (CLAUDE.md 10.3).
+            need = DesignCategoryNeed(
+                commerce_category=seating.commerce_category,
+                commerce_subcategory=seating.seating_types[0],
+                priority=priority,
+                seating_capacity=(
+                    SeatingCapacityConstraint(min_capacity=count) if count is not None else None
+                ),
+            )
+            pool = await self._design_discovery.discover(
+                request, InteriorDesignResult(needs=(need,)), turn.context
+            )
+            entry = pool.needs[0] if pool.needs else None
+            return optimise(
+                ((need, entry.pool),) if entry is not None and entry.pool is not None else ()
+            )
+
+        pools: dict[int, CandidatePoolResult] = {}
+        best: tuple[tuple[int, ...], _ComposedRoom] | None = None
+        for position, arrangement in enumerate(arrangements):
+            seats: list[tuple[DesignCategoryNeed, CandidatePoolResult]] = []
+            for line in arrangement.lines:
+                if line.product_id not in pools:
+                    pools[line.product_id] = await self._pipeline.execute_forced_pool(
+                        line.product_id, turn.context
+                    )
+                seats.append(
+                    (
+                        DesignCategoryNeed(
+                            commerce_category=seating.commerce_category,
+                            commerce_subcategory=line.commerce_subcategory,
+                            priority=priority,
+                            quantity=line.quantity,
+                            # Its alternatives seat the same number, so a swap
+                            # keeps the room's head count (a one-seat type
+                            # carries no filter: discovery drops it).
+                            seating_capacity=SeatingCapacityConstraint(
+                                min_capacity=line.seats_each, max_capacity=line.seats_each
+                            ),
+                        ),
+                        pools[line.product_id],
+                    )
+                )
+            tried = optimise(seats)
+            score = (*_room_shortfall(tried[2], len(seats)), position)
+            if best is None or score < best[0]:
+                best = (score, tried)
+        assert best is not None
+        return best[1]
 
     async def _design_advice(
         self,
@@ -2452,7 +2769,9 @@ class CustomerTurnCoordinator:
                 ),
                 resolved=resolved,
             )
-            attempt = await self._run_search(composed, state, turn.context)
+            attempt = await self._run_search(
+                composed, state, turn.context, recover_seating=False
+            )
             if attempt.failure is not None:
                 # The catalog, not the idea. Trying the next role would issue
                 # another query against something that just failed.
@@ -2967,6 +3286,128 @@ class CustomerTurnCoordinator:
         )
         return await self._run_search(composed, working, turn.context, save_sizes=True)
 
+    async def _maybe_compose_seating(
+        self,
+        resolved: ResolvedSearch,
+        primary: _Primary,
+        context: RetailerContext,
+    ) -> _Primary:
+        """When a seat count no single piece can meet leaves a search empty,
+        offer combinations instead of a dead end (CLAUDE.md 27).
+
+        Only a zero-result seating search with a stated minimum seat count
+        qualifies; the customer's exact request always ran first. The first
+        time for a seat count, when there is a real choice of shape or their
+        colour is unknown, the customer is asked which shape they would like -
+        only shapes that exist, each with its lowest total, never a budget
+        question. Asked once: afterwards the chosen shape, or the best of each,
+        is shown.
+
+        Recovery attaches only for outcomes there is something to say about.
+        A single piece that in fact suffices, or a store with no seating, leaves
+        the ordinary zero-result reply untouched.
+        """
+        request = resolved.request
+        if primary.search is None or primary.search.products:
+            return primary
+        if request.commerce_category != SEATING_CATEGORY or request.seating_capacity is None:
+            return primary
+        target = request.seating_capacity.min_capacity
+        if target is None:
+            return primary
+
+        if request.price is not None:
+            budget: Decimal | None = request.price.max_amount
+            currency = request.price.currency
+        else:
+            budget = None
+            store_currency = (await self._capabilities.overview(context)).currency
+            if store_currency is None:
+                # Nothing priced in one clean currency: a composed bundle could
+                # not state a trustworthy total, so leave the plain reply.
+                return primary
+            currency = store_currency
+
+        offer = primary.state.seating_offer
+        if offer is not None and offer.target_seats != target:
+            offer = None
+        requirements = _seating_requirements(resolved)
+        solution = await self._seating_planner.plan(
+            target_seats=target,
+            budget_amount=budget,
+            currency=currency,
+            context=context,
+            requirements=requirements,
+            shape=offer.chosen_shape if offer is not None else None,
+            exclude=frozenset(
+                _contents(combination) for combination in (offer.excluded if offer else ())
+            ),
+        )
+        if solution.outcome is SeatingSolutionOutcome.NONE_WITHIN_BUDGET and (
+            solution.closest_total is not None and offer is None
+        ):
+            # "The closest is about 3,700 - shall I show it?" is this seat
+            # count's one question: a yes shows the combinations, never another
+            # question first.
+            return replace(
+                primary,
+                state=_with_offer(
+                    primary.state, SeatingOfferState(target_seats=target, shape_asked=True)
+                ),
+                seating_solution=solution,
+            )
+        if solution.outcome in (
+            SeatingSolutionOutcome.NONE_WITHIN_BUDGET,
+            SeatingSolutionOutcome.NO_MORE,
+        ):
+            # Nothing new on screen: what they saw last is still what "the
+            # second option" means.
+            return replace(primary, seating_solution=solution)
+        if solution.outcome is not SeatingSolutionOutcome.BUNDLES:
+            return primary
+
+        shapes = tuple(option.shape for option in solution.options)
+        if _should_ask_shape(offer, solution, requirements):
+            asked = SeatingOfferState(target_seats=target, offered_shapes=shapes, shape_asked=True)
+            question = SeatingSolution(
+                target_seats=solution.target_seats,
+                budget_amount=solution.budget_amount,
+                currency=solution.currency,
+                outcome=SeatingSolutionOutcome.CHOOSE_SHAPE,
+                options=solution.options,
+                ask_colour=not _colour_known(requirements),
+                lifted=solution.lifted,
+            )
+            return replace(
+                primary,
+                state=_with_offer(primary.state, asked),
+                seating_solution=question,
+            )
+
+        shown = SeatingOfferState(
+            target_seats=target,
+            # Every shape ever offered: after paging, `shapes` lists only those
+            # with unseen combinations, and a chosen shape must stay offered.
+            offered_shapes=tuple(
+                dict.fromkeys((*(offer.offered_shapes if offer else ()), *shapes))
+            ),
+            shape_asked=offer.shape_asked if offer is not None else False,
+            chosen_shape=offer.chosen_shape if offer is not None else None,
+            chosen=offer.chosen if offer is not None else None,
+            excluded=offer.excluded if offer is not None else (),
+            shown=tuple(
+                OfferedCombination(
+                    shape=bundle.shape,
+                    lines=tuple(
+                        OfferedCombinationLine(product_id=line.product_id, quantity=line.quantity)
+                        for line in bundle.lines
+                    ),
+                )
+                for bundle in solution.bundles
+            ),
+        )
+        return replace(primary, state=_with_offer(primary.state, shown), seating_solution=solution)
+
     async def _similar_search_turn(
         self,
         reference: ProductReferenceSelector,
@@ -3027,6 +3468,7 @@ class CustomerTurnCoordinator:
         context: RetailerContext,
         *,
         save_sizes: bool = False,
+        recover_seating: bool = True,
     ) -> _Primary:
         """Execute, then promote and commit in one step.
 
@@ -3039,6 +3481,13 @@ class CustomerTurnCoordinator:
         for: its sizes are then saved against its product type. A room plan's
         or a similar-product search states no size of its own, and letting it
         save would erase the one the customer gave.
+
+        The seating-combination recovery lives here rather than on any one caller,
+        so a seat count no single piece can meet is answered by pairing pieces
+        whether the customer stated it fresh, refined a budget onto it, or paged
+        (CLAUDE.md 27). `recover_seating=False` opts a caller out - the cross-sell
+        suggestion loop does, because a piece we proposed that finds nothing is
+        withheld, not turned into a bundle the customer never asked for.
         """
         try:
             execution = await self._pipeline.execute(
@@ -3068,10 +3517,78 @@ class CustomerTurnCoordinator:
             ),
         )
         committed = commit_search_results(promoted, execution.presented_product_ids)
-        return _Primary(
+        primary = _Primary(
             state=remember_measurements(committed) if save_sizes else committed,
             search=execution.grounding,
         )
+        if not recover_seating:
+            return primary
+        another = await self._another_type_seats_them(composed, primary, working, context)
+        if another is not None:
+            return another
+        return await self._maybe_compose_seating(composed.resolved, primary, context)
+
+    async def _another_type_seats_them(
+        self,
+        composed: ComposedSearch,
+        primary: _Primary,
+        working: AgentStateV1,
+        context: RetailerContext,
+    ) -> _Primary | None:
+        """A seat count the type they asked for never reaches, but another main
+        type does in a single piece - "a sofa for six" where sofas stop at
+        four and sofa sets seat six or seven.
+
+        That other type is searched with everything else they asked kept, and
+        shown as the best fit for them (CLAUDE.md 27.1). Only when the asked
+        type itself cannot seat them: a purple sofa for three that found
+        nothing is a colour problem, not a reason to change the type.
+        """
+        request = composed.resolved.request
+        asked = request.commerce_subcategory
+        capacity = request.seating_capacity
+        if (
+            self._seating is None
+            or primary.search is None
+            or primary.search.products
+            or request.commerce_category != SEATING_CATEGORY
+            or asked is None
+            or capacity is None
+            or capacity.min_capacity is None
+        ):
+            return None
+        target = capacity.min_capacity
+        shelves = (await self._capabilities.overview(context)).shelves_in(SEATING_CATEGORY)
+        asked_ceiling = max(
+            (s.seating.maximum for s in shelves if s.commerce_subcategory == asked and s.seating),
+            default=None,
+        )
+        if asked_ceiling is not None and asked_ceiling >= target:
+            return None
+        others = sorted(
+            (
+                shelf
+                for shelf in shelves
+                if shelf.commerce_subcategory not in (None, asked)
+                and self._seating.is_combination_main(shelf.commerce_subcategory)
+                and shelf.seating is not None
+                and shelf.seating.maximum >= target
+            ),
+            key=lambda shelf: shelf.price_minimum,
+        )
+        for shelf in others:
+            instead = _with_subcategory(composed, shelf.commerce_subcategory)
+            found = await self._run_search(instead, working, context, recover_seating=False)
+            if found.search is not None and found.search.products:
+                logger.info(
+                    "seating_type_offered_instead",
+                    store_id=context.store_id,
+                    asked=asked,
+                    offered=shelf.commerce_subcategory,
+                    target_seats=target,
+                )
+                return replace(found, offered_instead_of=asked)
+        return None
 
     # ── refinement ──────────────────────────────────────────────────────────
 
@@ -3410,6 +3927,254 @@ class CustomerTurnCoordinator:
 
 
 # ── pure helpers ────────────────────────────────────────────────────────────
+
+
+MAX_EXCLUDED_COMBINATIONS = 60
+"""How many paged-past or turned-down combinations are remembered - the
+oldest are forgotten first, never refused."""
+
+
+def _pages_combinations(decision: CustomerAgentDecision, state: AgentStateV1) -> bool:
+    """More, or not this one, said about combinations on screen."""
+    offer = state.seating_offer
+    return (
+        offer is not None
+        and bool(offer.shown)
+        and (decision.show_more or decision.combination_dismiss is not None)
+    )
+
+
+def _contents(combination: OfferedCombination) -> tuple[tuple[int, int], ...]:
+    """A combination as its products and quantities, the builder's identity."""
+    return tuple(sorted((line.product_id, line.quantity) for line in combination.lines))
+
+
+def _should_ask_shape(
+    offer: SeatingOfferState | None,
+    solution: SeatingSolution,
+    requirements: SeatingRequirements,
+) -> bool:
+    """Ask first only once per seat count, and only when there is something
+    worth asking: a real choice of shape, or a colour nobody has mentioned."""
+    if not solution.options:
+        return False
+    if offer is not None and (offer.shape_asked or offer.chosen_shape is not None):
+        return False
+    return len(solution.options) >= 2 or not _colour_known(requirements)
+
+
+def _colour_known(requirements: SeatingRequirements) -> bool:
+    """Whether they named a colour, strictly or as a wish, or one is on record."""
+    return bool(
+        requirements.colors_any_of
+        or requirements.wished_colors
+        or AttributeFamily.COLOR in requirements.unmatchable_strict
+    )
+
+
+def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
+    """The state with this seating offer recorded - application-owned, like
+    the committed results it sits beside."""
+    return AgentStateV1(
+        customer_preferences=state.customer_preferences,
+        active_search=state.active_search,
+        product_interaction=state.product_interaction,
+        room_project=state.room_project,
+        derived_commerce=state.derived_commerce,
+        seating_offer=offer,
+    )
+
+
+def _with_seating_answer(state: AgentStateV1, decision: CustomerAgentDecision) -> AgentStateV1:
+    """Their answer to the shape question, recorded before the search runs.
+
+    Only a shape that was actually offered is taken; anything else, and "any",
+    leave the choice open - the best of every shape is then shown.
+    """
+    offer = state.seating_offer
+    if offer is not None and decision.combination_choice is not None:
+        return _with_chosen_combination(state, offer, decision.combination_choice)
+    answer = decision.seating_answer
+    if offer is None or answer is None:
+        return state
+    shape = answer.shape
+    chosen = shape if shape in offer.offered_shapes else None
+    return _with_offer(
+        state, offer.model_copy(update={"shape_asked": True, "chosen_shape": chosen})
+    )
+
+
+def _with_chosen_combination(
+    state: AgentStateV1, offer: SeatingOfferState, choice: int
+) -> AgentStateV1:
+    """The combination they chose, among the ones on screen, added to their picks.
+
+    Only a combination that was actually shown: a choice past the end changes
+    nothing, and the selection shown next says what they really have.
+    """
+    if not 1 <= choice <= len(offer.shown):
+        return state
+    chosen = offer.shown[choice - 1]
+    picks = state.product_interaction
+    selected = tuple(
+        dict.fromkeys((*picks.selected_product_ids, *(line.product_id for line in chosen.lines)))
+    )
+    interaction = ProductInteractionState.model_validate(
+        {**picks.model_dump(), "selected_product_ids": selected}
+    )
+    with_picks = AgentStateV1(
+        customer_preferences=state.customer_preferences,
+        active_search=state.active_search,
+        product_interaction=interaction,
+        room_project=state.room_project,
+        derived_commerce=state.derived_commerce,
+        seating_offer=offer.model_copy(update={"chosen": chosen}),
+    )
+    logger.info("seating_combination_chosen", choice=choice, pieces=len(chosen.lines))
+    return with_picks
+
+
+def _with_subcategory(composed: ComposedSearch, subcategory: str | None) -> ComposedSearch:
+    """The same search for another type: every other requirement kept."""
+    return composed.model_copy(
+        update={
+            "candidate": composed.candidate.model_copy(
+                update={
+                    "request": composed.candidate.request.model_copy(
+                        update={"commerce_subcategory": subcategory}
+                    )
+                }
+            ),
+            "resolved": composed.resolved.model_copy(
+                update={
+                    "request": composed.resolved.request.model_copy(
+                        update={"commerce_subcategory": subcategory}
+                    )
+                }
+            ),
+        }
+    )
+
+
+def _asks_about_the_room(decision: CustomerAgentDecision) -> bool:
+    clarification = decision.clarification
+    return (
+        clarification is not None
+        and clarification.reason is BlockingClarificationReason.MISSING_ROOM_REQUIREMENTS
+    )
+
+
+def _with_seating(
+    others: InteriorDesignResult,
+    found: DesignDiscoveryResult,
+    seats: Sequence[tuple[DesignCategoryNeed, CandidatePoolResult]],
+) -> tuple[InteriorDesignResult, DesignDiscoveryResult]:
+    """The room's plan and candidates with its seating first.
+
+    Seating leads the plan, as it leads a living room; the other pieces keep
+    their order, one position further on."""
+    entries = [
+        DesignNeedCandidates(need_index=position, need=need, pool=pool)
+        for position, (need, pool) in enumerate(seats)
+    ]
+    entries.extend(
+        entry.model_copy(update={"need_index": entry.need_index + len(seats)})
+        for entry in found.needs
+    )
+    plan = InteriorDesignResult(
+        guidance=others.guidance, needs=(*(need for need, _ in seats), *others.needs)
+    )
+    return plan, DesignDiscoveryResult(needs=tuple(entries))
+
+
+_ComposedRoom = tuple[InteriorDesignResult, DesignDiscoveryResult, BundleOptimizationOutcome]
+"""A room's plan, its candidates and the room chosen from them."""
+
+_UNBUILT = 10_000
+"""A shortfall no built room can reach, so any real room is preferred."""
+
+
+def _room_shortfall(
+    outcome: BundleOptimizationOutcome, seat_needs: int
+) -> tuple[int, int, int, int]:
+    """How far a room falls short: seats first - nobody should be left standing
+    - then essential, recommended and optional pieces, in that order."""
+    if not isinstance(outcome, RoomBundle) or outcome.status is BundleStatus.INFEASIBLE:
+        return (_UNBUILT, _UNBUILT, _UNBUILT, _UNBUILT)
+    unmet = dict.fromkeys(DesignPriority, 0)
+    seats = 0
+    for entry in outcome.unmet:
+        unmet[entry.priority] += 1
+        seats += entry.need_index < seat_needs
+    return (
+        seats,
+        unmet[DesignPriority.REQUIRED],
+        unmet[DesignPriority.RECOMMENDED],
+        unmet[DesignPriority.OPTIONAL],
+    )
+
+
+def _room_seating_wishes(room: RoomProjectState) -> SeatingRequirements:
+    """The room's colour and style leanings, as wishes each seat is ranked by -
+    never filters (CLAUDE.md 12.4)."""
+
+    def wished(family: AttributeFamily) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                p.canonical_value
+                for p in room.design_preferences
+                if p.family is family and p.canonical_value is not None
+            )
+        )
+
+    return SeatingRequirements(
+        wished_colors=wished(AttributeFamily.COLOR),
+        wished_styles=wished(AttributeFamily.STYLE),
+    )
+
+
+def _earlier_seat_count(state: AgentStateV1, template: RoomTemplate) -> int | None:
+    """A head count they gave while searching for seating earlier in the chat.
+
+    Offered for confirmation only - "is it for the nine you mentioned?" - and
+    never copied into the room unasked: a sofa search is not a statement about
+    the room (CLAUDE.md 10.1)."""
+    seating = template.seating
+    if seating is None:
+        return None
+    if state.seating_offer is not None:
+        return state.seating_offer.target_seats
+    search = state.active_search
+    if search is None or search.request.commerce_subcategory not in seating.seating_types:
+        return None
+    capacity = search.request.seating_capacity
+    return capacity.min_capacity if capacity is not None else None
+
+
+def _seating_requirements(resolved: ResolvedSearch) -> SeatingRequirements:
+    """Everything the customer asked beyond the seat count and budget, for
+    every piece of a combination to be held to (CLAUDE.md 12.4, 13)."""
+    request = resolved.request
+
+    def wished(family: AttributeFamily) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                p.canonical_value
+                for p in resolved.semantic_preferences
+                if p.family is family and p.canonical_value is not None
+            )
+        )
+
+    return SeatingRequirements(
+        colors_any_of=request.colors_any_of,
+        styles_all_of=request.styles_all_of,
+        unmatchable_strict=tuple(dict.fromkeys(a.family for a in resolved.unmatched_strict)),
+        wished_colors=wished(AttributeFamily.COLOR),
+        wished_styles=wished(AttributeFamily.STYLE),
+        asked_type=request.commerce_subcategory,
+        sized_type=request.commerce_subcategory if request.dimensions else None,
+        dimensions=request.dimensions,
+    )
 
 
 def _saved_sizes(

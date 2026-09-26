@@ -327,11 +327,48 @@ something, and apply it to related searches. The customer can clear it
 
 ## 4. "Sofa for 8 or 9 people" returns "nothing in the catalog"
 
-**Status:** Open. One-seat part done (2026-09-25): the seating registry
-(`app/taxonomy/seating_v1.yaml`) records chair types, stool and single-seater
-sofa as one seat, so they are never hidden by a seat filter, and "make them
-single seater sofas" now changes type instead of searching for a one-seat sofa
-(live 9/9). Seating bundles for large groups are still open.
+**Status:** Done on branch `feat/agent-catalog-awareness` (2026-09-26),
+reviewing and reworking a teammate's first version.
+- One-seat part (2026-09-25): chair types, stool and single-seater sofa seat
+  one and are never hidden by a seat filter.
+- Seating combinations: every real combination is worked out - two or three
+  sofas, or sofas with armchairs - holding every piece to the customer's
+  colour, style, wishes and sizes, within budget. "Beige, 8 people, under
+  5000" went from one sofa bed + 5 chairs to a beige 6-seat set + loveseat
+  (3,440), two 3-seaters + a loveseat (3,490), or the set + 2 sofa chairs.
+- The shape is asked first (with real "from" prices, colour if unknown, never
+  budget), once; the answer, "either", or ignoring it all work; "I'll take the
+  second option" saves that combination to their picks.
+- The reply never claims a colour, style or size a combination did not meet.
+- "Show more options" with combinations on screen showed the same three again
+  and called them new; now it shows the next best, never repeats, and says
+  honestly when a shape has run out (offering the other one). "I don't like
+  the second option" replaces just that one. Live: paging and not-this-one
+  6/6, 0 repeated combinations across 6 "show more" turns.
+- Only one product per kind of piece was ever used, so "9 people, dark,
+  under 5000" showed 2 combinations and then "no more" although 6 exist (12
+  dark 3-seaters). Now each layout comes in several real versions, paging
+  looks deeper each time, and all 6 are reached before "no more". Switching
+  shape ("sofas only", "armchairs instead") now works first time at any
+  point (it needed a second model call before).
+- Open: "only dark shades, remove option 3" in one message is still refused
+  (turning a combination down is accepted only on its own) - left as is by
+  the user's choice (2026-09-26).
+- Checked: unit suite 4430; each rule deliberately broken and caught; live
+  seating cases 27/27 (9 cases x 3) plus paging 6/6.
+- Done 2026-09-26 (user decisions): extra seats stay chair, lounge-chair and
+  single-seater sofa; recliner and chaise lounge stay out; a sofa bed is a
+  main piece only when asked for; "a sofa for 6" is shown the sofa set that
+  seats them, as the best fit; over budget, the reply offers the closest real
+  total ("about 3,700 - shall I show it?") and a yes shows the combinations.
+  Live 12/12 on repeat.
+- Still open:
+  - swapping one piece of a chosen combination (needs combinations and room
+    packages unified - agent-loop step);
+  - "Boucle Fabric Swivel Makeup Chair" is classified `chair`, so it can be
+    an extra seat when no colour is asked - a Django data fix;
+  - "armchairs" is often read as `lounge-chair` (1 product) instead of
+    `chair`.
 
 **Reported:** Asking for a sofa for eight or nine people returns "I don't have
 anything like this". It should suggest sofa sets, or buying two sofas
@@ -1228,7 +1265,51 @@ catalog data rather than AI judgement.
 
 ## F3. Let the customer choose the room's categories before the bundle is built
 
-**Status:** Planned
+**Status:** Built on `feat/agent-catalog-awareness` (2026-09-26), in a different
+shape from the plan below - see "What was built". Uncommitted.
+
+**What was built (agreed with the user 2026-09-26):**
+- **Rooms:** living room and bedroom, from a reviewed registry
+  (`app/taxonomy/room_pieces_v1.yaml`) rather than from the designer's plan.
+  - Tiers: essential (pre-ticked, removable), recommended (pre-ticked),
+    optional (unticked). Only stocked pieces are offered.
+  - Living room: essential sofa, center table, rug; recommended side table, TV
+    table, floor lamp, wall art.
+  - Bedroom: essential bed, nightstands x2; recommended wardrobe, rug, table
+    lamps x2, TV table, wall art; mattress optional.
+- **One question per turn, each once:** budget, pieces (chips with "Design my
+  room" and "Choose for me"), how many will sit (living room), colour. "Just
+  design it" skips the rest. Not the one-step checklist planned below: the
+  user asked for separate turns.
+- **The room is exactly the chosen pieces.** The designer adds only how each
+  piece should feel.
+- **Living-room seating sized to the head count.** A single piece, or a
+  combination, weighed together with the rest of the room within the budget.
+- **Missing pieces named, with a next step.** Fixes the reported reply "4
+  pieces covered... 1 needed piece couldn't be included... remains to be
+  resolved".
+- **Head count confirmed, not assumed.** A head count from an earlier sofa
+  search is confirmed ("is it for the 9 you mentioned?"), never reused
+  silently. Fixes the reported "I did not specify seats": a sofa search for 9
+  had silently sized the room, and the designer then planned an impossible
+  single set for 9.
+- Also: a chair need in a room never carries a seat filter, and room
+  alternatives no longer trigger a seating combination.
+
+- **Swapping one seating piece** keeps the head count: each seating piece
+  carries its seat count, so its alternatives seat the same, and the reply
+  counts real seats - "seating for all nine" only when true, and says so
+  plainly when a room falls short (2026-09-26).
+
+**Still open:**
+- **Recomposing a built room** ("make it Japandi") goes through the designer
+  as before, and does not re-apply the chosen pieces.
+- **Other room types** (dining room, office) still use the designer-planned
+  flow with the model's two opening questions.
+- **The chip picker** has only been type-checked, not viewed in a browser (the
+  browser tool was unavailable).
+
+**Original plan (kept for reference):**
 
 **Requested:** When the customer asks for a whole-room plan, show the
 categories that would go into the bundle and let them choose which to include,

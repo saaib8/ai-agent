@@ -63,6 +63,7 @@ def test_the_decision_service_is_wired_through_dependency_injection() -> None:
             "settings": settings,
             "decision_llm": object(),
             "attributes": load_catalog_attributes(),
+            "rooms": None,
         },
     )()
 

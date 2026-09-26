@@ -113,6 +113,17 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # the reply had a count and no nouns, and called a sofa and a centre
         # table "2 sofas".
         "selected_kinds",
+        # A seat count no single piece met, recovered by combining pieces. Here
+        # rather than on the grounding for the same reason as `bundle_outcome`:
+        # it carries product ids the application renders, and the grounding is
+        # kept id-free.
+        "seating_solution",
+        # The room question asked this turn, and the pieces it offers as chips.
+        "room_question",
+        # How many the room's seating really seats, counted from its pieces.
+        "room_seats",
+        # The seating type they asked for, when another type seats that many.
+        "offered_instead_of",
     }
 
 
@@ -419,6 +430,9 @@ def test_the_model_facing_enum_holds_only_its_original_vocabulary() -> None:
         # Room requests ask before they deliver, and only for what the state
         # view shows is missing - so the model can legitimately know it.
         "missing_room_requirements",
+        # A stated need ("I need seating") with one key detail missing: one
+        # question first, the search saved rather than run.
+        "detail_before_search",
     }
 
 

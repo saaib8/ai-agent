@@ -34,7 +34,7 @@ from app.services.refinement_composer import SearchRefinementComposer
 from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
-from app.taxonomy.seating import SeatingRules, load_seating_rules
+from app.taxonomy.seating import SeatingSemantics, load_seating_semantics
 
 from tests.unit.test_refinement_composer import _state
 from tests.unit.test_turn_coordinator import _coordinator, _preference, _turn
@@ -46,12 +46,12 @@ LOCKED = ConstraintStrength.LOCKED
 
 
 @pytest.fixture(scope="module")
-def seating() -> SeatingRules:
-    return load_seating_rules(taxonomy=load_taxonomy())
+def seating() -> SeatingSemantics:
+    return load_seating_semantics(taxonomy=load_taxonomy())
 
 
 @pytest.fixture(scope="module")
-def composer(seating: SeatingRules) -> SearchRefinementComposer:
+def composer(seating: SeatingSemantics) -> SearchRefinementComposer:
     taxonomy = load_taxonomy()
     return SearchRefinementComposer(
         load_catalog_attributes(), load_dimension_semantics(taxonomy=taxonomy), seating
@@ -74,7 +74,7 @@ CHEAPER = SearchRefinementDelta(
 # ── the registry ────────────────────────────────────────────────────────────
 
 
-def test_the_reviewed_file_loads_against_the_taxonomy(seating: SeatingRules) -> None:
+def test_the_reviewed_file_loads_against_the_taxonomy(seating: SeatingSemantics) -> None:
     assert seating.seats_one("single-seater-sofa")
     assert seating.seats_several("sofa")
     # Unconfirmed, so deliberately in neither list.
@@ -85,13 +85,20 @@ def test_the_reviewed_file_loads_against_the_taxonomy(seating: SeatingRules) -> 
 @pytest.mark.parametrize(
     ("content", "problem"),
     [
-        ("version: v1\none_seat: [chair]\nmulti_seat: [chair]\n", "cannot seat one and several"),
-        ("version: v1\none_seat: [not-a-type]\n", "unapproved subcategories"),
-        ("version: v1\none_seat: chair\n", "must be a list"),
-        ("version: v1\none_seat: [chair, chair]\n", "repeats a value"),
-        ("one_seat: [chair]\n", "'version'"),
+        (
+            "version: v1\nimplied_capacity: {chair: 1}\nmulti_seat: [chair]\n",
+            "cannot seat one and several",
+        ),
+        ("version: v1\nimplied_capacity: {not-a-type: 1}\n", "not an approved seating"),
+        ("version: v1\nimplied_capacity: {console: 1}\n", "not an approved seating"),
+        ("version: v1\nimplied_capacity: {chair: 1}\nmulti_seat: sofa\n", "must be a list"),
+        (
+            "version: v1\nimplied_capacity: {chair: 1}\nmulti_seat: [sofa, sofa]\n",
+            "repeats a value",
+        ),
+        ("implied_capacity: {chair: 1}\n", "'version'"),
         ("- chair\n", "top level must be a mapping"),
-        ("version: [\n", "cannot load"),
+        ("version: [\n", "not valid YAML"),
     ],
 )
 def test_a_malformed_file_stops_startup(tmp_path: Path, content: str, problem: str) -> None:
@@ -99,14 +106,14 @@ def test_a_malformed_file_stops_startup(tmp_path: Path, content: str, problem: s
     path.write_text(content)
 
     with pytest.raises(TaxonomyConfigurationError) as raised:
-        load_seating_rules(path, taxonomy=load_taxonomy())
+        load_seating_semantics(path, taxonomy=load_taxonomy())
 
     assert problem in str(raised.value.context)
 
 
 def test_a_missing_file_stops_startup(tmp_path: Path) -> None:
     with pytest.raises(TaxonomyConfigurationError):
-        load_seating_rules(tmp_path / "absent.yaml", taxonomy=load_taxonomy())
+        load_seating_semantics(tmp_path / "absent.yaml", taxonomy=load_taxonomy())
 
 
 # ── one-seat types carry no seat filter ─────────────────────────────────────
@@ -259,7 +266,7 @@ SINGLE_SEATERS = ResolvedSearch(
 )
 
 
-async def test_one_seat_sofa_is_corrected_into_a_change_of_type(seating: SeatingRules) -> None:
+async def test_one_seat_sofa_is_corrected_into_a_change_of_type(seating: SeatingSemantics) -> None:
     decisions = _Decisions(ONE_SEAT_SOFA, RETYPE)
     coordinator, parts = _coordinator(
         RETYPE, decisions=decisions, seating=seating, interpretation=SINGLE_SEATERS
@@ -280,7 +287,7 @@ async def test_one_seat_sofa_is_corrected_into_a_change_of_type(seating: Seating
     assert result.state.customer_preferences.semantic_preferences == ()
 
 
-async def test_a_second_misreading_ends_as_a_friendly_reply(seating: SeatingRules) -> None:
+async def test_a_second_misreading_ends_as_a_friendly_reply(seating: SeatingSemantics) -> None:
     decisions = _Decisions(ONE_SEAT_SOFA, ONE_SEAT_SOFA)
     coordinator, parts = _coordinator(
         RETYPE, decisions=decisions, seating=seating, interpretation=SINGLE_SEATERS

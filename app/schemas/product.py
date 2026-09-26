@@ -58,6 +58,10 @@ class EligibleProduct(BaseModel):
     the customer is drawn to first. Facts from the row, never inferred."""
 
 
+    seating_capacity: int | None = None
+    """The recorded seat count, or ``None`` when the catalog has none - never
+    filled in here. A seating combination groups a type's products by it."""
+
 
 class CommerceClassification(BaseModel):
     """Reviewed commerce classification, exactly as the catalog holds it.

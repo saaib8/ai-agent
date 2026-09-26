@@ -61,6 +61,8 @@ from app.services.numeric_guard import (
     bundle_counts,
     guidance_figures,
     screen_figures,
+    seating_counts,
+    seating_figures,
 )
 from app.services.response_validation import validate_response
 from app.services.response_view import route_response, valid_grounding_refs
@@ -265,7 +267,7 @@ class CustomerResponseGenerator:
             presented_count=view.presented_count,
             compared_count=view.compared_count,
             counts=(
-                *(bundle_counts(view.bundle) if view.bundle else ()),
+                *_view_counts(view),
                 # What each requirement set aside would find, when nothing met
                 # them all - counted by the application, so sayable.
                 *(option.eligible_count for option in view.would_find_without),
@@ -275,6 +277,15 @@ class CustomerResponseGenerator:
             # refuses anything that had to be computed (CLAUDE.md 14).
             figures=(
                 *screen_figures(view.screen),
+                # The lowest real total of each shape a seating question offers.
+                *(seating_figures(view.seating) if view.seating else ()),
+                # The lowest real total that would fill a piece the budget
+                # could not reach - the next step a partial room offers.
+                *(
+                    piece.cheapest_price
+                    for piece in (view.bundle.missing_pieces if view.bundle else ())
+                    if piece.cheapest_price is not None
+                ),
                 # The nearest real price to a budget nothing met.
                 *(o.nearest_price for o in view.would_find_without if o.nearest_price is not None),
                 # Rules of thumb the specialist supplied as structured
@@ -438,11 +449,42 @@ class CustomerResponseGenerator:
         )
 
 
+def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
+    """The counts this outcome licenses in prose, from whichever shape carries them.
+
+    A whole room and a seating combination each have their own count set, listed
+    field by field rather than swept from the view, so a numeric field added
+    later cannot silently widen what the model may assert. A view carries at
+    most one of the two.
+    """
+    if view.bundle is not None:
+        return bundle_counts(view.bundle)
+    if view.seating is not None:
+        return seating_counts(view.seating)
+    if view.room_question is not None:
+        question = view.room_question
+        return tuple(
+            n
+            for n in (
+                question.earlier_seat_count,
+                question.pieces_offered,
+                question.pieces_preselected,
+            )
+            if n
+        )
+    return ()
+
+
 def _reply(message: str) -> CustomerResponse:
     """An application-written reply: no citations, no optional question."""
     return CustomerResponse(message=message)
 
 
 def _fallback(view: ResponseGroundingView) -> str:
-    """This outcome's fixed sentence, bundle status included where it has one."""
-    return fallback_for(view.kind, view.bundle.status if view.bundle else None)
+    """This outcome's fixed sentence, with the status or outcome it needs."""
+    return fallback_for(
+        view.kind,
+        view.bundle.status if view.bundle else None,
+        view.seating.outcome if view.seating else None,
+        view.room_question.question if view.room_question else None,
+    )

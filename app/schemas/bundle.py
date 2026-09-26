@@ -103,6 +103,16 @@ class UnmetNeed(BaseModel):
 
     reason: UnmetReason
 
+    commerce_category: str | None = None
+    commerce_subcategory: str | None = None
+    """Which piece is missing, from the verified plan - so the reply can name
+    it ("the rug") instead of counting it ("1 needed piece")."""
+
+    cheapest_price: Decimal | None = Field(default=None, ge=0)
+    """The lowest total that would fill it, when the budget was what stopped
+    it - a real catalog price times the quantity, so the reply can offer a
+    concrete next step. None for any other reason."""
+
 
 class BundleLine(BaseModel):
     """One product in the room, and how many of it.

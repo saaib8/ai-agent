@@ -57,6 +57,7 @@ from app.schemas.response import (
     ResponseOutcomeKind,
 )
 from app.schemas.retailer import RetailerContext
+from app.schemas.seating_solution import SeatingSolution, SeatingSolutionOutcome
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.grounding_builder import to_grounded_product
 from app.services.refinement_composer import SearchRefinementComposer
@@ -284,6 +285,19 @@ class FakeOptimizer:
         return self.outcome
 
 
+class FakeSeatingPlanner:
+    """Composes nothing, so the seating-recovery hook is a no-op on this seam."""
+
+    async def plan(
+        self, *, target_seats: int, budget_amount: Any, currency: str, context: Any
+    ) -> SeatingSolution:
+        return SeatingSolution(
+            target_seats=target_seats,
+            currency=currency,
+            outcome=SeatingSolutionOutcome.NO_SEATING,
+        )
+
+
 def _coordinator(
     decision: CustomerAgentDecision,
     *,
@@ -312,6 +326,7 @@ def _coordinator(
         FakeDesignDiscovery(),  # type: ignore[arg-type]
         BundleReferenceResolver(taxonomy),
         FakeOptimizer(),  # type: ignore[arg-type]
+        FakeSeatingPlanner(),  # type: ignore[arg-type]
         dimensions,
         taxonomy,
     )

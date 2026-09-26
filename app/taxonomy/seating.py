@@ -1,77 +1,203 @@
-"""Which product types seat one person by nature, and which seat several.
+"""How many people a seating type seats by its nature, as reviewed domain data.
 
-Loaded and validated at startup like the other registries: every value must be
-an approved subcategory, and no type may be in both lists. Nothing here reads
-a product row - it describes the vocabulary, not the catalog.
+A chair or a single-seater sofa seats one person by definition, but the catalog
+records that as ``NULL`` rather than ``1``; a sofa, a set, a sectional or a sofa
+bed always seats two or more. This is where those reviewed facts live -
+versioned, cross-validated against the commerce taxonomy, never guessed in code
+or by a model (CLAUDE.md 6.2, 31).
+
+It answers three questions:
+
+* when a product of a type has no recorded seat count, how many does a reviewer
+  say it seats? (a combination fills a seat with it)
+* does the type seat exactly one? (it never carries a seat filter)
+* does it always seat several? ("one seat" of it is a misreading)
+
+A type the review has not settled - ``recliner``, where some seat 2-3 - is in
+neither list, and absence means unknown, never one. The loader mirrors the
+dimension-semantics registry: read the versioned file, validate its shape, and
+reject any type that is not an approved *seating* subcategory.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import yaml
-from pydantic import BaseModel, ConfigDict
 
 from app.core.exceptions import TaxonomyConfigurationError
 from app.taxonomy.registry import CommerceTaxonomy
 
 DEFAULT_SEATING_PATH: Final[Path] = Path(__file__).parent / "seating_v1.yaml"
 
+SEATING_CATEGORY: Final[str] = "seating"
+"""Implied seat counts are only meaningful for seating. Every entry is validated
+as an approved *seating* subcategory, so a table type can never acquire one."""
 
-class SeatingRules(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    version: str
-    one_seat: frozenset[str] = frozenset()
-    multi_seat: frozenset[str] = frozenset()
+class SeatingSemantics:
+    """Reviewed seat facts, keyed by approved seating subcategory."""
+
+    def __init__(
+        self,
+        version: str,
+        implied: Mapping[str, int],
+        multi_seat: frozenset[str] = frozenset(),
+        combination_extras: frozenset[str] = frozenset(),
+        combination_main: frozenset[str] | None = None,
+    ) -> None:
+        self._version = version
+        self._implied = dict(implied)
+        self._multi_seat = multi_seat
+        self._combination_extras = combination_extras
+        self._combination_main = multi_seat if combination_main is None else combination_main
+
+    @property
+    def version(self) -> str:
+        return self._version
+
+    def implied_capacity(self, subcategory: str | None) -> int | None:
+        """The reviewed seat count for a piece of this type when the catalog
+        records none, or ``None`` when no review has settled one.
+
+        Never a fallback for a *missing* subcategory and never applied over a
+        recorded count: it is the reviewed floor for a type whose catalog rows
+        are blank, and nothing more.
+        """
+        if subcategory is None:
+            return None
+        return self._implied.get(subcategory)
 
     def seats_one(self, subcategory: str | None) -> bool:
-        return subcategory is not None and subcategory in self.one_seat
+        """Every product of this type seats exactly one person."""
+        return self.implied_capacity(subcategory) == 1
 
     def seats_several(self, subcategory: str | None) -> bool:
-        return subcategory is not None and subcategory in self.multi_seat
+        """Every product of this type seats two or more."""
+        return subcategory is not None and subcategory in self._multi_seat
+
+    def is_combination_main(self, subcategory: str | None) -> bool:
+        """A multi-seat type a combination may be built around unasked. Any
+        other multi-seat type only when the customer asked for that type."""
+        return subcategory is not None and subcategory in self._combination_main
+
+    def is_combination_extra(self, subcategory: str | None) -> bool:
+        """A one-seat type that may add seats to a seating combination."""
+        return subcategory is not None and subcategory in self._combination_extras
+
+    def __repr__(self) -> str:
+        return (
+            f"SeatingSemantics(version={self._version!r}, implied={len(self._implied)}, "
+            f"multi_seat={len(self._multi_seat)})"
+        )
 
 
-def load_seating_rules(
+def load_seating_semantics(
     path: Path | None = None, taxonomy: CommerceTaxonomy | None = None
-) -> SeatingRules:
-    """Load and validate the registry. Raises on anything malformed."""
-    source_path = path or DEFAULT_SEATING_PATH
+) -> SeatingSemantics:
+    """Load and validate the seating registry. Raises on anything malformed.
+
+    When a ``taxonomy`` is given, every entry must be an approved seating
+    subcategory - the same cross-check the dimension-semantics registry applies,
+    so this file cannot drift from the vocabulary.
+    """
+    source = path or DEFAULT_SEATING_PATH
     try:
-        document = yaml.safe_load(source_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
+        text = source.read_text(encoding="utf-8")
+    except OSError as exc:
         raise TaxonomyConfigurationError(
-            detail=f"cannot load seating rules at {source_path.name}: {type(exc).__name__}"
+            detail=f"cannot read seating semantics at {source}: {type(exc).__name__}"
+        ) from exc
+    try:
+        document: Any = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name} is not valid YAML: {type(exc).__name__}"
         ) from exc
     if not isinstance(document, dict):
-        raise TaxonomyConfigurationError(detail=f"{source_path.name}: top level must be a mapping")
+        raise TaxonomyConfigurationError(detail=f"{source.name}: top level must be a mapping")
+
     version = document.get("version")
     if not isinstance(version, str) or not version:
         raise TaxonomyConfigurationError(
-            detail=f"{source_path.name}: 'version' must be a non-empty string"
+            detail=f"{source.name}: 'version' must be a non-empty string"
         )
 
-    lists: dict[str, frozenset[str]] = {}
-    for key in ("one_seat", "multi_seat"):
-        raw = document.get(key, [])
-        if not isinstance(raw, list) or not all(isinstance(v, str) and v for v in raw):
-            raise TaxonomyConfigurationError(
-                detail=f"{source_path.name}: '{key}' must be a list of subcategories"
-            )
-        if len(raw) != len(set(raw)):
-            raise TaxonomyConfigurationError(detail=f"{source_path.name}: '{key}' repeats a value")
-        if taxonomy is not None:
-            unknown = sorted(v for v in raw if not taxonomy.is_subcategory(v))
-            if unknown:
-                raise TaxonomyConfigurationError(
-                    detail=f"{source_path.name}: '{key}' names unapproved subcategories {unknown}"
-                )
-        lists[key] = frozenset(raw)
-
-    both = sorted(lists["one_seat"] & lists["multi_seat"])
-    if both:
+    implied = _implied_capacity(document.get("implied_capacity"), source, taxonomy)
+    multi_seat = _type_list(document.get("multi_seat", []), "multi_seat", source, taxonomy)
+    extras = _type_list(
+        document.get("combination_extras", []), "combination_extras", source, taxonomy
+    )
+    main = (
+        _type_list(document["combination_main"], "combination_main", source, taxonomy)
+        if "combination_main" in document
+        else None
+    )
+    not_one_seat = sorted(t for t in extras if implied.get(t) != 1)
+    if not_one_seat:
         raise TaxonomyConfigurationError(
-            detail=f"{source_path.name}: {both} cannot seat one and several"
+            detail=f"{source.name}: combination extras {not_one_seat} must each seat one"
         )
-    return SeatingRules(version=version, one_seat=lists["one_seat"], multi_seat=lists["multi_seat"])
+
+    one_seat_and_several = sorted(t for t in multi_seat if implied.get(t) == 1)
+    if one_seat_and_several:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: {one_seat_and_several} cannot seat one and several"
+        )
+    if main is not None and not main <= multi_seat:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: combination_main {sorted(main - multi_seat)} must seat several"
+        )
+    return SeatingSemantics(
+        version=version,
+        implied=implied,
+        multi_seat=multi_seat,
+        combination_extras=extras,
+        combination_main=main,
+    )
+
+
+def _implied_capacity(
+    raw: Any, source: Path, taxonomy: CommerceTaxonomy | None
+) -> dict[str, int]:
+    if not isinstance(raw, dict) or not raw:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: 'implied_capacity' must be a non-empty mapping"
+        )
+    implied: dict[str, int] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: each seating type must be a non-empty string"
+            )
+        # `bool` is an `int` subclass; a stray `true` must not read as 1.
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: implied capacity for {key!r} must be a positive integer"
+            )
+        _require_seating(key, source, taxonomy)
+        implied[key] = value
+    return implied
+
+
+def _type_list(
+    raw: Any, key: str, source: Path, taxonomy: CommerceTaxonomy | None
+) -> frozenset[str]:
+    if not isinstance(raw, list) or not all(isinstance(v, str) and v for v in raw):
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: '{key}' must be a list of subcategories"
+        )
+    if len(raw) != len(set(raw)):
+        raise TaxonomyConfigurationError(detail=f"{source.name}: '{key}' repeats a value")
+    for value in raw:
+        _require_seating(value, source, taxonomy)
+    return frozenset(raw)
+
+
+def _require_seating(subcategory: str, source: Path, taxonomy: CommerceTaxonomy | None) -> None:
+    if taxonomy is not None and not taxonomy.is_pair(SEATING_CATEGORY, subcategory):
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: {subcategory!r} is not an approved seating subcategory"
+        )

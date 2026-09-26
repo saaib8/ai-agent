@@ -339,6 +339,10 @@ until confirmed.
 - A one-seat type carries no seat filter: the catalog records no capacity for
   them, so a filter could only ever hide them all. This is the one place a
   missing capacity is not "unverified" (13.5) - the type itself answers it.
+- Combinations (27.1) use the reviewed `combination_main` types (sofa,
+  sectional, sofa set) as main pieces - a sofa bed only when the customer asked
+  for sofa beds - and the reviewed `combination_extras` (chair, lounge chair,
+  single-seater sofa) as extra seats.
 - A seat count of one on a multi-seat type, set in a turn, is a misreading: the
   composition is refused and the decision is corrected once to change product
   type ("make them single seaters").
@@ -438,33 +442,99 @@ Do not force the customer to pick every category one-by-one before seeing value.
 
 Default UX behavior:
 
-1. ask at most two opening questions, once
+1. ask what the room still needs, one question per turn, each once (10.1)
 2. propose a coherent complete bundle
 3. let the customer iteratively refine it
 
-### 10.1 The two opening questions
+### 10.1 The room questions
 
 A whole room is the only place this service asks before delivering. A single
 product search proceeds on almost nothing - "show me sofas" is answerable - but
 a room commits the customer to a set of pieces and a total, and one built
 around a guessed budget is a room they cannot buy.
 
-**Budget is asked for first** when it is not already known, because it
-constrains every other choice.
+**Rooms the registry knows - a living room, a bedroom - are asked about by the
+application, one question per turn**, in this order, skipping anything already
+on record:
 
-When the budget *is* known, ask instead for whichever single fact would most
-change the room: its size, the look they want, or - for a living room - how
-many people the seating is for.
+1. **budget** - it constrains every other choice;
+2. **pieces** - which pieces they want, shown as chips (10.3);
+3. **how many people will sit** - living room only;
+4. **colour** - the colours they are drawn to.
 
-Only ask for what is genuinely missing. The agent's state view already carries
-the budget, the room measurements, the room type and the style preferences on
-record; asking again for something already said is the annoyance this rule
-exists to avoid.
+The decision model never writes these questions: it hands off `whole_room`
+with the `room_kind` and records each answer (`room_budget`, `room_pieces` or
+`room_pieces_default`, `regular_seating_count`, `design_preferences`). A room
+question the model writes anyway (`missing_room_requirements`) is replaced by
+the application's own.
 
-**At most two questions, asked together, once.** If the customer answers
-partly, declines, or says to get on with it, build the room from what is known.
-Everything after the first room is refinement, never a second round of
-questions.
+**Each question is asked at most once** (`questions_asked` in session state).
+If they answer partly, ignore it, or say to get on with it ("just design it":
+`room_skip_questions`), the room is built from what is known - the usual
+pieces, one sofa when no head count was given. Everything after the first room
+is refinement, never another round of questions.
+
+**A head count is never carried in silently.** A number they gave while
+searching for seating ("a sofa for 9") is offered in the seats question for
+them to confirm - "is it for the 9 you mentioned?" - and is only recorded for
+the room when they say so.
+
+Any other room (a dining room, a home office) is asked about by the decision
+model as before: budget first, at most two questions, together, once.
+
+### 10.2 When the agent asks
+
+At most one question per reply, and never budget as an opener: asking it first
+anchors the price down and reads as "can you afford this?".
+
+- **An explicit ask to see** ("show me sofas") shows products first. The one
+  optional follow-up is, in order: how many people will sit, for multi-seat
+  seating (sofas, sets, sectionals) while unknown; otherwise the colour or
+  style taste, while neither is on record - the designer's one question.
+  Nothing when the key facts are given ("beige 3-seaters").
+- **A stated need** ("I need a sofa for the living room") asks that one
+  question first (`detail_before_search`). The decision restates the whole
+  request on the next turn, so the answer searches.
+- **A seat count no single piece meets** asks first which shape - separate
+  sofas together, or a sofa with armchairs - offering only shapes that really
+  exist, each "from" its real lowest total, plus the colour if none is known.
+  Asked once per seat count; answered, ignored or declined, it is never asked
+  again (section 27.1).
+- **A whole room** asks budget first, then its pieces, head count and colour,
+  one per turn (10.1): the optimiser needs the total.
+- **Budget otherwise** only once they are engaged: comparing, having picked
+  something, talking price without a figure, or refining a wide price range.
+
+### 10.3 A room is built from the pieces they chose
+
+Which pieces a room may hold is reviewed domain data
+(`app/taxonomy/room_pieces_v1.yaml`, loaded and validated at startup), in three
+tiers:
+
+- **essential** - starts selected; the customer may still remove it
+- **recommended** - starts selected
+- **optional** - offered, not selected
+
+"Choose for me" (or no answer) is every essential and recommended piece. Only
+pieces the store stocks are offered as chips (live capabilities, 9.1).
+
+The room is exactly the chosen pieces: one need per piece, at its tier's
+priority (essential -> required, recommended -> recommended, optional ->
+optional), so a short budget gives up optional pieces first and essential ones
+last. The design specialist is still consulted, but only for how each piece
+should feel; it cannot add or drop a piece.
+
+**Living-room seating is sized to the head count.** The "Sofa" chip is built
+from sofas, sectionals, sofa sets, single-seaters and chairs: one piece when one
+seats everyone, otherwise a combination (27.1). Each way the store can seat
+them within the budget is tried together with the rest of the room, and the
+room that keeps every seat and the most of its pieces wins - so the sofa never
+crowds out the rug, and the rug never leaves someone standing.
+
+**A missing piece is named, never counted.** The reply says which piece is
+missing and why - not stocked, or not within the budget alongside the rest,
+with the lowest real price that would fill it - and offers one concrete next
+step. "1 needed piece couldn't be included" is a defect.
 
 Track per-item state such as:
 
@@ -1779,6 +1849,64 @@ A set of individually best products is not automatically the best bundle.
 When the user rejects/replaces an item, preserve accepted/locked items and re-optimize only what is allowed to change.
 
 ---
+
+### 27.1 Seating combinations
+
+When a seat count no single piece meets leaves a search empty ("a sofa for
+8"), the combination planner (`app/services/seating_solution.py`) works out
+every combination the store can really build: two or three multi-seat pieces,
+or one or two with up to three extra seats of one kind. Seats add to the
+target exactly (one spare only if nothing is exact), and the total is within
+budget - both summed in code.
+
+- Types come from reviewed data (`app/taxonomy/seating_v1.yaml`): the
+  multi-seat types a combination is built around, and the one-seat types
+  allowed as extra seats in a living space. A product with no recorded seat
+  count never fills a seat.
+- Every piece goes through Product Discovery and is held to the rest of the
+  request: strict colour and style filter it (lifted only if no combination
+  meets them, and then said plainly), wishes rank it, and sizes measure only
+  the type they were given for.
+- Each kind of piece (a type at one seat count) may be filled by several real
+  products - the best few matches to their wishes, plus the cheapest - so one
+  layout comes in several versions, and several pieces of one kind need not
+  match. Each "show me more" looks further down each kind, so paging reaches
+  every product that fits. The best combinations by rank are kept, never
+  merely the first found. The first page shows every shape and arrangement
+  before other versions of one already shown.
+- Ranking: fewest missed wishes, then fewer pieces, then price. Each shape
+  carries a "from" price - the lowest total among its best wish matches, so it
+  is the price of what would be shown.
+- The offer lives in the session (`seating_offer`): shapes offered, whether
+  the question was asked, the chosen shape, the combinations on screen and the
+  one they chose ("I'll take the second option" adds its products to their
+  picks).
+- "Show me more" with combinations on screen means more combinations: the ones
+  on screen are remembered (`excluded`) and never shown again, and the next
+  best follow. "Not the second option" leaves out just that one. The shape can be switched
+  at any time while combinations are on screen. When a shape
+  has nothing left the reply says so (`no_more`) and offers the shapes that
+  still have unseen combinations - it never repeats or relabels old ones.
+- The reply is told which strict requirements were lifted, how many
+  combinations their size did not limit, and how many fully match their
+  wishes - and never claims more.
+- **When nothing fits the budget**, the reply offers the closest real total -
+  the lowest combination with the budget set aside and everything else kept -
+  as a question they can say yes to ("the closest is about 3,700 - shall I show
+  it?"). That offer is the seat count's one question: a yes shows the
+  combinations at once.
+- **When the asked type never seats that many but another main type does in
+  one piece** ("a sofa for six", where sofa sets seat six), that type is
+  searched with everything else kept and presented as the best fit - never
+  opened with "none of our sofas". Only when the asked type itself cannot seat
+  them: a colour or budget problem never changes the type.
+- **In a room**, each seating piece carries its own seat count, so swapping one
+  brings back a piece that seats the same; and the reply says "seating for all
+  nine" only when the real pieces add up to it, and says plainly when they fall
+  short.
+
+This is the `build_combination` tool of the agent-loop plan; the automatic
+trigger on an empty search is a bridge until the loop decides when to call it.
 
 ## 28. Prompt Management
 

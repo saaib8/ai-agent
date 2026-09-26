@@ -45,6 +45,7 @@ from app.services.relaxation import RelaxationPlanner
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.retailer_context import RetailerContextProvider
 from app.services.search_pipeline import ProductSearchPipeline
+from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.turn_coordinator import CustomerTurnCoordinator
@@ -233,7 +234,7 @@ def customer_agent_decision_service(
             detail=("customer_agent.decision_model must be set to use the customer agent"),
             public_message="The customer agent is not configured.",
         )
-    return CustomerAgentDecisionService(client, app_resources.attributes)
+    return CustomerAgentDecisionService(client, app_resources.attributes, app_resources.rooms)
 
 
 CustomerAgentDecisionServiceDep = Annotated[
@@ -267,6 +268,7 @@ def customer_turn_coordinator(
 
     repository = ProductRepository(session)
     resolver = ProductReferenceResolver(repository, app_resources.attributes)
+    capability = catalog_capability_service(session, app_resources)
     return CustomerTurnCoordinator(
         decisions,
         query_understanding_service(
@@ -284,13 +286,21 @@ def customer_turn_coordinator(
         pipeline,
         product_hydration_service(session),
         SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
-        catalog_capability_service(session, app_resources),
+        capability,
         design,
         design_discovery_service(session, app_resources),
         BundleReferenceResolver(app_resources.taxonomy),
         BundleOptimizer(),
+        SeatingSolutionPlanner(
+            capability,
+            product_discovery_service(session, app_resources),
+            product_hydration_service(session),
+            app_resources.seating,
+        ),
         app_resources.dimensions,
         app_resources.taxonomy,
+        app_resources.rooms,
+        app_resources.seating,
     )
 
 
@@ -334,7 +344,9 @@ def catalog_capability_service(
     session: SessionDep, app_resources: ResourcesDep
 ) -> CatalogCapabilityService:
     """What the active retailer stocks. Deterministic, no configuration."""
-    return CatalogCapabilityService(ProductRepository(session), app_resources.taxonomy)
+    return CatalogCapabilityService(
+        ProductRepository(session), app_resources.taxonomy, app_resources.seating
+    )
 
 
 CatalogCapabilityServiceDep = Annotated[
@@ -354,7 +366,9 @@ def design_discovery_service(
     them.
     """
     return DesignDiscoveryService(
-        product_search_pipeline(session, app_resources), app_resources.taxonomy
+        product_search_pipeline(session, app_resources),
+        app_resources.taxonomy,
+        app_resources.seating,
     )
 
 

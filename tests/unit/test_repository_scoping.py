@@ -88,6 +88,7 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
         ProductSearchRequest(commerce_category="seating"), CONTEXT
     ),
     "supported_commerce_types": lambda repo: repo.supported_commerce_types(CONTEXT),
+    "catalog_overview": lambda repo: repo.catalog_overview(CONTEXT),
     "visual_categories": lambda repo: repo.visual_categories(CONTEXT),
     "ids_for_visual_matches": lambda repo: repo.ids_for_visual_matches(
         ["vector-1"], ["https://example.test/1"], CONTEXT

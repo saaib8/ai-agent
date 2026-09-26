@@ -48,9 +48,14 @@ export function ChatPanel({
   }, [turns, sending])
 
   const last = turns[turns.length - 1]
+  // The backend's own choices win: they are built from real options, where the
+  // derived chips are only a guess from the question's wording.
+  const backendChoices = last?.kind === 'assistant' ? last.data.presentation?.choices ?? [] : []
   const quickReplies =
     !sending && last?.kind === 'assistant'
-      ? deriveQuickReplies(last.data.response.message, last.data.response.follow_up_question)
+      ? backendChoices.length > 0 || last.data.presentation?.piece_picker
+        ? backendChoices
+        : deriveQuickReplies(last.data.response.message, last.data.response.follow_up_question)
       : []
 
   // The picker only lives on the most recent assistant turn: older product
@@ -86,6 +91,7 @@ export function ChatPanel({
                     }
                     quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
                     onQuickReply={onSend}
+                    latest={turn.id === lastAssistantId}
                   />
                 )
               if (turn.kind === 'photo')

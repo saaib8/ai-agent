@@ -60,6 +60,13 @@ from app.schemas.response import (
     ResponseOutcomeKind,
     SideEffectNotice,
 )
+from app.schemas.seating_solution import (
+    SeatingBundle,
+    SeatingBundleLine,
+    SeatingShape,
+    SeatingSolution,
+    SeatingSolutionOutcome,
+)
 from app.services.response_view import route_response, valid_grounding_refs
 from app.taxonomy.dimensions import DimensionRole, UnsupportedDimensionReason
 from pydantic import BaseModel, ValidationError
@@ -72,6 +79,7 @@ def _result(
     *,
     action: AgentAction = AgentAction.ANSWER,
     interaction: ProductInteractionIntent | None = None,
+    seating_solution: SeatingSolution | None = None,
 ) -> CustomerTurnResult:
     """A turn result around one grounding.
 
@@ -84,6 +92,7 @@ def _result(
         state=AgentStateV1(),
         decision=_decision(action, interaction),
         grounding=grounding,
+        seating_solution=seating_solution,
     )
 
 
@@ -288,6 +297,95 @@ def test_a_failed_side_effect_does_not_hide_a_successful_search() -> None:
     assert routing.kind is ResponseOutcomeKind.SEARCH_RESULTS
 
 
+def _seating_solution(
+    outcome: SeatingSolutionOutcome = SeatingSolutionOutcome.BUNDLES,
+    *,
+    target: int = 8,
+) -> SeatingSolution:
+    bundles: tuple[SeatingBundle, ...] = ()
+    if outcome is SeatingSolutionOutcome.BUNDLES:
+        bundles = (
+            SeatingBundle(
+                shape=SeatingShape.SOFA_WITH_EXTRA_SEATS,
+                lines=(
+                    SeatingBundleLine(
+                        product_id=1,
+                        name="Big Sofa",
+                        commerce_subcategory="sofa",
+                        unit_price=Decimal("3000"),
+                        quantity=1,
+                        seats_each=5,
+                        seats_are_confirmed=True,
+                        image_url="http://x/s.jpg",
+                        product_url="http://x/s",
+                    ),
+                    SeatingBundleLine(
+                        product_id=2,
+                        name="Accent Chair",
+                        commerce_subcategory="chair",
+                        unit_price=Decimal("250"),
+                        quantity=3,
+                        seats_each=1,
+                        seats_are_confirmed=False,
+                        image_url="http://x/c.jpg",
+                        product_url="http://x/c",
+                    ),
+                ),
+                total_seats=8,
+                total_price=Decimal("3750"),
+                currency="SAR",
+            ),
+        )
+    return SeatingSolution(
+        target_seats=target,
+        budget_amount=Decimal("5000"),
+        currency="SAR",
+        outcome=outcome,
+        bundles=bundles,
+    )
+
+
+def test_a_seating_solution_routes_to_a_combination() -> None:
+    """A composed combination is framed as one, with counts only - the pieces
+    and their prices are rendered by the application (CLAUDE.md 20.4)."""
+    primary = route_response(
+        _result(
+            TurnGrounding(search=_search(count=0)),
+            action=AgentAction.SEARCH,
+            seating_solution=_seating_solution(),
+        )
+    ).primary
+
+    assert isinstance(primary, ResponseGroundingView)
+    assert primary.kind is ResponseOutcomeKind.SEATING_COMBINATION
+    assert primary.seating is not None
+    assert primary.seating.outcome is SeatingSolutionOutcome.BUNDLES
+    assert primary.seating.target_seats == 8
+    assert primary.seating.bundle_count == 1
+    assert primary.seating.budget_supplied is True
+    # No product identity crosses to the model: the combination is counts only,
+    # exactly as a room is.
+    assert primary.screen.is_empty()
+
+
+def test_a_combination_outranks_the_empty_search_it_rode_beside() -> None:
+    """The seat search matched nothing; reporting it as a plain zero result
+    would throw away the combination composed in its place (CLAUDE.md 27)."""
+    primary = route_response(
+        _result(
+            TurnGrounding(search=_search(count=0)),
+            action=AgentAction.SEARCH,
+            seating_solution=_seating_solution(SeatingSolutionOutcome.NONE_WITHIN_BUDGET),
+        )
+    ).primary
+
+    assert isinstance(primary, ResponseGroundingView)
+    assert primary.kind is ResponseOutcomeKind.SEATING_COMBINATION
+    assert primary.seating is not None
+    assert primary.seating.outcome is SeatingSolutionOutcome.NONE_WITHIN_BUDGET
+    assert primary.seating.bundle_count == 0
+
+
 def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
     """A model-facing enum cannot describe a job the model never does."""
     kinds = {k.value for k in ResponseOutcomeKind}
@@ -299,6 +397,12 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         "product_detail",
         "comparison",
         "room_bundle",
+        # A seat count no single piece met, recovered by combining pieces. The
+        # model frames the combinations rather than reporting a dead end.
+        "seating_combination",
+        # One question before a room is designed - which one is the
+        # application's, only the words are the model's.
+        "room_question",
         "design_advice",
         # M17: the customer's own choices, shown again. Not a search - nothing
         # was looked for, so the reply must not describe finding anything.
@@ -1167,6 +1271,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "commerce_category",
         "commerce_subcategory",
         "exact_match_count",
+        # The seating type they asked for, in words, when the cards are another
+        # type that seats that many. A type name - no product, no figure.
+        "offered_instead_of",
         # Counts of cards in a colour/style the customer asked or wished for,
         # so a reply cannot call black tables red. Counts, never a value.
         "wished_colour_matches",
@@ -1191,6 +1298,12 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "compared_count",
         "comparison_differs_on",
         "bundle",
+        # A composed seating combination: an outcome enum, the seat target the
+        # customer named, and a count of combinations. No price, no total, no
+        # product - the same rule as `bundle`.
+        "seating",
+        # The room question to word: its kind, and counts of pieces offered.
+        "room_question",
         "guidance",
         "screen",
         "clarification_reason",

@@ -40,6 +40,7 @@ from app.schemas.discovery import DimensionConstraintKind, ProductSort
 from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.query import ConstraintStrength
 from app.schemas.screen import PresentedCardView
+from app.schemas.seating_solution import SeatingShape
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole
 
@@ -248,6 +249,14 @@ class RoomProjectView(BaseModel):
     is about to accept refers to anything. It names no product and no type.
     """
 
+    room_kind: str | None = None
+    chosen_pieces: tuple[str, ...] | None = None
+    """The piece keys they chose for the room. None until they answer."""
+
+    last_room_question: str | None = None
+    """The room question asked last turn, while the room is not yet built -
+    what their reply is most likely answering."""
+
     regular_seating_count: int | None = None
     """How many people regularly use the room, when they have said.
 
@@ -286,6 +295,23 @@ class RoomProjectView(BaseModel):
         return self
 
 
+class SeatingOfferView(BaseModel):
+    """A seat count no single piece meets, and what the customer was offered.
+
+    `pending_question` means the shape question is on screen now: their reply
+    is most likely the answer, read into `seating_answer`. Shapes only - no
+    product and no price reaches the decision model this way.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target_seats: int
+    offered_shapes: tuple[SeatingShape, ...] = ()
+    pending_question: bool = False
+    chosen_shape: SeatingShape | None = None
+    combinations_on_screen: int = 0
+
+
 class AgentStateView(BaseModel):
     """Model input only. Never persisted, never written back.
 
@@ -302,3 +328,4 @@ class AgentStateView(BaseModel):
     presented: PresentedProductsView = PresentedProductsView()
     room_project: RoomProjectView | None = None
     purchase_stage: PurchaseStage | None = None
+    seating_offer: SeatingOfferView | None = None

@@ -6,6 +6,7 @@ import { ComparisonTable } from './presentation/ComparisonTable'
 import { ProductGrid } from './presentation/ProductGrid'
 import type { SearchRefineControls } from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
+import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 
@@ -66,6 +67,8 @@ interface AssistantBubbleProps {
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: QuickReply[]
   onQuickReply?: (value: string) => void
+  /** The most recent assistant turn: only it offers interactive pickers. */
+  latest?: boolean
 }
 
 export function AssistantBubble({
@@ -76,11 +79,13 @@ export function AssistantBubble({
   refine,
   quickReplies,
   onQuickReply,
+  latest,
 }: AssistantBubbleProps) {
   const { response, presentation } = data
   const hasProducts = !!presentation?.products?.length
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
+  const seatingBundles = presentation?.seating_bundles ?? []
 
   return (
     <div className="flex animate-rise gap-3">
@@ -101,11 +106,30 @@ export function AssistantBubble({
           <QuickReplies replies={quickReplies} onPick={onQuickReply} disabled={!!busy} />
         )}
 
+        {latest && presentation?.piece_picker && onQuickReply && (
+          <PiecePicker picker={presentation.piece_picker} onSend={onQuickReply} disabled={!!busy} />
+        )}
+
         {hasProducts && (
           <ProductGrid products={presentation!.products} pick={pick} refine={refine} busy={busy} />
         )}
         {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}
         {hasRoom && <RoomBundle room={presentation!.room!} onSwapStart={onSwapStart} busy={busy} />}
+
+        {seatingBundles.length > 0 && (
+          <div className="flex flex-col gap-2.5">
+            {seatingBundles.map((bundle, index) => (
+              <RoomBundle
+                key={index}
+                room={bundle}
+                label={
+                  seatingBundles.length > 1 ? `Seating option ${index + 1}` : 'Seating combination'
+                }
+                hideStatus
+              />
+            ))}
+          </div>
+        )}
 
         <RawJson value={data} />
       </div>

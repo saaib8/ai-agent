@@ -87,7 +87,7 @@ from app.schemas.refinement import (
 )
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, UnsupportedDimensionReason
-from app.taxonomy.seating import SeatingRules
+from app.taxonomy.seating import SeatingSemantics
 
 # An unqualified requirement is a requirement (CLAUDE.md 13.1). A bound the
 # customer stated without softening it is locked, here as in M7.
@@ -151,7 +151,7 @@ class SearchRefinementComposer:
         self,
         attributes: CatalogAttributes,
         dimensions: DimensionSemantics,
-        seating: SeatingRules | None = None,
+        seating: SeatingSemantics | None = None,
     ) -> None:
         # Named apart from the `_attributes` and `_dimensions` methods below:
         # the registries are collaborators, the methods are composition steps.
