@@ -1,10 +1,23 @@
-import { useCallback, useState } from 'react'
-import type { FinderObject, GroundedProduct } from './api/types'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { RENDER_VIEWS } from './api/types'
+import type {
+  CatalogItem,
+  CatalogSelection,
+  FinderObject,
+  GroundedProduct,
+  RenderRoomSpec,
+  RenderView,
+} from './api/types'
+import { CatalogDialog } from './components/catalog/CatalogDialog'
+import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
 import { useChat } from './hooks/useChat'
 import { useConfig } from './hooks/useConfig'
 import { useHealth } from './hooks/useHealth'
+import { DEFAULT_ROOM, styleLabel } from './lib/catalog'
+import type { RoomDraft, SelectedPiece } from './lib/catalog'
+import { humanise } from './lib/format'
 
 interface SwapContext {
   bundleOrdinal: number
@@ -19,6 +32,27 @@ export default function App() {
   // A swap-in-progress: the customer tapped "Swap" on a room piece and is now
   // choosing a replacement from the alternatives on screen.
   const [swap, setSwap] = useState<SwapContext | null>(null)
+
+  // Browse Catalogue: the picks and the room outlive the dialog, so closing
+  // it to ask something in chat loses nothing.
+  const [catalogStep, setCatalogStep] = useState<CatalogStep | null>(null)
+  const [selection, setSelection] = useState<SelectedPiece[]>([])
+  const [roomDraft, setRoomDraft] = useState<RoomDraft>(DEFAULT_ROOM)
+  // Every product ever picked, so a render's pieces can be put back in the
+  // selection when the customer asks to edit it.
+  const picked = useRef(new Map<number, CatalogItem>())
+  const storeId = config.config.storeId
+
+  const changeSelection = useCallback((next: SelectedPiece[]) => {
+    next.forEach((p) => picked.current.set(p.item.product_id, p.item))
+    setSelection(next)
+  }, [])
+
+  // Products belong to one store: another store's picks mean nothing here.
+  useEffect(() => {
+    setSelection([])
+    picked.current.clear()
+  }, [storeId])
 
   const handleSend = useCallback(
     (text: string) => {
@@ -102,10 +136,69 @@ export default function App() {
     [chat, config.config],
   )
 
+  const handleVisualize = useCallback(
+    (view: RenderView, viewLabel: string) => {
+      if (chat.sending) return
+      setSwap(null)
+      void chat.visualize(view, viewLabel, config.config)
+    },
+    [chat, config.config],
+  )
+
+  const closeCatalog = useCallback(() => setCatalogStep(null), [])
+
+  const renderSelection = useCallback(
+    (selection: CatalogSelection, view: RenderView, summary: string) => {
+      if (chat.sending) return
+      setSwap(null)
+      void chat.visualizeSelection(selection, view, summary, config.config)
+    },
+    [chat, config.config],
+  )
+
+  const handleCatalogVisualize = useCallback(
+    (items: CatalogSelection['items'], room: RenderRoomSpec, view: RenderView) => {
+      const units = items.reduce((n, item) => n + item.quantity, 0)
+      const viewLabel = RENDER_VIEWS.find((v) => v.value === view)?.label ?? view
+      setCatalogStep(null)
+      renderSelection(
+        { items, room },
+        view,
+        `Visualize my selection — ${units} ${units === 1 ? 'piece' : 'pieces'} in a ` +
+          `${room.length_m} × ${room.width_m} m ${styleLabel(room.style).toLowerCase()} ` +
+          `${humanise(room.room_type)}, ${viewLabel.toLowerCase()} view`,
+      )
+    },
+    [renderSelection],
+  )
+
+  const handleRerenderSelection = useCallback(
+    (selection: CatalogSelection, view: RenderView, viewLabel: string) =>
+      renderSelection(selection, view, `Show my selection — ${viewLabel.toLowerCase()} view`),
+    [renderSelection],
+  )
+
+  const handleEditSelection = useCallback((selection: CatalogSelection, view: RenderView) => {
+    const pieces = selection.items.flatMap((item) => {
+      const known = picked.current.get(item.product_id)
+      return known ? [{ item: known, quantity: item.quantity }] : []
+    })
+    if (pieces.length) setSelection(pieces)
+    setRoomDraft({
+      roomType: selection.room.room_type,
+      style: selection.room.style,
+      length: String(selection.room.length_m),
+      width: String(selection.room.width_m),
+      view,
+    })
+    setCatalogStep('browse')
+  }, [])
+
   const handleNewSession = useCallback(() => {
     config.rotateSession()
     chat.reset()
     setSwap(null)
+    setSelection([])
   }, [config, chat])
 
   return (
@@ -121,6 +214,7 @@ export default function App() {
         <ChatPanel
           turns={chat.turns}
           sending={chat.sending}
+          activity={chat.activity}
           storeId={config.config.storeId}
           draft={draft}
           onDraftChange={setDraft}
@@ -132,8 +226,26 @@ export default function App() {
           onPickAlternative={handlePickAlternative}
           onShowMoreOptions={handleShowMoreOptions}
           onExcludeProduct={handleExcludeProduct}
+          onVisualize={handleVisualize}
+          onOpenCatalog={() => setCatalogStep('browse')}
+          onRerenderSelection={handleRerenderSelection}
+          onEditSelection={handleEditSelection}
         />
       </main>
+      {catalogStep && (
+        <CatalogDialog
+          apiBase={config.config.apiBase}
+          storeId={storeId}
+          selection={selection}
+          onSelectionChange={changeSelection}
+          room={roomDraft}
+          onRoomChange={setRoomDraft}
+          initialStep={catalogStep}
+          busy={chat.sending}
+          onClose={closeCatalog}
+          onVisualize={handleCatalogVisualize}
+        />
+      )}
     </div>
   )
 }

@@ -29,6 +29,7 @@ from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
 from app.schemas.search_action import SearchActionRequest
+from app.schemas.visualization import RoomRenderPresentation
 
 MAX_MESSAGE_CHARS = 2000
 """A message, not a transcript. Long enough for a detailed request about a
@@ -184,6 +185,8 @@ class ChatPresentation(BaseModel):
 
     comparison: ProductComparisonResult | None = None
     room: GroundedBundlePresentation | None = None
+    render: RoomRenderPresentation | None = None
+    """A picture of the room package, when this turn made one."""
 
     seating_bundles: tuple[GroundedBundlePresentation, ...] = ()
     """Composed seating combinations, when a seat count no single piece met was
@@ -214,6 +217,7 @@ class ChatPresentation(BaseModel):
             not self.products
             and self.comparison is None
             and self.room is None
+            and self.render is None
             and not self.seating_bundles
             and not self.choices
             and self.piece_picker is None

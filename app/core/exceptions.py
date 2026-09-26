@@ -125,6 +125,13 @@ class VisualSearchUnavailableError(IntegrationUnavailableError):
     public_message = "We couldn't search for that item right now. Please try again shortly."
 
 
+class RenderUnavailableError(IntegrationUnavailableError):
+    """No image model could render the room, or the render could not be stored."""
+
+    code = "render_unavailable"
+    public_message = "We couldn't create the visualisation right now. Please try again."
+
+
 # ── Furniture Finder request errors ─────────────────────────────────────────
 
 
@@ -337,3 +344,38 @@ class CatalogSchemaError(ConfigurationError):
     """The live catalog lacks a column this service requires. Fails startup."""
 
     code = "catalog_schema_error"
+
+
+class NothingToVisualizeError(ZoryError):
+    """A visualisation was asked for with no room package in the session."""
+
+    code = "nothing_to_visualize"
+    http_status = HTTPStatus.CONFLICT
+    public_message = "There's no room package to visualise yet. Ask me to furnish a room first."
+
+
+# ── Browse Catalogue ────────────────────────────────────────────────────────
+
+
+class CatalogFilterRejectedError(InvalidRequestError):
+    """A browse filter naming something outside the approved vocabulary, or a
+    search too long to be one. The raiser picks a message the screen can show."""
+
+    code = "catalog_filter_rejected"
+    public_message = "That filter isn't available. Please clear it and try again."
+
+
+class SelectionRejectedError(InvalidRequestError):
+    """A catalogue selection or room outside what a render allows: too many
+    products, too many of one, a room size or style out of bounds."""
+
+    code = "selection_rejected"
+    public_message = "That selection can't be visualised as it is."
+
+
+class SelectionUnavailableError(ZoryError):
+    """None of the picked products are in the store's live catalog any more."""
+
+    code = "selection_unavailable"
+    http_status = HTTPStatus.CONFLICT
+    public_message = "None of the products you picked are available any more. Please pick again."

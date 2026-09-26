@@ -20,10 +20,18 @@ from app.db.catalog_schema import verify_commerce_schema
 from app.integrations.detection import ModalObjectDetector
 from app.integrations.embeddings import OpenAIQueryEmbedder
 from app.integrations.finder_index import FinderIndex, PineconeFinderIndex
+from app.integrations.image_generation import (
+    FallbackImageGenerator,
+    GeminiImageGenerator,
+    ImageGenerator,
+    OpenAIImageGenerator,
+)
 from app.integrations.llm import OpenAIStructuredClient
 from app.integrations.pinecone import PineconeSemanticIndex, SemanticIndex
 from app.integrations.postgres import Database
+from app.integrations.product_images import ProductImageFetcher
 from app.integrations.redis import RedisClient
+from app.integrations.render_store import RenderStore, S3RenderStore
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
@@ -71,6 +79,10 @@ class AppResources:
     finder_vision: OpenAIStructuredClient | None = None
     finder_embedder: OpenAIQueryEmbedder | None = None
     finder_index: FinderIndex | None = None
+    # All three None when room visualisation is not configured.
+    render_generator: ImageGenerator | None = None
+    render_store: RenderStore | None = None
+    render_photos: ProductImageFetcher | None = None
 
 
 def get_resources(app: FastAPI) -> AppResources:
@@ -181,6 +193,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings.llm, model=finder.embedding_model, dimensions=finder.embedding_dimensions
         )
         finder_index = PineconeFinderIndex(finder)
+    render_generator: ImageGenerator | None = None
+    render_store: RenderStore | None = None
+    render_photos: ProductImageFetcher | None = None
+    closables: list[OpenAIImageGenerator | GeminiImageGenerator | ProductImageFetcher] = []
+    visualization = settings.visualization
+    if visualization is not None:
+        generators: dict[str, OpenAIImageGenerator | GeminiImageGenerator] = {}
+        if visualization.openai_model is not None:
+            generators["openai"] = OpenAIImageGenerator(
+                visualization, api_key=settings.llm.api_key.get_secret_value()
+            )
+        if visualization.gemini_model is not None:
+            generators["gemini"] = GeminiImageGenerator(visualization)
+        primary = generators[visualization.primary]
+        fallback = next(
+            (g for name, g in generators.items() if name != visualization.primary), None
+        )
+        render_generator = FallbackImageGenerator(primary, fallback)
+        render_store = S3RenderStore(visualization)
+        render_photos = ProductImageFetcher(
+            timeout_s=visualization.reference_timeout_s,
+            max_bytes=visualization.reference_max_bytes,
+        )
+        closables.extend([*generators.values(), render_photos])
     design_model = settings.interior_design.model
     if design_model:
         design_llm = OpenAIStructuredClient(settings.llm.model_copy(update={"model": design_model}))
@@ -202,6 +238,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         enabled=detector is not None,
         index=settings.furniture_finder.index_name if settings.furniture_finder else None,
     )
+    logger.info(
+        "visualization_configured",
+        enabled=render_generator is not None,
+        primary=visualization.primary if visualization else None,
+        fallback_configured=bool(
+            visualization and visualization.openai_model and visualization.gemini_model
+        ),
+    )
     app.state.resources = AppResources(
         settings=settings,
         database=database,
@@ -222,6 +266,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finder_vision=finder_vision,
         finder_embedder=finder_embedder,
         finder_index=finder_index,
+        render_generator=render_generator,
+        render_store=render_store,
+        render_photos=render_photos,
     )
 
     await _check_catalog_schema(database)
@@ -237,6 +284,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await finder_vision.close()
         if finder_embedder is not None:
             await finder_embedder.close()
+        for closable in closables:
+            await closable.close()
         if decision_llm is not None:
             await decision_llm.close()
         if response_llm is not None:

@@ -17,9 +17,11 @@ from typing import Any, cast
 import pytest
 from app.repositories.products import ProductRepository
 from app.repositories.stores import StoreRepository
+from app.schemas.catalog import CatalogFilter
 from app.schemas.discovery import (
     PriceConstraint,
     ProductSearchRequest,
+    ProductSort,
     SeatingCapacityConstraint,
 )
 from app.schemas.retailer import RetailerContext
@@ -93,6 +95,11 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "ids_for_visual_matches": lambda repo: repo.ids_for_visual_matches(
         ["vector-1"], ["https://example.test/1"], CONTEXT
     ),
+    "browse": lambda repo: repo.browse(
+        CatalogFilter(name_words=("sofa",), category="seating"), CONTEXT, offset=0, limit=24
+    ),
+    "count_browse": lambda repo: repo.count_browse(CatalogFilter(), CONTEXT),
+    "facet_counts": lambda repo: repo.facet_counts(CONTEXT),
 }
 
 
@@ -128,6 +135,58 @@ async def test_a_different_context_scopes_to_a_different_store() -> None:
     sql = _sql(session.statements[0])
     assert f"core_product.store_id = {OTHER_STORE_ID}" in sql
     assert f"core_product.store_id = {STORE_ID}" not in sql
+
+
+async def test_facets_scope_every_statement_they_issue() -> None:
+    session = RecordingSession()
+    await _repository(session).facet_counts(CONTEXT)
+    assert len(session.statements) == 3
+
+
+async def test_a_name_search_matches_its_words_literally() -> None:
+    """`%` and `_` are LIKE wildcards; a customer's "50%_off" must not become one."""
+    session = RecordingSession()
+    await _repository(session).browse(
+        CatalogFilter(name_words=("50%_off",)), CONTEXT, offset=0, limit=10
+    )
+    compiled = session.statements[0].compile(dialect=_PG)
+    assert "%50\\%\\_off%" in compiled.params.values(), compiled.params
+    sql = str(compiled)
+    assert "core_product.name_english ILIKE" in sql and "core_product.name_arabic ILIKE" in sql
+    assert "ESCAPE" in sql
+
+
+async def test_the_page_and_its_count_share_one_definition_of_a_match() -> None:
+    filters = CatalogFilter(
+        name_words=("grey",),
+        category="seating",
+        subcategory="sofa",
+        color="Grey",
+        style="Modern",
+        min_price=Decimal("100"),
+        max_price=Decimal("900"),
+        currency="SAR",
+    )
+    page, count = RecordingSession(), RecordingSession()
+    await _repository(page).browse(filters, CONTEXT, offset=0, limit=10)
+    await _repository(count).count_browse(filters, CONTEXT)
+    assert _where(page.statements[0]) == _where(count.statements[0])
+
+
+async def test_lead_categories_order_only_the_default_sort() -> None:
+    leads = ("seating", "tables")
+    featured, cheapest = RecordingSession(), RecordingSession()
+    await _repository(featured).browse(
+        CatalogFilter(lead_categories=leads), CONTEXT, offset=0, limit=10
+    )
+    by_price = CatalogFilter(lead_categories=leads, sort=ProductSort.PRICE_ASC)
+    await _repository(cheapest).browse(by_price, CONTEXT, offset=0, limit=10)
+    featured_sql = " ".join(_sql(featured.statements[0]).split())
+    cheapest_sql = " ".join(_sql(cheapest.statements[0]).split())
+    leading = "ORDER BY CASE WHEN (core_product.commerce_category IN ('seating', 'tables'))"
+    assert leading in featured_sql
+    assert "ORDER BY core_product.price_amount ASC" in cheapest_sql
+    assert "CASE" not in cheapest_sql
 
 
 async def test_get_by_ids_with_no_ids_issues_no_query() -> None:

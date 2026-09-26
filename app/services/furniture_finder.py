@@ -34,7 +34,6 @@ from app.core.exceptions import (
     EmbeddingUnavailableError,
     FinderImageNotFoundError,
     InvalidRequestError,
-    SessionConflictError,
     VisualSearchUnavailableError,
 )
 from app.core.logging import get_logger
@@ -54,11 +53,6 @@ from app.schemas.agent_updates import (
     SetSemanticIntent,
 )
 from app.schemas.chat import ChatPresentation, ChatResponse
-from app.schemas.conversation import (
-    ConversationContext,
-    ConversationMessage,
-    ConversationRole,
-)
 from app.schemas.furniture_finder import (
     DetectedObject,
     FinderPhoto,
@@ -76,7 +70,7 @@ from app.services.agent_state import (
     apply_update,
     commit_search_results,
 )
-from app.services.chat_runtime import LoadedSession, load_for_turn, trim_history
+from app.services.chat_runtime import LoadedSession, commit_exchange, load_for_turn
 from app.services.finder_imaging import (
     bounded_box,
     clamp_polygon,
@@ -368,40 +362,19 @@ class FinderTurnRuntime:
     ) -> int:
         """Commit the pick as an exchange, or refuse because someone else did.
 
-        The customer's side of the exchange is recorded as words, since the
-        history is language only: what they did, and what it was for. Without
-        it the next turn would see an answer about sofas to a question nobody
-        asked. What the item looked like goes with it, so "the same but in
-        grey" has something to be the same as.
+        What the customer did is recorded in words, with what the item looked
+        like, so "the same but in grey" has something to be the same as.
         """
-        said = response.message
-        if response.follow_up_question:
-            said = f"{said} {response.follow_up_question}"
-        messages = (
-            *loaded.envelope.conversation.messages,
-            ConversationMessage(
-                role=ConversationRole.USER, content=_pick_utterance(detected, description)
-            ),
-            ConversationMessage(role=ConversationRole.ASSISTANT, content=said),
-        )
-        envelope = loaded.envelope.advanced(
+        return await commit_exchange(
+            self._sessions,
+            self._settings,
+            store_id=request.store_id,
+            session_id=request.session_id,
+            loaded=loaded,
             state=state,
-            conversation=ConversationContext(
-                messages=trim_history(messages, self._settings.max_history_messages)
-            ),
+            customer_said=_pick_utterance(detected, description),
+            response=response,
         )
-        committed = await self._sessions.save_if_revision(
-            request.store_id,
-            request.session_id,
-            expected_revision=loaded.loaded_revision,
-            envelope=envelope,
-        )
-        if not committed:
-            raise SessionConflictError(
-                expected_revision=loaded.loaded_revision,
-                store_id=request.store_id,
-            )
-        return envelope.session_revision
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

@@ -300,6 +300,97 @@ class FurnitureFinderSettings(BaseModel):
         return self
 
 
+class VisualizationSettings(BaseModel):
+    """Rendering a room package as an image. Absent when not configured.
+
+    Two image models, each named here and nowhere in code (CLAUDE.md 31): the
+    primary renders, and the other - when configured - is tried once if the
+    primary fails. OpenAI uses the language-model provider's key
+    (`llm.api_key`); Gemini has its own.
+
+    Renders are stored in a bucket and served from `public_base_url`, which is
+    a public address by deliberate choice: the link is what the customer
+    downloads and shares.
+    """
+
+    primary: Literal["openai", "gemini"] = "openai"
+
+    openai_model: str | None = Field(default=None, min_length=1)
+    openai_quality: Literal["low", "medium", "high", "xhigh", "max", "auto"] = "medium"
+    openai_size: str = Field(default="1536x1024", pattern=r"^\d{3,4}x\d{3,4}$")
+
+    gemini_model: str | None = Field(default=None, min_length=1)
+    gemini_api_key: SecretStr | None = None
+    gemini_image_size: Literal["1K", "2K", "4K"] = "2K"
+    gemini_aspect_ratio: str = Field(default="3:2", pattern=r"^\d{1,2}:\d{1,2}$")
+
+    timeout_s: float = Field(default=180.0, gt=0)
+    """One render. The slowest observed was ~50 s; this bounds a stuck call."""
+
+    max_references: int = Field(default=14, ge=1, le=14)
+    """Product photos sent with one render. 14 is Gemini's ceiling, and the
+    same cap keeps the two providers' renders comparable."""
+
+    reference_timeout_s: float = Field(default=15.0, gt=0)
+    reference_max_bytes: int = Field(default=8 * 1024 * 1024, gt=0)
+
+    store_bucket: str = Field(min_length=1)
+    store_region: str = Field(min_length=1)
+    store_prefix: str = Field(min_length=1)
+    """Keeps stage and prod renders apart inside one bucket."""
+
+    public_base_url: str = Field(min_length=1, pattern=r"^https://")
+    """Where a stored render is served from, e.g. the bucket's CloudFront."""
+
+    @model_validator(mode="after")
+    def _providers_are_usable(self) -> VisualizationSettings:
+        if self.gemini_model is not None and self.gemini_api_key is None:
+            raise ValueError("visualization gemini_model requires gemini_api_key")
+        configured = {
+            "openai": self.openai_model is not None,
+            "gemini": self.gemini_model is not None,
+        }
+        if not configured[self.primary]:
+            raise ValueError(f"visualization primary provider '{self.primary}' is not configured")
+        return self
+
+
+class CatalogSettings(BaseModel):
+    """Browsing the store's catalog and rendering a room from what was picked.
+
+    Browsing reads only PostgreSQL, so it is always available. Rendering a
+    selection also needs `visualization`, and refuses without it.
+    """
+
+    page_size: int = Field(default=24, ge=1)
+    max_page_size: int = Field(default=60, ge=1)
+    max_query_chars: int = Field(default=80, ge=1)
+    """A name search is a few words; anything longer is not a search."""
+
+    max_products: int = Field(default=14, ge=1)
+    """Distinct products in one selection. Each needs a reference photo, so
+    the effective cap is never above `visualization.max_references` (see
+    `Settings.effective_catalog`)."""
+
+    max_quantity: int = Field(default=10, ge=1)
+    """Units of one product: eight dining chairs is a room, forty is a hall."""
+
+    min_room_side_m: float = Field(default=1.5, gt=0)
+    max_room_side_m: float = Field(default=20.0, gt=0)
+
+    crowded_floor_ratio: float = Field(default=0.6, gt=0, le=1)
+    """Share of the floor furniture may cover before the room reads as
+    crowded. Advisory only: the customer is warned, never stopped."""
+
+    @model_validator(mode="after")
+    def _bounds_are_ordered(self) -> CatalogSettings:
+        if self.page_size > self.max_page_size:
+            raise ValueError("catalog page_size cannot exceed max_page_size")
+        if self.min_room_side_m >= self.max_room_side_m:
+            raise ValueError("catalog min_room_side_m must be below max_room_side_m")
+        return self
+
+
 class RelaxationSettings(BaseModel):
     """Policy for broadening a search that returned too little.
 
@@ -452,6 +543,9 @@ class Settings(BaseSettings):
     # Optional for the same reason: without it the finder routes refuse and
     # everything else is unaffected.
     furniture_finder: FurnitureFinderSettings | None = None
+    # And again: without it the Visualize route refuses and nothing else changes.
+    visualization: VisualizationSettings | None = None
+    catalog: CatalogSettings = CatalogSettings()
     observability: ObservabilitySettings = ObservabilitySettings()
     aws: AwsSettings = AwsSettings()
 
@@ -483,6 +577,16 @@ class Settings(BaseSettings):
             )
         return self
 
+    def effective_catalog(self) -> CatalogSettings:
+        """Catalog settings with the selection capped at what one render can
+        take a photo of. A piece beyond it would be drawn from words alone,
+        and look it - so the cap follows `visualization.max_references`
+        rather than failing startup when only one of the two is lowered."""
+        if self.visualization is None:
+            return self.catalog
+        cap = min(self.catalog.max_products, self.visualization.max_references)
+        return self.catalog.model_copy(update={"max_products": cap})
+
     def redacted(self) -> dict[str, Any]:
         """A summary safe to emit at startup: no secret ever renders (22)."""
         return {
@@ -513,6 +617,7 @@ class Settings(BaseSettings):
             "furniture_finder_index": (
                 self.furniture_finder.index_name if self.furniture_finder else None
             ),
+            "visualization_configured": self.visualization is not None,
         }
 
 

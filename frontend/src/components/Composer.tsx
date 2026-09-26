@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
-import { ImageIcon, SendIcon } from './icons'
+import { GridIcon, ImageIcon, SendIcon } from './icons'
 
 export const PHOTO_TYPES = 'image/jpeg,image/png,image/webp'
 
@@ -11,10 +11,11 @@ interface ComposerProps {
   onChange: (value: string) => void
   onSend: () => void
   onPhoto: (file: File) => void
+  onOpenCatalog: () => void
   disabled: boolean
 }
 
-export function Composer({ value, onChange, onSend, onPhoto, disabled }: ComposerProps) {
+export function Composer({ value, onChange, onSend, onPhoto, onOpenCatalog, disabled }: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -51,6 +52,14 @@ export function Composer({ value, onChange, onSend, onPhoto, disabled }: Compose
               if (file) onPhoto(file)
             }}
           />
+          <button
+            onClick={onOpenCatalog}
+            aria-label="Browse catalogue"
+            title="Browse catalogue"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-muted shadow-card transition hover:border-clay/40 hover:text-clay focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
+          >
+            <GridIcon size={19} />
+          </button>
           <button
             onClick={() => fileRef.current?.click()}
             disabled={disabled}

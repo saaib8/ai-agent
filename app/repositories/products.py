@@ -32,6 +32,7 @@ from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.tables import core_product
+from app.schemas.catalog import CatalogFilter
 from app.schemas.dimensions import CENTIMETRES_PER_UNIT, UNIT_ALIASES, RawDimensions
 from app.schemas.discovery import (
     AxisConstraint,
@@ -172,6 +173,26 @@ def _style_tokens() -> ColumnElement[Any]:
         ),
         ARRAY(Text),
     )
+
+
+def _like_escaped(word: str) -> str:
+    """A customer's word as a LIKE pattern that matches it literally.
+
+    `%` and `_` are wildcards to LIKE; a search for "50%" must not mean
+    "anything starting 50".
+    """
+    escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+@dataclass(frozen=True, slots=True)
+class FacetCounts:
+    """Raw facet counts for a store, before the registries have a say."""
+
+    colors: tuple[tuple[str, int], ...]
+    styles: tuple[tuple[str, int], ...]
+    prices: tuple[tuple[str, Decimal, Decimal, int], ...]
+    """(currency, lowest, highest, product count), most products first."""
 
 
 def _to_product_row(row: Row[Any]) -> ProductRow:
@@ -619,6 +640,109 @@ class ProductRepository:
             if row.product_url:
                 by_url.setdefault(row.product_url, row.id)
         return by_vector, by_url
+
+    # ── Browse Catalogue ────────────────────────────────────────────────────
+
+    def _browse_clauses(
+        self, filters: CatalogFilter, context: RetailerContext
+    ) -> list[ColumnElement[bool]]:
+        """The one definition of which products a browse page may show, shared
+        by the page and its count so the two can never disagree."""
+        clauses: list[ColumnElement[bool]] = [*self._scope_clauses(context)]
+        for word in filters.name_words:
+            pattern = _like_escaped(word)
+            clauses.append(
+                core_product.c.name_english.ilike(pattern, escape="\\")
+                | core_product.c.name_arabic.ilike(pattern, escape="\\")
+            )
+        if filters.category is not None:
+            clauses.append(core_product.c.commerce_category == filters.category)
+        if filters.subcategory is not None:
+            clauses.append(core_product.c.commerce_subcategory == filters.subcategory)
+        if filters.color is not None:
+            clauses.append(core_product.c.main_color == filters.color)
+        if filters.style is not None:
+            clauses.append(_style_tokens().contains([filters.style]))
+        if filters.currency is not None:
+            clauses.append(core_product.c.price_unit == filters.currency)
+            if filters.min_price is not None:
+                clauses.append(core_product.c.price_amount >= filters.min_price)
+            if filters.max_price is not None:
+                clauses.append(core_product.c.price_amount <= filters.max_price)
+        return clauses
+
+    async def browse(
+        self,
+        filters: CatalogFilter,
+        context: RetailerContext,
+        *,
+        offset: int,
+        limit: int,
+    ) -> list[ProductRow]:
+        """One page of the store's catalog, in the requested order."""
+        order = list(_ORDER_BY[filters.sort])
+        if filters.lead_categories and filters.sort is ProductSort.DEFAULT:
+            leads = case(
+                (core_product.c.commerce_category.in_(filters.lead_categories), 0), else_=1
+            )
+            order.insert(0, leads)
+        statement = (
+            select(*_SELECTED_COLUMNS)
+            .where(*self._browse_clauses(filters, context))
+            .order_by(*order)
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self._session.execute(statement)
+        return [_to_product_row(row) for row in result]
+
+    async def count_browse(self, filters: CatalogFilter, context: RetailerContext) -> int:
+        """How many products a browse matches, across every page."""
+        statement = (
+            select(func.count())
+            .select_from(core_product)
+            .where(*self._browse_clauses(filters, context))
+        )
+        result = await self._session.execute(statement)
+        return int(result.scalar_one())
+
+    async def facet_counts(self, context: RetailerContext) -> FacetCounts:
+        """Colours, style tokens and price ranges the store's catalog holds.
+
+        Raw values, counted as stored. Which of them are approved vocabulary
+        is the registries' decision, made by the caller.
+        """
+        scope = self._scope_clauses(context)
+        colors = await self._session.execute(
+            select(core_product.c.main_color, func.count())
+            .where(*scope, core_product.c.main_color.is_not(None))
+            .group_by(core_product.c.main_color)
+            .order_by(func.count().desc(), core_product.c.main_color)
+        )
+        tokens = select(func.unnest(_style_tokens()).label("token")).where(*scope).subquery()
+        styles = await self._session.execute(
+            select(tokens.c.token, func.count())
+            .group_by(tokens.c.token)
+            .order_by(func.count().desc(), tokens.c.token)
+        )
+        prices = await self._session.execute(
+            select(
+                core_product.c.price_unit,
+                func.min(core_product.c.price_amount),
+                func.max(core_product.c.price_amount),
+                func.count(),
+            )
+            .where(*scope)
+            .group_by(core_product.c.price_unit)
+            .order_by(func.count().desc(), core_product.c.price_unit)
+        )
+        return FacetCounts(
+            colors=tuple((row[0], int(row[1])) for row in colors.all()),
+            styles=tuple((row[0], int(row[1])) for row in styles.all() if row[0]),
+            prices=tuple(
+                (row[0], row[1], row[2], int(row[3])) for row in prices.all() if row[0]
+            ),
+        )
 
     async def count_active(self, context: RetailerContext) -> int:
         """How many active products the store has. Backs health and capability checks."""
