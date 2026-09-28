@@ -312,6 +312,20 @@ class SeatingOfferView(BaseModel):
     combinations_on_screen: int = 0
 
 
+class QuestionCardView(BaseModel):
+    """A card of questions on screen for a stated need (CLAUDE.md 10.4).
+
+    What they were asked about, in customer words - never the choices, which
+    are the application's. Their reply is most likely the answers, typed
+    instead of tapped.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    looking_for: str
+    """What the card is about ("sofa"), as they would say it."""
+
+
 class AgentStateView(BaseModel):
     """Model input only. Never persisted, never written back.
 
@@ -329,3 +343,4 @@ class AgentStateView(BaseModel):
     room_project: RoomProjectView | None = None
     purchase_stage: PurchaseStage | None = None
     seating_offer: SeatingOfferView | None = None
+    question_card: QuestionCardView | None = None

@@ -9,6 +9,8 @@ import type {
   FinderPhotoResponse,
   FinderPickRequest,
   HealthResponse,
+  PicksRequest,
+  PicksResponse,
   VisualizeRequest,
 } from './types'
 
@@ -112,6 +114,15 @@ export async function postCatalogVisualize(
   body: CatalogVisualizeRequest,
 ): Promise<ChatResult> {
   return postJson<ChatResponse>(base, '/v1/catalog/visualizations', body, isChatResponse)
+}
+
+// ── Picks ────────────────────────────────────────────────────────────────────
+
+/** Tick or untick a product. Silent: no chat turn, the picks come back. */
+export async function postPicks(base: string, body: PicksRequest): Promise<Fetched<PicksResponse>> {
+  return postJson<PicksResponse>(base, '/v1/picks', body, (p) =>
+    typeof p === 'object' && p !== null && 'picks' in p,
+  )
 }
 
 // ── transport ────────────────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ session my screen was drawn from* on the next request.
 from __future__ import annotations
 
 import re
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -28,6 +28,9 @@ from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
+from app.schemas.picks import PickView
+from app.schemas.product_action import ProductActionRequest
+from app.schemas.product_brief import ProductBrief
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.visualization import RoomRenderPresentation
 
@@ -78,6 +81,15 @@ class ChatRequest(BaseModel):
     `search_action` is present on a turn.
     """
 
+    product_action: ProductActionRequest | None = None
+    """A deterministic action on the customer's picks - ask about one, compare
+    two, or show the companions a chip offered.
+
+    Like the others, no decision model is consulted: the customer tapped a
+    control, and a pick is named by its position in their picks, resolved
+    server-side (CLAUDE.md 3.6, 20.2).
+    """
+
     expected_session_revision: int | None = Field(default=None, ge=0)
     """The session revision the client's screen was rendered from.
 
@@ -114,13 +126,18 @@ class ChatRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_structured_action_at_most(self) -> Self:
-        """A turn is either a room edit or a search follow-up, never both.
+        """A turn is a room edit, a search follow-up or a picks action - one.
 
-        Each takes its own deterministic path, so a turn carrying both would
+        Each takes its own deterministic path, so a turn carrying two would
         have one silently ignored - a defect the client should hear about at
         the boundary rather than discover from surprising results.
         """
-        if self.bundle_action is not None and self.search_action is not None:
+        carried = [
+            action
+            for action in (self.bundle_action, self.search_action, self.product_action)
+            if action is not None
+        ]
+        if len(carried) > 1:
             raise ValueError("a turn carries at most one structured action")
         return self
 
@@ -136,6 +153,10 @@ class ReplyChoice(BaseModel):
 
     label: str = Field(min_length=1, max_length=80)
     value: str = Field(min_length=1, max_length=200)
+    product_action: ProductActionRequest | None = None
+    """The action tapping it performs, when it is one - "Matching rugs" runs
+    that companion search directly rather than asking a model to read `value`.
+    `value` is then the words recorded for the customer's side of the turn."""
 
 
 class PieceChoice(BaseModel):
@@ -183,6 +204,40 @@ class ChatPresentation(BaseModel):
     one" is resolved against this sequence next turn.
     """
 
+    product_source: Literal["search", "selection", "detail"] | None = None
+    """Which of those `products` is.
+
+    Only search results are the list "the second one" counts into. The
+    customer's own picks and a single product are shown as cards too, but a
+    control that acts on a position - "Not this one", a tick - would act on
+    the result list behind them, which is not what the customer is looking at.
+    A client offers those controls on search results only.
+    """
+
+    list_revision: int | None = Field(default=None, ge=1)
+    """Which result list these cards are, when they are search results.
+
+    A tick names it, so a card can still be picked after newer results have
+    replaced it - a customer shown what goes with their sofa can still tick a
+    second sofa to compare. Typed positions always mean the latest list.
+    """
+
+    best_match: bool = False
+    """The first card is the closest to what the customer described - their
+    colours, styles or chosen feel ordered the list. Only then is it labelled
+    so; a price sort or an unordered list has no best match."""
+
+    brief: ProductBrief | None = None
+    """A card of questions for a stated need: first, before anything is
+    searched, or folded beside results to narrow them (CLAUDE.md 10.4)."""
+
+    focus: GroundedProduct | None = None
+    """The pick the customer asked about, shown above what goes with it.
+
+    Drawn from the catalog like any card. It is not one of `products` and has
+    no position among them: the companions are the list on screen.
+    """
+
     comparison: ProductComparisonResult | None = None
     room: GroundedBundlePresentation | None = None
     render: RoomRenderPresentation | None = None
@@ -215,12 +270,14 @@ class ChatPresentation(BaseModel):
         """
         return (
             not self.products
+            and self.focus is None
             and self.comparison is None
             and self.room is None
             and self.render is None
             and not self.seating_bundles
             and not self.choices
             and self.piece_picker is None
+            and self.brief is None
         )
 
 
@@ -237,3 +294,12 @@ class ChatResponse(BaseModel):
 
     response: CustomerResponse
     presentation: ChatPresentation | None = None
+
+    picks: tuple[PickView, ...] | None = None
+    """The customer's picks after this turn, in the order they picked them.
+
+    The server is the source of truth for what is picked, so every chat turn
+    reports it and a client draws its tray and ticks from it. None where a
+    response does not report picks at all (a photo pick, a render), which
+    means *unchanged*, not *empty*.
+    """

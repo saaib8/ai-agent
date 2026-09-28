@@ -101,6 +101,16 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "rooms",
         # Reviewed seat counts, to count a room's real seats. Data, not a service.
         "seating",
+        # Product Q&A cross-sell: the reviewed pairings (data, reads no catalog),
+        # a pure builder that turns a pairing into a search for the ordinary
+        # pipeline (not a second search system), and how many cards to show.
+        "complements",
+        "companion_search",
+        "cross_sell_limit",
+        # The card of questions for a stated need: reviewed questions, and
+        # budget bands, colours and styles counted from the store-scoped
+        # catalog. Its answers run through the ordinary pipeline.
+        "briefs",
     ]
 
 

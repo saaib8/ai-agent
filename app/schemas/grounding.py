@@ -98,6 +98,15 @@ class TurnFailureCode(StrEnum):
     miss, so the customer rephrases rather than reading an error.
     """
 
+    QUESTIONS_EXPIRED = "questions_expired"
+    """Answers tapped on a card of questions that is no longer the one on
+    screen, or naming a choice it never offered.
+
+    Nothing is searched: reading a stale card's keys against a newer one would
+    run a search nobody asked for. Said as a way on rather than a fault - they
+    only need to say what they are after (CLAUDE.md 10.4).
+    """
+
     DESIGN_ADVICE_UNAVAILABLE = "design_advice_unavailable"
     """A design *question* went unanswered.
 

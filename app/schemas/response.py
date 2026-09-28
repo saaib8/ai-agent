@@ -51,6 +51,7 @@ from app.schemas.seating_solution import (
     SeatingSolutionOutcome,
 )
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.briefs import BriefQuestionKind
 from app.taxonomy.dimensions import DimensionRole
 
 
@@ -89,6 +90,11 @@ class ResponseOutcomeKind(StrEnum):
     ROOM_QUESTION = "room_question"
     """One question before a room is designed - its budget, its pieces (as
     chips), how many will sit, or the colours they like (CLAUDE.md 10.1)."""
+
+    PRODUCT_BRIEF = "product_brief"
+    """They stated a need, and a card of short questions is shown beneath the
+    reply before anything is searched (CLAUDE.md 10.4). The card asks; the
+    reply only introduces it."""
 
     SELECTION = "selection"
     """The customer's own choices, shown again.
@@ -339,6 +345,21 @@ class RoomQuestionGroundingView(BaseModel):
     pieces_preselected: int = Field(default=0, ge=0)
 
 
+class ProductBriefGroundingView(BaseModel):
+    """The card of questions shown beneath the reply, as the reply may know it.
+
+    What it is about and what it asks - never its choices: the card shows them,
+    and a reply that listed them would be a second copy that could disagree.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    looking_for: str = Field(min_length=1)
+    """What they need, in customer words ("sofa")."""
+
+    asks_about: tuple[BriefQuestionKind, ...] = Field(min_length=1)
+
+
 class SeatingSolutionGroundingView(BaseModel):
     """What a composed seating combination looks like to the response model.
 
@@ -506,6 +527,21 @@ class ResponseGroundingView(BaseModel):
     have failed.
     """
 
+    picked_kind: str | None = None
+    """The kind of pick they just chose - "bed" - whose card is shown above
+    the pieces that go with it.
+
+    The kind, never the product: its facts are on its card, not in the reply.
+    Without it the reply saw a customer asking about a product it had no facts
+    for, and said so - beside the card that answered them.
+    """
+
+    best_match_first: bool = False
+    """The cards are ordered by how well they match what the customer
+    described - their colours, styles, the feel they chose - so the first is
+    the closest. False when the order is a price sort, or nothing they said
+    could order it: then the first card is simply first."""
+
     selected_count: int = Field(default=0, ge=0)
     """How many products the customer has settled on, after this turn.
 
@@ -586,6 +622,11 @@ class ResponseGroundingView(BaseModel):
     room_question: RoomQuestionGroundingView | None = None
     """What to ask about the room, for `ROOM_QUESTION` and nothing else."""
 
+    brief: ProductBriefGroundingView | None = None
+    """The card of questions shown with the reply: the whole turn for
+    `PRODUCT_BRIEF`, or folded beneath results as "Narrow down" for
+    `SEARCH_RESULTS`. Either way it is the turn's only question."""
+
     guidance: tuple[DesignGuidance, ...] = ()
     """The design specialist's answer, for `DESIGN_ADVICE`.
 
@@ -642,6 +683,17 @@ class ResponseGroundingView(BaseModel):
 
         if (self.kind is ResponseOutcomeKind.ROOM_QUESTION) != (self.room_question is not None):
             raise ValueError("a room question carries its question, and only it does")
+
+        if self.kind is ResponseOutcomeKind.PRODUCT_BRIEF and self.brief is None:
+            raise ValueError("a product brief carries its card")
+        if self.brief is not None and self.kind not in (
+            ResponseOutcomeKind.PRODUCT_BRIEF,
+            ResponseOutcomeKind.SEARCH_RESULTS,
+        ):
+            raise ValueError("a card of questions is shown only first or beside results")
+
+        if self.best_match_first and self.kind is not ResponseOutcomeKind.SEARCH_RESULTS:
+            raise ValueError("only results on screen have a best match")
 
         if self.selected_kinds and len(self.selected_kinds) != self.selected_count:
             raise ValueError("every choice is one kind, so the two counts agree")

@@ -1,10 +1,12 @@
-import type { ChatResponse, RenderView } from '../api/types'
+import type { BriefAnswerAction, ChatResponse, ProductAction, RenderView } from '../api/types'
 import type { RejectedRef } from '../hooks/useChat'
 import type { QuickReply } from '../lib/quickReplies'
+import { BriefCard } from './BriefCard'
 import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
+import { FocusCard } from './presentation/FocusCard'
 import { ProductGrid } from './presentation/ProductGrid'
-import type { SearchRefineControls } from './presentation/ProductGrid'
+import type { GridSelection, SearchRefineControls } from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
 import { RoomRender } from './presentation/RoomRender'
 import { PiecePicker } from './PiecePicker'
@@ -65,9 +67,11 @@ interface AssistantBubbleProps {
   pick?: { role: string; onPick: (alternativeOrdinal: number) => void }
   /** Present only on the latest search grid: "different options" and per-card exclude. */
   refine?: SearchRefineControls
+  /** Present on the search results on screen: tick cards into the picks. */
+  selection?: GridSelection
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: QuickReply[]
-  onQuickReply?: (value: string) => void
+  onQuickReply?: (value: string, action?: ProductAction | null) => void
   /** Present on the current room package only: render it from a view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void
   /** Present while this turn's render can be drawn again from another view. */
@@ -78,6 +82,8 @@ interface AssistantBubbleProps {
   renderOutdated?: boolean
   /** The most recent assistant turn: only it offers interactive pickers. */
   latest?: boolean
+  /** Answers tapped on a card of questions, sent as a search. */
+  onBriefSubmit?: (answer: BriefAnswerAction, summary: string) => void
 }
 
 export function AssistantBubble({
@@ -86,6 +92,7 @@ export function AssistantBubble({
   onSwapStart,
   pick,
   refine,
+  selection,
   quickReplies,
   onQuickReply,
   onVisualize,
@@ -93,13 +100,26 @@ export function AssistantBubble({
   onEditSelection,
   renderOutdated = false,
   latest,
+  onBriefSubmit,
 }: AssistantBubbleProps) {
   const { response, presentation } = data
   const hasProducts = !!presentation?.products?.length
+  // Only search results are the list a tick or "Not this one" counts into.
+  // Picks shown back, or a single product, would act on the list behind them.
+  const isResultList = presentation?.product_source === 'search'
+  const focus = presentation?.focus ?? null
+  // Chips that run an action - the companions of a product - belong under the
+  // cards they extend; plain answers to a question stay beside the question.
+  const textReplies = (quickReplies ?? []).filter((r) => !r.product_action)
+  const actionReplies = (quickReplies ?? []).filter((r) => r.product_action)
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
   const render = presentation?.render ?? null
   const seatingBundles = presentation?.seating_bundles ?? []
+  const brief = presentation?.brief ?? null
+  const briefCard = brief && onBriefSubmit && (
+    <BriefCard brief={brief} active={!!latest} busy={!!busy} onSubmit={onBriefSubmit} />
+  )
 
   return (
     <div className="flex animate-rise gap-3">
@@ -116,16 +136,35 @@ export function AssistantBubble({
           </div>
         )}
 
-        {quickReplies && quickReplies.length > 0 && onQuickReply && (
-          <QuickReplies replies={quickReplies} onPick={onQuickReply} disabled={!!busy} />
+        {textReplies.length > 0 && onQuickReply && (
+          <QuickReplies replies={textReplies} onPick={onQuickReply} disabled={!!busy} />
         )}
 
         {latest && presentation?.piece_picker && onQuickReply && (
           <PiecePicker picker={presentation.piece_picker} onSend={onQuickReply} disabled={!!busy} />
         )}
 
+        {brief?.mode === 'ask' && briefCard}
+
+        {focus && <FocusCard product={focus} />}
         {hasProducts && (
-          <ProductGrid products={presentation!.products} pick={pick} refine={refine} busy={busy} />
+          <ProductGrid
+            products={presentation!.products}
+            pick={pick}
+            refine={isResultList ? refine : undefined}
+            selection={isResultList ? selection : undefined}
+            bestMatch={isResultList && !!presentation?.best_match}
+            busy={busy}
+          />
+        )}
+        {brief?.mode === 'narrow' && latest && briefCard}
+        {actionReplies.length > 0 && onQuickReply && (
+          <QuickReplies
+            replies={actionReplies}
+            onPick={onQuickReply}
+            disabled={!!busy}
+            label="Also goes with it"
+          />
         )}
         {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}
         {hasRoom && (

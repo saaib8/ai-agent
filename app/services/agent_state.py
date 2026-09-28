@@ -22,12 +22,14 @@ from collections.abc import Sequence
 
 from app.core.exceptions import InvalidRequestError
 from app.schemas.agent_state import (
+    MAX_EARLIER_LISTS,
     ActiveSearchState,
     AgentStateV1,
     BundleItemState,
     BundleItemStatus,
     CustomerPreferenceState,
     DerivedCommerceState,
+    PresentedList,
     ProductInteractionState,
     RoomDesignNeedState,
     RoomProjectState,
@@ -55,6 +57,7 @@ from app.schemas.agent_updates import (
     SetSemanticIntent,
     apply_items,
 )
+from app.schemas.product_brief import PendingBrief, ProductBriefState
 from app.schemas.query import ConstraintSemantics
 
 NO_RESULTS_REVISION = 0
@@ -76,6 +79,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         room_project=room,
         derived_commerce=commerce,
         seating_offer=state.seating_offer,
+        product_brief=state.product_brief,
     )
 
 
@@ -111,6 +115,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         product_interaction=ProductInteractionState(
             presented_product_ids=product_ids,
             presented_search_revision=revision,
+            earlier_lists=_earlier_lists(interaction, revision),
             # A focus on the *previous results* no longer refers to anything
             # the customer can see, so it goes. A focus on something they
             # **chose** does not: a choice outlives the search that surfaced
@@ -138,7 +143,53 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
+        product_brief=state.product_brief,
     )
+
+
+def record_brief(
+    state: AgentStateV1, pending: PendingBrief | None, *, shown: str | None = None
+) -> AgentStateV1:
+    """The state with a card of questions on screen - or with none, once answered.
+
+    **Application-owned**, like the committed results beside it: which card
+    was shown, and what its keys mean, is a fact about what the application
+    drew, so no update contract can set it and no model output can mark a card
+    shown or answered (CLAUDE.md 10.4).
+    """
+    current = state.product_brief
+    names = current.shown
+    if shown is not None and shown not in names:
+        names = (*names, shown)
+    return AgentStateV1(
+        customer_preferences=state.customer_preferences,
+        active_search=state.active_search,
+        product_interaction=state.product_interaction,
+        room_project=state.room_project,
+        derived_commerce=state.derived_commerce,
+        seating_offer=state.seating_offer,
+        product_brief=ProductBriefState(
+            shown=names,
+            cards=max(current.cards, pending.card) if pending is not None else current.cards,
+            pending=pending,
+        ),
+    )
+
+
+def _earlier_lists(
+    interaction: ProductInteractionState, revision: int
+) -> tuple[PresentedList, ...]:
+    """The lists that stay tickable once a new one is committed at `revision`.
+
+    The list being replaced joins them, and the oldest fall away. A list at
+    or past the new revision can only belong to a search lineage that has
+    since started again, so its numbers no longer mean anything and it goes.
+    """
+    kept = [entry for entry in interaction.earlier_lists if entry.revision < revision]
+    previous = interaction.presented_search_revision
+    if previous is not None and previous < revision and interaction.presented_product_ids:
+        kept.append(PresentedList(revision=previous, product_ids=interaction.presented_product_ids))
+    return tuple(kept[-MAX_EARLIER_LISTS:])
 
 
 def remember_measurements(state: AgentStateV1) -> AgentStateV1:
@@ -180,6 +231,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
+        product_brief=state.product_brief,
     )
 
 
@@ -247,6 +299,7 @@ def _interaction(
     return ProductInteractionState(
         presented_product_ids=current.presented_product_ids,
         presented_search_revision=current.presented_search_revision,
+        earlier_lists=current.earlier_lists,
         focused_product_id=focus,
         selected_product_ids=apply_items(current.selected_product_ids, update.selected_product_ids),
         # Replaced wholesale, never merged: a comparison is one table, and two

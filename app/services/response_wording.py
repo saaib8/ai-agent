@@ -37,6 +37,9 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "I wasn't able to put those side by side just now."
     ),
     TurnFailureCode.REFERENCE_UNRESOLVED: ("I wasn't able to work out which product you meant."),
+    TurnFailureCode.QUESTIONS_EXPIRED: (
+        "Those questions have moved on. Tell me what you're looking for and I'll find it."
+    ),
     TurnFailureCode.RESPONSE_UNAVAILABLE: ("I wasn't able to put a reply together just now."),
     TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE: (
         "One of the pieces you asked me to keep isn't available any more, so I "
@@ -168,6 +171,10 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",
     ResponseOutcomeKind.COMPARISON: "Here's how those compare.",
     ResponseOutcomeKind.ROOM_QUESTION: ROOM_QUESTION_DEFAULT,
+    ResponseOutcomeKind.PRODUCT_BRIEF: (
+        "Let's find the right one for you. Tap whatever matters below - or skip "
+        "straight to the results."
+    ),
     ResponseOutcomeKind.DESIGN_ADVICE: (
         "I wasn't able to put that answer into words just now."
     ),

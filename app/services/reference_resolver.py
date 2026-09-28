@@ -36,7 +36,7 @@ from app.schemas.agent_decision import (
 )
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.product import ProductRow
-from app.schemas.product_reference import ComparedOrdinal
+from app.schemas.product_reference import ComparedOrdinal, PickedOrdinal
 from app.schemas.resolution import (
     ReferenceFailureReason,
     ReferenceOutcome,
@@ -82,6 +82,47 @@ class ProductReferenceResolver:
         )
         return outcome
 
+    async def resolve_on_list(
+        self,
+        ordinal: int,
+        list_revision: int | None,
+        state: AgentStateV1,
+        context: RetailerContext,
+    ) -> ReferenceOutcome:
+        """A tick: a card by its position on a named result list.
+
+        Not a model-facing selector - only the screen names a list. The
+        current list resolves exactly as a typed position does; an earlier one
+        still on screen resolves against the list remembered for it; a list no
+        longer remembered resolves to nothing rather than to whatever list
+        happens to be current (CLAUDE.md 20.2).
+        """
+        current = state.product_interaction.presented_search_revision
+        if list_revision is None or list_revision == current:
+            return await self.resolve(PresentedOrdinal(position=ordinal), state, context)
+        earlier = next(
+            (
+                entry
+                for entry in state.product_interaction.earlier_lists
+                if entry.revision == list_revision
+            ),
+            None,
+        )
+        if earlier is None:
+            outcome: ReferenceOutcome = _unresolved(ReferenceFailureReason.NO_PRESENTED_RESULTS)
+        elif ordinal > len(earlier.product_ids):
+            outcome = _unresolved(ReferenceFailureReason.ORDINAL_OUT_OF_RANGE)
+        else:
+            outcome = await self._verify(earlier.product_ids[ordinal - 1], context)
+        logger.info(
+            "product_reference_resolved",
+            store_id=context.store_id,
+            selector="EarlierListOrdinal",
+            resolved=isinstance(outcome, ResolvedProductReference),
+            reason=str(outcome.reason) if isinstance(outcome, ReferenceUnresolved) else None,
+        )
+        return outcome
+
     async def _dispatch(
         self,
         selector: ProductReferenceSelector,
@@ -93,6 +134,8 @@ class ProductReferenceResolver:
                 return await self._by_ordinal(selector, state, context)
             case ComparedOrdinal():
                 return await self._by_compared_ordinal(selector, state, context)
+            case PickedOrdinal():
+                return await self._by_picked_ordinal(selector, state, context)
             case FocusedProduct():
                 return await self._focused(state, context)
             case SoleSelectedProduct():
@@ -140,6 +183,26 @@ class ProductReferenceResolver:
         if selector.position > len(compared):
             return _unresolved(ReferenceFailureReason.COMPARED_ORDINAL_OUT_OF_RANGE)
         return await self._verify(compared[selector.position - 1], context)
+
+    async def _by_picked_ordinal(
+        self,
+        selector: PickedOrdinal,
+        state: AgentStateV1,
+        context: RetailerContext,
+    ) -> ReferenceOutcome:
+        """A pick, counted in the order the customer picked.
+
+        Needs no presentation lineage either: picks outlive the searches that
+        showed them, which is what makes comparing a sofa from one search with
+        a sofa from another possible. Verified like every reference, because a
+        product picked last week may have left the catalog since.
+        """
+        picked = state.product_interaction.selected_product_ids
+        if not picked:
+            return _unresolved(ReferenceFailureReason.NO_SELECTED_PRODUCT)
+        if selector.position > len(picked):
+            return _unresolved(ReferenceFailureReason.PICKED_ORDINAL_OUT_OF_RANGE)
+        return await self._verify(picked[selector.position - 1], context)
 
     # ── conversational memory ───────────────────────────────────────────────
 

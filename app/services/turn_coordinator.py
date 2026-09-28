@@ -59,6 +59,7 @@ from app.schemas.agent_decision import (
     ProductInteractionOp,
 )
 from app.schemas.agent_state import (
+    MAX_SEMANTIC_INTENT_CHARS,
     ActiveSearchState,
     AgentStateV1,
     BundleItemState,
@@ -90,7 +91,6 @@ from app.schemas.agent_updates import (
     PreservedBundleLine,
     ProductInteractionUpdate,
     RefineBundle,
-    RemoveItems,
     ReplaceDesignPlan,
     ReplaceItems,
     RoomProjectUpdate,
@@ -149,8 +149,22 @@ from app.schemas.grounding import (
     TurnFailure,
     TurnFailureCode,
 )
+from app.schemas.picks import PickView
 from app.schemas.product import ProductCandidate
-from app.schemas.product_reference import PresentedOrdinal, ProductReferenceSelector
+from app.schemas.product_action import (
+    CompanionAction,
+    CompanionOffer,
+    ComparePicksAction,
+    GoesWithPickAction,
+    ProductActionRequest,
+)
+from app.schemas.product_brief import BriefMode, ProductBrief
+from app.schemas.product_reference import (
+    FocusedProduct,
+    PickedOrdinal,
+    PresentedOrdinal,
+    ProductReferenceSelector,
+)
 from app.schemas.query import (
     ClarificationReason,
     ClarificationRequired,
@@ -166,6 +180,7 @@ from app.schemas.refinement import (
     PriceRefinementOp,
     SearchRefinementDelta,
     SemanticIntentOp,
+    SemanticIntentRefinement,
 )
 from app.schemas.resolution import (
     _UNAVAILABILITY_REASONS,
@@ -189,7 +204,11 @@ from app.schemas.resolution import (
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import PresentedCardView
-from app.schemas.search_action import MoreOptionsAction, SearchActionRequest
+from app.schemas.search_action import (
+    BriefAnswerAction,
+    MoreOptionsAction,
+    SearchActionRequest,
+)
 from app.schemas.seating_solution import (
     SeatingArrangement,
     SeatingRequirements,
@@ -200,6 +219,7 @@ from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
     commit_search_results,
+    record_brief,
     remember_measurements,
 )
 from app.services.agent_view import project_state
@@ -207,6 +227,7 @@ from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.comparison import ProductComparisonService
+from app.services.cross_sell import CompanionSearchBuilder
 from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.design_facts import project_anchors
@@ -218,6 +239,8 @@ from app.services.design_revision import (
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
+from app.services.product_brief import ProductBriefBuilder
+from app.services.product_interaction import build_picks, interaction_update
 from app.services.proposal_mapping import MappedProposals, map_proposals
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
@@ -236,6 +259,7 @@ from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.complements import Companion, Complements
 from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.rooms import RoomPieces, RoomTemplate
@@ -397,6 +421,15 @@ class _Primary:
     room_question: RoomQuestion | None = None
     """This turn's one question about a room being designed, when something it
     needs is still missing (CLAUDE.md 10.1)."""
+
+    focus: GroundedProduct | None = None
+    """The pick the customer asked about, drawn above what goes with it."""
+
+    companions: tuple[CompanionOffer, ...] = ()
+    """Other types that go with the product in focus, offered as chips."""
+
+    product_brief: ProductBrief | None = None
+    """A card of questions for a stated need, when one was drawn this turn."""
     """The room edit this turn made, for the deterministic acknowledgement.
 
     Set only when lines actually changed: an operation that asked for a state a
@@ -723,6 +756,73 @@ def _search_action_decision() -> CustomerAgentDecision:
     )
 
 
+def _goes_with_decision(pick: int) -> CustomerAgentDecision:
+    """The synthesised decision "what goes with it" stands in for.
+
+    The customer's tap already decided the turn, so no model produced this.
+    A product detail on the pick they chose - and an upsell, because the
+    pieces shown beside it are our idea, not their request. That motive is what
+    routes the companions to be introduced as a suggestion ("these would sit
+    well beside it") rather than reported as results they searched for.
+    """
+    return CustomerAgentDecision(
+        action=AgentAction.PRODUCT_DETAIL,
+        commercial_reason=CommercialReason.UPSELL,
+        reference=PickedOrdinal(position=pick),
+    )
+
+
+def _compare_picks_decision(action: ComparePicksAction) -> CustomerAgentDecision:
+    """The synthesised decision "Compare" stands in for: a comparison of two
+    picks, named by their positions in the picks - the same selector a typed
+    "compare the two I picked" resolves through (CLAUDE.md 17.1)."""
+    first, second = action.picks
+    return CustomerAgentDecision(
+        action=AgentAction.COMPARE,
+        commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+        comparison_references=(PickedOrdinal(position=first), PickedOrdinal(position=second)),
+    )
+
+
+def _next_round(
+    companions: tuple[Companion, ...], state: AgentStateV1, anchor_id: int
+) -> tuple[Companion, ...]:
+    """The companions in order, starting after the kind already on screen for
+    this pick.
+
+    Picking a rug shows centre tables; asking what goes with the same rug
+    again must show something new - sofas - not the same centre tables. So
+    when this pick is in focus and one of its companion kinds is the list on
+    screen, the round starts after that kind and wraps: the kind on screen
+    comes last, shown again only if nothing else finds anything.
+    """
+    active = state.active_search
+    if active is None or state.product_interaction.focused_product_id != anchor_id:
+        return companions
+    on_screen = next(
+        (
+            index
+            for index, companion in enumerate(companions)
+            if companion.commerce_subcategory == active.request.commerce_subcategory
+        ),
+        None,
+    )
+    if on_screen is None:
+        return companions
+    return companions[on_screen + 1 :] + companions[: on_screen + 1]
+
+
+def _offers(companions: Sequence[Companion]) -> tuple[CompanionOffer, ...]:
+    return tuple(
+        CompanionOffer(
+            category=companion.commerce_category,
+            subcategory=companion.commerce_subcategory,
+            label=companion.label,
+        )
+        for companion in companions
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _Anchored:
     """A resolved design anchor, or the reason to stop.
@@ -790,8 +890,22 @@ class CustomerTurnCoordinator:
         taxonomy: CommerceTaxonomy,
         rooms: RoomPieces | None = None,
         seating: SeatingSemantics | None = None,
+        complements: Complements | None = None,
+        companion_search: CompanionSearchBuilder | None = None,
+        cross_sell_limit: int = 3,
+        briefs: ProductBriefBuilder | None = None,
     ) -> None:
         self._taxonomy = taxonomy
+        self._briefs = briefs
+        """The cards of questions for a stated need. None where a stated need
+        is simply searched, as it always was."""
+        self._complements = complements
+        """The reviewed pairings: what goes with what. None where products are
+        opened without cross-sell - the product is still shown."""
+        self._companion_builder = companion_search
+        self._cross_sell_limit = cross_sell_limit
+        """How many companion cards sit beside a product the customer opened.
+        A suggestion is a few pieces, not a page."""
         self._rooms = rooms
         """The room registry: which pieces a living room or a bedroom may hold.
         None where rooms are planned without it, as they always were."""
@@ -868,7 +982,11 @@ class CustomerTurnCoordinator:
         already spent its own corrective attempt - a turn never costs more
         than three decisions.
         """
-        typed = turn.bundle_action is None and turn.search_action is None
+        typed = (
+            turn.bundle_action is None
+            and turn.search_action is None
+            and turn.product_action is None
+        )
         return typed and exc.context.get("stage") not in ("decision", "interpretation")
 
     async def _dispatch(self, turn: CustomerTurnInput) -> CustomerTurnResult:
@@ -876,6 +994,8 @@ class CustomerTurnCoordinator:
             return await self._run_bundle_action(turn, turn.bundle_action)
         if turn.search_action is not None:
             return await self._run_search_action(turn, turn.search_action)
+        if turn.product_action is not None:
+            return await self._run_product_action(turn, turn.product_action)
         return await self._run_decided_turn(turn)
 
     def _not_understood(
@@ -904,6 +1024,8 @@ class CustomerTurnCoordinator:
                 if turn.bundle_action is not None
                 else "search"
                 if turn.search_action is not None
+                else "product"
+                if turn.product_action is not None
                 else None
             ),
         )
@@ -958,10 +1080,17 @@ class CustomerTurnCoordinator:
         )
 
         grounding = self._ground(decision, primary, interaction, proposals.clarification)
+        if pre_turn.product_brief.pending is not None and grounding.search is not None:
+            # A card of questions was on screen and they answered in words
+            # instead: they have just been asked, so the reply asks nothing
+            # more (CLAUDE.md 10.4).
+            grounding = grounding.model_copy(update={"follow_up_policy": FollowUpPolicy.NONE})
         self._log(decision, pre_turn, final_state, primary, interaction, started)
+        kinds, picks = await self._selection_facts(final_state, turn)
         return CustomerTurnResult(
             state=final_state,
-            selected_kinds=await self._chosen_kinds(final_state, turn),
+            selected_kinds=kinds,
+            picks=picks,
             decision=decision,
             grounding=grounding,
             selection_added=bool(
@@ -974,6 +1103,7 @@ class CustomerTurnCoordinator:
             room_question=primary.room_question,
             room_seats=self._room_seats(primary.bundle_outcome),
             offered_instead_of=primary.offered_instead_of,
+            product_brief=primary.product_brief,
         )
 
     # ── a screen-driven room edit ───────────────────────────────────────────
@@ -998,9 +1128,11 @@ class CustomerTurnCoordinator:
 
         decision = _bundle_action_decision(action)
         final_state = primary.state
+        kinds, picks = await self._selection_facts(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
-            selected_kinds=await self._chosen_kinds(final_state, turn),
+            selected_kinds=kinds,
+            picks=picks,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
             selection_added=False,
@@ -1038,14 +1170,18 @@ class CustomerTurnCoordinator:
 
         decision = _search_action_decision()
         final_state = primary.state
+        kinds, picks = await self._selection_facts(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
-            selected_kinds=await self._chosen_kinds(final_state, turn),
+            selected_kinds=kinds,
+            picks=picks,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
             selection_added=False,
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
+            seating_solution=primary.seating_solution,
+            offered_instead_of=primary.offered_instead_of,
         )
         logger.info(
             "search_action_completed",
@@ -1057,6 +1193,294 @@ class CustomerTurnCoordinator:
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return result
+
+    # ── a screen-driven action on the picks ─────────────────────────────────
+
+    async def _run_product_action(
+        self, turn: CustomerTurnInput, action: ProductActionRequest
+    ) -> CustomerTurnResult:
+        """Ask about a pick, compare two, or show a companion a chip offered.
+
+        No decision model and no query understanding: a pick is named by its
+        position in the picks and resolves against verified state, and a
+        companion type is checked against the reviewed pairings. Each grounds
+        exactly as its ordinary counterpart would - a product, a comparison, a
+        search - and is worded the same way (CLAUDE.md 3.6).
+        """
+        started = time.perf_counter()
+        pre_turn = turn.state
+        match action:
+            case GoesWithPickAction():
+                decision = _goes_with_decision(action.pick)
+                primary = await self._goes_with(action.pick, pre_turn, turn)
+            case ComparePicksAction():
+                decision = _compare_picks_decision(action)
+                primary = await self._compare(decision, pre_turn, pre_turn, turn)
+            case CompanionAction():
+                decision = _search_action_decision()
+                primary = await self._show_companion(action, pre_turn, turn)
+
+        final_state = primary.state
+        kinds, picks = await self._selection_facts(final_state, turn)
+        result = CustomerTurnResult(
+            state=final_state,
+            selected_kinds=kinds,
+            picks=picks,
+            decision=decision,
+            grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
+            selection_added=False,
+            focus=primary.focus,
+            companions=primary.companions,
+        )
+        logger.info(
+            "product_action_completed",
+            store_id=turn.context.store_id,
+            action=action.kind,
+            companions_shown=primary.search is not None and primary.design_handoff,
+            companions_offered=len(primary.companions),
+            failed=primary.failure is not None,
+            clarified=primary.clarification is not None,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+        return result
+
+    async def _goes_with(
+        self, pick: int, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """What goes with one pick: focus it, and show its companions.
+
+        Runs when a customer picks the first product of its kind, and from a
+        pick's "Goes with" button. The pick is drawn above as its own card; its
+        facts are on the card, not in the reply. Beneath it, the first
+        companion type the store stocks that finds products is shown as a few
+        cards, and the other stocked companions become chips. A type they have
+        already picked is not offered again: a customer with a sofa and a
+        centre table is not shown sofas beside the table.
+
+        The companions are our idea. One that finds nothing is passed over and
+        never reported - the customer asked for nothing here, and nothing they
+        asked for failed (CLAUDE.md 51). With no companion to show, the turn is
+        simply the product.
+        """
+        outcome = await self._references.resolve(
+            PickedOrdinal(position=pick), pre_turn, turn.context
+        )
+        if isinstance(outcome, ReferenceUnresolved):
+            clarification, failure = _reference_outcome(
+                outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            )
+            return _Primary(state=pre_turn, clarification=clarification, failure=failure)
+
+        products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
+        if not products:
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE)
+            )
+        anchor = products[0]
+        focused = apply_update(
+            pre_turn,
+            AgentStateUpdate(
+                product_interaction=interaction_update(
+                    ProductInteractionOp.FOCUS, anchor.product_id, pre_turn
+                )
+            ),
+        )
+        card = to_grounded_product(
+            anchor,
+            grounding_ref=1,
+            # No search returned it and it holds no position in any list on
+            # screen: it is the product they opened.
+            presented_ordinal=None,
+            relaxation_depth=None,
+        )
+
+        stocked = _next_round(
+            await self._stocked_companions(
+                anchor, turn, picked=await self._picked_types(pre_turn, turn)
+            ),
+            pre_turn,
+            anchor.product_id,
+        )
+        came_to_nothing: list[Companion] = []
+        for companion in stocked:
+            attempt = await self._companion_search(
+                anchor, companion, focused, turn, presentation_limit=self._cross_sell_limit
+            )
+            if attempt.failure is not None:
+                # The catalog, not the pairing. Trying the next type would
+                # query something that just failed.
+                break
+            if attempt.search is not None and attempt.search.products:
+                # The rest become chips - but not a type that just found
+                # nothing, which would be a chip that leads to an empty screen.
+                return replace(
+                    attempt,
+                    design_handoff=True,
+                    focus=card,
+                    companions=await self._chips(
+                        [
+                            c
+                            for c in stocked
+                            if c is not companion and c not in came_to_nothing
+                        ],
+                        turn,
+                    ),
+                )
+            came_to_nothing.append(companion)
+        logger.info(
+            "cross_sell_nothing_to_show",
+            store_id=turn.context.store_id,
+            companions_stocked=len(stocked),
+        )
+        return _Primary(state=focused, product_detail=card)
+
+    async def _show_companion(
+        self, action: CompanionAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """A chip's companion type, for the product in focus.
+
+        Their request now, not our suggestion: they tapped "Matching rugs", so
+        the rugs are reported as the search they asked for, with the usual
+        page of cards. The type must be one the reviewed pairings offer beside
+        the focused product; a chip left over from an earlier product is a
+        reference we can no longer resolve, not a licence to search anything.
+        """
+        outcome = await self._references.resolve(FocusedProduct(), pre_turn, turn.context)
+        if isinstance(outcome, ReferenceUnresolved):
+            clarification, failure = _reference_outcome(
+                outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            )
+            return _Primary(state=pre_turn, clarification=clarification, failure=failure)
+        products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
+        if not products:
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE)
+            )
+        anchor = products[0]
+        companion = (
+            self._complements.companion(
+                anchor.commerce.subcategory, action.category, action.subcategory
+            )
+            if self._complements is not None
+            else None
+        )
+        if companion is None:
+            logger.info("companion_not_offered", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.REFERENCE_UNRESOLVED)
+            )
+
+        attempt = await self._companion_search(anchor, companion, pre_turn, turn)
+        stocked = await self._stocked_companions(
+            anchor, turn, picked=await self._picked_types(pre_turn, turn)
+        )
+        return replace(
+            attempt, companions=await self._chips([c for c in stocked if c != companion], turn)
+        )
+
+    async def _chips(
+        self, companions: Sequence[Companion], turn: CustomerTurnInput
+    ) -> tuple[CompanionOffer, ...]:
+        """The other companions as chips, the kind the store has most of first.
+
+        Only the chips: the companion shown as cards is still the reviewed
+        design priority - nightstands beside a bed - and so is the order "what
+        goes with it" moves through. A capability read that fails keeps the
+        reviewed order.
+        """
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+        except _HANDLED_DESIGN_FAILURES:
+            return _offers(companions)
+        return _offers(
+            sorted(
+                companions,
+                key=lambda c: -capabilities.product_count(
+                    c.commerce_category, c.commerce_subcategory
+                ),
+            )
+        )
+
+    async def _picked_types(self, state: AgentStateV1, turn: CustomerTurnInput) -> frozenset[str]:
+        """The product types among their picks, read fresh."""
+        chosen = state.product_interaction.selected_product_ids
+        if not chosen:
+            return frozenset()
+        try:
+            products = await self._hydration.hydrate_ids(chosen, turn.context)
+        except _HANDLED_SEARCH_FAILURES:
+            return frozenset()
+        return frozenset(
+            product.commerce.subcategory
+            for product in products
+            if product.commerce.subcategory is not None
+        )
+
+    async def _stocked_companions(
+        self,
+        anchor: ProductCandidate,
+        turn: CustomerTurnInput,
+        *,
+        picked: frozenset[str] = frozenset(),
+    ) -> tuple[Companion, ...]:
+        """The anchor's companion types this store actually sells, in order.
+
+        A pairing is a permission to look, never a claim of stock; the live
+        catalog decides (CLAUDE.md 9.1). A capability read that fails offers
+        nothing rather than guessing - the product is still shown. Types among
+        `picked` are left out: they already chose one.
+        """
+        if self._complements is None or self._companion_builder is None:
+            return ()
+        companions = tuple(
+            companion
+            for companion in self._complements.for_type(anchor.commerce.subcategory)
+            if companion.commerce_subcategory not in picked
+        )
+        if not companions:
+            return ()
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("cross_sell_capabilities_unavailable", store_id=turn.context.store_id)
+            return ()
+        return tuple(
+            companion
+            for companion in companions
+            if capabilities.supports(companion.commerce_category, companion.commerce_subcategory)
+        )
+
+    async def _companion_search(
+        self,
+        anchor: ProductCandidate,
+        companion: Companion,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+        *,
+        presentation_limit: int | None = None,
+    ) -> _Primary:
+        """One companion type, searched like any new task and committed.
+
+        Committed, so the cards are the list on screen: "a cheaper one", a
+        tick and "Not this one" all work on them. The anchor stays in focus -
+        it is a pick, and a pick's focus survives a new result set.
+        """
+        assert self._companion_builder is not None
+        composed = self._composer.seed_new_task(
+            self._companion_builder.build(anchor, companion),
+            room_preferences=(
+                state.room_project.design_preferences if state.room_project else ()
+            ),
+            customer_defaults=state.customer_preferences.semantic_preferences,
+            revision=_current_revision(state),
+        )
+        return await self._run_search(
+            composed,
+            state,
+            turn.context,
+            recover_seating=False,
+            presentation_limit=presentation_limit,
+        )
 
     async def _apply_search_action(
         self,
@@ -1074,6 +1498,8 @@ class CustomerTurnCoordinator:
         progress, so the exclusion carries into the next follow-up too, and the
         results are committed like any other search (CLAUDE.md 3.6, 13.5).
         """
+        if isinstance(action, BriefAnswerAction):
+            return await self._answer_brief(action, pre_turn, turn)
         active = pre_turn.active_search
         if active is None:
             return _Primary(
@@ -1386,28 +1812,36 @@ class CustomerTurnCoordinator:
             need.commerce_subcategory is None or commerce.subcategory == need.commerce_subcategory
         )
 
-    async def _chosen_kinds(self, state: AgentStateV1, turn: CustomerTurnInput) -> tuple[str, ...]:
-        """What kinds of thing they have chosen, in the order they chose them.
+    async def _selection_facts(
+        self, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> tuple[tuple[str, ...], tuple[PickView, ...] | None]:
+        """What they have chosen: the kinds, for the reply, and the picks, for
+        the tray - from one fresh read of the catalog.
 
-        Read fresh, like every other product fact: a kind taken from state
-        would be a classification that was true when they picked it. One entry
-        per choice, so the kinds and the count cannot disagree.
+        **Kinds**, in the order chosen. A kind taken from state would be a
+        classification that was true when they picked it. One entry per
+        choice, so the kinds and the count cannot disagree: a choice the
+        catalog no longer returns yields nothing, which makes the lists shorter
+        than the selection - so the projection carries kinds only when it has
+        one for every choice, and otherwise carries none. A partial list read
+        as a whole one is how "a sofa and a table" became "2 sofas".
 
-        A choice the catalog no longer returns yields nothing, which makes the
-        lists shorter than the selection - so the projection carries kinds only
-        when it has one for every choice, and otherwise carries none. A partial
-        list read as a whole one is how "a sofa and a table" became "2 sofas".
+        **Picks**, numbered by their place in the selection, so a pick that
+        left the catalog leaves a gap rather than renumbering the rest. None
+        when the catalog could not be read: the client keeps the tray it has
+        rather than being told the customer picked nothing.
         """
         chosen = state.product_interaction.selected_product_ids
         if not chosen:
-            return ()
+            return (), ()
         try:
             products = await self._hydration.hydrate_ids(chosen, turn.context)
         except _HANDLED_CATALOG_FAILURES:
             logger.warning("chosen_kinds_unavailable", store_id=turn.context.store_id)
-            return ()
+            return (), None
+        picks = build_picks(state, products)
         if len(products) != len(chosen):
-            return ()
+            return (), picks
         kinds = tuple(
             customer_words_or_none(product.commerce.subcategory or product.commerce.category)
             for product in products
@@ -1416,7 +1850,7 @@ class CustomerTurnCoordinator:
             ()
             if any(kind is None for kind in kinds)
             else tuple(kind for kind in kinds if kind is not None)
-        )
+        ), picks
 
     async def _visible_cards(self, turn: CustomerTurnInput) -> tuple[PresentedCardView, ...]:
         """The products the customer was looking at when they typed.
@@ -1474,7 +1908,7 @@ class CustomerTurnCoordinator:
             )
             return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
 
-        update = _interaction_update(decision.interaction.op, outcome.product_id, pre_turn)
+        update = interaction_update(decision.interaction.op, outcome.product_id, pre_turn)
         return _Interaction(
             state=apply_update(pre_turn, AgentStateUpdate(product_interaction=update)),
             applied=True,
@@ -3255,7 +3689,156 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=working, clarification=_interpretation_clarification(interpretation)
             )
-        return await self._seed_and_execute(interpretation, decision, working, turn)
+        if decision.stated_need and not await self._needs_combining(interpretation, turn):
+            # "I need a sofa": the card first, nothing searched yet. Its
+            # answers are searched when they tap them (CLAUDE.md 10.4).
+            asked = await self._product_brief(interpretation, working, turn, BriefMode.ASK)
+            if asked is not None:
+                return asked
+        if working.product_brief.pending is not None:
+            # A new search replaces the card on screen; its answers would now
+            # refine a request nobody is making.
+            working = record_brief(working, None)
+        primary = await self._seed_and_execute(interpretation, decision, working, turn)
+        if decision.stated_need:
+            return primary
+        return await self._offer_narrowing(interpretation, primary, turn)
+
+    async def _needs_combining(self, resolved: ResolvedSearch, turn: CustomerTurnInput) -> bool:
+        """Whether no single piece in the store seats as many as they need.
+
+        Then the seating shape is the question that matters - separate sofas,
+        or a sofa with armchairs (CLAUDE.md 10.2, 27.1) - and it comes first,
+        instead of the card: asked a card, "separate sofas please" had no shape
+        question to answer and was asked again. A catalog that cannot be read
+        says nothing about it, and the card is shown as usual.
+        """
+        request = resolved.request
+        capacity = request.seating_capacity
+        if (
+            request.commerce_category != SEATING_CATEGORY
+            or capacity is None
+            or capacity.min_capacity is None
+        ):
+            return False
+        try:
+            overview = await self._capabilities.overview(turn.context)
+        except _HANDLED_SEARCH_FAILURES:
+            return False
+        ceiling = overview.max_seats_in(SEATING_CATEGORY)
+        return ceiling is not None and capacity.min_capacity > ceiling
+
+    async def _product_brief(
+        self,
+        resolved: ResolvedSearch,
+        working: AgentStateV1,
+        turn: CustomerTurnInput,
+        mode: BriefMode,
+    ) -> _Primary | None:
+        """The card for this search, recorded as shown - or None to search.
+
+        A card is a convenience, never a gate: with no card for this type,
+        nothing left to ask, a folded card already offered or the catalog
+        unreadable, the turn simply searches.
+        """
+        if self._briefs is None:
+            return None
+        try:
+            built = await self._briefs.build(resolved, working, turn.context, mode=mode)
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("product_brief_unavailable", store_id=turn.context.store_id)
+            return None
+        if built is None:
+            return None
+        return _Primary(
+            state=record_brief(working, built.pending, shown=built.pending.name),
+            product_brief=built.card,
+        )
+
+    async def _offer_narrowing(
+        self, resolved: ResolvedSearch, primary: _Primary, turn: CustomerTurnInput
+    ) -> _Primary:
+        """Beside results they asked to see, the card folded - to narrow them.
+
+        "Show me sofas" shows sofas at once; the questions a stated need would
+        have been asked sit beside them instead, once per product family. Only beside
+        ordinary results: a combination, another type offered in place of the
+        one they asked for, or an empty search each have their own next step.
+        """
+        search = primary.search
+        active = primary.state.active_search
+        if (
+            search is None
+            or not search.products
+            or active is None
+            or primary.failure is not None
+            or primary.seating_solution is not None
+            or primary.offered_instead_of is not None
+        ):
+            return primary
+        executed = ResolvedSearch(
+            request=active.request,
+            semantics=active.semantics,
+            semantic_preferences=active.semantic_preferences,
+            semantic_text=resolved.semantic_text,
+            unmatched_strict=resolved.unmatched_strict,
+        )
+        narrowed = await self._product_brief(executed, primary.state, turn, BriefMode.NARROW)
+        if narrowed is None:
+            return primary
+        return replace(primary, state=narrowed.state, product_brief=narrowed.product_brief)
+
+    async def _answer_brief(
+        self, action: BriefAnswerAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """The answers tapped on a card, searched as a new request.
+
+        Everything they said before the card is kept; the card's answers are
+        added to it, then it runs like any search they asked for - relaxed,
+        ranked and committed the same way. A card that is not the one on
+        screen, or a key it never offered, searches nothing.
+        """
+        pending = pre_turn.product_brief.pending
+        resolved = (
+            self._briefs.answer(action, pending)
+            if self._briefs is not None and pending is not None
+            else None
+        )
+        if resolved is None:
+            logger.info("product_brief_answer_refused", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.QUESTIONS_EXPIRED)
+            )
+        answered = record_brief(pre_turn, None)
+        wording = (resolved.semantic_text or "").strip()[:MAX_SEMANTIC_INTENT_CHARS].strip()
+        composed = self._composer.seed_new_task(
+            resolved,
+            room_preferences=(
+                answered.room_project.design_preferences if answered.room_project else ()
+            ),
+            customer_defaults=answered.customer_preferences.semantic_preferences,
+            # The feel they chose keeps ranking when they page or refine.
+            semantic_intent=(
+                SemanticIntentRefinement(op=SemanticIntentOp.SET, value=wording)
+                if wording
+                else None
+            ),
+            saved_measurements=answered.customer_preferences.measurements_for(
+                resolved.request.commerce_subcategory
+            ),
+            revision=_current_revision(answered),
+        )
+        logger.info(
+            "product_brief_answered",
+            store_id=turn.context.store_id,
+            brief=pending.name if pending else None,
+            piece=action.piece is not None,
+            budget=action.budget is not None,
+            colours=len(action.colours),
+            styles=len(action.styles),
+            feel=action.feel is not None,
+        )
+        return await self._run_search(composed, answered, turn.context, save_sizes=True)
 
     async def _seed_and_execute(
         self,
@@ -3469,6 +4052,7 @@ class CustomerTurnCoordinator:
         *,
         save_sizes: bool = False,
         recover_seating: bool = True,
+        presentation_limit: int | None = None,
     ) -> _Primary:
         """Execute, then promote and commit in one step.
 
@@ -3495,6 +4079,7 @@ class CustomerTurnCoordinator:
                 context,
                 dropped_constraints=composed.dropped_constraints,
                 earlier_sizes_applied=composed.earlier_sizes_applied,
+                presentation_limit=presentation_limit,
             )
         except _HANDLED_SEARCH_FAILURES:
             logger.warning("turn_search_unavailable", store_id=context.store_id)
@@ -3982,6 +4567,7 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=offer,
+        product_brief=state.product_brief,
     )
 
 
@@ -4029,6 +4615,7 @@ def _with_chosen_combination(
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=offer.model_copy(update={"chosen": chosen}),
+        product_brief=state.product_brief,
     )
     logger.info("seating_combination_chosen", choice=choice, pieces=len(chosen.lines))
     return with_picks
@@ -4144,10 +4731,19 @@ def _earlier_seat_count(state: AgentStateV1, template: RoomTemplate) -> int | No
         return None
     if state.seating_offer is not None:
         return state.seating_offer.target_seats
-    search = state.active_search
-    if search is None or search.request.commerce_subcategory not in seating.seating_types:
+    # A card of questions still on screen is the latest need they stated - "a
+    # sofa for 9" is asked its budget before anything is searched - so its
+    # head count is the one to confirm.
+    pending = state.product_brief.pending
+    if pending is not None:
+        request = pending.base.request
+    elif state.active_search is not None:
+        request = state.active_search.request
+    else:
         return None
-    capacity = search.request.seating_capacity
+    if request.commerce_subcategory not in seating.seating_types:
+        return None
+    capacity = request.seating_capacity
     return capacity.min_capacity if capacity is not None else None
 
 
@@ -4208,42 +4804,6 @@ def _intent_update(intent: str | None) -> SetSemanticIntent | ClearSemanticInten
     which would carry a previous task's wording into a new search.
     """
     return ClearSemanticIntent() if intent is None else SetSemanticIntent(value=intent)
-
-
-def _interaction_update(
-    op: ProductInteractionOp, product_id: int, state: AgentStateV1
-) -> ProductInteractionUpdate:
-    """One atomic update per interaction.
-
-    Deselecting needs care. If the product is focused and is *not* also
-    presented, then removing the selection removes the only thing making the
-    focus resolvable - so the focus must go in the same update. Doing it in two
-    steps would build an intermediate state the reducer rejects, and clearing
-    the focus unconditionally would drop a focus that was still perfectly valid
-    because the product is still on screen.
-    """
-    interaction = state.product_interaction
-    match op:
-        case ProductInteractionOp.SELECT:
-            # The piece they just chose becomes the one under discussion.
-            # Without this, "show me the one I selected" kept resolving through
-            # a focus set turns earlier - so a customer who corrected their
-            # choice was shown the product they had just rejected (M15 3).
-            return ProductInteractionUpdate(
-                selected_product_ids=AddItems(items=(product_id,)),
-                focused_product_id=product_id,
-            )
-        case ProductInteractionOp.FOCUS:
-            return ProductInteractionUpdate(focused_product_id=product_id)
-        case ProductInteractionOp.DESELECT:
-            orphans_focus = (
-                interaction.focused_product_id == product_id
-                and product_id not in interaction.presented_product_ids
-            )
-            return ProductInteractionUpdate(
-                selected_product_ids=RemoveItems(items=(product_id,)),
-                clear_focus=orphans_focus,
-            )
 
 
 def _reference_outcome(

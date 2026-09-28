@@ -131,6 +131,20 @@ class RetailerCatalogCapabilities(BaseModel):
                     entry.commerce_category, entry.commerce_subcategory
                 )
 
+    def product_count(self, category: str, subcategory: str | None = None) -> int:
+        """How many active products of exactly this type the store holds, or
+        zero. A count for ordering what is offered, never a claim of stock
+        beyond the type."""
+        return next(
+            (
+                entry.active_product_count
+                for entry in self.capabilities
+                if entry.commerce_category == category
+                and entry.commerce_subcategory == subcategory
+            ),
+            0,
+        )
+
     def supports(self, category: str, subcategory: str | None = None) -> bool:
         """Whether a planner may rely on this product type.
 

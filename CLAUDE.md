@@ -485,16 +485,19 @@ model as before: budget first, at most two questions, together, once.
 ### 10.2 When the agent asks
 
 At most one question per reply, and never budget as an opener: asking it first
-anchors the price down and reads as "can you afford this?".
+anchors the price down and reads as "can you afford this?". The one exception
+is the card for a stated need (10.4), where the budget is one tappable question
+among several, chosen as a band from the store's own prices.
 
 - **An explicit ask to see** ("show me sofas") shows products first. The one
   optional follow-up is, in order: how many people will sit, for multi-seat
   seating (sofas, sets, sectionals) while unknown; otherwise the colour or
   style taste, while neither is on record - the designer's one question.
   Nothing when the key facts are given ("beige 3-seaters").
-- **A stated need** ("I need a sofa for the living room") asks that one
-  question first (`detail_before_search`). The decision restates the whole
-  request on the next turn, so the answer searches.
+- **A stated need** ("I need a sofa for the living room") gets the card of
+  questions first (10.4); nothing is searched until they answer or skip it.
+  The decision model only flags the need (`stated_need`); it never writes the
+  card's questions.
 - **A seat count no single piece meets** asks first which shape - separate
   sofas together, or a sofa with armchairs - offering only shapes that really
   exist, each "from" its real lowest total, plus the colour if none is known.
@@ -547,6 +550,76 @@ Track per-item state such as:
 If a customer accepts/locks an item, later optimization must preserve it unless the customer explicitly permits replacement.
 
 Distinguish required, recommended, and optional furnishing categories so budget optimization can remove lower-priority items before degrading core room requirements.
+
+### 10.4 The card for a stated need
+
+"I need a sofa" says what they want and nothing about which one. Instead of
+showing the first few products the catalog returns, the application shows one
+card of short questions, answered by tapping and sent together:
+
+- **the kind** - for sofas: 2-seater, 3-seater, 4+ seater, L-shape, set, bed
+  (2/3/4-seater are `seating_capacity` on `sofa`, 7). A need that names only a
+  category - "I need a table", "I need a light" - gets its category's card
+  with the kind asked first (coffee, side, dining, TV, console, nightstand):
+  the vague word is settled by a tap, never guessed (14.5), and results for a
+  whole category are never described as narrowed to one kind;
+- **the budget** - bands between the quartiles of what those products cost in
+  the store, rounded the way a person says a budget;
+- **colours** and **style** - the approved values the store's products of that
+  kind actually carry, most common first;
+- **the feel** - a fabric, finish or detail (bouclé, marble, with storage).
+
+Chips come in order of how many products stand behind them: the kinds, colours
+and styles the store has most of first. Budget bands stay in price order -
+they are cut at the quartiles, so each already holds about a quarter - and
+feels in their reviewed order, since the catalog records no material to count.
+The companion chips beside a pick ("Matching rugs") are ordered the same way,
+while the companion shown as cards stays the reviewed design priority.
+
+Which questions each product family is asked, its kinds and its feel words are
+reviewed domain data (`app/taxonomy/briefs_v1.yaml`, loaded and validated
+against the taxonomy at startup). Budget bands, colours and styles are counted
+from the live, store-scoped catalog when the card is built, and a kind the store
+does not stock is not offered - every chip leads to real products.
+
+- **A stated need always gets its card**, however long the chat: "I need a
+  bed" said again is a new need, and an earlier card they left unanswered is
+  no reason to skip the questions. The card never asks what they already said,
+  in the message or on record earlier; a card with nothing left to ask is
+  skipped and the search simply runs. A head count no single piece in the
+  store seats ("a sofa for 9") skips the card too: which seating shape is the
+  question that matters, and it comes first (27.1). A head count on a card
+  still on screen is the one a room's seats question confirms (10.1).
+- **Answers are keys, read back through the card the session remembers**
+  (`product_brief.pending`), so a client can name a choice but never invent
+  one; a stale card or an unknown key searches nothing (`questions_expired`).
+- **The kind and the budget are requirements** (they tapped them): the kind is
+  locked, a band's ceiling is locked and its floor preferred. **Colours and
+  styles are preferences** (12.4). **The feel only ranks**: the catalog has no
+  material field (5), so it becomes descriptive wording for semantic ranking,
+  nothing is filtered on it, and the reply never says a piece is made of it.
+- Answered or skipped, the search runs like any other, showing the configured
+  number of products (five by default) with the closest first. The first card
+  is labelled the best match only when their own words ordered the list (16.1)
+  and it met their request exactly - never beside a price sort, and never on
+  what goes with a pick, which is ordered by the pick's look.
+- **An explicit ask to see** ("show me sofas") shows products at once; the card
+  sits folded beside them as "Narrow down" - offered once per family per
+  session, so it does not follow every list around - and the reply asks no
+  other question.
+- A typed answer to the card ("grey, around 3000") is a new search restating
+  the whole request.
+
+**Picking a product.** Cards can be ticked into the customer's picks, which last
+across searches. The first pick of its kind - judged by what goes with it, so a
+sectional after a sofa is a second option, not a new piece - is followed by the
+reviewed pairings (`app/taxonomy/complements_v1.yaml`): a few cards of its first
+companion the store stocks and finds, and the others as chips, never a type
+they already picked. Asking what goes with the same pick again moves on to
+its next companion kind rather than repeating the one on screen. Earlier
+result lists stay tickable for a while
+(`product_interaction.earlier_lists`), so a second sofa can still be picked to
+compare after the screen has moved on. Comparison is of exactly two picks.
 
 ---
 
@@ -681,10 +754,15 @@ share. Do not create the abstraction ahead of that evidence.
 The catalog carries material and dimension data that structured search cannot
 yet filter on.
 
-When a customer explicitly asks for one of these, the result must say so. It is
-a distinct outcome type, not a flag, so that a caller which only handles the
-resolved case cannot mistakenly present the results as satisfying the whole
-request.
+When a customer insists on one of these - only leather, it must be wool - the
+result must say so. It is a distinct outcome type, not a flag, so that a caller
+which only handles the resolved case cannot mistakenly present the results as
+satisfying the whole request.
+
+A material they simply want ("a wool rug", "something velvet") is a leaning,
+exactly as a colour is (12.4): it is kept as descriptive wording that ranks by
+meaning, nothing is filtered on it, and the reply never says a piece is made of
+it. The card's feel (10.4) is the same thing, tapped.
 
 Colour and style are no longer among these: they are handled by 12.4.
 

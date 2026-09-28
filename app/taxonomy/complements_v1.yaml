@@ -1,0 +1,89 @@
+# What goes with what: the pieces offered beside a product the customer asks
+# about. Version v1.
+#
+# Reviewed domain data, like the room registry (CLAUDE.md 3.1, 10.3). When a
+# customer opens a product they picked, the first companion here that the store
+# stocks and that finds products is shown as cards - "these nightstands go with
+# it" - and the others are offered as chips. Nothing is offered that the store
+# does not stock, and nothing here is a product: it names product types.
+#
+# Keyed by the product's commerce subcategory. A type that is not listed has no
+# companions: the customer simply sees the product. Order is design priority -
+# the first companion is the one most worth showing.
+#
+# `label` is the companion in customer words, plural, as it reads on a chip:
+# "Matching <label>".
+version: v1
+
+complements:
+  bed:
+    - {category: tables, subcategory: nightstand, label: nightstands}
+    - {category: bedding, subcategory: mattresses, label: mattresses}
+    - {category: bedroom, subcategory: wardrobe, label: wardrobes}
+    - {category: decor, subcategory: carpet, label: rugs}
+    - {category: lighting, subcategory: table-lamp, label: table lamps}
+
+  sofa: &main_seating
+    - {category: tables, subcategory: center-table, label: center tables}
+    - {category: tables, subcategory: service-table, label: side tables}
+    - {category: decor, subcategory: carpet, label: rugs}
+    - {category: lighting, subcategory: floor-lamp, label: floor lamps}
+    - {category: seating, subcategory: chair, label: accent chairs}
+  sectional-sofa: *main_seating
+  sofa-set: *main_seating
+
+  chair: &single_seat
+    - {category: tables, subcategory: service-table, label: side tables}
+    - {category: lighting, subcategory: floor-lamp, label: floor lamps}
+    - {category: decor, subcategory: carpet, label: rugs}
+  lounge-chair: *single_seat
+  single-seater-sofa: *single_seat
+  sofa-bed: *single_seat
+  chaise-lounge: *single_seat
+  recliner: *single_seat
+
+  dining-table:
+    - {category: seating, subcategory: dining-chair, label: dining chairs}
+    - {category: lighting, subcategory: chandelier, label: chandeliers}
+    - {category: lighting, subcategory: pendant-lighting, label: pendant lights}
+    - {category: decor, subcategory: carpet, label: rugs}
+  dining-chair:
+    - {category: dining, subcategory: dining-table, label: dining tables}
+
+  office-table:
+    - {category: seating, subcategory: office-chair, label: office chairs}
+    - {category: lighting, subcategory: table-lamp, label: table lamps}
+    - {category: storage, subcategory: shelve, label: shelves}
+  office-chair:
+    - {category: office, subcategory: office-table, label: desks}
+
+  center-table:
+    - {category: decor, subcategory: carpet, label: rugs}
+    - {category: tables, subcategory: service-table, label: side tables}
+    - {category: seating, subcategory: sofa, label: sofas}
+  service-table:
+    - {category: lighting, subcategory: table-lamp, label: table lamps}
+    - {category: seating, subcategory: chair, label: accent chairs}
+  nightstand:
+    - {category: lighting, subcategory: table-lamp, label: table lamps}
+    - {category: bedroom, subcategory: bed, label: beds}
+  console:
+    - {category: decor, subcategory: mirror, label: mirrors}
+    - {category: lighting, subcategory: table-lamp, label: table lamps}
+    - {category: decor, subcategory: vase, label: vases}
+  tv-table:
+    - {category: decor, subcategory: carpet, label: rugs}
+    - {category: seating, subcategory: sofa, label: sofas}
+    - {category: tables, subcategory: center-table, label: center tables}
+
+  wardrobe:
+    - {category: bedroom, subcategory: dresser, label: dressers}
+    - {category: decor, subcategory: mirror, label: mirrors}
+  dresser: &dressing
+    - {category: decor, subcategory: mirror, label: mirrors}
+    - {category: lighting, subcategory: table-lamp, label: table lamps}
+  dressing-table: *dressing
+
+  carpet:
+    - {category: tables, subcategory: center-table, label: center tables}
+    - {category: seating, subcategory: sofa, label: sofas}

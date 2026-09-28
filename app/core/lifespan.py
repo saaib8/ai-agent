@@ -33,6 +33,8 @@ from app.integrations.product_images import ProductImageFetcher
 from app.integrations.redis import RedisClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
+from app.taxonomy.briefs import Briefs, load_briefs
+from app.taxonomy.complements import Complements, load_complements
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
 from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
 from app.taxonomy.rooms import RoomPieces, load_room_pieces
@@ -81,6 +83,13 @@ class AppResources:
     # Both None when room visualisation is not configured.
     render_generator: ImageGenerator | None = None
     render_photos: ProductImageFetcher | None = None
+    # The reviewed pairings - what goes with what. Defaulted so a deployment
+    # built without them constructs as before: products open without
+    # cross-sell, and nothing else changes.
+    complements: Complements | None = None
+    # The cards of questions for a stated need. Defaulted, like the pairings:
+    # without them a stated need is simply searched.
+    briefs: Briefs | None = None
 
 
 def get_resources(app: FastAPI) -> AppResources:
@@ -131,6 +140,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     dimensions = load_dimension_semantics(taxonomy=taxonomy)
     seating = load_seating_semantics(taxonomy=taxonomy)
     rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
+    complements = load_complements(taxonomy=taxonomy)
+    briefs = load_briefs(taxonomy=taxonomy)
     logger.info(
         "taxonomy_loaded",
         taxonomy_version=taxonomy.version,
@@ -142,6 +153,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         dimension_subcategories=len(dimensions.subcategories),
         seating_version=seating.version,
         room_pieces_version=rooms.version,
+        complements_version=complements.version,
+        briefs_version=briefs.version,
     )
 
     database = Database.create(settings.db)
@@ -258,6 +271,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         seating=seating,
         chat_graph=chat_graph,
         rooms=rooms,
+        complements=complements,
+        briefs=briefs,
         detector=detector,
         finder_vision=finder_vision,
         finder_embedder=finder_embedder,
