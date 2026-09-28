@@ -48,6 +48,10 @@ class ReferenceFailureReason(StrEnum):
     """Column four of a two-column table. Distinct from the list being too
     short, because the customer is counting in a different place."""
 
+    PICKED_ORDINAL_OUT_OF_RANGE = "picked_ordinal_out_of_range"
+    """Pick three of two picks. Distinct again: the customer is counting in
+    their picks, not in the results or a comparison."""
+
     KIND_MISMATCH = "kind_mismatch"
     """The position resolved, and to the wrong kind of thing.
 

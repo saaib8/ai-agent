@@ -100,6 +100,7 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     ),
     "count_browse": lambda repo: repo.count_browse(CatalogFilter(), CONTEXT),
     "facet_counts": lambda repo: repo.facet_counts(CONTEXT),
+    "brief_facts": lambda repo: repo.brief_facts(["sofa", "sofa-set"], CONTEXT),
 }
 
 
@@ -111,8 +112,7 @@ def test_every_public_product_query_is_registered_here() -> None:
         if not name.startswith("_")
     }
     assert public == set(PRODUCT_QUERIES), (
-        "unregistered repository method(s): "
-        f"{sorted(public.symmetric_difference(PRODUCT_QUERIES))}"
+        f"unregistered repository method(s): {sorted(public.symmetric_difference(PRODUCT_QUERIES))}"
     )
 
 

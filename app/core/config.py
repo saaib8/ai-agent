@@ -443,13 +443,24 @@ class CustomerAgentSettings(BaseModel):
     configuration belong to the phases that introduce their consumers.
     """
 
-    comparison_max_products: int = Field(default=3, ge=2, le=4)
+    comparison_max_products: int = Field(default=2, ge=2, le=4)
     """How many products one comparison may cover.
 
     The schema's own ceiling is four; this may choose a smaller one. Beyond it
     a comparison stops being a comparison, and the customer is asked to narrow
-    it rather than having the extras silently dropped.
+    it rather than having the extras silently dropped. Two by product decision:
+    a side-by-side of two reads at a glance, and typed and tapped comparisons
+    share the limit.
     """
+
+    cross_sell_limit: int = Field(default=3, ge=1, le=10)
+    """How many companion cards sit beside a product the customer opened -
+    "these nightstands go with it". A suggestion is a few pieces, not a page;
+    a companion the customer then asks for shows a normal page."""
+
+    max_picks: int = Field(default=10, ge=2, le=50)
+    """How many products the picks tray keeps. A shortlist, not a second
+    catalogue: past this a tick asks them to remove one first."""
 
     decision_model: str | None = Field(default=None, min_length=1)
     """The model that decides what a customer turn should do.

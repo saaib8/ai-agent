@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react'
 import type {
+  BriefAnswerAction,
   CatalogSelection,
   FinderObject,
   GroundedBundlePresentation,
   GroundedProduct,
+  PickView,
+  ProductAction,
   RenderView,
   RoomRenderPresentation,
 } from '../api/types'
@@ -14,6 +17,7 @@ import { EmptyState } from './EmptyState'
 import { ErrorCard } from './ErrorCard'
 import { AssistantBubble, UserBubble, ZoryAvatar } from './MessageBubble'
 import { PhotoTurn } from './PhotoTurn'
+import { PicksTray } from './PicksTray'
 import { TypingIndicator } from './TypingIndicator'
 
 interface ChatPanelProps {
@@ -38,7 +42,26 @@ interface ChatPanelProps {
   onRerenderSelection: (selection: CatalogSelection, view: RenderView, viewLabel: string) => void
   /** Reopen the catalogue with a selection's pieces and room. */
   onEditSelection: (selection: CatalogSelection, view: RenderView) => void
+  /** The customer's picks, as the server last reported them. */
+  picks: PickView[]
+  /** A tick is being saved; the session is busy. */
+  picking: boolean
+  picksError: string | null
+  /** Tick or untick a card on the result list it belongs to. */
+  onTogglePick: (product: GroundedProduct, listRevision: number) => void
+  onRemovePick: (pick: PickView) => void
+  /** Show what goes with a pick. */
+  onGoesWith: (pick: PickView) => void
+  onComparePicks: (first: PickView, second: PickView) => void
+  /** A tapped chip: its words, and the action it runs when it carries one. */
+  onChoice: (value: string, action?: ProductAction | null) => void
+  /** Answers tapped on a card of questions. */
+  onBriefSubmit: (answer: BriefAnswerAction, summary: string) => void
 }
+
+/** The latest result list and the six before it - as many as the server
+ *  keeps tickable. */
+const TICKABLE_LISTS = 7
 
 export function ChatPanel({
   turns,
@@ -59,6 +82,15 @@ export function ChatPanel({
   onOpenCatalog,
   onRerenderSelection,
   onEditSelection,
+  picks,
+  picking,
+  picksError,
+  onTogglePick,
+  onRemovePick,
+  onGoesWith,
+  onComparePicks,
+  onChoice,
+  onBriefSubmit,
 }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -70,9 +102,13 @@ export function ChatPanel({
   // The backend's own choices win: they are built from real options, where the
   // derived chips are only a guess from the question's wording.
   const backendChoices = last?.kind === 'assistant' ? last.data.presentation?.choices ?? [] : []
+  // A card of questions or a piece picker is the turn's question: nothing is
+  // guessed from the reply's words beside it.
   const quickReplies =
     !sending && last?.kind === 'assistant'
-      ? backendChoices.length > 0 || last.data.presentation?.piece_picker
+      ? backendChoices.length > 0 ||
+        last.data.presentation?.piece_picker ||
+        last.data.presentation?.brief
         ? backendChoices
         : deriveQuickReplies(last.data.response.message, last.data.response.follow_up_question)
       : []
@@ -80,6 +116,40 @@ export function ChatPanel({
   // The picker only lives on the most recent assistant turn: older product
   // grids are history and must not sprout "Use this" buttons.
   const lastAssistantId = [...turns].reverse().find((t) => t.kind === 'assistant')?.id
+
+  // A tick and a reply both write the session, so neither starts while the
+  // other is in flight.
+  const busy = sending || picking
+
+  // A tick names the result list its card is on. The server remembers the
+  // latest list and a few before it, so a sofa can still be picked after the
+  // screen has moved on to what goes with another; older grids are history.
+  const tickable = new Set(
+    turns
+      .flatMap((t) =>
+        t.kind === 'assistant' &&
+        t.data.presentation?.product_source === 'search' &&
+        t.data.presentation.list_revision != null
+          ? [t.data.presentation.list_revision]
+          : [],
+      )
+      .slice(-TICKABLE_LISTS),
+  )
+  const pickedOn = (listRevision: number) =>
+    new Set(
+      picks.flatMap((p) =>
+        (p.positions ?? [])
+          .filter((position) => position.list_revision === listRevision)
+          .map((position) => position.ordinal),
+      ),
+    )
+  const selectionFor = (listRevision: number | null | undefined) =>
+    listRevision != null && tickable.has(listRevision)
+      ? {
+          pickedOrdinals: pickedOn(listRevision),
+          onToggle: (product: GroundedProduct) => onTogglePick(product, listRevision),
+        }
+      : undefined
 
   // The room package on screen now: the latest turn that showed one. Only it
   // offers Visualize, and a render is outdated once its pieces differ from it.
@@ -134,7 +204,7 @@ export function ChatPanel({
                   <AssistantBubble
                     key={turn.id}
                     data={turn.data}
-                    busy={sending}
+                    busy={busy}
                     onSwapStart={onSwapStart}
                     pick={
                       turn.id === lastAssistantId && swapRole
@@ -146,8 +216,10 @@ export function ChatPanel({
                         ? { onShowMore: onShowMoreOptions, onExclude: onExcludeProduct }
                         : undefined
                     }
+                    selection={selectionFor(turn.data.presentation?.list_revision)}
+                    onBriefSubmit={onBriefSubmit}
                     quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
-                    onQuickReply={onSend}
+                    onQuickReply={onChoice}
                     latest={turn.id === lastAssistantId}
                     {...visualizeProps(
                       turn.data.presentation?.room ?? null,
@@ -188,13 +260,21 @@ export function ChatPanel({
         )}
       </div>
 
+      <PicksTray
+        picks={picks}
+        busy={busy}
+        error={picksError}
+        onRemove={onRemovePick}
+        onGoesWith={onGoesWith}
+        onCompare={onComparePicks}
+      />
       <Composer
         value={draft}
         onChange={onDraftChange}
         onSend={() => onSend(draft)}
         onPhoto={onPhoto}
         onOpenCatalog={onOpenCatalog}
-        disabled={sending}
+        disabled={busy}
       />
     </div>
   )

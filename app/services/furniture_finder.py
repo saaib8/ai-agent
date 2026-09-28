@@ -272,7 +272,15 @@ class FinderTurnRuntime:
                     presented_ordinal=position if on_screen else None,
                 )
                 for position, product in enumerate(products, start=1)
-            )
+            ),
+            # Committed as the results on screen, so ticks and "Not this one"
+            # count into them; otherwise they are cards with no position.
+            product_source="search" if on_screen and products else None,
+            list_revision=(
+                state.product_interaction.presented_search_revision
+                if state is not None and products
+                else None
+            ),
         )
 
         revision = await self._persist(

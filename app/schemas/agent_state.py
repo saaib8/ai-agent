@@ -41,6 +41,7 @@ from app.schemas.discovery import (
     SeatingCapacityConstraint,
 )
 from app.schemas.geometry import RoomGeometry
+from app.schemas.product_brief import ProductBriefState
 from app.schemas.query import (
     ConstraintSemantics,
     DimensionConstraintSemantics,
@@ -219,6 +220,22 @@ class ActiveSearchState(BaseModel):
         return self
 
 
+MAX_EARLIER_LISTS = 6
+"""How many result lists before the current one stay tickable. A few
+screens back is where a customer still looks; past that, a list is history."""
+
+
+class PresentedList(BaseModel):
+    """A result list that was on screen before the current one, in order."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    revision: int = Field(ge=1)
+    """The search revision it was committed at - the number its cards carry."""
+
+    product_ids: tuple[int, ...] = Field(min_length=1)
+
+
 class ProductInteractionState(BaseModel):
     """Which products the conversation has referred to.
 
@@ -233,6 +250,16 @@ class ProductInteractionState(BaseModel):
     presented_search_revision: int | None = None
     focused_product_id: int | None = None
     selected_product_ids: tuple[int, ...] = ()
+
+    earlier_lists: tuple[PresentedList, ...] = Field(default=(), max_length=MAX_EARLIER_LISTS)
+    """Result lists shown before the current one, oldest first.
+
+    For ticks only. A tick names the list its card is on, and a customer who
+    picked a sofa and was shown what goes with it must still be able to tick a
+    second sofa to compare - the sofas are no longer the current list, but they
+    are still on their screen. Typed positions ("the second one") always mean
+    the current list, and nothing but a tick reads these.
+    """
 
     compared_product_ids: tuple[int, ...] = ()
     """The products of the comparison currently on screen, in column order.
@@ -258,6 +285,16 @@ class ProductInteractionState(BaseModel):
     @classmethod
     def _unique(cls, value: tuple[int, ...]) -> tuple[int, ...]:
         return _no_duplicates(value, "product id list")
+
+    @model_validator(mode="after")
+    def _earlier_lists_are_earlier(self) -> Self:
+        revisions = [entry.revision for entry in self.earlier_lists]
+        if len(revisions) != len(set(revisions)):
+            raise ValueError("each earlier list is one revision")
+        current = self.presented_search_revision
+        if current is not None and any(revision >= current for revision in revisions):
+            raise ValueError("an earlier list must come before the current one")
+        return self
 
     @model_validator(mode="after")
     def _focus_is_known(self) -> Self:
@@ -679,6 +716,10 @@ class AgentStateV1(BaseModel):
     seating_offer: SeatingOfferState | None = None
     """A seating combination in progress. Defaulted, like
     `measurements_by_type`, so every saved session still reads."""
+
+    product_brief: ProductBriefState = ProductBriefState()
+    """The cards of questions asked before a search (CLAUDE.md 10.4).
+    Defaulted, so every saved session still reads."""
 
     @model_validator(mode="after")
     def _presented_matches_the_executed_search(self) -> Self:

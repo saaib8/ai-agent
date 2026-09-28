@@ -91,6 +91,19 @@ export interface GroundedBundlePresentation {
 
 export interface ChatPresentation {
   products: GroundedProduct[]
+  /** Which kind of list `products` is. Only search results are the list that
+   *  ticks and "Not this one" count into; picks and a single product are
+   *  cards with no position there. */
+  product_source?: 'search' | 'selection' | 'detail' | null
+  /** Which result list these cards are, for ticks. Set on search results. */
+  list_revision?: number | null
+  /** The first card is the closest to what they described. */
+  best_match?: boolean
+  /** A card of questions for a stated need: asked first, or folded beside
+   *  results to narrow them. */
+  brief?: ProductBrief | null
+  /** The pick the customer just chose, drawn above what goes with it. */
+  focus?: GroundedProduct | null
   comparison: ProductComparisonResult | null
   room: GroundedBundlePresentation | null
   /** A picture of the room package, when the turn made one. */
@@ -100,9 +113,32 @@ export interface ChatPresentation {
   seating_bundles: GroundedBundlePresentation[]
   /** Ready answers to the question just asked, built by the backend from real
    *  options (e.g. the seating shapes in stock, with their from prices). */
-  choices?: { label: string; value: string }[]
+  choices?: ReplyChoice[]
   /** A room's pieces as chips to tick, when the room question asks for them. */
   piece_picker?: PiecePickerData | null
+}
+
+// ── The card of questions for a stated need ──────────────────────────────────
+
+export type BriefQuestionKind = 'type' | 'budget' | 'colour' | 'feel' | 'style'
+
+export interface BriefQuestion {
+  kind: BriefQuestionKind
+  label: string
+  /** Every choice leads to real products; `key` is what tapping sends back. */
+  choices: { key: string; label: string }[]
+  /** One for a single answer; more where several may be ticked together. */
+  max_choices: number
+}
+
+export interface ProductBrief {
+  /** Which card this is in the session; its answers name it. */
+  card: number
+  /** `ask`: nothing searched yet. `narrow`: beside results, folded. */
+  mode: 'ask' | 'narrow'
+  noun: string
+  questions: BriefQuestion[]
+  submit_label: string
 }
 
 export interface PiecePickerData {
@@ -183,6 +219,8 @@ export interface ChatResponse {
   session_revision: number
   response: CustomerResponse
   presentation: ChatPresentation | null
+  /** The picks after this turn; absent or null means unchanged. */
+  picks?: PickView[] | null
 }
 
 export interface BundleAlternativesAction {
@@ -211,7 +249,69 @@ export interface ExcludeProductAction {
   ordinal: number
 }
 
-export type SearchAction = MoreOptionsAction | ExcludeProductAction
+/** The answers tapped on a card of questions, as the keys it offered. */
+export interface BriefAnswerAction {
+  kind: 'brief'
+  card: number
+  piece?: string | null
+  budget?: string | null
+  colours?: string[]
+  styles?: string[]
+  feel?: string | null
+}
+
+export type SearchAction = MoreOptionsAction | ExcludeProductAction | BriefAnswerAction
+
+// ── Picks: ticked products, asking about one, comparing two ─────────────────
+
+/** An action on the customer's picks. Picks are named by their position in
+ *  the picks, never by a product id. */
+export type ProductAction =
+  | { kind: 'goes_with'; pick: number }
+  | { kind: 'compare'; picks: [number, number] }
+  | { kind: 'companion'; category: string; subcategory: string }
+
+/** A ready answer to tap; when it carries an action, tapping runs it. */
+export interface ReplyChoice {
+  label: string
+  value: string
+  product_action?: ProductAction | null
+}
+
+export interface PickView {
+  /** Its position in the picks — the number the tray's actions use. */
+  pick: number
+  name_english: string
+  image_url: string
+  price_amount: string
+  price_unit: string
+  kind: string | null
+  /** Its card number in the results on screen, when it is one of them. */
+  presented_ordinal: number | null
+  /** Every card showing it on the result lists still tickable. */
+  positions?: { list_revision: number; ordinal: number }[]
+  /** The product the conversation is about. */
+  focused: boolean
+}
+
+export type PickAction =
+  | { kind: 'select'; ordinal: number; list_revision?: number | null }
+  | { kind: 'deselect'; pick: number }
+
+export interface PicksRequest {
+  session_id: string
+  store_id: number
+  action: PickAction
+  expected_session_revision?: number
+}
+
+export interface PicksResponse {
+  session_id: string
+  session_revision: number
+  picks: PickView[]
+  /** Set when this tick picked the first of its kind: show what goes with it. */
+  goes_with?: number | null
+}
 
 export interface ChatRequest {
   session_id: string
@@ -220,6 +320,7 @@ export interface ChatRequest {
   expected_session_revision?: number
   bundle_action?: BundleAction
   search_action?: SearchAction
+  product_action?: ProductAction
 }
 
 export interface ErrorBody {

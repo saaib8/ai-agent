@@ -30,6 +30,7 @@ from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
+from app.services.cross_sell import CompanionSearchBuilder
 from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.discovery import ProductDiscoveryService
@@ -38,6 +39,8 @@ from app.services.health import HealthService
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
 from app.services.object_description import ObjectDescriber
+from app.services.picks import PicksRuntime
+from app.services.product_brief import ProductBriefBuilder
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
@@ -307,6 +310,16 @@ def customer_turn_coordinator(
         app_resources.taxonomy,
         app_resources.rooms,
         app_resources.seating,
+        complements=app_resources.complements,
+        companion_search=CompanionSearchBuilder(app_resources.attributes),
+        cross_sell_limit=settings.customer_agent.cross_sell_limit,
+        briefs=(
+            ProductBriefBuilder(
+                repository, app_resources.briefs, app_resources.attributes, app_resources.taxonomy
+            )
+            if app_resources.briefs is not None
+            else None
+        ),
     )
 
 
@@ -419,6 +432,22 @@ def session_store(app_resources: ResourcesDep) -> SessionStore:
 
 
 SessionStoreDep = Annotated[SessionStore, Depends(session_store)]
+
+
+def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRuntime:
+    """Ticks and unticks: the reference resolver, fresh reads, the session."""
+    repository = ProductRepository(session)
+    return PicksRuntime(
+        ProductReferenceResolver(repository, app_resources.attributes),
+        product_hydration_service(session),
+        session_store(app_resources),
+        app_resources.settings.customer_agent,
+        complements=app_resources.complements,
+        capabilities=catalog_capability_service(session, app_resources),
+    )
+
+
+PicksRuntimeDep = Annotated[PicksRuntime, Depends(picks_runtime)]
 
 
 def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntime:

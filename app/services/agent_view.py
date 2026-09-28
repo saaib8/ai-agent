@@ -41,6 +41,7 @@ from app.schemas.agent_view import (
     PreferenceView,
     PresentedProductsView,
     PriceView,
+    QuestionCardView,
     RoomProjectView,
     SeatingOfferView,
 )
@@ -48,6 +49,7 @@ from app.schemas.discovery import PriceConstraint
 from app.schemas.query import ConstraintSemantics, SemanticPreference
 from app.schemas.screen import PresentedCardView
 from app.services.bundle_cards import group_bundle_cards
+from app.taxonomy.words import customer_words
 
 
 def project_state(
@@ -72,6 +74,17 @@ def project_state(
         room_project=_room_project(state.room_project),
         purchase_stage=state.derived_commerce.purchase_stage,
         seating_offer=_seating_offer(state.seating_offer),
+        question_card=_question_card(state),
+    )
+
+
+def _question_card(state: AgentStateV1) -> QuestionCardView | None:
+    pending = state.product_brief.pending
+    if pending is None:
+        return None
+    request = pending.base.request
+    return QuestionCardView(
+        looking_for=customer_words(request.commerce_subcategory or request.commerce_category)
     )
 
 

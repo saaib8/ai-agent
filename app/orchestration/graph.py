@@ -170,5 +170,6 @@ async def _build_public_response(
             state["revision"],
             state["response"],
             state["presentation"],
+            state["result"].picks,
         )
     }

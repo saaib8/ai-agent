@@ -1,6 +1,6 @@
 import type { GroundedProduct } from '../../api/types'
 import { ProductCard } from './ProductCard'
-import type { AlternativePick } from './ProductCard'
+import type { AlternativePick, CardSelect } from './ProductCard'
 
 export interface SearchRefineControls {
   /** Re-run the search, excluding everything on screen — a different page. */
@@ -16,10 +16,27 @@ interface ProductGridProps {
   /** Present on the latest search grid: a "different options" button and a
    *  per-card "not this one". Absent while picking a room replacement. */
   refine?: SearchRefineControls
+  /** Present on the search results on screen: each card can be ticked. */
+  selection?: GridSelection
+  /** The first card is the closest to what they described. */
+  bestMatch?: boolean
   busy?: boolean
 }
 
-export function ProductGrid({ products, pick, refine, busy }: ProductGridProps) {
+/** Which cards are picked, by card number, and how to tick one. */
+export interface GridSelection {
+  pickedOrdinals: ReadonlySet<number>
+  onToggle: (product: GroundedProduct) => void
+}
+
+export function ProductGrid({
+  products,
+  pick,
+  refine,
+  selection,
+  bestMatch = false,
+  busy,
+}: ProductGridProps) {
   if (products.length === 0) return null
   const showRefine = refine && !pick
   return (
@@ -31,8 +48,15 @@ export function ProductGrid({ products, pick, refine, busy }: ProductGridProps) 
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {products.map((p) => (
-          <ProductCard key={p.grounding_ref} product={p} pick={pick} onExclude={refine?.onExclude} />
+        {products.map((p, index) => (
+          <ProductCard
+            key={p.grounding_ref}
+            product={p}
+            pick={pick}
+            onExclude={refine?.onExclude}
+            select={cardSelect(p, selection, !!busy)}
+            bestMatch={bestMatch && index === 0}
+          />
         ))}
       </div>
       {showRefine && (
@@ -46,4 +70,17 @@ export function ProductGrid({ products, pick, refine, busy }: ProductGridProps) 
       )}
     </div>
   )
+}
+
+function cardSelect(
+  product: GroundedProduct,
+  selection: GridSelection | undefined,
+  busy: boolean,
+): CardSelect | undefined {
+  if (!selection || product.presented_ordinal == null) return undefined
+  return {
+    picked: selection.pickedOrdinals.has(product.presented_ordinal),
+    onToggle: selection.onToggle,
+    disabled: busy,
+  }
 }

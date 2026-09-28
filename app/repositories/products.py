@@ -195,6 +195,29 @@ class FacetCounts:
     """(currency, lowest, highest, product count), most products first."""
 
 
+@dataclass(frozen=True, slots=True)
+class BriefFacts:
+    """What a card of questions may offer for some product types, as stored.
+
+    Raw values, counted from the active store's live catalog. Which colours
+    and styles are approved vocabulary is the registries' decision, made by
+    the caller, exactly as for :class:`FacetCounts`.
+    """
+
+    kinds: tuple[tuple[str, int | None, int], ...]
+    """(subcategory, seating capacity, product count) - NULL capacity kept as
+    its own row, since an unverified count satisfies no seat choice."""
+
+    currency: str | None
+    """The price unit most of these products carry, or None with no prices."""
+
+    price_quartiles: tuple[Decimal, Decimal, Decimal] | None
+    """The lower quartile, median and upper quartile of prices in `currency`."""
+
+    colors: tuple[tuple[str, int], ...]
+    styles: tuple[tuple[str, int], ...]
+
+
 def _to_product_row(row: Row[Any]) -> ProductRow:
     return ProductRow(
         id=row.id,
@@ -742,6 +765,70 @@ class ProductRepository:
             prices=tuple(
                 (row[0], row[1], row[2], int(row[3])) for row in prices.all() if row[0]
             ),
+        )
+
+    async def brief_facts(
+        self, subcategories: Sequence[str], context: RetailerContext
+    ) -> BriefFacts:
+        """Kinds, prices, colours and styles among some product types.
+
+        One read per fact, all under the store scope. Prices are summarised in
+        a single currency - the one most of these products carry - because a
+        quartile across two currencies is not a price anyone could pay.
+        """
+        types = tuple(dict.fromkeys(subcategories))
+        scope = (*self._scope_clauses(context), core_product.c.commerce_subcategory.in_(types))
+        kinds = await self._session.execute(
+            select(
+                core_product.c.commerce_subcategory,
+                core_product.c.seating_capacity,
+                func.count(),
+            )
+            .where(*scope)
+            .group_by(core_product.c.commerce_subcategory, core_product.c.seating_capacity)
+        )
+        units = await self._session.execute(
+            select(core_product.c.price_unit, func.count())
+            .where(*scope, core_product.c.price_unit.is_not(None))
+            .group_by(core_product.c.price_unit)
+            .order_by(func.count().desc(), core_product.c.price_unit)
+            .limit(1)
+        )
+        unit = units.first()
+        currency = unit[0] if unit is not None and unit[0] else None
+        quartiles: tuple[Decimal, Decimal, Decimal] | None = None
+        if currency is not None:
+            price = core_product.c.price_amount
+            spread = await self._session.execute(
+                select(
+                    func.percentile_cont(0.25).within_group(price.asc()),
+                    func.percentile_cont(0.5).within_group(price.asc()),
+                    func.percentile_cont(0.75).within_group(price.asc()),
+                ).where(*scope, core_product.c.price_unit == currency, price.is_not(None))
+            )
+            row = spread.first()
+            if row is not None and all(value is not None for value in row):
+                quartiles = (Decimal(str(row[0])), Decimal(str(row[1])), Decimal(str(row[2])))
+        colors = await self._session.execute(
+            select(core_product.c.main_color, func.count())
+            .where(*scope, core_product.c.main_color.is_not(None))
+            .group_by(core_product.c.main_color)
+            .order_by(func.count().desc(), core_product.c.main_color)
+        )
+        tokens = select(func.unnest(_style_tokens()).label("token")).where(*scope).subquery()
+        styles = await self._session.execute(
+            select(tokens.c.token, func.count())
+            .group_by(tokens.c.token)
+            .order_by(func.count().desc(), tokens.c.token)
+        )
+        return BriefFacts(
+            kinds=tuple(
+                (row[0], row[1], int(row[2])) for row in kinds.all() if row[0] is not None
+            ),
+            currency=currency,
+            price_quartiles=quartiles,
+            colors=tuple((row[0], int(row[1])) for row in colors.all()),
+            styles=tuple((row[0], int(row[1])) for row in styles.all() if row[0]),
         )
 
     async def count_active(self, context: RetailerContext) -> int:

@@ -79,7 +79,7 @@ def test_the_two_numberings_are_different_members_of_the_union() -> None:
 
     members = {member.__name__ for member in get_args(get_args(ProductReferenceSelector)[0])}
 
-    assert {"PresentedOrdinal", "ComparedOrdinal"} <= members
+    assert {"PresentedOrdinal", "ComparedOrdinal", "PickedOrdinal"} <= members
 
     # Distinct tags, so a JSON payload names its surface unambiguously. The
     # types are distinct too - mypy proves that statically, which is why it is
@@ -203,7 +203,7 @@ def test_selecting_takes_focus() -> None:
     customer who corrected their choice was shown what they had rejected."""
     from app.schemas.agent_state import ActiveSearchState
     from app.schemas.discovery import ProductSearchRequest
-    from app.services.turn_coordinator import _interaction_update
+    from app.services.product_interaction import interaction_update
 
     state = AgentStateV1(
         active_search=ActiveSearchState(
@@ -217,7 +217,7 @@ def test_selecting_takes_focus() -> None:
         ),
     )
 
-    update = _interaction_update(ProductInteractionOp.SELECT, 105, state)
+    update = interaction_update(ProductInteractionOp.SELECT, 105, state)
     after = apply_update(state, AgentStateUpdate(product_interaction=update))
 
     assert after.product_interaction.focused_product_id == 105

@@ -379,3 +379,26 @@ class SelectionUnavailableError(ZoryError):
     code = "selection_unavailable"
     http_status = HTTPStatus.CONFLICT
     public_message = "None of the products you picked are available any more. Please pick again."
+
+
+# ── Picks ───────────────────────────────────────────────────────────────────
+
+
+class PickUnavailableError(ZoryError):
+    """A tick or untick that no longer points at anything.
+
+    The card is not in the results on screen any more, the pick is not in the
+    picks, or the product has left the catalog. The raiser picks a message the
+    customer can act on.
+    """
+
+    code = "pick_unavailable"
+    http_status = HTTPStatus.CONFLICT
+    public_message = "That product isn't on screen any more. Please pick from the latest results."
+
+
+class PickLimitError(InvalidRequestError):
+    """A tick past the most picks the tray keeps."""
+
+    code = "pick_limit"
+    public_message = "Your picks are full. Remove one to add another."
