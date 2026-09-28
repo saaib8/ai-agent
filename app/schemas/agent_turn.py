@@ -264,6 +264,12 @@ class CustomerTurnResult(BaseModel):
     """The seating type they asked for, when it never seats that many and the
     cards are another type that does."""
 
+    unstocked_type: str | None = None
+    """The type they asked for, when the store stocks none of it and the cards
+    are the closest type it does stock - a substitution offered instead of a
+    dead end (CLAUDE.md 27). Distinct from `offered_instead_of`: there the type
+    exists but seats too few; here the store simply does not carry it."""
+
     room_seats: int | None = Field(default=None, ge=1)
     """How many the room's seating really seats, counted from its pieces - so
     a reply never says "seating for all nine" about a room that seats eight."""

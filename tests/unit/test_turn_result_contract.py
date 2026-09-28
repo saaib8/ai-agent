@@ -124,6 +124,9 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         "room_seats",
         # The seating type they asked for, when another type seats that many.
         "offered_instead_of",
+        # The type they asked for, when the store carries none of it and the
+        # cards are the closest type it does stock.
+        "unstocked_type",
     }
 
 

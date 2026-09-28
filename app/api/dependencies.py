@@ -28,6 +28,7 @@ from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
+from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.customer_decision import CustomerAgentDecisionService
@@ -307,6 +308,7 @@ def customer_turn_coordinator(
         app_resources.taxonomy,
         app_resources.rooms,
         app_resources.seating,
+        ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
     )
 
 

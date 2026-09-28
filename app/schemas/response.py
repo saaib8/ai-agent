@@ -494,6 +494,15 @@ class ResponseGroundingView(BaseModel):
     many and the cards are another type that does - offered as the best fit,
     never as a refusal."""
 
+    unstocked_type: str | None = None
+    """The type they asked for, in words, when the store stocks *none* of it and
+    the cards are the closest type it does stock - offered instead of a dead end.
+
+    Distinct from `offered_instead_of`, and the difference is the whole reason
+    for two fields: there the asked type exists but cannot seat them; here the
+    store simply does not carry it, so the reply says "we don't have that, but
+    here's the closest" rather than "this is the best fit for your number"."""
+
     search_was_suggested: bool = False
     """Whether this set is something we proposed rather than something they
     asked for.
@@ -678,11 +687,20 @@ class ResponseGroundingView(BaseModel):
         ):
             raise ValueError("an unwidened search presents only exact matches")
 
-        for words in (self.commerce_category, self.commerce_subcategory, self.offered_instead_of):
+        for words in (
+            self.commerce_category,
+            self.commerce_subcategory,
+            self.offered_instead_of,
+            self.unstocked_type,
+        ):
             # The registry key is an internal identifier; a model shown one
             # writes it back verbatim.
             if words is not None and "-" in words:
                 raise ValueError("a category reaches the model as words, not a key")
+        if self.offered_instead_of is not None and self.unstocked_type is not None:
+            # Two different substitutions cannot both own one turn: the seat-count
+            # swap and the not-stocked swap are mutually exclusive recoveries.
+            raise ValueError("a turn offers one substitution reason, not both")
         return self
 
 

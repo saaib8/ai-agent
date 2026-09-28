@@ -206,6 +206,7 @@ from app.services.agent_view import project_state
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog_capability import CatalogCapabilityService
+from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
@@ -393,6 +394,10 @@ class _Primary:
     offered_instead_of: str | None = None
     """The seating type they asked for, when it never seats that many and the
     cards are another type that does - shown as the best fit for them."""
+
+    unstocked_type: str | None = None
+    """The type they asked for, when the store stocks none of it and the cards
+    are the closest type it does stock - offered instead of a dead end."""
 
     room_question: RoomQuestion | None = None
     """This turn's one question about a room being designed, when something it
@@ -790,8 +795,13 @@ class CustomerTurnCoordinator:
         taxonomy: CommerceTaxonomy,
         rooms: RoomPieces | None = None,
         seating: SeatingSemantics | None = None,
+        closest_type: ClosestTypeResolver | None = None,
     ) -> None:
         self._taxonomy = taxonomy
+        self._closest_type = closest_type
+        """The closest stocked type when the asked one is absent. None where the
+        capability is not configured, in which case an unstocked type stays a
+        plain zero result rather than a substitution (CLAUDE.md 27)."""
         self._rooms = rooms
         """The room registry: which pieces a living room or a bedroom may hold.
         None where rooms are planned without it, as they always were."""
@@ -974,6 +984,7 @@ class CustomerTurnCoordinator:
             room_question=primary.room_question,
             room_seats=self._room_seats(primary.bundle_outcome),
             offered_instead_of=primary.offered_instead_of,
+            unstocked_type=primary.unstocked_type,
         )
 
     # ── a screen-driven room edit ───────────────────────────────────────────
@@ -3526,7 +3537,13 @@ class CustomerTurnCoordinator:
         another = await self._another_type_seats_them(composed, primary, working, context)
         if another is not None:
             return another
-        return await self._maybe_compose_seating(composed.resolved, primary, context)
+        seated = await self._maybe_compose_seating(composed.resolved, primary, context)
+        if seated is not primary:
+            return seated
+        closest = await self._offer_closest_type_instead(composed, primary, working, context)
+        if closest is not None:
+            return closest
+        return primary
 
     async def _another_type_seats_them(
         self,
@@ -3588,6 +3605,73 @@ class CustomerTurnCoordinator:
                     target_seats=target,
                 )
                 return replace(found, offered_instead_of=asked)
+        return None
+
+    async def _offer_closest_type_instead(
+        self,
+        composed: ComposedSearch,
+        primary: _Primary,
+        working: AgentStateV1,
+        context: RetailerContext,
+    ) -> _Primary | None:
+        """The store carries none of the type they asked for, so offer the
+        closest type it does stock instead of a dead end (CLAUDE.md 27).
+
+        The taxonomy gives the neighbourhood - the sibling types under the same
+        category - and the live catalog says which of them this store actually
+        stocks. The model, given only that stocked list, picks the closest by
+        purpose; it can invent nothing and can name nothing the store lacks. When
+        it declines, or the store stocks nothing in the family, the turn keeps its
+        honest zero result rather than force a bad substitute.
+
+        The trigger is a genuinely unstocked type - `not overview.stocks(...)` -
+        never a search a filter merely emptied: a beige recliner that found
+        nothing is a colour problem the relaxation layer owns, not a reason to
+        change the type (CLAUDE.md 13.3). Runs last, after the seating recoveries,
+        as the generic fallback for any category.
+        """
+        if self._closest_type is None:
+            return None
+        request = composed.resolved.request
+        asked = request.commerce_subcategory
+        if primary.search is None or primary.search.products or asked is None:
+            return None
+
+        overview = await self._capabilities.overview(context)
+        if overview.stocks(request.commerce_category, asked):
+            # The type is on the shelf; the empty search is tight filters, and
+            # the relaxation layer already speaks to that.
+            return None
+        offered = tuple(
+            shelf.commerce_subcategory
+            for shelf in overview.shelves_in(request.commerce_category)
+            if shelf.commerce_subcategory is not None and shelf.commerce_subcategory != asked
+        )
+        if not offered:
+            # Nothing stocked in the whole family - no honest sibling to offer.
+            # The reply says plainly we don't carry it (CLAUDE.md 9.1).
+            return None
+
+        picked = await self._closest_type.closest(
+            asked_subcategory=asked,
+            commerce_category=request.commerce_category,
+            offered=offered,
+            context=context,
+        )
+        if picked is None:
+            return None
+
+        instead = _with_subcategory(composed, picked)
+        found = await self._run_search(instead, working, context, recover_seating=False)
+        if found.search is not None and found.search.products:
+            logger.info(
+                "closest_type_offered_instead",
+                store_id=context.store_id,
+                asked=asked,
+                offered=picked,
+                commerce_category=request.commerce_category,
+            )
+            return replace(found, unstocked_type=asked)
         return None
 
     # ── refinement ──────────────────────────────────────────────────────────

@@ -101,6 +101,9 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "rooms",
         # Reviewed seat counts, to count a room's real seats. Data, not a service.
         "seating",
+        # The closest stocked type when the asked one is absent: a typed model
+        # step over the store's real shelf, never raw catalog access.
+        "closest_type",
     ]
 
 

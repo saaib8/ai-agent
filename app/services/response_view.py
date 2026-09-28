@@ -634,6 +634,7 @@ def _search(
         commerce_category=_words(executed.request.commerce_category if executed else None),
         commerce_subcategory=_words(executed.request.commerce_subcategory if executed else None),
         offered_instead_of=_words(result.offered_instead_of),
+        unstocked_type=_words(result.unstocked_type),
         exact_match_count=search.exact_candidate_count,
         # A search reached through a design handoff is one we proposed: the
         # customer asked what would suit the piece they chose, or said nothing

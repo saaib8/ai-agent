@@ -1274,6 +1274,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # The seating type they asked for, in words, when the cards are another
         # type that seats that many. A type name - no product, no figure.
         "offered_instead_of",
+        # The type they asked for, in words, when the store stocks none of it and
+        # the cards are the closest type it does. A type name - no product.
+        "unstocked_type",
         # Counts of cards in a colour/style the customer asked or wished for,
         # so a reply cannot call black tables red. Counts, never a value.
         "wished_colour_matches",

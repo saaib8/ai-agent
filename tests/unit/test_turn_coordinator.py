@@ -448,6 +448,7 @@ def _coordinator(
     decisions: Any = None,
     seating: Any = None,
     rooms: Any = None,
+    closest_type: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -488,6 +489,7 @@ def _coordinator(
         taxonomy,
         rooms,
         seating,
+        closest_type,
     )
     return coordinator, parts
 
