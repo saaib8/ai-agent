@@ -94,6 +94,9 @@ class Brief:
     name: str
     subcategories: tuple[str, ...]
     ask: tuple[BriefQuestionKind, ...]
+    categories: tuple[str, ...] = ()
+    """Categories whose search named no kind, which this card settles by
+    asking the kind first."""
     noun: str | None = None
     kinds: tuple[KindChoice, ...] = ()
     feel_label: str | None = None
@@ -107,6 +110,7 @@ class Briefs:
         self._version = version
         self._briefs = briefs
         self._by_type = {sub: brief for brief in briefs for sub in brief.subcategories}
+        self._by_category = {cat: brief for brief in briefs for cat in brief.categories}
 
     @property
     def version(self) -> str:
@@ -115,6 +119,13 @@ class Briefs:
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(brief.name for brief in self._briefs)
+
+    def for_search(self, category: str, subcategory: str | None) -> Brief | None:
+        """The card for a search: its kind's card, or - when no kind was
+        named, as in "I need a table" - the card that asks the kind."""
+        if subcategory is not None:
+            return self._by_type.get(subcategory)
+        return self._by_category.get(category)
 
     def for_type(self, subcategory: str | None) -> Brief | None:
         """The card for a product type, or None when it has no card.
@@ -156,6 +167,7 @@ def load_briefs(path: Path | None = None, taxonomy: CommerceTaxonomy | None = No
 
     briefs: list[Brief] = []
     claimed: set[str] = set()
+    claimed_categories: set[str] = set()
     for name, entry in raw.items():
         if not isinstance(name, str) or not name:
             raise TaxonomyConfigurationError(detail=f"{source.name}: each card must be named")
@@ -167,6 +179,12 @@ def load_briefs(path: Path | None = None, taxonomy: CommerceTaxonomy | None = No
                 detail=f"{source.name}: {name}: {sorted(taken)[0]} already has a card"
             )
         claimed.update(brief.subcategories)
+        taken_categories = claimed_categories.intersection(brief.categories)
+        if taken_categories:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: {name}: {sorted(taken_categories)[0]} already has a card"
+            )
+        claimed_categories.update(brief.categories)
         briefs.append(brief)
     return Briefs(version=version, briefs=tuple(briefs))
 
@@ -186,6 +204,12 @@ def _brief(name: str, raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -
         raise TaxonomyConfigurationError(
             detail=f"{where}: feels are listed exactly when the feel is asked"
         )
+    categories = _categories(raw.get("for_category"), where, taxonomy)
+    if categories and BriefQuestionKind.TYPE not in ask:
+        # A search that named no kind is settled by asking it, never guessed.
+        raise TaxonomyConfigurationError(
+            detail=f"{where}: a card for a whole category must ask the kind"
+        )
     noun = raw.get("noun")
     if noun is not None and (not isinstance(noun, str) or not noun.strip() or len(noun) > 30):
         raise TaxonomyConfigurationError(detail=f"{where}: 'noun' must be 1-30 characters")
@@ -193,6 +217,7 @@ def _brief(name: str, raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -
         name=name,
         subcategories=subcategories,
         ask=ask,
+        categories=categories,
         noun=noun.strip() if isinstance(noun, str) else None,
         kinds=kinds,
         feel_label=feel_label,
@@ -209,6 +234,23 @@ def _subcategories(raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -> t
         if taxonomy is not None and not taxonomy.is_subcategory(subcategory):
             raise TaxonomyConfigurationError(
                 detail=f"{where}: {subcategory} is not an approved subcategory"
+            )
+    return tuple(raw)
+
+
+def _categories(raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw or not all(isinstance(c, str) for c in raw):
+        raise TaxonomyConfigurationError(
+            detail=f"{where}: 'for_category' needs a list of categories"
+        )
+    if len(raw) != len(set(raw)):
+        raise TaxonomyConfigurationError(detail=f"{where}: 'for_category' repeats a category")
+    for category in raw:
+        if taxonomy is not None and not taxonomy.is_category(category):
+            raise TaxonomyConfigurationError(
+                detail=f"{where}: {category} is not an approved category"
             )
     return tuple(raw)
 

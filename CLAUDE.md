@@ -558,12 +558,23 @@ showing the first few products the catalog returns, the application shows one
 card of short questions, answered by tapping and sent together:
 
 - **the kind** - for sofas: 2-seater, 3-seater, 4+ seater, L-shape, set, bed
-  (2/3/4-seater are `seating_capacity` on `sofa`, 7);
+  (2/3/4-seater are `seating_capacity` on `sofa`, 7). A need that names only a
+  category - "I need a table", "I need a light" - gets its category's card
+  with the kind asked first (coffee, side, dining, TV, console, nightstand):
+  the vague word is settled by a tap, never guessed (14.5), and results for a
+  whole category are never described as narrowed to one kind;
 - **the budget** - bands between the quartiles of what those products cost in
   the store, rounded the way a person says a budget;
 - **colours** and **style** - the approved values the store's products of that
   kind actually carry, most common first;
 - **the feel** - a fabric, finish or detail (bouclé, marble, with storage).
+
+Chips come in order of how many products stand behind them: the kinds, colours
+and styles the store has most of first. Budget bands stay in price order -
+they are cut at the quartiles, so each already holds about a quarter - and
+feels in their reviewed order, since the catalog records no material to count.
+The companion chips beside a pick ("Matching rugs") are ordered the same way,
+while the companion shown as cards stays the reviewed design priority.
 
 Which questions each product family is asked, its kinds and its feel words are
 reviewed domain data (`app/taxonomy/briefs_v1.yaml`, loaded and validated
@@ -575,7 +586,10 @@ does not stock is not offered - every chip leads to real products.
   bed" said again is a new need, and an earlier card they left unanswered is
   no reason to skip the questions. The card never asks what they already said,
   in the message or on record earlier; a card with nothing left to ask is
-  skipped and the search simply runs.
+  skipped and the search simply runs. A head count no single piece in the
+  store seats ("a sofa for 9") skips the card too: which seating shape is the
+  question that matters, and it comes first (27.1). A head count on a card
+  still on screen is the one a room's seats question confirms (10.1).
 - **Answers are keys, read back through the card the session remembers**
   (`product_brief.pending`), so a client can name a choice but never invent
   one; a stale card or an unknown key searches nothing (`questions_expired`).
@@ -585,7 +599,7 @@ does not stock is not offered - every chip leads to real products.
   material field (5), so it becomes descriptive wording for semantic ranking,
   nothing is filtered on it, and the reply never says a piece is made of it.
 - Answered or skipped, the search runs like any other, showing the configured
-  number of products (three by default) with the closest first. The first card
+  number of products (five by default) with the closest first. The first card
   is labelled the best match only when their own words ordered the list (16.1)
   and it met their request exactly - never beside a price sort, and never on
   what goes with a pick, which is ordered by the pick's look.

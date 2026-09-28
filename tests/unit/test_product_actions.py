@@ -210,6 +210,7 @@ def _coordinator(
     catalog: Catalog | None = None,
     complements: Any = COMPLEMENTS,
     cross_sell_limit: int = 3,
+    capabilities: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     parts: dict[str, Any] = {
         "decisions": FakeDecisions(_never_decided()),
@@ -217,7 +218,7 @@ def _coordinator(
         "comparison": comparison or FakeComparison(None),
         "pipeline": pipeline or ScriptedPipeline((30, 31, 32)),
         "catalog": catalog or Catalog(),
-        "capabilities": FakeCapabilities(pairs=stock),
+        "capabilities": capabilities or FakeCapabilities(pairs=stock),
     }
     coordinator = CustomerTurnCoordinator(
         parts["decisions"],
@@ -364,6 +365,36 @@ async def test_asking_again_moves_on_to_the_next_kind_that_goes_with_it() -> Non
     (request,) = parts["pipeline"].requests
     assert request.commerce_subcategory == "wardrobe"
     assert [offer.subcategory for offer in result.companions] == ["carpet", "nightstand"]
+
+
+class CountedStock(FakeCapabilities):
+    """The bedroom store, holding many more rugs than wardrobes."""
+
+    async def capabilities(self, context: Any) -> Any:
+        from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
+
+        counts = {"nightstand": 9, "wardrobe": 32, "carpet": 142, "sofa": 173}
+        return RetailerCatalogCapabilities(
+            capabilities=tuple(
+                RetailerCatalogCapability(
+                    commerce_category=category,
+                    commerce_subcategory=subcategory,
+                    active_product_count=counts[subcategory or ""],
+                )
+                for category, subcategory in BEDROOM_STOCK
+            )
+        )
+
+
+async def test_companion_chips_put_the_most_stocked_first() -> None:
+    """Nightstands are still the cards beside a bed - the reviewed design
+    priority - but the chips lead with rugs, which the store has most of."""
+    coordinator, parts = _coordinator(capabilities=CountedStock(pairs=BEDROOM_STOCK))
+
+    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
+
+    assert parts["pipeline"].requests[0].commerce_subcategory == "nightstand"
+    assert [offer.subcategory for offer in result.companions] == ["carpet", "wardrobe"]
 
 
 async def test_a_pick_not_in_focus_starts_from_its_first_companion() -> None:

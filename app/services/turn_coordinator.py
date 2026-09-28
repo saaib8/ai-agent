@@ -1317,12 +1317,13 @@ class CustomerTurnCoordinator:
                     attempt,
                     design_handoff=True,
                     focus=card,
-                    companions=_offers(
+                    companions=await self._chips(
                         [
                             c
                             for c in stocked
                             if c is not companion and c not in came_to_nothing
-                        ]
+                        ],
+                        turn,
                     ),
                 )
             came_to_nothing.append(companion)
@@ -1373,7 +1374,32 @@ class CustomerTurnCoordinator:
         stocked = await self._stocked_companions(
             anchor, turn, picked=await self._picked_types(pre_turn, turn)
         )
-        return replace(attempt, companions=_offers([c for c in stocked if c != companion]))
+        return replace(
+            attempt, companions=await self._chips([c for c in stocked if c != companion], turn)
+        )
+
+    async def _chips(
+        self, companions: Sequence[Companion], turn: CustomerTurnInput
+    ) -> tuple[CompanionOffer, ...]:
+        """The other companions as chips, the kind the store has most of first.
+
+        Only the chips: the companion shown as cards is still the reviewed
+        design priority - nightstands beside a bed - and so is the order "what
+        goes with it" moves through. A capability read that fails keeps the
+        reviewed order.
+        """
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+        except _HANDLED_DESIGN_FAILURES:
+            return _offers(companions)
+        return _offers(
+            sorted(
+                companions,
+                key=lambda c: -capabilities.product_count(
+                    c.commerce_category, c.commerce_subcategory
+                ),
+            )
+        )
 
     async def _picked_types(self, state: AgentStateV1, turn: CustomerTurnInput) -> frozenset[str]:
         """The product types among their picks, read fresh."""
@@ -3663,7 +3689,7 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=working, clarification=_interpretation_clarification(interpretation)
             )
-        if decision.stated_need:
+        if decision.stated_need and not await self._needs_combining(interpretation, turn):
             # "I need a sofa": the card first, nothing searched yet. Its
             # answers are searched when they tap them (CLAUDE.md 10.4).
             asked = await self._product_brief(interpretation, working, turn, BriefMode.ASK)
@@ -3677,6 +3703,30 @@ class CustomerTurnCoordinator:
         if decision.stated_need:
             return primary
         return await self._offer_narrowing(interpretation, primary, turn)
+
+    async def _needs_combining(self, resolved: ResolvedSearch, turn: CustomerTurnInput) -> bool:
+        """Whether no single piece in the store seats as many as they need.
+
+        Then the seating shape is the question that matters - separate sofas,
+        or a sofa with armchairs (CLAUDE.md 10.2, 27.1) - and it comes first,
+        instead of the card: asked a card, "separate sofas please" had no shape
+        question to answer and was asked again. A catalog that cannot be read
+        says nothing about it, and the card is shown as usual.
+        """
+        request = resolved.request
+        capacity = request.seating_capacity
+        if (
+            request.commerce_category != SEATING_CATEGORY
+            or capacity is None
+            or capacity.min_capacity is None
+        ):
+            return False
+        try:
+            overview = await self._capabilities.overview(turn.context)
+        except _HANDLED_SEARCH_FAILURES:
+            return False
+        ceiling = overview.max_seats_in(SEATING_CATEGORY)
+        return ceiling is not None and capacity.min_capacity > ceiling
 
     async def _product_brief(
         self,
@@ -4681,10 +4731,19 @@ def _earlier_seat_count(state: AgentStateV1, template: RoomTemplate) -> int | No
         return None
     if state.seating_offer is not None:
         return state.seating_offer.target_seats
-    search = state.active_search
-    if search is None or search.request.commerce_subcategory not in seating.seating_types:
+    # A card of questions still on screen is the latest need they stated - "a
+    # sofa for 9" is asked its budget before anything is searched - so its
+    # head count is the one to confirm.
+    pending = state.product_brief.pending
+    if pending is not None:
+        request = pending.base.request
+    elif state.active_search is not None:
+        request = state.active_search.request
+    else:
         return None
-    capacity = search.request.seating_capacity
+    if request.commerce_subcategory not in seating.seating_types:
+        return None
+    capacity = request.seating_capacity
     return capacity.min_capacity if capacity is not None else None
 
 

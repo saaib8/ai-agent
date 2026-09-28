@@ -112,7 +112,8 @@ class ProductBriefBuilder:
         already known, or for a folded card already offered. Then the search
         simply runs.
         """
-        brief = self._briefs.for_type(resolved.request.commerce_subcategory)
+        request = resolved.request
+        brief = self._briefs.for_search(request.commerce_category, request.commerce_subcategory)
         briefs = state.product_brief
         if brief is None or (mode is BriefMode.NARROW and brief.name in briefs.shown):
             return None
@@ -121,9 +122,14 @@ class ProductBriefBuilder:
             return None
 
         asking_type = BriefQuestionKind.TYPE in open_questions
-        subcategory = resolved.request.commerce_subcategory
-        assert subcategory is not None, "a card is found by its subcategory"
-        types = tuple(kind.subcategory for kind in brief.kinds) if asking_type else (subcategory,)
+        subcategory = request.commerce_subcategory
+        # No kind named means the kind is asked: the card for a whole
+        # category always asks it, and its facts cover every kind offered.
+        types = (
+            tuple(kind.subcategory for kind in brief.kinds)
+            if asking_type or subcategory is None
+            else (subcategory,)
+        )
         facts = await self._repository.brief_facts(types, context)
 
         number = briefs.cards + 1
@@ -173,7 +179,11 @@ class ProductBriefBuilder:
         # "Show me rugs" for carpets, but "Show me sectional sofas" once they
         # asked for a sectional.
         family_word = brief.noun is not None and (asking_type or not brief.kinds)
-        noun = brief.noun if family_word and brief.noun else _plural(customer_words(subcategory))
+        noun = (
+            brief.noun
+            if family_word and brief.noun
+            else _plural(customer_words(subcategory or request.commerce_category))
+        )
         card = ProductBrief(
             card=number,
             mode=mode,
@@ -238,11 +248,14 @@ class ProductBriefBuilder:
     # ── building ────────────────────────────────────────────────────────────
 
     def _kinds(self, brief: Brief, facts: BriefFacts) -> tuple[BriefKindOption, ...]:
-        """The kinds this store really stocks. A seat count counts only
-        products whose capacity was reviewed - an unverified one satisfies
-        no seat choice (CLAUDE.md 31)."""
+        """The kinds this store really stocks, the one it has most of first.
+
+        A seat count counts only products whose capacity was reviewed - an
+        unverified one satisfies no seat choice (CLAUDE.md 31). Kinds the store
+        holds as many of keep their reviewed order.
+        """
         stocked: list[BriefKindOption] = []
-        for kind in brief.kinds:
+        for kind in sorted(brief.kinds, key=lambda k: -_stock(k, facts)):
             if _stock(kind, facts) == 0:
                 continue
             category = self._category_of(kind.subcategory)
@@ -272,13 +285,17 @@ class ProductBriefBuilder:
     def _approved(
         self, family: AttributeFamily, counts: tuple[tuple[str, int], ...]
     ) -> tuple[str, ...]:
-        """Stored values the vocabulary approves, most common first, once each."""
-        values: list[str] = []
-        for raw, _count in counts:
+        """Stored values the vocabulary approves, most products first, once each.
+
+        Counted after spelling is normalised, so "light grey" and "Light Grey"
+        stored by different merchants count as one colour.
+        """
+        totals: dict[str, int] = {}
+        for raw, count in counts:
             canonical = self._attributes.canonical(family, raw)
-            if canonical is not None and canonical not in values:
-                values.append(canonical)
-        return tuple(values)
+            if canonical is not None:
+                totals[canonical] = totals.get(canonical, 0) + count
+        return tuple(sorted(totals, key=lambda value: -totals[value]))
 
 
 # ── what is already known ───────────────────────────────────────────────────

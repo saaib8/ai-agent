@@ -11,6 +11,12 @@ servers::
 Every server gets its own fresh session per case, so versions never share
 state. Results are printed as a side-by-side table; failures are signal about
 the prompt, the model or the code, not something to patch per case.
+
+A turn is either words the customer types, or a tap the screen makes - a
+question card answered or skipped, a card ticked, "Goes with", Compare, a chip,
+"Show me different options", "Not this one". Taps are sent exactly as the
+console sends them, reading keys and positions from the replies before them,
+so a case never hard-codes a key the server made up.
 """
 
 from __future__ import annotations
@@ -38,11 +44,21 @@ _NO_MATCH = re.compile(r"\b(no|none|not|don't|do not|couldn't|could not|isn't|ar
 """A reply that admits the request had no exact match uses one of these."""
 
 
+class CaseError(Exception):
+    """A tap the conversation could not make - the card has no such question,
+    there is no grid to tick. Reported as the case's failure."""
+
+
 @dataclass
 class TurnResult:
     status: int
     elapsed_s: float
     body: dict[str, Any] = field(default_factory=dict)
+    kind: str = "chat"
+    """`chat` for a message or a screen action sent as a chat turn; `picks`
+    for a silent tick or untick."""
+    chosen_budget: str | None = None
+    """The budget band tapped on a card, as its label, for checking prices."""
 
     @property
     def message(self) -> str:
@@ -83,6 +99,19 @@ class TurnResult:
     @property
     def has_piece_picker(self) -> bool:
         return bool((self.body.get("presentation") or {}).get("piece_picker"))
+
+    @property
+    def presentation(self) -> dict[str, Any]:
+        return dict(self.body.get("presentation") or {})
+
+    @property
+    def brief(self) -> dict[str, Any] | None:
+        return self.presentation.get("brief") or None
+
+    @property
+    def picks(self) -> list[dict[str, Any]] | None:
+        picks = self.body.get("picks")
+        return None if picks is None else list(picks)
 
 
 @dataclass
@@ -211,41 +240,320 @@ def _check(
             failures.append(f"a combination uses {kind}")
     if (words := checks.get("not_mentions")) and any(w in turn.message.lower() for w in words):
         failures.append(f"reply mentions one of {words}")
+    failures.extend(_discovery_checks(checks, turn))
     if checks.get("engages"):
         asks = "?" in turn.message
-        if not (products or turn.has_comparison or turn.has_room or turn.has_piece_picker or asks):
-            failures.append("dead end: no products, comparison, room, chips or question")
+        shown = (
+            products or turn.has_comparison or turn.has_room or turn.has_piece_picker or turn.brief
+        )
+        if not (shown or asks):
+            failures.append("dead end: no products, comparison, room, chips, card or question")
     return failures
+
+
+def _upper_bound(label: str | None) -> Decimal | None:
+    """The ceiling of a tapped budget band: "Under 1,900 SAR", "1,900-2,700
+    SAR"; "Over 4,000 SAR" has none."""
+    if not label or label.lower().startswith("over"):
+        return None
+    figures = re.findall(r"\d[\d,]*", label)
+    return Decimal(figures[-1].replace(",", "")) if figures else None
+
+
+def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
+    """The question card, picks, cross-sell and comparison checks."""
+    failures: list[str] = []
+    products = turn.products
+    brief = turn.brief
+    kinds = [q.get("kind") for q in (brief or {}).get("questions", [])]
+    if (want := checks.get("card")) is not None:
+        asking = brief is not None and brief.get("mode") == "ask"
+        if want and not asking:
+            failures.append("no question card - it searched straight away")
+        if not want and asking:
+            failures.append("a question card was shown")
+    if (mode := checks.get("card_mode")) and (brief or {}).get("mode") != mode:
+        failures.append(f"card mode {(brief or {}).get('mode')!r}, expected {mode!r}")
+    if (asks := checks.get("card_asks")) and not set(asks) <= set(kinds):
+        failures.append(f"card asks {kinds}, missing some of {asks}")
+    if (skips := checks.get("card_skips")) and set(skips) & set(kinds):
+        failures.append(f"card asks {sorted(set(skips) & set(kinds))} it was already told")
+    if (first := checks.get("card_first")) and (not kinds or kinds[0] != first):
+        failures.append(f"card's first question is {kinds[:1]}, expected {first}")
+    if labels := checks.get("card_kinds_include"):
+        kind_question: dict[str, Any] = next(
+            (q for q in (brief or {}).get("questions", []) if q.get("kind") == "type"), {}
+        )
+        offered = [c.get("label") for c in kind_question.get("choices", [])]
+        missing = [label for label in labels if label not in offered]
+        if missing:
+            failures.append(f"card offers kinds {offered}, missing {missing}")
+    if first_kind := checks.get("card_kind_first"):
+        kind_question = next(
+            (q for q in (brief or {}).get("questions", []) if q.get("kind") == "type"), {}
+        )
+        labels = [c.get("label") for c in kind_question.get("choices", [])]
+        if not labels or labels[0] != first_kind:
+            failures.append(f"card's kinds start {labels[:2]}, expected {first_kind!r} first")
+    if first_chip := checks.get("first_chip"):
+        chips = [c.get("label") for c in turn.presentation.get("choices") or []]
+        if not chips or chips[0] != first_chip:
+            failures.append(f"chips start {chips[:2]}, expected {first_chip!r} first")
+    if (want := checks.get("best_match")) is not None and bool(
+        turn.presentation.get("best_match")
+    ) != want:
+        failures.append(
+            f"best_match is {bool(turn.presentation.get('best_match'))}, expected {want}"
+        )
+    if (count := checks.get("picks")) is not None:
+        got = len(turn.picks or [])
+        if got != count:
+            failures.append(f"{got} picks in the tray, expected {count}")
+    if (want := checks.get("cross_sell")) is not None:
+        got = bool(turn.presentation.get("focus"))
+        if got != want:
+            failures.append("no cross-sell after the pick" if want else "an unexpected cross-sell")
+    if checks.get("silent_tick") and (turn.kind != "picks" or turn.body.get("goes_with")):
+        failures.append("the tick was not silent - it started a turn")
+    if (seats := checks.get("seats")) is not None:
+        counts = [(p.get("commerce") or {}).get("seating_capacity") for p in products]
+        if not products or any(c != seats for c in counts):
+            failures.append(f"seat counts {counts}, expected all {seats}")
+    if (least := checks.get("min_seats")) is not None:
+        counts = [(p.get("commerce") or {}).get("seating_capacity") for p in products]
+        if not products or any(c is None or c < least for c in counts):
+            failures.append(f"seat counts {counts}, expected all at least {least}")
+    if checks.get("comparison") and not turn.has_comparison:
+        failures.append("no comparison table")
+    if checks.get("no_follow_up") and turn.follow_up:
+        failures.append(f"an extra question: {turn.follow_up!r}")
+    if (least := checks.get("companion_chips_min")) is not None:
+        chips = [c for c in turn.presentation.get("choices") or [] if c.get("product_action")]
+        if len(chips) < least:
+            failures.append(f"{len(chips)} companion chips < {least}")
+    if allowed := checks.get("subcategory_in"):
+        found = [(p.get("commerce") or {}).get("subcategory") for p in products]
+        if not products or any(k not in allowed for k in found):
+            failures.append(f"product types {found}, expected only {allowed}")
+    if (banned := checks.get("not_subcategory")) and any(
+        (p.get("commerce") or {}).get("subcategory") == banned for p in products
+    ):
+        failures.append(f"shows {banned}, which it should not")
+    if checks.get("within_chosen_budget"):
+        ceiling = _upper_bound(turn.chosen_budget)
+        over = [
+            p["price_amount"]
+            for p in products
+            if ceiling is not None and Decimal(str(p["price_amount"])) > ceiling
+        ]
+        if over:
+            failures.append(f"prices {over} over the band {turn.chosen_budget!r}")
+    return failures
+
+
+class Conversation:
+    """One case's session, sending turns the way the console does."""
+
+    def __init__(self, client: httpx.AsyncClient, base: str, session: str) -> None:
+        self.client, self.base, self.session = client, base, session
+        self.turns: list[TurnResult] = []
+
+    @property
+    def chats(self) -> list[TurnResult]:
+        return [t for t in self.turns if t.kind == "chat" and t.status == 200]
+
+    def latest_brief(self) -> dict[str, Any]:
+        for turn in reversed(self.chats):
+            if turn.brief:
+                return turn.brief
+        raise CaseError("no question card to answer")
+
+    def grid(self, index: int) -> dict[str, Any]:
+        grids = [
+            t.presentation
+            for t in self.chats
+            if t.presentation.get("product_source") == "search"
+            and t.presentation.get("list_revision") is not None
+        ]
+        if len(grids) < abs(index):
+            raise CaseError(f"no result grid {index} to tick")
+        return grids[index]
+
+    def current_picks(self) -> list[dict[str, Any]]:
+        for turn in reversed(self.turns):
+            if turn.status == 200 and turn.picks is not None:
+                return turn.picks
+        return []
+
+    def pick_name(self, number: int) -> str:
+        pick = next((p for p in self.current_picks() if p.get("pick") == number), None)
+        if pick is None:
+            raise CaseError(f"no pick {number} in the tray")
+        return str(pick.get("name_english"))
+
+    async def _post(self, path: str, body: dict[str, Any], kind: str) -> TurnResult:
+        started = time.perf_counter()
+        try:
+            reply = await self.client.post(
+                f"{self.base}{path}",
+                json={"session_id": self.session, "store_id": STORE_ID, **body},
+                timeout=REQUEST_TIMEOUT_S,
+            )
+            data = reply.json() if reply.content else {}
+            result = TurnResult(reply.status_code, time.perf_counter() - started, data, kind)
+        except httpx.HTTPError as exc:
+            result = TurnResult(
+                0, time.perf_counter() - started, {"error": {"code": type(exc).__name__}}, kind
+            )
+        self.turns.append(result)
+        return result
+
+    async def chat(self, message: str, **action: Any) -> TurnResult:
+        return await self._post("/v1/chat", {"message": message, **action}, "chat")
+
+    async def play(self, turn: Any) -> TurnResult:
+        if isinstance(turn, str):
+            return await self.chat(turn)
+        if "say" in turn:
+            return await self.chat(turn["say"])
+        if "answer_card" in turn or "skip_card" in turn:
+            return await self._answer_card(turn.get("answer_card") or {})
+        if "tick" in turn:
+            return await self._tick(turn["tick"])
+        if "untick" in turn:
+            return await self._post(
+                "/v1/picks", {"action": {"kind": "deselect", "pick": turn["untick"]}}, "picks"
+            )
+        if "goes_with" in turn:
+            number = int(turn["goes_with"])
+            return await self.chat(
+                f"What goes with the {self.pick_name(number)}?",
+                product_action={"kind": "goes_with", "pick": number},
+            )
+        if "compare" in turn:
+            first, second = (int(n) for n in turn["compare"])
+            return await self.chat(
+                f"Compare the {self.pick_name(first)} and the {self.pick_name(second)}",
+                product_action={"kind": "compare", "picks": [first, second]},
+            )
+        if "chip" in turn:
+            return await self._chip(str(turn["chip"]))
+        if "more_options" in turn:
+            return await self.chat(
+                "Show me different options", search_action={"kind": "more_options"}
+            )
+        if "not_this_one" in turn:
+            return await self.chat(
+                "Not this one",
+                search_action={"kind": "exclude", "ordinal": int(turn["not_this_one"])},
+            )
+        raise CaseError(f"unknown turn {turn!r}")
+
+    async def _answer_card(self, spec: dict[str, Any]) -> TurnResult:
+        brief = self.latest_brief()
+        questions = {q["kind"]: q for q in brief.get("questions", [])}
+
+        def choose(kind: str, wanted: Any) -> tuple[str, str]:
+            question = questions.get(kind)
+            if question is None:
+                raise CaseError(f"the card has no {kind} question")
+            choices = question["choices"]
+            if isinstance(wanted, int):
+                if not 1 <= wanted <= len(choices):
+                    raise CaseError(f"the card's {kind} question has no choice {wanted}")
+                chosen = choices[wanted - 1]
+            else:
+                chosen = next(
+                    (c for c in choices if c["label"].casefold() == str(wanted).casefold()), None
+                )
+                if chosen is None:
+                    offered = [c["label"] for c in choices]
+                    raise CaseError(f"the card offers no {kind} {wanted!r} (offers {offered})")
+            return chosen["key"], chosen["label"]
+
+        answer: dict[str, Any] = {
+            "kind": "brief",
+            "card": int(brief["card"]) + (50 if spec.get("stale") else 0),
+        }
+        said: list[str] = []
+        budget_label = None
+        for field_name, kind in (("piece", "type"), ("budget", "budget"), ("feel", "feel")):
+            if field_name in spec:
+                key, label = choose(kind, spec[field_name])
+                answer[field_name] = key
+                said.append(label)
+                if field_name == "budget":
+                    budget_label = label
+        for field_name, kind in (("colours", "colour"), ("styles", "style")):
+            if field_name in spec:
+                chosen = [choose(kind, value) for value in spec[field_name]]
+                answer[field_name] = [key for key, _ in chosen]
+                said.append(" or ".join(label for _, label in chosen))
+        message = " · ".join(said) or f"Just {str(brief.get('submit_label', 'show me')).lower()}"
+        result = await self.chat(message, search_action=answer)
+        result.chosen_budget = budget_label
+        return result
+
+    async def _tick(self, spec: Any) -> TurnResult:
+        ordinal, grid_index = (
+            (int(spec), -1)
+            if isinstance(spec, int)
+            else (int(spec["ordinal"]), int(spec.get("grid", -1)))
+        )
+        grid = self.grid(grid_index)
+        ticked = await self._post(
+            "/v1/picks",
+            {
+                "action": {
+                    "kind": "select",
+                    "ordinal": ordinal,
+                    "list_revision": grid["list_revision"],
+                }
+            },
+            "picks",
+        )
+        goes_with = ticked.body.get("goes_with") if ticked.status == 200 else None
+        if goes_with:
+            # The console asks what goes with the first pick of its kind.
+            return await self.chat(
+                f"I like the {self.pick_name(int(goes_with))}",
+                product_action={"kind": "goes_with", "pick": int(goes_with)},
+            )
+        return ticked
+
+    async def _chip(self, label: str) -> TurnResult:
+        choices = self.chats[-1].presentation.get("choices") or [] if self.chats else []
+        chip = next((c for c in choices if c["label"].casefold() == label.casefold()), None)
+        if chip is None:
+            raise CaseError(f"no chip {label!r} (offers {[c['label'] for c in choices]})")
+        if chip.get("product_action"):
+            return await self.chat(chip["value"], product_action=chip["product_action"])
+        return await self.chat(chip["value"])
 
 
 async def _run_case(
     client: httpx.AsyncClient, base: str, case: dict[str, Any], gate: asyncio.Semaphore
 ) -> CaseResult:
     safe_id = "".join(ch if ch.isalnum() else "-" for ch in case["id"])
-    session = f"eval-{safe_id}-{uuid.uuid4().hex[:8]}"
-    turns: list[TurnResult] = []
+    conversation = Conversation(client, base, f"eval-{safe_id}-{uuid.uuid4().hex[:8]}")
+    problem: str | None = None
     async with gate:
-        for message in case["turns"]:
-            started = time.perf_counter()
+        for step, turn in enumerate(case["turns"], start=1):
             try:
-                reply = await client.post(
-                    f"{base}/v1/chat",
-                    json={"session_id": session, "store_id": STORE_ID, "message": message},
-                    timeout=REQUEST_TIMEOUT_S,
-                )
-                body = reply.json() if reply.content else {}
-                turns.append(TurnResult(reply.status_code, time.perf_counter() - started, body))
-            except httpx.HTTPError as exc:
-                turns.append(
-                    TurnResult(
-                        0, time.perf_counter() - started, {"error": {"code": type(exc).__name__}}
-                    )
-                )
+                result = await conversation.play(turn)
+            except CaseError as exc:
+                problem = f"step {step}: {exc}"
                 break
-            if reply.status_code != 200:
+            if result.status != 200:
                 break
-    previous = turns[-2] if len(turns) > 1 else None
-    return CaseResult(case["id"], turns, _check(case.get("checks", {}), turns[-1], previous))
+    turns = conversation.turns or [TurnResult(0, 0.0, {"error": {"code": "no turn"}})]
+    if problem is not None:
+        return CaseResult(case["id"], turns, [problem])
+    chats = [t for t in turns if t.kind == "chat"]
+    last = turns[-1]
+    earlier_chats = [t for t in chats if t is not last]
+    previous = earlier_chats[-1] if earlier_chats else None
+    return CaseResult(case["id"], turns, _check(case.get("checks", {}), last, previous))
 
 
 async def _run_server(base: str, cases: list[dict[str, Any]]) -> list[CaseResult]:
@@ -255,9 +563,24 @@ async def _run_server(base: str, cases: list[dict[str, Any]]) -> list[CaseResult
 
 
 def _cards(turn: TurnResult) -> str:
+    cards = "; ".join(
+        f"{(p.get('commerce') or {}).get('subcategory')} {p.get('main_color')} "
+        f"{p.get('price_amount')}"
+        for p in turn.products[:5]
+    )
+    if turn.brief:
+        asked = ",".join(q.get("kind", "?") for q in turn.brief.get("questions", []))
+        cards = f"{cards + ' | ' if cards else ''}card[{turn.brief.get('mode')}: {asked}]"
+    if turn.kind == "picks":
+        cards = f"picks={len(turn.picks or [])} goes_with={turn.body.get('goes_with')}"
+    return cards or "-"
+
+
+def _describe(turn: Any) -> str:
     return (
-        "; ".join(f"{p.get('main_color')} {p.get('price_amount')}" for p in turn.products[:5])
-        or "-"
+        repr(turn)
+        if isinstance(turn, str)
+        else "<" + ", ".join(f"{k}={v}" for k, v in turn.items()) + ">"
     )
 
 
@@ -267,7 +590,7 @@ def _report(
     by_id = {label: {r.case_id: r for r in results[label]} for label in labels}
     for case in cases:
         print(f"\n### {case['id']}  ({case['issue']})")
-        print(f"customer: {' -> '.join(repr(t) for t in case['turns'])}")
+        print(f"customer: {' -> '.join(_describe(t) for t in case['turns'])}")
         for label in labels:
             result = by_id[label][case["id"]]
             verdict = "PASS" if not result.failures else "FAIL: " + "; ".join(result.failures)

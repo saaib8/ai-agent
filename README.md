@@ -130,7 +130,9 @@ product family and their kinds and feel words are reviewed data,
 `app/taxonomy/briefs_v1.yaml`. Budget bands (price quartiles), colours and
 styles are counted from the store's live catalog when the card is built, and
 a kind the store doesn't stock isn't offered. Anything they already said is
-skipped. A stated need gets its card every time; "Show me sofas" shows results
+skipped. A need naming only a category ("I need a table") gets that
+category's card with the kind asked first. A stated need gets its card every
+time; "Show me sofas" shows results
 at once, with the card folded beside them as "Narrow down" (once per family
 per session).
 
@@ -138,7 +140,7 @@ per session).
   colours, styles, feel}` answers the card with the keys it offered. The kind
   and the budget filter; colours, styles and the feel only rank. The catalog
   has no material field, so the feel is never filtered on or claimed. Results
-  show `ZORY_CUSTOMER_AGENT__PRESENTATION_LIMIT` products (3), and the first
+  show `ZORY_CUSTOMER_AGENT__PRESENTATION_LIMIT` products (5), and the first
   is flagged `best_match` when their own words ordered the list.
 * `POST /v1/picks` (`session_id`, `store_id`, `action`: `{kind: "select",
   ordinal, list_revision}` | `{kind: "deselect", pick}`,

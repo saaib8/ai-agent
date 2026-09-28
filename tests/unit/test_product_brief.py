@@ -27,6 +27,7 @@ from app.schemas.agent_state import (
     ProductInteractionState,
 )
 from app.schemas.agent_turn import CustomerTurnInput
+from app.schemas.catalog_overview import CatalogOverview, SeatingSpread, SubcategoryShelf
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.discovery import ProductSearchRequest, ProductSort, SeatingCapacityConstraint
 from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome, TurnFailureCode
@@ -55,12 +56,14 @@ from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.response_view import best_match_first, route_response
 from app.services.similar_search import SimilarSearchBuilder
-from app.services.turn_coordinator import CustomerTurnCoordinator
+from app.services.turn_coordinator import CustomerTurnCoordinator, _earlier_seat_count
 from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
 from app.taxonomy.briefs import BriefQuestionKind, load_briefs
 from app.taxonomy.complements import load_complements
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.rooms import load_room_pieces
+from app.taxonomy.seating import load_seating_semantics
 
 from tests.unit.test_chat_api import FakeSessionStore
 from tests.unit.test_picks import SESSION, STORE, _stored
@@ -83,6 +86,7 @@ ATTRIBUTES = load_catalog_attributes()
 DIMENSIONS = load_dimension_semantics(taxonomy=TAXONOMY)
 BRIEFS = load_briefs(taxonomy=TAXONOMY)
 COMPLEMENTS = load_complements(taxonomy=TAXONOMY)
+ROOMS = load_room_pieces(taxonomy=TAXONOMY, seating=load_seating_semantics(taxonomy=TAXONOMY))
 
 SOFA_FACTS = BriefFacts(
     kinds=(
@@ -185,6 +189,18 @@ def test_every_card_loads_against_the_taxonomy() -> None:
             "[{label: A, words: a}]}}",
             "options",
         ),
+        (
+            "sofas: {for: [sofa], for_category: [seating], ask: [budget]}",
+            "must ask the kind",
+        ),
+        ("sofas: {for: [sofa], for_category: [furniture], ask: [budget]}", "approved category"),
+        (
+            "a: {for: [sofa], for_category: [seating], ask: [type], type: "
+            "[{label: A, subcategory: sofa, seats: 2}, {label: B, subcategory: sofa, seats: 3}]}"
+            "\n  b: {for: [chair], for_category: [seating], ask: [type], type: "
+            "[{label: A, subcategory: chair}, {label: B, subcategory: chair, seats: 1}]}",
+            "already has a card",
+        ),
     ],
 )
 def test_a_malformed_card_fails_startup(tmp_path: Path, body: str, problem: str) -> None:
@@ -234,6 +250,44 @@ async def test_only_stocked_kinds_are_offered_and_seats_count_only_when_reviewed
     assert built is not None
     # 40 sofas with no reviewed capacity make no 2-seater and no 4+ seater.
     assert _labels(built, BriefQuestionKind.TYPE) == ["3-seater", "Sofa set"]
+
+
+async def test_the_kind_the_store_has_most_of_comes_first() -> None:
+    builder, _ = _builder()
+
+    built = await builder.build(_need(), AgentStateV1(), CONTEXT, mode=BriefMode.ASK)
+
+    assert built is not None
+    assert _labels(built, BriefQuestionKind.TYPE) == [
+        "3-seater",
+        "2-seater",
+        "4+ seater",
+        "Sofa set",
+        "L-shape",
+    ]
+
+
+async def test_colours_are_counted_after_spelling_is_normalised() -> None:
+    """Two merchants' "beige" and "Beige" are one colour, and together they
+    outnumber the grey."""
+    facts = BriefFacts(
+        kinds=(("sofa", 3, 5),),
+        currency=None,
+        price_quartiles=None,
+        colors=(("Grey", 30), ("Beige", 20), ("beige", 15)),
+        styles=(),
+    )
+    builder, _ = _builder(facts)
+
+    built = await builder.build(
+        _need(seating_capacity=SeatingCapacityConstraint.exactly(3)),
+        AgentStateV1(),
+        CONTEXT,
+        mode=BriefMode.ASK,
+    )
+
+    assert built is not None
+    assert _labels(built, BriefQuestionKind.COLOUR) == ["Beige", "Grey"]
 
 
 async def test_budget_bands_follow_the_quartiles_rounded_as_a_person_says_them() -> None:
@@ -372,6 +426,69 @@ async def test_cards_are_numbered_through_the_session() -> None:
     rug = await builder.build(_need("carpet", "decor"), after, CONTEXT, mode=BriefMode.NARROW)
 
     assert rug is not None and rug.card.card == 2 and rug.card.mode is BriefMode.NARROW
+
+
+TABLE_FACTS = BriefFacts(
+    kinds=(("center-table", None, 41), ("service-table", None, 63), ("dining-table", None, 4)),
+    currency="SAR",
+    price_quartiles=(Decimal("630"), Decimal("990"), Decimal("1500")),
+    colors=(("Walnut", 30), ("Black", 20)),
+    styles=(("Modern", 90), ("Minimalist", 70)),
+)
+
+
+async def test_a_need_that_names_no_kind_is_asked_the_kind_first() -> None:
+    """ "I need a table" names a category, not a kind: the card settles it by
+    a tap rather than a guess (CLAUDE.md 14.5)."""
+    builder, facts = _builder(TABLE_FACTS)
+
+    built = await builder.build(
+        ResolvedSearch(request=ProductSearchRequest(commerce_category="tables")),
+        AgentStateV1(),
+        CONTEXT,
+        mode=BriefMode.ASK,
+    )
+
+    assert built is not None
+    assert _asked(built)[0] is BriefQuestionKind.TYPE
+    # Only kinds the store stocks: no TV units, consoles or nightstands here.
+    # Most-stocked first: side tables, then coffee tables, then dining tables.
+    assert _labels(built, BriefQuestionKind.TYPE) == ["Side table", "Coffee table", "Dining table"]
+    assert "dining-table" in facts.calls[0]
+    assert built.card.submit_label == "Show me tables"
+
+
+async def test_a_kind_from_a_whole_category_card_can_move_to_its_own_category() -> None:
+    builder, _ = _builder(TABLE_FACTS)
+    built = await builder.build(
+        ResolvedSearch(request=ProductSearchRequest(commerce_category="tables")),
+        AgentStateV1(),
+        CONTEXT,
+        mode=BriefMode.ASK,
+    )
+    assert built is not None
+
+    search = builder.answer(BriefAnswerAction(card=1, piece="dining-table"), built.pending)
+
+    assert search is not None
+    assert (search.request.commerce_category, search.request.commerce_subcategory) == (
+        "dining",
+        "dining-table",
+    )
+    assert search.semantics.subcategory is ConstraintStrength.LOCKED
+
+
+async def test_a_category_with_no_card_is_just_searched() -> None:
+    builder, _ = _builder()
+
+    built = await builder.build(
+        ResolvedSearch(request=ProductSearchRequest(commerce_category="seating")),
+        AgentStateV1(),
+        CONTEXT,
+        mode=BriefMode.ASK,
+    )
+
+    assert built is None
 
 
 # ── reading the answers ═════════════════════════════════════════════════════
@@ -577,7 +694,9 @@ def _sofa(
 
 
 def _coordinator(
-    decision: CustomerAgentDecision, need: ResolvedSearch | None = None
+    decision: CustomerAgentDecision,
+    need: ResolvedSearch | None = None,
+    capabilities: Any = None,
 ) -> tuple[CustomerTurnCoordinator, Pipeline]:
     pipeline = Pipeline()
     builder, _ = _builder()
@@ -591,7 +710,7 @@ def _coordinator(
         pipeline,  # type: ignore[arg-type]
         Catalog(),  # type: ignore[arg-type]
         SimilarSearchBuilder(TAXONOMY, ATTRIBUTES),
-        FakeCapabilities(),  # type: ignore[arg-type]
+        capabilities or FakeCapabilities(),  # type: ignore[arg-type]
         FakeDesign(),  # type: ignore[arg-type]
         FakeDesignDiscovery(),  # type: ignore[arg-type]
         BundleReferenceResolver(TAXONOMY),
@@ -731,6 +850,66 @@ async def test_answers_to_a_card_no_longer_on_screen_search_nothing() -> None:
     assert pipeline.requests == []
     assert result.grounding.failure is not None
     assert result.grounding.failure.code is TurnFailureCode.QUESTIONS_EXPIRED
+
+
+class SeatCeiling(FakeCapabilities):
+    """A store whose largest single seating piece seats five."""
+
+    async def overview(self, context: Any) -> CatalogOverview:
+        return CatalogOverview(
+            store_id=50,
+            currency="SAR",
+            shelves=(
+                SubcategoryShelf(
+                    commerce_category="seating",
+                    commerce_subcategory="sofa",
+                    active_count=10,
+                    price_minimum=Decimal(990),
+                    price_maximum=Decimal(4990),
+                    seating=SeatingSpread(known_count=10, minimum=2, maximum=5),
+                ),
+            ),
+        )
+
+
+async def test_a_need_no_single_piece_seats_asks_the_shape_not_the_card() -> None:
+    """ "A sofa for 9": which shape - separate sofas, or a sofa with armchairs -
+    is the question that matters, so it comes first (CLAUDE.md 10.2, 27.1)."""
+    need = _need(seating_capacity=SeatingCapacityConstraint.at_least(9))
+    coordinator, pipeline = _coordinator(_search(stated_need=True), need, SeatCeiling())
+
+    result = await coordinator.run(_typed(AgentStateV1(), "I need a sofa for 9 people"))
+
+    assert result.product_brief is None
+    assert len(pipeline.requests) == 1
+
+
+async def test_a_need_one_piece_can_seat_still_gets_its_card() -> None:
+    need = _need(seating_capacity=SeatingCapacityConstraint.exactly(4))
+    coordinator, pipeline = _coordinator(_search(stated_need=True), need, SeatCeiling())
+
+    result = await coordinator.run(_typed(AgentStateV1(), "I need a sofa for 4 people"))
+
+    assert result.product_brief is not None
+    assert pipeline.requests == []
+
+
+async def test_a_head_count_on_a_card_on_screen_is_offered_to_the_room() -> None:
+    """ "A sofa for 9" shows its card; designing the room next still asks "is
+    it for the 9 you mentioned?" - the head count is on the card, not a search."""
+    builder, _ = _builder()
+    built = await builder.build(
+        _need(seating_capacity=SeatingCapacityConstraint.at_least(9)),
+        AgentStateV1(),
+        CONTEXT,
+        mode=BriefMode.ASK,
+    )
+    assert built is not None
+    on_screen = record_brief(AgentStateV1(), built.pending, shown=built.pending.name)
+    living_room = ROOMS.template("living_room")
+    assert living_room is not None
+
+    assert _earlier_seat_count(on_screen, living_room) == 9
 
 
 # ── the best match ══════════════════════════════════════════════════════════
