@@ -329,3 +329,6 @@ class AgentStateView(BaseModel):
     room_project: RoomProjectView | None = None
     purchase_stage: PurchaseStage | None = None
     seating_offer: SeatingOfferView | None = None
+    discovery_questions_left: int = 0
+    """How many more questions a stated need may get before products are
+    shown. At 0, the next step on that need is to show something."""

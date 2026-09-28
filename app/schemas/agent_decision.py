@@ -732,6 +732,20 @@ class BlockingClarification(BaseModel):
     reason: BlockingClarificationReason
     question: str = Field(min_length=1, max_length=MAX_CLARIFICATION_CHARS)
 
+    subject: FollowUpGoal | None = None
+    """What the question is about, from the same list as a follow-up.
+
+    Lets the application offer answers to tap that match the question however
+    the writer words it, and check the order of a stated need's questions."""
+
+    multi_seat_seating: bool = False
+    """The need is seating that holds several people - a sofa, sectional, sofa
+    set or sofa bed."""
+
+    seats_known: bool = False
+    """They already said how many will sit. With `multi_seat_seating`, how many
+    will sit is the first thing a salesperson asks; this says it is answered."""
+
 
 # ── the decision ────────────────────────────────────────────────────────────
 

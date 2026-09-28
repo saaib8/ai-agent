@@ -218,4 +218,6 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "presentation_limit",
         "decision_model",
         "response_model",
+        # Read by the coordinator: questions before products on a stated need.
+        "discovery_question_limit",
     }

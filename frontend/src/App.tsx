@@ -136,6 +136,22 @@ export default function App() {
     [chat, config.config],
   )
 
+  const handleSelectProduct = useCallback(
+    (product: GroundedProduct) => {
+      if (chat.sending || product.presented_ordinal == null) return
+      setSwap(null)
+      // Sent as words, not a screen action: choosing is where the sale moves
+      // on - what goes with it, what finishes the room - and that is the
+      // agent's judgement. The number resolves against this grid, the one on
+      // screen; the name makes the thread read clearly.
+      void chat.send(
+        `I'll take number ${product.presented_ordinal}, the ${product.name_english}`,
+        config.config,
+      )
+    },
+    [chat, config.config],
+  )
+
   const handleVisualize = useCallback(
     (view: RenderView, viewLabel: string) => {
       if (chat.sending) return
@@ -226,6 +242,7 @@ export default function App() {
           onPickAlternative={handlePickAlternative}
           onShowMoreOptions={handleShowMoreOptions}
           onExcludeProduct={handleExcludeProduct}
+          onSelectProduct={handleSelectProduct}
           onVisualize={handleVisualize}
           onOpenCatalog={() => setCatalogStep('browse')}
           onRerenderSelection={handleRerenderSelection}

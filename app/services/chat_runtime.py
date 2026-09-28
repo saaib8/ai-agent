@@ -37,7 +37,7 @@ from app.schemas.agent_turn import (
     CustomerTurnInput,
     CustomerTurnResult,
 )
-from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse
+from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse, ReplyChoice
 from app.schemas.conversation import (
     ConversationContext,
     ConversationMessage,
@@ -47,10 +47,12 @@ from app.schemas.grounding import GroundedProduct
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
+from app.services.question_choices import choices_for, question_choices
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.room_presentation import piece_picker
 from app.services.seating_presentation import present_seating_solution, seating_choices
 from app.services.turn_coordinator import CustomerTurnCoordinator
+from app.taxonomy.attributes import CatalogAttributes
 
 logger = get_logger(__name__)
 
@@ -78,11 +80,15 @@ class ChatRuntime:
         responses: CustomerResponseGenerator,
         sessions: SessionStore,
         settings: SessionSettings,
+        attributes: CatalogAttributes | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._responses = responses
         self._sessions = sessions
         self._settings = settings
+        self._attributes = attributes
+        """The colour and style vocabulary, for the answers a question offers
+        to tap. Without it a colour or style question offers none."""
 
     # ── 1. load ─────────────────────────────────────────────────────────────
 
@@ -136,8 +142,9 @@ class ChatRuntime:
         """
         return await self._responses.generate(turn, result)
 
-    @staticmethod
-    def presentation(result: CustomerTurnResult) -> ChatPresentation | None:
+    def presentation(
+        self, result: CustomerTurnResult, response: CustomerResponse | None = None
+    ) -> ChatPresentation | None:
         """What the client draws, built from verified facts only.
 
         Assembled from the turn's own grounding and the room the optimiser
@@ -159,9 +166,7 @@ class ChatRuntime:
             if result.seating_solution is not None
             else ()
         )
-        choices = (
-            seating_choices(result.seating_solution) if result.seating_solution is not None else ()
-        )
+        choices = self._choices(result, response)
         built = ChatPresentation(
             products=products,
             comparison=grounding.comparison,
@@ -173,6 +178,23 @@ class ChatRuntime:
             ),
         )
         return None if built.is_empty() else built
+
+    def _choices(
+        self, result: CustomerTurnResult, response: CustomerResponse | None
+    ) -> tuple[ReplyChoice, ...]:
+        """Answers to tap for the question this reply ends on, if any.
+
+        A seating shape question, a question asked before anything is shown,
+        or the optional follow-up after results - only when the reply really
+        asks it, so a chip never answers a question nobody asked.
+        """
+        if result.seating_solution is not None:
+            return seating_choices(result.seating_solution)
+        if result.grounding.clarification is not None:
+            return question_choices(result.grounding.clarification, self._attributes)
+        if response is not None and response.follow_up_question is not None:
+            return choices_for(result.decision.follow_up_goal, self._attributes)
+        return ()
 
     # ── 4. persist ──────────────────────────────────────────────────────────
 
@@ -269,7 +291,7 @@ class ChatRuntime:
         turn = self.turn_input(request, context, loaded)
         result = await self.run_turn(turn)
         response = await self.render(turn, result)
-        presentation = self.presentation(result)
+        presentation = self.presentation(result, response)
 
         revision = await self.persist(request, loaded, result, response)
         self._log(request, loaded, revision, presentation, started)

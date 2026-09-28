@@ -706,7 +706,8 @@ def test_the_reply_is_told_not_to_stop_at_a_receipt() -> None:
     flat = " ".join(INSTRUCTIONS.split())
 
     assert "Never end on the acknowledgement alone" in flat
-    assert "acknowledge in a clause, not a sentence" in flat
+    assert "Celebrate their choice, specifically" in flat
+    assert "Never hand them homework" in flat
 
 
 # ── a request finished across turns ─────────────────────────────────────────

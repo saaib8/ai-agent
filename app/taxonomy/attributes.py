@@ -33,9 +33,21 @@ class AttributeFamily(StrEnum):
 class CatalogAttributes:
     """Immutable view of the approved colour and style vocabularies."""
 
-    def __init__(self, version: str, values: Mapping[AttributeFamily, frozenset[str]]) -> None:
+    def __init__(
+        self,
+        version: str,
+        values: Mapping[AttributeFamily, frozenset[str]],
+        suggestions: Mapping[AttributeFamily, tuple[str, ...]] | None = None,
+    ) -> None:
         self._version = version
         self._values: Mapping[AttributeFamily, frozenset[str]] = dict(values)
+        self._suggestions: Mapping[AttributeFamily, tuple[str, ...]] = dict(suggestions or {})
+        for family, suggested in self._suggestions.items():
+            unknown = [value for value in suggested if value not in self._values[family]]
+            if unknown:
+                raise TaxonomyConfigurationError(
+                    detail=f"suggested {family} values are not approved: {unknown}"
+                )
         self._by_spelling: Mapping[AttributeFamily, Mapping[str, str]] = {
             family: _spelling_index(family, members) for family, members in self._values.items()
         }
@@ -54,6 +66,11 @@ class CatalogAttributes:
 
     def values(self, family: AttributeFamily) -> frozenset[str]:
         return self._values[family]
+
+    def suggested(self, family: AttributeFamily) -> tuple[str, ...]:
+        """A short reviewed pick of approved values to offer as answers to tap,
+        in order. Empty when none is configured."""
+        return self._suggestions.get(family, ())
 
     def is_color(self, value: str) -> bool:
         return value in self.colors
@@ -125,6 +142,18 @@ def _parse_family(document: Any, key: str, *, source: str) -> frozenset[str]:
     return frozenset(seen)
 
 
+def _parse_suggestions(document: Any, key: str, *, source: str) -> tuple[str, ...]:
+    """An optional ordered list; approval is checked against the family later."""
+    raw = document.get(key)
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(v, str) and v.strip() for v in raw):
+        raise TaxonomyConfigurationError(detail=f"{source}: '{key}' must be a list of values")
+    if len(set(raw)) != len(raw):
+        raise TaxonomyConfigurationError(detail=f"{source}: {key} repeats a value")
+    return tuple(raw)
+
+
 def load_catalog_attributes(path: Path | None = None) -> CatalogAttributes:
     """Load and validate the vocabularies. Raises on anything malformed."""
     source = path or DEFAULT_ATTRIBUTES_PATH
@@ -161,5 +190,13 @@ def load_catalog_attributes(path: Path | None = None) -> CatalogAttributes:
         values={
             AttributeFamily.COLOR: _parse_family(document, "colors", source=source.name),
             AttributeFamily.STYLE: styles,
+        },
+        suggestions={
+            AttributeFamily.COLOR: _parse_suggestions(
+                document, "suggested_colors", source=source.name
+            ),
+            AttributeFamily.STYLE: _parse_suggestions(
+                document, "suggested_styles", source=source.name
+            ),
         },
     )

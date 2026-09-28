@@ -40,6 +40,7 @@ from app.schemas.grounding import (
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerContext
 from app.schemas.room_opener import RoomQuestion
+from app.schemas.screen import ChosenPieceView
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingSolution
 
@@ -212,6 +213,11 @@ class CustomerTurnResult(BaseModel):
     piece produces no `RoomBundle`, and manufacturing one would invent a status
     and a feasibility claim nobody established.
     """
+
+    selected_pieces: tuple[ChosenPieceView, ...] = ()
+    """The same choices, with the look of each - colour, styles, seats - so a
+    reply can talk about the piece they chose rather than its category.
+    Empty whenever `selected_kinds` is."""
 
     selected_kinds: tuple[str, ...] = ()
     """What kinds of thing the customer has chosen, in the order chosen.

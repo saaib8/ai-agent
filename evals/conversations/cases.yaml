@@ -354,3 +354,63 @@ cases:
     turns: ["show me sofas for 9 people", "either is fine, show me both"]
     checks: {not_fallback: true, min_combinations: 2, combination_excludes: sofa-bed}
 
+
+  # ── the sharp salesperson (docs/known-issues.md issue 10) ─────────────────
+  # A stated need gets a short conversation - a question or two, one per turn -
+  # before products; "just show me" gets products at once; every question is
+  # asked in a human voice; a firm budget is never upsold past.
+
+  - id: sales_greets_back_and_asks_seats_first
+    issue: "a greeting is returned, a sofa asks who sits before the look, no AI tells"
+    turns: ["hi i need sofas"]
+    checks:
+      not_fallback: true
+      max_products: 0
+      mentions: ["hi", "hello", "welcome"]
+      not_mentions: ["—", "of course", "absolutely", "certainly", "style", "look"]
+
+  - id: sales_stated_need_asks_one_thing_first
+    issue: "a stated need: one warm question before showing anything"
+    turns: ["I need to buy a sofa under 5000 SAR"]
+    checks:
+      not_fallback: true
+      max_products: 0
+      engages: true
+      not_mentions: ["budget", "here are", "based on your"]
+
+  - id: sales_second_answer_keeps_it_moving
+    issue: "their answer is heard; at most one more question, or products"
+    turns: ["I need to buy a sofa under 5000 SAR", "we are 4 at home"]
+    checks: {not_fallback: true, engages: true, not_mentions: ["how many", "budget"]}
+
+  - id: sales_shows_by_the_third_turn
+    issue: "never a third question before products"
+    turns: ["I need to buy a sofa under 5000 SAR", "we are 4 at home", "modern, light colours"]
+    checks: {not_fallback: true, min_products: 1, max_price: 5000}
+
+  - id: sales_just_show_me
+    issue: "someone keen to look is shown products at once"
+    turns: ["I need a sofa, just show me what you have"]
+    checks: {not_fallback: true, min_products: 1}
+
+  - id: sales_show_me_opens_with_a_welcome
+    issue: "the first 'show me a sofa' welcomes, asks one thing, shows nothing yet"
+    turns: ["can u show me a sofa?"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["welcome"]}
+
+  - id: sales_no_robotic_phrasing
+    issue: "results are framed like a person, not a system"
+    turns: ["just show me modern sofas"]
+    checks:
+      not_fallback: true
+      min_products: 1
+      not_mentions: ["here are the results", "based on your preferences", "i've pulled together", "seating capacity", "footprint"]
+
+  - id: sales_firm_budget_is_never_upsold
+    issue: "a locked ceiling is never crossed or hinted past"
+    turns: ["show me sofas, no more than 3000 SAR"]
+    checks:
+      not_fallback: true
+      min_products: 1
+      max_price: 3000
+      not_mentions: ["a little more", "touch over", "stretch", "bit more"]

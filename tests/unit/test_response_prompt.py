@@ -69,7 +69,7 @@ POLICIES = {
     "one question in one place": ("Ask it in one place",),
     "english only": ("Reply in English",),
     "a choice is not the end": ("Never end on the acknowledgement alone",),
-    "acknowledge in a clause": ("acknowledge in a clause, not a sentence",),
+    "celebrate the choice specifically": ("Celebrate their choice, specifically",),
     "a choice is claimed only when recorded": (
         "only when the summary says this turn added one",
     ),

@@ -9,6 +9,7 @@ wrong the customer still gets a usable reply.
 from __future__ import annotations
 
 import ast
+import json
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -214,26 +215,88 @@ _NOTICE_FOR = {
 # ── branches that never reach a model ───────────────────────────────────────
 
 
-async def test_a_model_written_clarification_is_returned_verbatim() -> None:
-    """The decision model wrote it and it was validated in its own phase."""
-    question = "Which kind of table did you mean?"
-    client = FakeClient(SAFE)
+_DRAFT = "Which kind of table did you mean?"
 
-    response = await _generate(
-        client,
-        TurnGrounding(
-            clarification=BlockingClarification(
-                reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
-                question=question,
-            )
-        ),
-        action=AgentAction.CLARIFY,
+
+def _drafted_question() -> TurnGrounding:
+    return TurnGrounding(
+        clarification=BlockingClarification(
+            reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
+            question=_DRAFT,
+        )
     )
 
-    assert response.message == question
-    assert client.calls == [], "no response call at all"
+
+async def test_a_model_written_clarification_is_asked_in_the_writers_voice() -> None:
+    """The decision model chose what to ask; the writer asks it like a person."""
+    voiced = CustomerResponse(
+        message="Happy to help with a table - which kind did you have in mind?"
+    )
+    client = FakeClient(voiced)
+
+    response = await _generate(client, _drafted_question(), action=AgentAction.CLARIFY)
+
+    assert response.message == voiced.message
+    assert len(client.calls) == 1
+    sent = json.loads(client.calls[0]["user_input"])
+    assert sent["grounding"]["kind"] == "question"
+    assert sent["grounding"]["draft_question"] == _DRAFT
+    assert response.follow_up_question is None
+
+
+async def test_a_voiced_question_in_the_follow_up_field_is_moved_into_the_message() -> None:
+    """The writer's own question in the wrong field is kept, not refused - a
+    refusal would send the cold draft instead."""
+    client = FakeClient(
+        CustomerResponse(
+            message="Ooh, a new table - happy to help.",
+            follow_up_question="Which kind did you have in mind?",
+        )
+    )
+
+    response = await _generate(client, _drafted_question(), action=AgentAction.CLARIFY)
+
+    assert response.message == (
+        "Ooh, a new table - happy to help. Which kind did you have in mind?"
+    )
+    assert response.follow_up_question is None
+    assert len(client.calls) == 1
+
+
+async def test_a_question_written_in_both_places_is_asked_once() -> None:
+    question = "Which kind did you have in mind?"
+    client = FakeClient(
+        CustomerResponse(
+            message=f"Ooh, a new table. {question}", follow_up_question=question
+        )
+    )
+
+    response = await _generate(client, _drafted_question(), action=AgentAction.CLARIFY)
+
+    assert response.message == f"Ooh, a new table. {question}"
+    assert response.follow_up_question is None
+
+
+async def test_a_question_the_writer_cannot_voice_falls_back_to_the_draft() -> None:
+    """Never worse than before: the plain draft, exactly as it was meant."""
+    client = FakeClient(LLMRequestError(provider="openai", status_code=400))
+
+    response = await _generate(client, _drafted_question(), action=AgentAction.CLARIFY)
+
+    assert response.message == _DRAFT
     assert response.follow_up_question is None
     assert response.referenced_grounding_refs == ()
+
+
+async def test_a_voiced_question_with_an_invented_figure_falls_back_to_the_draft() -> None:
+    """The figure guard holds on questions too: a number the customer never
+    gave is retried once, then the draft is sent."""
+    client = FakeClient(CustomerResponse(message="Is that a table for 6 people?"))
+
+    response = await _generate(client, _drafted_question(), action=AgentAction.CLARIFY)
+
+    assert response.message == _DRAFT
+    assert len(client.calls) == 2
 
 
 @pytest.mark.parametrize("code", list(TurnFailureCode))

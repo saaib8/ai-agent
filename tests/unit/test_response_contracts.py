@@ -211,9 +211,9 @@ def _comparison() -> ProductComparisonResult:
 # ── which branches reach a model ────────────────────────────────────────────
 
 
-def test_a_model_written_clarification_is_passed_through() -> None:
-    """The decision model already wrote it; re-wording could only change what
-    was asked."""
+def test_a_model_written_clarification_is_worded_by_the_writer() -> None:
+    """The decision model chose what to ask; the writer asks it in the
+    assistant's voice, carrying the draft and the reason it is asked."""
     routing = _route(
         TurnGrounding(
             clarification=BlockingClarification(
@@ -223,8 +223,17 @@ def test_a_model_written_clarification_is_passed_through() -> None:
         )
     )
 
-    assert isinstance(routing, DeterministicResponse)
-    assert routing.kind is DeterministicResponseKind.MODEL_CLARIFICATION
+    assert isinstance(routing, ResponseGroundingView)
+    assert routing.kind is ResponseOutcomeKind.QUESTION
+    assert routing.draft_question == "Which kind of table?"
+    assert routing.clarification_reason is BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE
+
+
+def test_a_question_view_needs_its_draft_and_nothing_else_carries_one() -> None:
+    with pytest.raises(ValidationError):
+        ResponseGroundingView(kind=ResponseOutcomeKind.QUESTION)
+    with pytest.raises(ValidationError):
+        ResponseGroundingView(kind=ResponseOutcomeKind.ANSWER, draft_question="Which one?")
 
 
 @pytest.mark.parametrize("code", list(TurnFailureCode))
@@ -408,6 +417,8 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # was looked for, so the reply must not describe finding anything.
         "selection",
         "deterministic_clarification",
+        # A question the decision model drafted, asked in the writer's voice.
+        "question",
     }
     for absent in ("clarify", "failure", "design_handoff", "handled_failure"):
         assert absent not in kinds
@@ -1285,6 +1296,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # conversation, which is how it once reported a rug nobody kept.
         "selected_count",
         "selected_kinds",
+        # The look of each choice - colour, styles, seats - so a reply can talk
+        # about *their* piece. No name, no price, no identity.
+        "selected_pieces",
         "selection_changed",
         "seating_requirement_known",
         "follow_up_goal",
@@ -1309,6 +1323,12 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "clarification_reason",
         "reference_reason",
         "relative_price_reason",
+        # The decision model's own plain question, for the writer to voice.
+        # Its words, not a catalog value.
+        "draft_question",
+        # A bool: whether their price ceiling was loose, the licence for an
+        # upsell. Never the figure.
+        "budget_flexible",
     }
 
 

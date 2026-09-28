@@ -145,10 +145,8 @@ async def _render_customer_response(
 ) -> dict[str, object]:
     engine = runtime.context.chat
     result = state["result"]
-    return {
-        "response": await engine.render(state["turn"], result),
-        "presentation": engine.presentation(result),
-    }
+    response = await engine.render(state["turn"], result)
+    return {"response": response, "presentation": engine.presentation(result, response)}
 
 
 async def _persist_session(

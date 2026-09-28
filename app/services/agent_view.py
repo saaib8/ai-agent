@@ -51,7 +51,10 @@ from app.services.bundle_cards import group_bundle_cards
 
 
 def project_state(
-    state: AgentStateV1, cards: Sequence[PresentedCardView] = ()
+    state: AgentStateV1,
+    cards: Sequence[PresentedCardView] = (),
+    *,
+    discovery_question_limit: int = 0,
 ) -> AgentStateView:
     """The model-safe view of one conversation's memory.
 
@@ -72,6 +75,9 @@ def project_state(
         room_project=_room_project(state.room_project),
         purchase_stage=state.derived_commerce.purchase_stage,
         seating_offer=_seating_offer(state.seating_offer),
+        discovery_questions_left=max(
+            0, discovery_question_limit - state.derived_commerce.discovery_questions_asked
+        ),
     )
 
 

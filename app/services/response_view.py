@@ -16,16 +16,19 @@ from __future__ import annotations
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
     AgentAction,
+    BlockingClarification,
     BundleInteractionOp,
     CommercialReason,
     FollowUpPolicy,
     ProductInteractionOp,
 )
+from app.schemas.agent_state import ActiveSearchState
 from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
 from app.schemas.bundle import BundleStatus, BundleUnavailable, RoomBundle
 from app.schemas.comparison import ComparisonStatus
 from app.schemas.design import DesignPriority
 from app.schemas.grounding import GroundedProduct, SearchOutcome, TurnFailureCode
+from app.schemas.query import ConstraintStrength
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
     BundleGroundingView,
@@ -74,9 +77,20 @@ def route_response(result: CustomerTurnResult) -> ResponseRoute:
         required_clarification=required,
         side_notice=_side_notice(result),
         follow_up_allowed=(
-            grounding.follow_up_policy is FollowUpPolicy.OPTIONAL and required is None
+            grounding.follow_up_policy is FollowUpPolicy.OPTIONAL
+            and required is None
+            and not _shows_our_suggestion(primary)
         ),
     )
+
+
+def _shows_our_suggestion(primary: ResponseRouting) -> bool:
+    """A set we proposed is on screen - the piece that goes with their choice.
+
+    That set is already the next step, so a separate "shall I help with the
+    rest of the room?" beside it offers what is being done, and reads as a
+    form. The reply closes on the suggestion itself instead."""
+    return isinstance(primary, ResponseGroundingView) and primary.search_was_suggested
 
 
 def _required_clarification(
@@ -190,9 +204,15 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         return _room_question(result, result.room_question)
 
     if grounding.clarification is not None:
-        # The decision model already wrote this question, and re-wording it
-        # could only change what was asked.
-        return DeterministicResponse(kind=DeterministicResponseKind.MODEL_CLARIFICATION)
+        # The decision model chose what to ask and drafted it; the writer asks
+        # it the way a person would. The draft is the fallback, so a failed
+        # rewording is never worse than the draft itself.
+        return _view(
+            ResponseOutcomeKind.QUESTION,
+            None,
+            result=result,
+            question=grounding.clarification,
+        )
 
     if grounding.failure is not None and not _has_primary_outcome(result):
         return DeterministicResponse(
@@ -518,12 +538,14 @@ def _view(
     clarification: DeterministicClarification | None,
     *,
     result: CustomerTurnResult | None = None,
+    question: BlockingClarification | None = None,
     **fields: object,
 ) -> ResponseGroundingView:
     """A view of one outcome, carrying any question it also owes.
 
     The reasons are copied from what the coordinator found, never derived here:
     the response layer reports a question, it does not decide there is one.
+    `question` is the decision model's own, for the `QUESTION` job.
     """
     return ResponseGroundingView(
         kind=kind,
@@ -531,7 +553,10 @@ def _view(
         # presentation payload is built from. Per-branch assembly would be one
         # more place the words and the cards could come apart (CLAUDE.md 2).
         screen=_screen(result),
-        clarification_reason=clarification.reason if clarification else None,
+        draft_question=question.question if question else None,
+        clarification_reason=(
+            question.reason if question else clarification.reason if clarification else None
+        ),
         reference_reason=clarification.reference_reason if clarification else None,
         relative_price_reason=(clarification.relative_price_reason if clarification else None),
         # Turn-wide facts, so no branch has to remember them: what the decision
@@ -542,6 +567,7 @@ def _view(
             len(result.state.product_interaction.selected_product_ids) if result else 0
         ),
         selected_kinds=result.selected_kinds if result else (),
+        selected_pieces=result.selected_pieces if result else (),
         selection_changed=_selection_changed(result),
         seating_requirement_known=_seating_known(result),
         **fields,
@@ -654,7 +680,22 @@ def _search(
         ),
         earlier_sizes_applied=search.earlier_sizes_applied,
         would_find_without=search.set_aside,
+        budget_flexible=_budget_flexible(executed),
     )
+
+
+def _budget_flexible(executed: ActiveSearchState | None) -> bool | None:
+    """Whether their price ceiling is one they said was loose - the only
+    licence for mentioning something above it. None when they gave no ceiling.
+
+    A ceiling with no recorded strength reads as firm: absent metadata is never
+    consent (CLAUDE.md 13.5)."""
+    if executed is None or executed.request.price is None:
+        return None
+    if executed.request.price.max_amount is None:
+        return None
+    strength = executed.semantics.price_max
+    return strength is not None and strength is not ConstraintStrength.LOCKED
 
 
 def _wished_matches(

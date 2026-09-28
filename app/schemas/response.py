@@ -15,9 +15,8 @@ What remains is enough to write a sentence with - what kind of turn this is,
 how many things are on screen, whether the search was widened, and which
 reason a question is being asked for.
 
-**Not every branch calls a model.** A clarification the decision model already
-worded is passed through; a handled failure and a design handoff are worded
-deterministically. Those branches are absent from `ResponseOutcomeKind`
+**Not every branch calls a model.** A handled failure and a design handoff are
+worded deterministically. Those branches are absent from `ResponseOutcomeKind`
 entirely, so the model-facing enum cannot describe a job the model does not do.
 """
 
@@ -44,7 +43,7 @@ from app.schemas.resolution import (
     SearchRequirementClarificationReason,
 )
 from app.schemas.room_opener import RoomQuestionKind
-from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.screen import ChosenPieceView, CustomerVisibleScreenView
 from app.schemas.seating_solution import (
     SeatingShape,
     SeatingShapeOption,
@@ -107,6 +106,14 @@ class ResponseOutcomeKind(StrEnum):
 
     DETERMINISTIC_CLARIFICATION = "deterministic_clarification"
 
+    QUESTION = "question"
+    """The decision model chose to ask one thing before acting, and drafted it.
+
+    The writer asks it in the assistant's own voice - a person who is listening,
+    not a form - and asks exactly that: the draft decides *what* is asked, the
+    writer only *how*. If the writer cannot, the draft is sent as it is.
+    """
+
 
 class DeterministicResponseKind(StrEnum):
     """Branches answered without a model call.
@@ -115,10 +122,6 @@ class DeterministicResponseKind(StrEnum):
     already exists, or there is nothing to say that a fixed sentence does not
     say better and more safely.
     """
-
-    MODEL_CLARIFICATION = "model_clarification"
-    """The decision model already wrote the question. Re-wording it could only
-    change what was asked."""
 
     HANDLED_FAILURE = "handled_failure"
     """"We could not do that just now" has no conversational nuance to gain,
@@ -530,6 +533,10 @@ class ResponseGroundingView(BaseModel):
     never keys, and never a product name.
     """
 
+    selected_pieces: tuple[ChosenPieceView, ...] = ()
+    """The same choices with their look - colour, styles, seats - so the reply
+    can be about *their* piece: "that beige corner set". No name, no price."""
+
     selection_changed: bool = False
     """Whether this turn added one.
 
@@ -619,6 +626,17 @@ class ResponseGroundingView(BaseModel):
     """Why a question is being asked, in reason codes. The words are the
     model's job; which question to ask is not."""
 
+    draft_question: str | None = None
+    """For `QUESTION`: what the decision step wants asked, in its own plain
+    words. The writer asks the same thing in a human voice."""
+
+    budget_flexible: bool | None = None
+    """For a search: whether the customer's price limit is one they said was
+    loose ("around 5000", "ideally under"). None when they gave no price.
+
+    The licence for an upsell. A flexible budget may hear "for a little more,
+    this one seats five"; a firm one never hears about anything above it."""
+
     @model_validator(mode="after")
     def _the_kind_and_its_evidence_agree(self) -> Self:
         # A question may be the whole job, or it may accompany one. What it may
@@ -645,6 +663,11 @@ class ResponseGroundingView(BaseModel):
 
         if self.selected_kinds and len(self.selected_kinds) != self.selected_count:
             raise ValueError("every choice is one kind, so the two counts agree")
+        if self.selected_pieces and len(self.selected_pieces) != self.selected_count:
+            raise ValueError("every choice is one piece, so the two counts agree")
+
+        if (self.kind is ResponseOutcomeKind.QUESTION) != (self.draft_question is not None):
+            raise ValueError("a question carries its draft, and only it does")
 
         if (self.kind is ResponseOutcomeKind.DESIGN_ADVICE) != bool(self.guidance):
             raise ValueError("design advice carries guidance, and only it does")

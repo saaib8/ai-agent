@@ -7,6 +7,9 @@ export interface SearchRefineControls {
   onShowMore: () => void
   /** Drop one product and re-run, so it does not come back. */
   onExclude: (product: GroundedProduct) => void
+  /** Choose this one: sent as a message, so the agent records the pick and
+   *  carries the sale on from it, exactly as if they had typed it. */
+  onSelect: (product: GroundedProduct) => void
 }
 
 interface ProductGridProps {
@@ -32,7 +35,14 @@ export function ProductGrid({ products, pick, refine, busy }: ProductGridProps) 
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {products.map((p) => (
-          <ProductCard key={p.grounding_ref} product={p} pick={pick} onExclude={refine?.onExclude} />
+          <ProductCard
+            key={p.grounding_ref}
+            product={p}
+            pick={pick}
+            onExclude={refine?.onExclude}
+            onSelect={refine?.onSelect}
+            busy={busy}
+          />
         ))}
       </div>
       {showRefine && (

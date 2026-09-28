@@ -487,14 +487,29 @@ model as before: budget first, at most two questions, together, once.
 At most one question per reply, and never budget as an opener: asking it first
 anchors the price down and reads as "can you afford this?".
 
-- **An explicit ask to see** ("show me sofas") shows products first. The one
-  optional follow-up is, in order: how many people will sit, for multi-seat
-  seating (sofas, sets, sectionals) while unknown; otherwise the colour or
-  style taste, while neither is on record - the designer's one question.
-  Nothing when the key facts are given ("beige 3-seaters").
-- **A stated need** ("I need a sofa for the living room") asks that one
-  question first (`detail_before_search`). The decision restates the whole
-  request on the next turn, so the answer searches.
+- **The first ask to see a kind of product** ("can you show me a sofa?")
+  opens like a showroom: a welcome, a warm line about what they are choosing,
+  and one question that shapes what to bring out - then products. It is
+  treated as a stated need (below). Products come at once instead for "just
+  show me", "show me everything", an impatient "showww", a request with the
+  key facts ("beige 3-seaters for 4"), or a kind already shown. After that,
+  "show me" always shows. (Changed 2026-09-29 at the product owner's request;
+  `discovery_question_limit=0` restores show-first.) Once products are on
+  screen, the one optional follow-up is, in order: how many people will sit,
+  for multi-seat seating while unknown; otherwise the colour or style taste.
+- **A stated need** ("I need a sofa for the living room") gets a short
+  conversation first, the way a good salesperson has one: at most
+  `discovery_question_limit` questions (default 2), one per turn, each
+  `detail_before_search` - how many will sit for multi-seat seating, then the
+  look. A ceiling, not a quota: it asks only what would change what it shows,
+  and searches at once when the key facts are in or they are keen to look.
+  The count lives in session state (`discovery_questions_asked`); a question
+  past the limit is refused and the decision corrected once to search. The
+  decision restates the whole request when it searches, so every answer is
+  kept.
+- **Upselling** is allowed only when the price ceiling is loose ("around
+  5000", "ideally under") or absent, and only with a reason from what they told
+  us. A locked ceiling is never crossed or hinted past.
 - **A seat count no single piece meets** asks first which shape - separate
   sofas together, or a sofa with armchairs - offering only shapes that really
   exist, each "from" its real lowest total, plus the colour if none is known.
@@ -504,6 +519,11 @@ anchors the price down and reads as "can you afford this?".
   one per turn (10.1): the optimiser needs the total.
 - **Budget otherwise** only once they are engaged: comparing, having picked
   something, talking price without a figure, or refining a wide price range.
+
+Every question reaches the customer in the reply writer's voice. The decision
+model chooses *what* to ask and drafts it plainly; the writer asks exactly that,
+as a person would (the `question` outcome). If the writer fails or states a
+figure the customer never gave, the draft is sent as it is.
 
 ### 10.3 A room is built from the pieces they chose
 

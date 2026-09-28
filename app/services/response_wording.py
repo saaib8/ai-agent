@@ -30,45 +30,53 @@ from app.schemas.seating_solution import SeatingSolutionOutcome
 
 FAILURE_WORDING: dict[TurnFailureCode, str] = {
     TurnFailureCode.SEARCH_UNAVAILABLE: (
-        "I wasn't able to run that search just now. Please try again in a moment."
+        "Sorry, I couldn't pull those up just now. Give me a moment and ask "
+        "again - I'll have them for you."
     ),
-    TurnFailureCode.PRODUCT_UNAVAILABLE: ("I wasn't able to pull up that product just now."),
+    TurnFailureCode.PRODUCT_UNAVAILABLE: (
+        "Sorry, I couldn't bring that one up just now - try me again in a moment."
+    ),
     TurnFailureCode.COMPARISON_TARGET_UNAVAILABLE: (
-        "I wasn't able to put those side by side just now."
+        "Sorry, I couldn't line those up side by side just now - try me again in a moment."
     ),
-    TurnFailureCode.REFERENCE_UNRESOLVED: ("I wasn't able to work out which product you meant."),
-    TurnFailureCode.RESPONSE_UNAVAILABLE: ("I wasn't able to put a reply together just now."),
+    TurnFailureCode.REFERENCE_UNRESOLVED: (
+        "I want to be sure I've got the right one - tell me which piece you meant."
+    ),
+    TurnFailureCode.RESPONSE_UNAVAILABLE: (
+        "Sorry, I lost my train of thought there - say that once more and I'm with you."
+    ),
     TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE: (
-        "One of the pieces you asked me to keep isn't available any more, so I "
-        "wasn't able to plan the room around it."
+        "Unfortunately one of the pieces you asked me to keep isn't available any "
+        "more, so I couldn't plan the room around it. Let me know how you'd like "
+        "to handle it."
     ),
     TurnFailureCode.BUNDLE_NOT_VERIFIABLE: (
-        "I couldn't check everything currently in your room, so I wasn't sure "
-        "which piece you meant."
+        "I couldn't check everything in your room just now, so I'm not sure which "
+        "piece you meant - point me to it once more and I'll take it from there."
     ),
     TurnFailureCode.NO_REPLACEMENT_CANDIDATE: (
-        "I couldn't find another one of those to offer you, so I've left your "
-        "current choice as it is."
+        "I had a good look, but there isn't another one of those I'd offer you "
+        "right now, so I've left your current choice as it is."
     ),
     TurnFailureCode.REPLACEMENT_NOT_FEASIBLE: (
-        "I found alternatives, but none of them works alongside the rest of the "
-        "room, so I've left your current choice as it is."
+        "I found a few alternatives, but none of them sits well with the rest of "
+        "the room, so I've left your current choice as it is."
     ),
     TurnFailureCode.NOTHING_SELECTED: (
-        "You haven't picked anything out yet, so there's nothing to show you "
-        "here."
+        "You haven't picked anything out yet - when something catches your eye, "
+        "just tell me and I'll keep it aside for you."
     ),
     TurnFailureCode.REQUEST_NOT_UNDERSTOOD: (
-        "Sorry, I didn't quite catch that. Try saying it a little differently - "
-        "for example, the kind of piece you're after, or what you'd like to "
-        "change about what you're looking at."
+        "Sorry, I didn't quite catch that. Try putting it another way - tell me "
+        "the kind of piece you're after, or what you'd like to change about what "
+        "you're looking at."
     ),
     TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE: (
-        "I wasn't able to answer that one just now. Please try again in a "
-        "moment."
+        "Sorry, I couldn't answer that one just now - ask me again in a moment."
     ),
     TurnFailureCode.DESIGN_UNAVAILABLE: (
-        "I wasn't able to put a room plan together just now. Please try again in a moment."
+        "Sorry, I couldn't put the room plan together just now. Give me a moment "
+        "and ask again - we'll pick up right where we left off."
     ),
 }
 """Total over the failure codes, so a new one cannot fall through to silence.
@@ -107,17 +115,20 @@ changing a budget is the customer's decision, and a fixed sentence that
 suggested it would be making it for them.
 """
 
-BUNDLE_KEPT_WORDING = "That piece will stay in the room."
+BUNDLE_KEPT_WORDING = "Done - that piece stays in the room, whatever else we change."
 """No product name, no figure, no question. The cards are rendered beside it."""
 
-BUNDLE_UNLOCKED_WORDING = "That piece can change in later refinements."
+BUNDLE_UNLOCKED_WORDING = (
+    "Got it - that piece is open to change now, if something suits the room better later."
+)
 """Says what changed - permission - and does not promise a replacement."""
 
 BUNDLE_ACQUISITION_WORDING: dict[BundleAcquisition, str] = {
     BundleAcquisition.ALREADY_OWNED: (
-        "I'll treat that as something you already have, so it won't count towards what you spend."
+        "Good to know - I'll work around the one you already have, so it won't "
+        "count towards what you spend."
     ),
-    BundleAcquisition.TO_BUY: ("I'll count that as something you still need to buy."),
+    BundleAcquisition.TO_BUY: ("Got it - I'll count that as something you still need to buy."),
 }
 """What the customer told us about owning a piece, said back plainly.
 
@@ -130,13 +141,13 @@ carries the rest.
 """
 
 BUNDLE_CHANGED_NOT_REFRESHED_WORDING = (
-    "I've made that change. I wasn't able to work the rest of the room out "
-    "again just now, so what you can see may be out of date."
+    "Done - I've made that change. I couldn't rework the rest of the room just "
+    "now, though, so what you're seeing may be a step behind."
 )
 """Both halves, in order. The change is stated as done because it is done, and
 the room is described as stale rather than as wrong."""
 
-DESIGN_HANDOFF_WORDING = "I wasn't able to put that together just now."
+DESIGN_HANDOFF_WORDING = "Sorry, I couldn't put that together just now."
 """A design request that produced nothing to show.
 
 It used to say the service could not plan a whole room yet. That stopped being
@@ -149,30 +160,45 @@ about what the capability can or cannot do. Something did not come back, and
 that is the whole message."""
 
 SIDE_NOTICE_WORDING: dict[SideEffectNotice, str] = {
-    SideEffectNotice.SELECTION_NOT_UPDATED: "I wasn't able to save that selection.",
-    SideEffectNotice.SELECTION_NOT_REMOVED: "I wasn't able to remove that selection.",
-    SideEffectNotice.FOCUS_NOT_CHANGED: "I wasn't able to switch to that product.",
+    SideEffectNotice.SELECTION_NOT_UPDATED: (
+        "I couldn't save that as your pick just now, though."
+    ),
+    SideEffectNotice.SELECTION_NOT_REMOVED: (
+        "I couldn't take that off your picks just now, though."
+    ),
+    SideEffectNotice.FOCUS_NOT_CHANGED: "I couldn't switch to that piece just now, though.",
 }
 
-ROOM_QUESTION_DEFAULT = "Let's design your room. What would you like to spend on it overall?"
+ROOM_QUESTION_DEFAULT = (
+    "Lovely - let's design your room. What would you like to spend on it overall?"
+)
 
 FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
-    ResponseOutcomeKind.ANSWER: "I'm not able to answer that just now.",
-    ResponseOutcomeKind.SEARCH_RESULTS: "Here's what I found.",
-    ResponseOutcomeKind.ZERO_RESULTS: (
-        "I couldn't find anything that matches all of that together. Tell me "
-        "which part matters least - the budget, the size or the colour - and "
-        "I'll widen that one."
+    ResponseOutcomeKind.ANSWER: (
+        "Sorry, I couldn't put an answer together just now - ask me again in a moment."
     ),
-    ResponseOutcomeKind.SELECTION: "Here's what you've picked out so far.",
-    ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",
-    ResponseOutcomeKind.COMPARISON: "Here's how those compare.",
+    ResponseOutcomeKind.SEARCH_RESULTS: (
+        "Here are a few I think are worth a look - tell me which way you're "
+        "leaning and I'll narrow them down."
+    ),
+    ResponseOutcomeKind.ZERO_RESULTS: (
+        "Nothing here matches all of that together, I'm afraid. Tell me which "
+        "part matters least - the budget, the size or the colour - and I'll "
+        "widen that one."
+    ),
+    ResponseOutcomeKind.SELECTION: "Here's everything you've picked out so far.",
+    ResponseOutcomeKind.PRODUCT_DETAIL: "Here's a closer look at that one.",
+    ResponseOutcomeKind.COMPARISON: "Here they are side by side.",
     ResponseOutcomeKind.ROOM_QUESTION: ROOM_QUESTION_DEFAULT,
     ResponseOutcomeKind.DESIGN_ADVICE: (
-        "I wasn't able to put that answer into words just now."
+        "Sorry, I couldn't put my thoughts on that together just now - ask me "
+        "again in a moment."
     ),
     ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION: (
-        "Could you tell me a little more about what you're after?"
+        "Tell me a little more about what you have in mind, and I'll take it from there."
+    ),
+    ResponseOutcomeKind.QUESTION: (
+        "Tell me a little more about what you have in mind, and I'll take it from there."
     ),
 }
 """What the customer gets when generation could not be used.
@@ -183,13 +209,18 @@ usable answer rather than an apology.
 """
 
 BUNDLE_FALLBACK_WORDING: dict[BundleStatus, str] = {
-    BundleStatus.COMPLETE: ("Here's a room package covering everything it needs."),
+    BundleStatus.COMPLETE: (
+        "Here's a room I've put together with everything it needs - have a look "
+        "and tell me what you'd change."
+    ),
     BundleStatus.PARTIAL: (
-        "Here's a partial room package - some of the pieces it needs are still missing."
+        "Here's the room so far - a few of the pieces it needs are still "
+        "missing, and we can work on those next."
     ),
     BundleStatus.INFEASIBLE: (
-        "The pieces you asked me to keep don't fit within the budget you gave "
-        "me, so I couldn't put a package together around them."
+        "The pieces you asked me to keep don't fit inside the budget you gave "
+        "me, so I couldn't build the room around them - tell me which you'd "
+        "rather bend on."
     ),
 }
 """What a whole-room turn says when generation could not be used.
@@ -227,9 +258,6 @@ table. Digit-free: the seats and prices are on the cards either way.
 """
 
 DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
-    DeterministicResponseKind.MODEL_CLARIFICATION: FALLBACK_WORDING[
-        ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION
-    ],
     DeterministicResponseKind.HANDLED_FAILURE: FAILURE_WORDING[
         TurnFailureCode.RESPONSE_UNAVAILABLE
     ],
@@ -244,7 +272,7 @@ DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
         BundleAcquisition.ALREADY_OWNED
     ],
     DeterministicResponseKind.BUNDLE_UNAVAILABLE: (
-        "I wasn't able to work the room package out just now."
+        "Sorry, I couldn't work the room out just now - give me a moment and ask again."
     ),
 }
 """For a deterministic branch whose own wording could not be produced - a

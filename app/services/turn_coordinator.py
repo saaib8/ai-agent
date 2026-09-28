@@ -54,6 +54,7 @@ from app.schemas.agent_decision import (
     CommercialReason,
     CustomerAgentDecision,
     DesignScope,
+    FollowUpGoal,
     FollowUpPolicy,
     ProductInteractionIntent,
     ProductInteractionOp,
@@ -188,7 +189,7 @@ from app.schemas.resolution import (
 )
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.schemas.room_opener import RoomQuestion
-from app.schemas.screen import PresentedCardView
+from app.schemas.screen import ChosenPieceView, PresentedCardView
 from app.schemas.search_action import MoreOptionsAction, SearchActionRequest
 from app.schemas.seating_solution import (
     SeatingArrangement,
@@ -790,8 +791,13 @@ class CustomerTurnCoordinator:
         taxonomy: CommerceTaxonomy,
         rooms: RoomPieces | None = None,
         seating: SeatingSemantics | None = None,
+        *,
+        discovery_question_limit: int = 2,
     ) -> None:
         self._taxonomy = taxonomy
+        self._discovery_question_limit = discovery_question_limit
+        """At most this many questions about a stated need before products are
+        shown (`CustomerAgentSettings.discovery_question_limit`)."""
         self._rooms = rooms
         """The room registry: which pieces a living room or a bedroom may hold.
         None where rooms are planned without it, as they always were."""
@@ -871,6 +877,34 @@ class CustomerTurnCoordinator:
         typed = turn.bundle_action is None and turn.search_action is None
         return typed and exc.context.get("stage") not in ("decision", "interpretation")
 
+    def _require_discovery_question_left(
+        self, decision: CustomerAgentDecision, pre_turn: AgentStateV1
+    ) -> None:
+        """A stated need gets a few questions, then it gets products.
+
+        The limit is shown to the decision model, which usually respects it.
+        When it does not, the decision is refused rather than the question
+        sent: a customer asked a third question before seeing anything feels
+        interrogated, and one corrective decision - told to search with what
+        it knows - is cheap by comparison.
+        """
+        clarification = decision.clarification
+        if (
+            clarification is None
+            or clarification.reason is not BlockingClarificationReason.DETAIL_BEFORE_SEARCH
+        ):
+            return
+        if pre_turn.derived_commerce.discovery_questions_asked >= self._discovery_question_limit:
+            raise LLMResponseInvalidError(reason="discovery questions exhausted")
+        # For a sofa, how many will sit decides everything after it - one piece
+        # or a combination, which sizes, which shapes - so it comes first.
+        if (
+            clarification.multi_seat_seating
+            and not clarification.seats_known
+            and clarification.subject is not FollowUpGoal.SEATING_REQUIREMENT
+        ):
+            raise LLMResponseInvalidError(reason="discovery seats first")
+
     async def _dispatch(self, turn: CustomerTurnInput) -> CustomerTurnResult:
         if turn.bundle_action is not None:
             return await self._run_bundle_action(turn, turn.bundle_action)
@@ -935,10 +969,15 @@ class CustomerTurnCoordinator:
             DecisionInput(
                 message=turn.message,
                 conversation=turn.conversation,
-                state_view=project_state(pre_turn, await self._visible_cards(turn)),
+                state_view=project_state(
+                    pre_turn,
+                    await self._visible_cards(turn),
+                    discovery_question_limit=self._discovery_question_limit,
+                ),
             ),
             problems=problems,
         )
+        self._require_discovery_question_left(decision, pre_turn)
 
         proposals = self._with_room_pieces(
             decision, map_proposals(decision.state_proposal, decision.commerce_proposal), pre_turn
@@ -951,17 +990,22 @@ class CustomerTurnCoordinator:
         # successful search or a resolved selection. A branch that already
         # applied them says so, because applying an add twice would duplicate
         # every preference in it.
-        final_state = (
-            primary.state
-            if primary.proposals_applied
-            else apply_update(primary.state, proposals.update)
+        final_state = _with_discovery_count(
+            (
+                primary.state
+                if primary.proposals_applied
+                else apply_update(primary.state, proposals.update)
+            ),
+            decision,
         )
 
         grounding = self._ground(decision, primary, interaction, proposals.clarification)
         self._log(decision, pre_turn, final_state, primary, interaction, started)
+        selected_kinds, selected_pieces = await self._chosen(final_state, turn)
         return CustomerTurnResult(
             state=final_state,
-            selected_kinds=await self._chosen_kinds(final_state, turn),
+            selected_kinds=selected_kinds,
+            selected_pieces=selected_pieces,
             decision=decision,
             grounding=grounding,
             selection_added=bool(
@@ -998,9 +1042,11 @@ class CustomerTurnCoordinator:
 
         decision = _bundle_action_decision(action)
         final_state = primary.state
+        selected_kinds, selected_pieces = await self._chosen(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
-            selected_kinds=await self._chosen_kinds(final_state, turn),
+            selected_kinds=selected_kinds,
+            selected_pieces=selected_pieces,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
             selection_added=False,
@@ -1038,9 +1084,11 @@ class CustomerTurnCoordinator:
 
         decision = _search_action_decision()
         final_state = primary.state
+        selected_kinds, selected_pieces = await self._chosen(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
-            selected_kinds=await self._chosen_kinds(final_state, turn),
+            selected_kinds=selected_kinds,
+            selected_pieces=selected_pieces,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
             selection_added=False,
@@ -1386,37 +1434,47 @@ class CustomerTurnCoordinator:
             need.commerce_subcategory is None or commerce.subcategory == need.commerce_subcategory
         )
 
-    async def _chosen_kinds(self, state: AgentStateV1, turn: CustomerTurnInput) -> tuple[str, ...]:
-        """What kinds of thing they have chosen, in the order they chose them.
+    async def _chosen(
+        self, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> tuple[tuple[str, ...], tuple[ChosenPieceView, ...]]:
+        """What they have chosen, as kinds and as pieces, in the order chosen.
 
         Read fresh, like every other product fact: a kind taken from state
-        would be a classification that was true when they picked it. One entry
-        per choice, so the kinds and the count cannot disagree.
+        would be a classification that was true when they picked it. Both lists
+        come from one read, so they always describe the same products.
 
-        A choice the catalog no longer returns yields nothing, which makes the
-        lists shorter than the selection - so the projection carries kinds only
-        when it has one for every choice, and otherwise carries none. A partial
-        list read as a whole one is how "a sofa and a table" became "2 sofas".
+        A choice the catalog no longer returns makes the lists shorter than the
+        selection - so both are carried only when there is one entry for every
+        choice, and otherwise neither is. A partial list read as a whole one is
+        how "a sofa and a table" became "2 sofas".
         """
         chosen = state.product_interaction.selected_product_ids
         if not chosen:
-            return ()
+            return (), ()
         try:
             products = await self._hydration.hydrate_ids(chosen, turn.context)
         except _HANDLED_CATALOG_FAILURES:
             logger.warning("chosen_kinds_unavailable", store_id=turn.context.store_id)
-            return ()
+            return (), ()
         if len(products) != len(chosen):
-            return ()
+            return (), ()
         kinds = tuple(
             customer_words_or_none(product.commerce.subcategory or product.commerce.category)
             for product in products
         )
-        return (
-            ()
-            if any(kind is None for kind in kinds)
-            else tuple(kind for kind in kinds if kind is not None)
+        if any(kind is None for kind in kinds):
+            return (), ()
+        pieces = tuple(
+            ChosenPieceView(
+                kind=kind,
+                main_color=product.main_color,
+                styles=tuple(style.replace("_", " ") for style in product.styles),
+                seating_capacity=product.commerce.seating_capacity,
+            )
+            for kind, product in zip(kinds, products, strict=True)
+            if kind is not None
         )
+        return tuple(piece.kind for piece in pieces), pieces
 
     async def _visible_cards(self, turn: CustomerTurnInput) -> tuple[PresentedCardView, ...]:
         """The products the customer was looking at when they typed.
@@ -3982,6 +4040,36 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=offer,
+    )
+
+
+def _with_discovery_count(state: AgentStateV1, decision: CustomerAgentDecision) -> AgentStateV1:
+    """Count a question asked about a stated need; start again once they act.
+
+    An answer or another kind of question leaves the count alone - a side
+    question mid-discovery is not a reason to start asking afresh. Anything
+    that does something - a search, a room, a comparison - resets it, so the
+    next need they state gets its own questions.
+    """
+    clarification = decision.clarification
+    asked = state.derived_commerce.discovery_questions_asked
+    if (
+        clarification is not None
+        and clarification.reason is BlockingClarificationReason.DETAIL_BEFORE_SEARCH
+    ):
+        count = asked + 1
+    elif decision.action in (AgentAction.ANSWER, AgentAction.CLARIFY):
+        count = asked
+    else:
+        count = 0
+    if count == asked:
+        return state
+    return state.model_copy(
+        update={
+            "derived_commerce": state.derived_commerce.model_copy(
+                update={"discovery_questions_asked": count}
+            )
+        }
     )
 
 

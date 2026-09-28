@@ -24,12 +24,17 @@ export function ProductCard({
   product,
   pick,
   onExclude,
+  onSelect,
+  busy,
 }: {
   product: GroundedProduct
   pick?: AlternativePick
   /** Present on a fresh search grid: drops this one and re-runs, so it does
    *  not come back. Absent while picking a room replacement. */
   onExclude?: (product: GroundedProduct) => void
+  /** Present on the latest grid: chooses this one. */
+  onSelect?: (product: GroundedProduct) => void
+  busy?: boolean
 }) {
   const [imgFailed, setImgFailed] = useState(false)
   const { commerce } = product
@@ -103,9 +108,19 @@ export function ProductCard({
               Use this {pick.role}
             </button>
           )}
+          {!pick && onSelect && product.presented_ordinal != null && (
+            <button
+              onClick={() => onSelect(product)}
+              disabled={busy}
+              className="w-full rounded-lg bg-clay px-3 py-2 text-xs font-semibold text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 disabled:opacity-50"
+            >
+              I&apos;ll take this one
+            </button>
+          )}
           {!pick && onExclude && product.presented_ordinal != null && (
             <button
               onClick={() => onExclude(product)}
+              disabled={busy}
               className="w-full rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
             >
               Not this one

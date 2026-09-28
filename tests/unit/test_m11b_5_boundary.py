@@ -101,6 +101,9 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "rooms",
         # Reviewed seat counts, to count a room's real seats. Data, not a service.
         "seating",
+        # How many questions a stated need may get before products are shown.
+        # A setting, not a service.
+        "discovery_question_limit",
     ]
 
 

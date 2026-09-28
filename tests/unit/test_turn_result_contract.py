@@ -113,6 +113,7 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # the reply had a count and no nouns, and called a sofa and a centre
         # table "2 sofas".
         "selected_kinds",
+        "selected_pieces",
         # A seat count no single piece met, recovered by combining pieces. Here
         # rather than on the grounding for the same reason as `bundle_outcome`:
         # it carries product ids the application renders, and the grounding is

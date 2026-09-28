@@ -32,6 +32,7 @@ interface ChatPanelProps {
   onPickAlternative: (alternativeOrdinal: number) => void
   onShowMoreOptions: () => void
   onExcludeProduct: (product: GroundedProduct) => void
+  onSelectProduct: (product: GroundedProduct) => void
   onVisualize: (view: RenderView, viewLabel: string) => void
   onOpenCatalog: () => void
   /** Draw a catalogue selection again, from another view. */
@@ -55,6 +56,7 @@ export function ChatPanel({
   onPickAlternative,
   onShowMoreOptions,
   onExcludeProduct,
+  onSelectProduct,
   onVisualize,
   onOpenCatalog,
   onRerenderSelection,
@@ -143,7 +145,11 @@ export function ChatPanel({
                     }
                     refine={
                       turn.id === lastAssistantId
-                        ? { onShowMore: onShowMoreOptions, onExclude: onExcludeProduct }
+                        ? {
+                            onShowMore: onShowMoreOptions,
+                            onExclude: onExcludeProduct,
+                            onSelect: onSelectProduct,
+                          }
                         : undefined
                     }
                     quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}

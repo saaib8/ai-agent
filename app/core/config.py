@@ -451,6 +451,15 @@ class CustomerAgentSettings(BaseModel):
     it rather than having the extras silently dropped.
     """
 
+    discovery_question_limit: int = Field(default=2, ge=0, le=3)
+    """At most how many questions a stated need ("I need a sofa") gets, one per
+    turn, before products are shown.
+
+    A ceiling, not a quota: the agent asks only what would change what it
+    shows, and a customer who wants to see things is shown them at once. 0
+    means show first, always.
+    """
+
     decision_model: str | None = Field(default=None, min_length=1)
     """The model that decides what a customer turn should do.
 

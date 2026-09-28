@@ -12,10 +12,10 @@ Three rules shape it.
 rendered by the application from verified grounding, so prose that cannot see
 them cannot misstate them. That is why the numeric guard can be small.
 
-**Most branches never reach a model.** A question the decision model already
-wrote is passed through; a handled failure and a design handoff are worded from
-constants. A model call is for turns where there is genuinely something to
-phrase.
+**Some branches never reach a model.** A handled failure and a design handoff
+are worded from constants. A question the decision model drafted is asked in
+the writer's voice, and the draft is what is sent if that fails. A model call is
+for turns where there is genuinely something to phrase.
 
 **One retry, for one reason.** A figure with no source is a wording problem and
 asking again can fix it. A citation of a product that was never grounded means
@@ -25,6 +25,7 @@ remedy - that falls back instead.
 
 from __future__ import annotations
 
+import re
 import time
 
 from pydantic import ValidationError
@@ -73,7 +74,6 @@ from app.services.response_wording import (
     BUNDLE_UNAVAILABLE_WORDING,
     BUNDLE_UNLOCKED_WORDING,
     DESIGN_HANDOFF_WORDING,
-    DETERMINISTIC_FALLBACK,
     FAILURE_WORDING,
     SIDE_NOTICE_WORDING,
     compose,
@@ -162,7 +162,7 @@ class CustomerResponseGenerator:
         route = route_response(result)
 
         response, calls, used_fallback = await self._primary_response(turn, result, route)
-        final = self._with_side_notice(_asked_once(response), route)
+        final = self._with_side_notice(_asked_once(_plain_punctuation(response)), route)
 
         self._log(route, calls, used_fallback, started)
         return final
@@ -192,15 +192,6 @@ class CustomerResponseGenerator:
         handoff is sent with it.
         """
         match primary.kind:
-            case DeterministicResponseKind.MODEL_CLARIFICATION:
-                clarification = result.grounding.clarification
-                if clarification is None:  # pragma: no cover - routing guarantees it
-                    return _reply(DETERMINISTIC_FALLBACK[primary.kind]), 0, True
-                # The decision model wrote this question and it was validated
-                # in its own phase. Re-wording it could only change what was
-                # asked, so it is carried through untouched and not scanned.
-                return _reply(clarification.question), 0, False
-
             case DeterministicResponseKind.HANDLED_FAILURE:
                 assert primary.failure_code is not None
                 return _reply(FAILURE_WORDING[primary.failure_code]), 0, False
@@ -384,7 +375,7 @@ class CustomerResponseGenerator:
         (CLAUDE.md 20.1).
         """
         try:
-            return await self._client.parse(
+            response = await self._client.parse(
                 instructions=instructions,
                 user_input=request.model_dump_json(exclude_none=True),
                 schema=CustomerResponse,
@@ -392,6 +383,9 @@ class CustomerResponseGenerator:
         except _HANDLED_PROVIDER_FAILURES as exc:
             logger.warning("response_generation_unavailable", error=type(exc).__name__)
             return None
+        if request.grounding.kind is ResponseOutcomeKind.QUESTION:
+            return _question_in_the_message(response)
+        return response
 
     # ── composition ─────────────────────────────────────────────────────────
 
@@ -475,13 +469,58 @@ def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
     return ()
 
 
+_LONG_DASH = re.compile(r"(?<!\d)\s*[\u2014\u2013]\s*(?!\d)")
+"""An em or en dash between words - never one between figures, where it is a
+range ("5 to 7 seats")."""
+
+
+def _plain_punctuation(response: CustomerResponse) -> CustomerResponse:
+    """The long dash, written the way people type: as a comma.
+
+    It is one of the clearest tells that a reply was machine-written, and the
+    prompt asks for none; this is the net for the ones that slip through.
+    Punctuation only - no word is added, removed or changed.
+    """
+    message = _LONG_DASH.sub(", ", response.message)
+    question = (
+        _LONG_DASH.sub(", ", response.follow_up_question)
+        if response.follow_up_question is not None
+        else None
+    )
+    if message == response.message and question == response.follow_up_question:
+        return response
+    return response.model_copy(update={"message": message, "follow_up_question": question})
+
+
+def _question_in_the_message(response: CustomerResponse) -> CustomerResponse:
+    """A question turn's question, where it belongs: in the message.
+
+    On a question turn the question *is* the reply, so a writer that put it in
+    the follow-up field wrote the one question the turn asks, just in the wrong
+    place. Refusing it would send the plain draft instead - the cold reply this
+    turn exists to avoid - so it is moved, word for word, and never rewritten.
+    """
+    question = response.follow_up_question
+    if question is None:
+        return response
+    message = response.message
+    if " ".join(question.split()) not in " ".join(message.split()):
+        message = compose(message, question)
+    return response.model_copy(update={"message": message, "follow_up_question": None})
+
+
 def _reply(message: str) -> CustomerResponse:
     """An application-written reply: no citations, no optional question."""
     return CustomerResponse(message=message)
 
 
 def _fallback(view: ResponseGroundingView) -> str:
-    """This outcome's fixed sentence, with the status or outcome it needs."""
+    """This outcome's fixed sentence, with the status or outcome it needs.
+
+    A question falls back to the decision model's own draft: plainer than the
+    writer's, and exactly what was meant to be asked."""
+    if view.draft_question is not None:
+        return view.draft_question
     return fallback_for(
         view.kind,
         view.bundle.status if view.bundle else None,

@@ -664,6 +664,14 @@ class DerivedCommerceState(BaseModel):
 
     purchase_stage: PurchaseStage | None = None
 
+    discovery_questions_asked: int = Field(default=0, ge=0)
+    """Questions asked about a stated need before anything was shown.
+
+    A salesperson asks a little before bringing things out, and knows when to
+    stop asking. This counts the questions since the last time products went on
+    screen, so the ceiling holds however the conversation drifts. Defaulted, so
+    every saved session still reads."""
+
 
 class AgentStateV1(BaseModel):
     """Structured working memory. Five domains, and nothing else."""

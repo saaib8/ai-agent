@@ -113,7 +113,9 @@ def test_the_runtime_holds_only_the_four_things_it_sequences() -> None:
         name for name in inspect.signature(ChatRuntime.__init__).parameters if name != "self"
     ]
 
-    assert parameters == ["coordinator", "responses", "sessions", "settings"]
+    # `attributes` is reviewed vocabulary, not a service: it lets a question
+    # offer answers to tap that are approved colour and style values.
+    assert parameters == ["coordinator", "responses", "sessions", "settings", "attributes"]
 
 
 def test_the_runtime_exposes_the_five_phases_a_graph_sequences() -> None:

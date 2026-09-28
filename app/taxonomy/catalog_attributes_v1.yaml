@@ -72,3 +72,21 @@ styles:
   - Coastal
   - Traditional
   - Moroccan
+
+# Answers offered to tap when the agent asks a customer about colour or style.
+# A short, reviewed pick for a first conversation - a customer can always type
+# anything else. Each must be an approved value above; checked at startup.
+suggested_colors:
+  - Beige
+  - Grey
+  - White
+  - Charcoal
+  - Navy
+  - Olive
+
+suggested_styles:
+  - Modern
+  - Minimalist
+  - Scandinavian
+  - Japandi
+  - Traditional

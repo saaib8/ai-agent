@@ -427,8 +427,9 @@ async def test_a_handled_search_failure_is_worded_without_a_model() -> None:
     assert result.state.product_interaction.presented_product_ids == (1, 2)
 
 
-async def test_a_model_clarification_passes_straight_through() -> None:
+async def test_a_model_clarification_is_voiced_by_the_writer() -> None:
     question = "Which kind of table did you mean?"
+    voiced = CustomerResponse(message="Happy to help - which kind of table did you mean?")
     _, response, client = await _run(
         CustomerAgentDecision(
             action=AgentAction.CLARIFY,
@@ -437,11 +438,12 @@ async def test_a_model_clarification_passes_straight_through() -> None:
                 question=question,
             ),
             follow_up_policy=FollowUpPolicy.NONE,
-        )
+        ),
+        replies=(voiced,),
     )
 
-    assert client.calls == [], "the decision model already wrote it"
-    assert response.message == question
+    assert len(client.calls) == 1, "the writer asks it, once"
+    assert response.message == voiced.message
     assert response.follow_up_question is None
 
 

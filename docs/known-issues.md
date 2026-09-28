@@ -117,7 +117,7 @@ customer explicitly rules alternatives out. This replaces the fixes in issues
 
 | Situation | Behaviour |
 |---|---|
-| Single product search ("show me sofas") | **Ask and show in the same reply.** Products appear immediately, with one question and tap-to-answer chips: "Here are some sofas to start with. How many people usually need a seat?" [2] [3] [4] [5+]. The answer reorders or narrows the results. Never a question *instead of* products. |
+| Single product search ("show me sofas") | **Superseded 2026-09-29:** the first ask for a kind now opens with a welcome and one question, then products (CLAUDE.md 10.2). Was: **Ask and show in the same reply.** Products appear immediately, with one question and tap-to-answer chips: "Here are some sofas to start with. How many people usually need a seat?" [2] [3] [4] [5+]. The answer reorders or narrows the results. Never a question *instead of* products. |
 | Whole room ("design my living room") | **Ask first**, on one screen: budget + household size (at most two questions, once), together with the category checklist (F3). Then build. |
 | Genuinely ambiguous request ("show me a table") | Ask **one** question first, with chips of the store's real options, because guessing would show the wrong products. |
 | Problem recovery ("only neon ones") | One question with chips (recovery ladder step 4). |
@@ -1002,7 +1002,22 @@ searching again themselves. This should never happen.
 
 ## 10. Replies sound flat and AI-generated, not like a welcoming salesperson or designer
 
-**Status:** Open
+**Status:** Partly fixed (2026-09-29) - needs a live eval run to verify.
+
+Done: proposed fixes 1 (in part), 2, 3 (in part) and 7:
+- the decision model's questions are now asked by the writer, in its voice,
+  with the draft as the fallback (`question` outcome);
+- both prompts open with a "sharp salesperson" persona, and the writer has a
+  worked example of a step-by-step conversation;
+- a stated need gets up to 2 questions, one per turn, before products
+  (`discovery_question_limit`), then a light next step after results;
+- upselling only when the budget is loose (`budget_flexible`);
+- the fixed sentences are warmer (still the last resort);
+- `sales_*` cases in `evals/conversations/cases.yaml`.
+
+Still open: fixes 4 (design facts about chosen pieces), 5 (welcome message),
+6 (writer's own model settings), and moving room edits and failures through
+the writer.
 
 **Reported:** The writer should produce good sales and interior-designer
 responses in a welcoming tone, instead of dead, AI-generated sounding

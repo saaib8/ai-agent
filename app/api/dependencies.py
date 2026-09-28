@@ -307,6 +307,7 @@ def customer_turn_coordinator(
         app_resources.taxonomy,
         app_resources.rooms,
         app_resources.seating,
+        discovery_question_limit=settings.customer_agent.discovery_question_limit,
     )
 
 
@@ -433,6 +434,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         customer_response_generator(app_resources),
         session_store(app_resources),
         app_resources.settings.session,
+        app_resources.attributes,
     )
 
 

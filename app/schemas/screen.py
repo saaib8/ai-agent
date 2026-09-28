@@ -129,6 +129,22 @@ class PresentedCardView(BaseModel):
         return self
 
 
+class ChosenPieceView(BaseModel):
+    """A piece the customer has settled on, as the reply may talk about it.
+
+    What makes it *theirs* in conversation - "that oak Japandi bed" - and
+    nothing else: no name, no price, no identity. The cards and the basket show
+    the rest, from verified records (CLAUDE.md 20.4).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str = Field(min_length=1)
+    main_color: str | None = None
+    styles: tuple[str, ...] = ()
+    seating_capacity: int | None = Field(default=None, ge=1)
+
+
 class ScreenComparisonCellView(BaseModel):
     """One cell of the visible comparison table."""
 
