@@ -697,3 +697,36 @@ cases:
     issue: "discovery: seating for 8 in a majlis engages"
     turns: ["I need somewhere for 8 people to sit in my majlis"]
     checks: {not_fallback: true, engages: true}
+
+  # ══ room questions send real, tappable chips that match the question ═════════
+  # The room flow asks budget, pieces, seats and colour one at a time. Only the
+  # pieces question ever sent structured chips; budget/seats/colour sent none, so
+  # a client had to guess chips from the reply's wording - and a word in the
+  # acknowledgement ("seating for 8", "the bedroom") chose the wrong ones. These
+  # cases TAP the backend chips ({chip: ...} reads presentation.choices), so on
+  # the old backend they error at the first tap (no chips), and they assert each
+  # question's chips are its real answers - the store's own colours for colour.
+  - id: room_budget_chips_tappable
+    issue: "room chips: the budget question offers tappable bands (was empty, guessed from text)"
+    turns: ["design my living room"]
+    checks: {not_fallback: true, first_chip: "Under 10,000 SAR"}
+
+  - id: room_seats_chips_are_counts
+    issue: "room chips: the seats question offers seat-count chips, not colours or room types"
+    turns: ["design my living room", {chip: "Under 10,000 SAR"}, "Choose the pieces for me"]
+    checks: {not_fallback: true, first_chip: "2 people"}
+
+  - id: room_colour_chips_are_store_colours
+    issue: "room chips: the colour question showed seat counts / room types; now the store's real colours"
+    turns: ["design my living room", {chip: "Under 10,000 SAR"}, "Choose the pieces for me", {chip: "2 people"}]
+    checks: {not_fallback: true, first_chip: Beige}
+
+  - id: room_chips_round_trip_living
+    issue: "room chips: tapping budget, seats and a colour chip advances the flow and builds the room"
+    turns: ["design my living room", {chip: "Under 10,000 SAR"}, "Choose the pieces for me", {chip: "2 people"}, {chip: Beige}]
+    checks: {not_fallback: true, room_status: complete}
+
+  - id: room_bedroom_skips_seats_chip_path
+    issue: "room chips: a bedroom goes budget -> pieces -> colour (no seats), and its colour chip builds it"
+    turns: ["help me design my bedroom", {chip: "Under 10,000 SAR"}, "Choose the pieces for me", {chip: Beige}]
+    checks: {not_fallback: true, room_status: complete, room_has: [bed]}
