@@ -3785,6 +3785,7 @@ class CustomerTurnCoordinator:
             or primary.failure is not None
             or primary.seating_solution is not None
             or primary.offered_instead_of is not None
+            or primary.unstocked_type is not None
         ):
             return primary
         executed = ResolvedSearch(
