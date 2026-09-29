@@ -91,8 +91,12 @@ words like around, about, roughly or approximately.
 what they said, not the tone.
 
 Requirements this search cannot apply:
-- List a requirement here only when it is a material. Colours, styles and \
-measurements have their own fields below and must never be listed here.
+- List a requirement here only when it is a material they insisted on - only \
+this, must be this, nothing else. Colours, styles and measurements have their \
+own fields below and must never be listed here.
+- A material, fabric or texture they simply want - "in wool", "a velvet \
+one", "something soft like boucle" - is not a requirement: keep it in the \
+descriptive wording below, where it orders the results without ruling any out.
 - Only list one when you could quote the exact material from their own words. \
 If you cannot point to a specific value they gave, list nothing.
 
@@ -153,7 +157,8 @@ units, no seat counts.
 beige one around 220 cm wide" keep "a beige one"; from "the cheapest modern \
 one" keep "modern one".
 - Keep their wording rather than tidying it, and keep words that describe \
-character or feel even when no field holds them - cosy, elegant, warm neutral.
+character or feel even when no field holds them - cosy, elegant, warm neutral, \
+and a material or fabric they want, such as wool or velvet.
 - Leave it null when nothing descriptive remains, as in a request that names \
 only a product type and a budget.
 

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { RENDER_VIEWS } from './api/types'
 import type {
+  BriefAnswerAction,
   CatalogItem,
   CatalogSelection,
   FinderObject,
   GroundedProduct,
+  PickView,
+  ProductAction,
   RenderRoomSpec,
   RenderView,
 } from './api/types'
@@ -136,6 +139,92 @@ export default function App() {
     [chat, config.config],
   )
 
+  // ── picks: ticking, what goes with one, comparing two ───────────────────────
+
+  const handleTogglePick = useCallback(
+    async (product: GroundedProduct, listRevision: number) => {
+      const ordinal = product.presented_ordinal
+      if (chat.sending || chat.picking || ordinal == null) return
+      const already = chat.picks.find((p) =>
+        (p.positions ?? []).some(
+          (position) => position.list_revision === listRevision && position.ordinal === ordinal,
+        ),
+      )
+      if (already) {
+        void chat.changePicks({ kind: 'deselect', pick: already.pick }, config.config)
+        return
+      }
+      const saved = await chat.changePicks(
+        { kind: 'select', ordinal, list_revision: listRevision },
+        config.config,
+      )
+      // The first pick of its kind: show what goes with it, as a turn of its
+      // own. A second of the same kind - picked to compare - stays silent.
+      const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
+      if (chosen) {
+        setSwap(null)
+        void chat.send(`I like the ${chosen.name_english}`, config.config, {
+          product: { kind: 'goes_with', pick: chosen.pick },
+        })
+      }
+    },
+    [chat, config.config],
+  )
+
+  const handleRemovePick = useCallback(
+    (pick: PickView) => {
+      if (chat.sending || chat.picking) return
+      void chat.changePicks({ kind: 'deselect', pick: pick.pick }, config.config)
+    },
+    [chat, config.config],
+  )
+
+  const handleGoesWith = useCallback(
+    (pick: PickView) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(`What goes with the ${pick.name_english}?`, config.config, {
+        product: { kind: 'goes_with', pick: pick.pick },
+      })
+    },
+    [chat, config.config],
+  )
+
+  const handleComparePicks = useCallback(
+    (first: PickView, second: PickView) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(
+        `Compare the ${first.name_english} and the ${second.name_english}`,
+        config.config,
+        { product: { kind: 'compare', picks: [first.pick, second.pick] } },
+      )
+    },
+    [chat, config.config],
+  )
+
+  const handleBriefSubmit = useCallback(
+    (answer: BriefAnswerAction, summary: string) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(summary, config.config, { search: answer })
+    },
+    [chat, config.config],
+  )
+
+  const handleChoice = useCallback(
+    (value: string, action?: ProductAction | null) => {
+      if (!action) {
+        handleSend(value)
+        return
+      }
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(value, config.config, { product: action })
+    },
+    [chat, config.config, handleSend],
+  )
+
   const handleVisualize = useCallback(
     (view: RenderView, viewLabel: string) => {
       if (chat.sending) return
@@ -230,6 +319,15 @@ export default function App() {
           onOpenCatalog={() => setCatalogStep('browse')}
           onRerenderSelection={handleRerenderSelection}
           onEditSelection={handleEditSelection}
+          picks={chat.picks}
+          picking={chat.picking}
+          picksError={chat.picksError}
+          onTogglePick={handleTogglePick}
+          onRemovePick={handleRemovePick}
+          onGoesWith={handleGoesWith}
+          onComparePicks={handleComparePicks}
+          onChoice={handleChoice}
+          onBriefSubmit={handleBriefSubmit}
         />
       </main>
       {catalogStep && (

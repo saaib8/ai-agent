@@ -37,6 +37,9 @@ from app.schemas.grounding import (
     SelectionGrounding,
     TurnFailure,
 )
+from app.schemas.picks import PickView
+from app.schemas.product_action import CompanionOffer, ProductActionRequest
+from app.schemas.product_brief import ProductBrief
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerContext
 from app.schemas.room_opener import RoomQuestion
@@ -72,6 +75,11 @@ class CustomerTurnInput(BaseModel):
     turn is deterministic — re-run the search in progress while excluding what
     was already shown, or the one product turned down — and no decision model
     runs. `message` is kept for the conversation record only (CLAUDE.md 3.6)."""
+
+    product_action: ProductActionRequest | None = None
+    """A screen-driven action on the customer's picks - ask about one, compare
+    two, or show a companion a chip offered. Deterministic, like the others:
+    no decision model runs (CLAUDE.md 3.6)."""
 
 
 class DecisionInput(BaseModel):
@@ -277,6 +285,29 @@ class CustomerTurnResult(BaseModel):
     room_question: RoomQuestion | None = None
     """This turn's question about a room being designed, and the pieces offered
     as chips when it asks for them (CLAUDE.md 10.1)."""
+
+    picks: tuple[PickView, ...] | None = None
+    """The customer's picks after the turn, read fresh, for the client's tray.
+
+    None when the turn did not read them - a turn that was not understood
+    changed nothing - which a client takes as unchanged, never as empty.
+    """
+
+    focus: GroundedProduct | None = None
+    """The pick the customer asked about, drawn above what goes with it.
+
+    Here rather than on `TurnGrounding`: the grounding is what the reply may
+    speak about, and the product itself is shown, not described - its facts
+    are on its card (the product decision for asking about a pick).
+    """
+
+    companions: tuple[CompanionOffer, ...] = ()
+    """Other types that go with the product in focus, offered as chips."""
+
+    product_brief: ProductBrief | None = None
+    """A card of questions for a stated need - first, before anything is
+    searched, or folded beside results to narrow them (CLAUDE.md 10.4).
+    Built by the application; the reply only introduces it."""
 
 
 class CustomerResponse(BaseModel):

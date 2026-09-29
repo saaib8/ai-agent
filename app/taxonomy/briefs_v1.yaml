@@ -1,0 +1,145 @@
+# What to ask before showing products for a stated need (CLAUDE.md 10.4).
+#
+# "I need a sofa" is answered with one card of questions rather than a guess:
+# the kind of piece, the budget, colours, the feel and the style. This file is
+# the reviewed half of that card - which questions a product family is asked,
+# in card order, and the choices that are not live facts. Budget bands,
+# colours and styles are never listed here: they are counted from what the
+# store actually stocks when the card is built, so every chip leads to real
+# products.
+#
+#   for   the subcategories this card is asked for. Each belongs to one card.
+#   for_category
+#         categories whose search named no kind - "I need a table" - that
+#         this card answers. Such a card must ask the kind, so the vague word
+#         is settled by a tap rather than guessed (CLAUDE.md 14.5).
+#   noun  what the card's button shows ("Show me sofas"), when the kind is
+#         being asked; otherwise the searched kind is named instead.
+#   ask   the questions, in card order: type, budget, colour, feel, style.
+#   type  the kinds of piece, each a subcategory from `for`, optionally with a
+#         seat count - 2/3-seaters are capacity on `sofa`, not types
+#         (CLAUDE.md 7). A kind the store does not stock is not offered.
+#   feel  words that rank and never filter: a fabric, a finish, a detail. The
+#         catalog has no material field (CLAUDE.md 5), so a feel only orders
+#         the cards by how well their descriptions match it; nothing is hidden
+#         and the reply never claims a piece is made of it.
+
+version: v1
+
+feels:
+  fabric: &fabric
+    label: Fabric feel
+    options:
+      - {label: Bouclé, words: textured boucle fabric}
+      - {label: Chenille, words: soft chenille fabric}
+      - {label: Velvet, words: plush velvet}
+      - {label: Leather, words: leather}
+
+briefs:
+  sofas:
+    for: [sofa, sectional-sofa, sofa-set, sofa-bed]
+    noun: sofas
+    ask: [type, budget, colour, feel, style]
+    type:
+      - {label: 2-seater, subcategory: sofa, seats: 2}
+      - {label: 3-seater, subcategory: sofa, seats: 3}
+      - {label: 4+ seater, subcategory: sofa, min_seats: 4}
+      - {label: L-shape, subcategory: sectional-sofa}
+      - {label: Sofa set, subcategory: sofa-set}
+      - {label: Sofa bed, subcategory: sofa-bed}
+    feel: *fabric
+
+  armchairs:
+    for: [chair, single-seater-sofa, lounge-chair, recliner, chaise-lounge]
+    noun: chairs
+    ask: [type, budget, colour, feel, style]
+    type:
+      - {label: Accent chair, subcategory: chair}
+      - {label: Armchair, subcategory: single-seater-sofa}
+      - {label: Lounge chair, subcategory: lounge-chair}
+      - {label: Recliner, subcategory: recliner}
+      - {label: Chaise lounge, subcategory: chaise-lounge}
+    feel: *fabric
+
+  dining-chairs:
+    for: [dining-chair]
+    ask: [budget, colour, feel, style]
+    feel:
+      label: Seat feel
+      options:
+        - {label: Velvet, words: plush velvet}
+        - {label: Bouclé, words: textured boucle fabric}
+        - {label: Rattan, words: rattan cane}
+        - {label: Wood, words: wooden}
+
+  beds:
+    for: [bed]
+    ask: [budget, colour, feel, style]
+    feel:
+      label: Headboard & extras
+      options:
+        - {label: Curved headboard, words: curved headboard}
+        - {label: Wingback, words: wingback headboard}
+        - {label: Channel-tufted, words: channel tufted headboard}
+        - {label: With storage, words: storage bed with gas lift base}
+
+  tables:
+    for: [center-table, service-table, tv-table, console, nightstand, dining-table]
+    for_category: [tables]
+    noun: tables
+    ask: [type, budget, colour, feel, style]
+    type:
+      - {label: Coffee table, subcategory: center-table}
+      - {label: Side table, subcategory: service-table}
+      - {label: Dining table, subcategory: dining-table}
+      - {label: TV unit, subcategory: tv-table}
+      - {label: Console, subcategory: console}
+      - {label: Nightstand, subcategory: nightstand}
+    feel:
+      label: Material look
+      options:
+        - {label: Wood, words: wood}
+        - {label: Marble, words: marble}
+        - {label: Glass, words: glass}
+        - {label: Metal, words: metal}
+
+  wardrobes:
+    for: [wardrobe, dresser, dressing-table]
+    ask: [budget, colour, feel, style]
+    feel:
+      label: Finish
+      options:
+        - {label: Wood, words: wood}
+        - {label: Mirrored, words: mirrored doors}
+        - {label: Glass doors, words: glass doors}
+        - {label: Sliding doors, words: sliding doors}
+
+  rugs:
+    for: [carpet]
+    noun: rugs
+    ask: [budget, colour, feel, style]
+    feel:
+      label: Material feel
+      options:
+        - {label: Wool, words: wool}
+        - {label: Cotton, words: cotton}
+        - {label: Flatweave, words: flatweave}
+        - {label: Jute, words: natural jute}
+
+  lamps:
+    for: [table-lamp, floor-lamp, chandelier, pendant-lighting]
+    for_category: [lighting]
+    noun: lights
+    ask: [type, budget, colour, feel, style]
+    type:
+      - {label: Table lamp, subcategory: table-lamp}
+      - {label: Floor lamp, subcategory: floor-lamp}
+      - {label: Chandelier, subcategory: chandelier}
+      - {label: Pendant light, subcategory: pendant-lighting}
+    feel:
+      label: Finish
+      options:
+        - {label: Brass & gold, words: brass gold}
+        - {label: Marble, words: marble}
+        - {label: Glass, words: glass}
+        - {label: Linen shade, words: linen shade}

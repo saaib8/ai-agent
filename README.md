@@ -120,6 +120,49 @@ The fit check (the share of the floor covered, pieces too big for the room) is
 computed in the browser from those footprints. It is advisory only. Configure
 limits with `ZORY_CATALOG__*`.
 
+## Product discovery: the question card, picks and comparison
+
+A stated need ("I need a sofa") is answered with a card of short questions
+before anything is searched: the kind (2-seater, 3-seater, L-shape, set...),
+the budget, colours, the feel (bouclé, marble, with storage) and the style.
+The decision model only flags the need (`stated_need`). The questions per
+product family and their kinds and feel words are reviewed data,
+`app/taxonomy/briefs_v1.yaml`. Budget bands (price quartiles), colours and
+styles are counted from the store's live catalog when the card is built, and
+a kind the store doesn't stock isn't offered. Anything they already said is
+skipped. A need naming only a category ("I need a table") gets that
+category's card with the kind asked first. A stated need gets its card every
+time; "Show me sofas" shows results
+at once, with the card folded beside them as "Narrow down" (once per family
+per session).
+
+* `POST /v1/chat` with `search_action: {kind: "brief", card, piece, budget,
+  colours, styles, feel}` answers the card with the keys it offered. The kind
+  and the budget filter; colours, styles and the feel only rank. The catalog
+  has no material field, so the feel is never filtered on or claimed. Results
+  show `ZORY_CUSTOMER_AGENT__PRESENTATION_LIMIT` products (5), and the first
+  is flagged `best_match` when their own words ordered the list.
+* `POST /v1/picks` (`session_id`, `store_id`, `action`: `{kind: "select",
+  ordinal, list_revision}` | `{kind: "deselect", pick}`,
+  `expected_session_revision`) ticks a card or removes a pick. It is silent.
+  `list_revision` names the result list the card is on
+  (`presentation.list_revision`), and the latest 7 lists stay tickable.
+  `goes_with` is set when the tick picked the first product of its kind that
+  has companions the store sells; the client then sends
+  `product_action: {kind: "goes_with", pick}`.
+* `POST /v1/chat` with `product_action`:
+  * `{kind: "goes_with", pick}` shows the pick, then 3 cards of its first
+    companion the store stocks (a bed → nightstands), with the other
+    companions as chips. Types already picked are skipped, and asking again
+    for the same pick moves on to its next companion kind.
+  * `{kind: "compare", picks: [a, b]}` compares exactly two picks.
+  * `{kind: "companion", category, subcategory}` is a chip, checked against
+    the pairings for the product in focus.
+
+The pairings are `app/taxonomy/complements_v1.yaml`. Companion searches lean
+towards the pick's style and carry no budget. Configure with
+`ZORY_CUSTOMER_AGENT__CROSS_SELL_LIMIT` and `ZORY_CUSTOMER_AGENT__MAX_PICKS`.
+
 ## Configuration
 
 Everything runtime-dependent is declared in `app/core/config.py` and nowhere

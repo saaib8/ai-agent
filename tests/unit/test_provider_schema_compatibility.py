@@ -54,6 +54,7 @@ from pydantic import TypeAdapter, ValidationError
 SELECTOR_MEMBERS = (
     "PresentedOrdinal",
     "ComparedOrdinal",
+    "PickedOrdinal",
     "FocusedProduct",
     "SoleSelectedProduct",
     "PresentedAttributeMatch",

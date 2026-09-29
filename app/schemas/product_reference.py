@@ -59,6 +59,24 @@ class ComparedOrdinal(BaseModel):
     position: int = Field(ge=1)
 
 
+class PickedOrdinal(BaseModel):
+    """"my second pick" - a position in the products the customer picked.
+
+    Picks are a list of their own, kept across searches and shown in a tray,
+    so they have their own numbering: the first product they picked is pick
+    one whatever results are on screen now. The tray's Ask and Compare buttons
+    name picks this way, and a typed "compare my two picks" resolves through
+    the same selector, so typing and tapping cannot differ (CLAUDE.md 17.1).
+
+    Its positions are the picks', never the result list's.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["picked_ordinal"] = "picked_ordinal"
+    position: int = Field(ge=1)
+
+
 class FocusedProduct(BaseModel):
     """"it", "that one", "this sofa"."""
 
@@ -115,6 +133,7 @@ def _must_declare_its_kind(value: Any) -> Any:
 ProductReferenceSelector = Annotated[
     PresentedOrdinal
     | ComparedOrdinal
+    | PickedOrdinal
     | FocusedProduct
     | SoleSelectedProduct
     | PresentedAttributeMatch

@@ -199,6 +199,7 @@ class FakePipeline:
     def __init__(self, ids: tuple[int, ...] = (), error: Exception | None = None):
         self.ids, self.error = ids, error
         self.calls: list[Any] = []
+        self.limits: list[int | None] = []
 
     async def execute(
         self,
@@ -207,8 +208,10 @@ class FakePipeline:
         *,
         dropped_constraints: Any = (),
         earlier_sizes_applied: bool = False,
+        presentation_limit: int | None = None,
     ) -> ProductSearchExecutionResult:
         self.calls.append(resolved)
+        self.limits.append(presentation_limit)
         if self.error is not None:
             raise self.error
         return ProductSearchExecutionResult(

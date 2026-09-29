@@ -114,6 +114,7 @@ class ProductSearchPipeline:
         *,
         dropped_constraints: tuple[DroppedConstraint, ...] = (),
         earlier_sizes_applied: bool = False,
+        presentation_limit: int | None = None,
     ) -> ProductSearchExecutionResult:
         """Run one search and return what may be committed and explained.
 
@@ -121,14 +122,22 @@ class ProductSearchPipeline:
         from composition: a product type change leaves one type's sizes behind
         and may bring back another's, and the reply has to be able to say so.
         The pipeline does not discover them.
+
+        `presentation_limit` lets one search show fewer cards than usual - a
+        suggestion beside a product is a few pieces, not a page. It can only
+        lower the configured limit, never raise it, and like that limit it is
+        display policy applied after ranking (CLAUDE.md 16.1).
         """
         started = time.perf_counter()
 
         searched, ranked = await self._search_and_rank(resolved, context, explain_empty=True)
 
-        selected = select_for_presentation(
-            ranked.product_ids, limit=self._presentation_limit
+        limit = (
+            self._presentation_limit
+            if presentation_limit is None
+            else min(presentation_limit, self._presentation_limit)
         )
+        selected = select_for_presentation(ranked.product_ids, limit=limit)
         hydrated = await self._hydration.hydrate_ids(selected, context)
 
         depth_by_id = {c.product_id: c.relaxation_depth for c in ranked.candidates}

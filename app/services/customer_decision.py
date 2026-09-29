@@ -158,6 +158,7 @@ class CustomerAgentDecisionService:
             has_new_search=decision.new_search is not None,
             has_refinement=decision.refinement is not None,
             taxonomy_change_requested=decision.taxonomy_change_requested,
+            stated_need=decision.stated_need,
             has_state_proposal=decision.state_proposal is not None,
             has_commerce_proposal=decision.commerce_proposal is not None,
             reference_count=len(decision.comparison_references)

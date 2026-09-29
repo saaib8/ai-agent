@@ -118,24 +118,34 @@ class SimilarSearchBuilder:
     def _preferences(
         self, product: ProductCandidate
     ) -> tuple[SemanticPreference, ...]:
-        """The reference's own colour and styles, where the registry knows them.
+        return leanings_of(product, self._attributes)
 
-        An unapproved token is skipped rather than replaced: "close enough" is
-        how a search starts answering a question nobody asked. One unusable
-        preference does not cost the whole search - it only costs that lean.
-        """
-        values: list[tuple[AttributeFamily, str]] = []
-        if product.main_color is not None:
-            values.append((AttributeFamily.COLOR, product.main_color))
-        values.extend((AttributeFamily.STYLE, style) for style in product.styles)
 
-        return tuple(
-            SemanticPreference(
-                family=family,
-                raw_value=value,
-                canonical_value=value,
-                strength=_PREFERENCE_STRENGTH,
-            )
-            for family, value in values
-            if self._attributes.is_value(family, value)
+def leanings_of(
+    product: ProductCandidate, attributes: CatalogAttributes
+) -> tuple[SemanticPreference, ...]:
+    """A product's own colour and styles, as preferences, where the registry
+    knows them.
+
+    Shared by every search seeded from a product - more like it, or pieces
+    that go with it - so "leaning towards this one" means one thing.
+
+    An unapproved token is skipped rather than replaced: "close enough" is
+    how a search starts answering a question nobody asked. One unusable
+    preference does not cost the whole search - it only costs that lean.
+    """
+    values: list[tuple[AttributeFamily, str]] = []
+    if product.main_color is not None:
+        values.append((AttributeFamily.COLOR, product.main_color))
+    values.extend((AttributeFamily.STYLE, style) for style in product.styles)
+
+    return tuple(
+        SemanticPreference(
+            family=family,
+            raw_value=value,
+            canonical_value=value,
+            strength=_PREFERENCE_STRENGTH,
         )
+        for family, value in values
+        if attributes.is_value(family, value)
+    )

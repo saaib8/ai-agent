@@ -127,6 +127,15 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # The type they asked for, when the store carries none of it and the
         # cards are the closest type it does stock.
         "unstocked_type",
+        # Product Q&A: the picks after the turn, for the client's tray; the
+        # pick they asked about, shown not described; and the companion types
+        # offered beside it as chips. None of them reaches the reply model.
+        "picks",
+        "focus",
+        "companions",
+        # The card of questions for a stated need, drawn by the client. The
+        # reply sees only what it asks about.
+        "product_brief",
     }
 
 
@@ -501,6 +510,7 @@ def test_the_provider_structure_stays_intact_as_the_schema_grows() -> None:
     members = {
         "PresentedOrdinal",
         "ComparedOrdinal",
+        "PickedOrdinal",
         "FocusedProduct",
         "SoleSelectedProduct",
         "PresentedAttributeMatch",

@@ -19,6 +19,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.product_brief import MAX_BRIEF_COLOURS, MAX_BRIEF_STYLES
+
 
 class MoreOptionsAction(BaseModel):
     """Re-run the current search, excluding everything already shown.
@@ -47,8 +49,34 @@ class ExcludeProductAction(BaseModel):
     ordinal: int = Field(ge=1)
 
 
+class BriefAnswerAction(BaseModel):
+    """The answers tapped on a card of questions, and a search to run on them.
+
+    Keys only, each one of the choices the card offered: they are read back
+    through the card the session remembers, so a tapped answer can name a
+    choice but never invent one - a type, a price or a colour the card did not
+    show is refused rather than searched (CLAUDE.md 10.4, 20.2). Anything left
+    blank is simply not asked about; a card sent with nothing ticked searches
+    for what they first said.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["brief"] = "brief"
+    card: int = Field(ge=1)
+    """The card answered, as it was numbered when drawn."""
+
+    piece: str | None = Field(default=None, min_length=1, max_length=64)
+    """The kind of piece: a sofa's seat count, an L-shape, a set."""
+
+    budget: str | None = Field(default=None, min_length=1, max_length=64)
+    colours: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_COLOURS)
+    styles: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_STYLES)
+    feel: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 SearchActionRequest = Annotated[
-    MoreOptionsAction | ExcludeProductAction,
+    MoreOptionsAction | ExcludeProductAction | BriefAnswerAction,
     Field(discriminator="kind"),
 ]
-"""Either follow-up, told apart by `kind`."""
+"""A follow-up on the search, or the answers to its card, told apart by `kind`."""

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Literal
 
 from app.core.config import SessionSettings
 from app.core.exceptions import SessionConflictError
@@ -44,10 +45,13 @@ from app.schemas.conversation import (
     ConversationRole,
 )
 from app.schemas.grounding import GroundedProduct
+from app.schemas.picks import PickView
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
+from app.services.cross_sell import companion_choices
 from app.services.response_generator import CustomerResponseGenerator
+from app.services.response_view import best_match_first
 from app.services.room_presentation import piece_picker
 from app.services.seating_presentation import present_seating_solution, seating_choices
 from app.services.turn_coordinator import CustomerTurnCoordinator
@@ -113,6 +117,7 @@ class ChatRuntime:
             context=context,
             bundle_action=request.bundle_action,
             search_action=request.search_action,
+            product_action=request.product_action,
         )
 
     async def run_turn(self, turn: CustomerTurnInput) -> CustomerTurnResult:
@@ -147,12 +152,13 @@ class ChatRuntime:
         """
         grounding = result.grounding
         products: tuple[GroundedProduct, ...] = ()
+        source: Literal["search", "selection", "detail"] | None = None
         if grounding.search is not None:
-            products = grounding.search.products
+            products, source = grounding.search.products, "search"
         elif grounding.selection is not None:
-            products = grounding.selection.products
+            products, source = grounding.selection.products, "selection"
         elif grounding.product_detail is not None:
-            products = (grounding.product_detail,)
+            products, source = (grounding.product_detail,), "detail"
 
         seating_bundles = (
             present_seating_solution(result.seating_solution)
@@ -160,10 +166,22 @@ class ChatRuntime:
             else ()
         )
         choices = (
-            seating_choices(result.seating_solution) if result.seating_solution is not None else ()
+            seating_choices(result.seating_solution)
+            if result.seating_solution is not None
+            else companion_choices(result.companions)
         )
+        results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,
+            product_source=source if products else None,
+            # Search results are committed as the list on screen, so the state
+            # after the turn names their revision.
+            list_revision=(
+                result.state.product_interaction.presented_search_revision if results else None
+            ),
+            best_match=results and best_match_first(result),
+            brief=result.product_brief,
+            focus=result.focus,
             comparison=grounding.comparison,
             room=build_bundle_presentation(result),
             seating_bundles=seating_bundles,
@@ -247,12 +265,14 @@ class ChatRuntime:
         revision: int,
         response: CustomerResponse,
         presentation: ChatPresentation | None,
+        picks: tuple[PickView, ...] | None = None,
     ) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
             session_revision=revision,
             response=response,
             presentation=presentation,
+            picks=picks,
         )
 
     # ── the whole exchange ──────────────────────────────────────────────────
@@ -273,7 +293,7 @@ class ChatRuntime:
 
         revision = await self.persist(request, loaded, result, response)
         self._log(request, loaded, revision, presentation, started)
-        return self.public_response(request, revision, response, presentation)
+        return self.public_response(request, revision, response, presentation, result.picks)
 
     @staticmethod
     def _log(
@@ -344,6 +364,30 @@ async def load_for_turn(
         loaded_revision=envelope.session_revision,
         existed=stored is not None,
     )
+
+
+async def commit_state(
+    sessions: SessionStore,
+    *,
+    store_id: int,
+    session_id: str,
+    loaded: LoadedSession,
+    state: AgentStateV1,
+) -> int:
+    """Persist a change of state that was not an exchange of words.
+
+    For a tick: the customer picked a product on screen, which the agent must
+    know about, but nothing was said and nothing is answered, so the
+    conversation is left exactly as it was. Compare-and-set against the loaded
+    revision, like every write (M13 18, 33).
+    """
+    envelope = loaded.envelope.advanced(state=state, conversation=loaded.envelope.conversation)
+    committed = await sessions.save_if_revision(
+        store_id, session_id, expected_revision=loaded.loaded_revision, envelope=envelope
+    )
+    if not committed:
+        raise SessionConflictError(expected_revision=loaded.loaded_revision, store_id=store_id)
+    return envelope.session_revision
 
 
 async def commit_exchange(

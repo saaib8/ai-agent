@@ -25,13 +25,16 @@ from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
 from app.schemas.bundle import BundleStatus, BundleUnavailable, RoomBundle
 from app.schemas.comparison import ComparisonStatus
 from app.schemas.design import DesignPriority
+from app.schemas.discovery import ProductSort
 from app.schemas.grounding import GroundedProduct, SearchOutcome, TurnFailureCode
+from app.schemas.product_brief import BriefMode
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
     BundleGroundingView,
     DeterministicResponse,
     DeterministicResponseKind,
     MissingPieceView,
+    ProductBriefGroundingView,
     ResponseGroundingView,
     ResponseOutcomeKind,
     ResponseRoute,
@@ -73,8 +76,12 @@ def route_response(result: CustomerTurnResult) -> ResponseRoute:
         primary=primary,
         required_clarification=required,
         side_notice=_side_notice(result),
+        # A card of questions on screen is the turn's asking; a second
+        # question in the reply would ask the same things twice.
         follow_up_allowed=(
-            grounding.follow_up_policy is FollowUpPolicy.OPTIONAL and required is None
+            grounding.follow_up_policy is FollowUpPolicy.OPTIONAL
+            and required is None
+            and result.product_brief is None
         ),
     )
 
@@ -188,6 +195,14 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         # wrote: which question is the application's, only the words are the
         # model's (CLAUDE.md 10.1).
         return _room_question(result, result.room_question)
+
+    brief = result.product_brief
+    if brief is not None and brief.mode is BriefMode.ASK:
+        # The card is the turn: nothing was searched, and the questions are
+        # the application's (CLAUDE.md 10.4).
+        return _view(
+            ResponseOutcomeKind.PRODUCT_BRIEF, None, result=result, brief=_brief_view(result)
+        )
 
     if grounding.clarification is not None:
         # The decision model already wrote this question, and re-wording it
@@ -542,6 +557,7 @@ def _view(
             len(result.state.product_interaction.selected_product_ids) if result else 0
         ),
         selected_kinds=result.selected_kinds if result else (),
+        picked_kind=_picked_kind(result),
         selection_changed=_selection_changed(result),
         seating_requirement_known=_seating_known(result),
         **fields,
@@ -571,6 +587,60 @@ def _screen(result: CustomerTurnResult | None) -> CustomerVisibleScreenView:
         comparison=grounding.comparison,
         room=build_bundle_presentation(result),
     )
+
+
+def best_match_first(result: CustomerTurnResult) -> bool:
+    """Whether the first card is the closest to what they described.
+
+    Only when their own words ordered the cards - their colours, styles or
+    the feel they chose ranked them (CLAUDE.md 16.1) - and the first met their
+    request exactly. A price sort is an instruction, not a match, and a card
+    reached by widening their budget is not the best match for it.
+
+    One reader for the reply and the card's label, so the words and the
+    screen cannot disagree about which is best.
+    """
+    search = result.grounding.search
+    active = result.state.active_search
+    if search is None or not search.products or active is None:
+        return False
+    if result.focus is not None or result.companions:
+        # What goes with a pick is ordered by the pick's look, not by
+        # anything they described: nothing there is *their* best match.
+        return False
+    first = search.products[0]
+    return (
+        search.semantic_used
+        and active.request.sort is ProductSort.DEFAULT
+        and len(search.products) > 1
+        and first.relaxation_depth == 0
+    )
+
+
+def _brief_view(result: CustomerTurnResult) -> ProductBriefGroundingView | None:
+    brief = result.product_brief
+    if brief is None:
+        return None
+    return ProductBriefGroundingView(
+        looking_for=_brief_subject(result),
+        asks_about=tuple(question.kind for question in brief.questions),
+    )
+
+
+def _brief_subject(result: CustomerTurnResult) -> str:
+    pending = result.state.product_brief.pending
+    if pending is None:
+        return "piece"
+    request = pending.base.request
+    return _words(request.commerce_subcategory or request.commerce_category) or "piece"
+
+
+def _picked_kind(result: CustomerTurnResult | None) -> str | None:
+    """The kind of pick they opened, when its card leads this turn's screen."""
+    if result is None or result.focus is None:
+        return None
+    commerce = result.focus.commerce
+    return _words(commerce.subcategory or commerce.category)
 
 
 def _selection_changed(result: CustomerTurnResult | None) -> bool:
@@ -655,6 +725,10 @@ def _search(
         ),
         earlier_sizes_applied=search.earlier_sizes_applied,
         would_find_without=search.set_aside,
+        best_match_first=results and best_match_first(result),
+        # Folded beneath the results to narrow them: the turn's question, so
+        # the reply asks none of its own.
+        brief=_brief_view(result) if results else None,
     )
 
 

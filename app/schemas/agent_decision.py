@@ -830,6 +830,22 @@ class CustomerAgentDecision(BaseModel):
     everywhere else, since dropping a size is never worth refusing a turn.
     """
 
+    stated_need: bool = False
+    """They said what they need rather than asking to see anything - "I need a
+    sofa", "I'm looking for a rug for the bedroom", "we want a new dining
+    table".
+
+    The application then shows a card of short questions (the kind, the
+    budget, colours, the feel, the style) before searching, so the few
+    products that follow are the ones that suit them (CLAUDE.md 10.4). "Show
+    me sofas", "what beds do you have" and "just show me" ask to see things:
+    false, and the products come straight away.
+
+    A flag, never the questions: which questions, and their choices, are the
+    application's. Read only on a new search; ignored everywhere else, since
+    a card is never worth refusing a turn over.
+    """
+
     comparison_references: tuple[ProductReferenceSelector, ...] = ()
     clarification: BlockingClarification | None = None
 

@@ -147,8 +147,10 @@ def test_the_configured_maximum_cannot_exceed_the_schema_ceiling() -> None:
         CustomerAgentSettings(comparison_max_products=1)
 
 
-def test_the_default_maximum_is_three() -> None:
-    assert CustomerAgentSettings().comparison_max_products == 3
+def test_the_default_maximum_is_two() -> None:
+    """A product decision: a side-by-side of two reads at a glance, and the
+    Compare button and a typed comparison share the limit."""
+    assert CustomerAgentSettings().comparison_max_products == 2
 
 
 async def test_the_same_product_twice_is_refused() -> None:

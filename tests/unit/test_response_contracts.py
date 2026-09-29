@@ -403,6 +403,9 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # One question before a room is designed - which one is the
         # application's, only the words are the model's.
         "room_question",
+        # A card of questions for a stated need - which questions is the
+        # application's; the reply only introduces the card.
+        "product_brief",
         "design_advice",
         # M17: the customer's own choices, shown again. Not a search - nothing
         # was looked for, so the reply must not describe finding anything.
@@ -1288,6 +1291,12 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # conversation, which is how it once reported a rug nobody kept.
         "selected_count",
         "selected_kinds",
+        # The kind of pick they opened ("bed"), whose card leads the screen -
+        # a type name, never the product or its facts, which stay on the card.
+        "picked_kind",
+        # Whether the cards are ordered by how well they match what they
+        # described. A bool - no product, no value.
+        "best_match_first",
         "selection_changed",
         "seating_requirement_known",
         "follow_up_goal",
@@ -1307,6 +1316,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "seating",
         # The room question to word: its kind, and counts of pieces offered.
         "room_question",
+        # The card of questions: what it is about and which questions it asks
+        # - kinds only, never its choices.
+        "brief",
         "guidance",
         "screen",
         "clarification_reason",

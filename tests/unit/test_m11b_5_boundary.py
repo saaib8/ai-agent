@@ -104,6 +104,16 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # The closest stocked type when the asked one is absent: a typed model
         # step over the store's real shelf, never raw catalog access.
         "closest_type",
+        # Product Q&A cross-sell: the reviewed pairings (data, reads no catalog),
+        # a pure builder that turns a pairing into a search for the ordinary
+        # pipeline (not a second search system), and how many cards to show.
+        "complements",
+        "companion_search",
+        "cross_sell_limit",
+        # The card of questions for a stated need: reviewed questions, and
+        # budget bands, colours and styles counted from the store-scoped
+        # catalog. Its answers run through the ordinary pipeline.
+        "briefs",
     ]
 
 

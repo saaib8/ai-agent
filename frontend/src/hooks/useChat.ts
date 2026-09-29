@@ -4,6 +4,7 @@ import {
   postChat,
   postFinderPhoto,
   postFinderPick,
+  postPicks,
   postVisualize,
 } from '../api/client'
 import type {
@@ -13,6 +14,10 @@ import type {
   ErrorBody,
   FinderObject,
   FinderPhotoResponse,
+  PickAction,
+  PickView,
+  PicksResponse,
+  ProductAction,
   RenderView,
   SearchAction,
 } from '../api/types'
@@ -40,17 +45,30 @@ export type Turn =
 /** A long-running turn the waiting indicator should name. */
 export type Activity = 'rendering' | null
 
+/** Options a message can carry: a structured action, and how to show it. */
+export interface SendOptions {
+  bundle?: BundleAction
+  search?: SearchAction
+  product?: ProductAction
+  rejected?: RejectedRef
+}
+
 export interface UseChat {
   turns: Turn[]
   sending: boolean
   activity: Activity
   /** Revision the last committed turn produced; drives expected_session_revision. */
   revision: number | null
-  send: (
-    message: string,
-    config: ConsoleConfig,
-    opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
-  ) => Promise<void>
+  /** The customer's picks, as the server last reported them. */
+  picks: PickView[]
+  /** A tick or untick is in flight: the session is being written. */
+  picking: boolean
+  /** Why the last tick was refused, in the server's words; cleared by the next. */
+  picksError: string | null
+  send: (message: string, config: ConsoleConfig, opts?: SendOptions) => Promise<void>
+  /** Tick a card or untick a pick. Silent: no chat turn. */
+  /** Tick or untick. Resolves to the server's answer, or null on failure. */
+  changePicks: (action: PickAction, config: ConsoleConfig) => Promise<PicksResponse | null>
   /** Share a photo: detect what is in it. Commits nothing to the session. */
   uploadPhoto: (file: File, config: ConsoleConfig) => Promise<void>
   /** Pick an object in a shared photo. A committed turn, like a message. */
@@ -81,6 +99,9 @@ export function useChat(): UseChat {
   const [sending, setSending] = useState(false)
   const [activity, setActivity] = useState<Activity>(null)
   const [revision, setRevision] = useState<number | null>(null)
+  const [picks, setPicks] = useState<PickView[]>([])
+  const [picking, setPicking] = useState(false)
+  const [picksError, setPicksError] = useState<string | null>(null)
   // A ref as well as state: send() reads the latest revision without being
   // re-created on every commit.
   const revisionRef = useRef<number | null>(null)
@@ -95,6 +116,9 @@ export function useChat(): UseChat {
   const commit = (data: ChatResponse, selection?: CatalogSelection) => {
     revisionRef.current = data.session_revision
     setRevision(data.session_revision)
+    // The server is the source of truth for what is picked; absent means the
+    // turn did not report picks, so the tray stays as it is.
+    if (data.picks) setPicks(data.picks)
     setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data, selection }])
   }
 
@@ -102,11 +126,7 @@ export function useChat(): UseChat {
     setTurns((prev) => [...prev, { kind: 'error', id: nextId(), status, error }])
 
   const send = useCallback(
-    async (
-      message: string,
-      config: ConsoleConfig,
-      opts?: { bundle?: BundleAction; search?: SearchAction; rejected?: RejectedRef },
-    ) => {
+    async (message: string, config: ConsoleConfig, opts?: SendOptions) => {
       const text = message.trim()
       if (!text) return
 
@@ -123,6 +143,7 @@ export function useChat(): UseChat {
         ...expected(config),
         ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
         ...(opts?.search ? { search_action: opts.search } : {}),
+        ...(opts?.product ? { product_action: opts.product } : {}),
       })
 
       if (result.ok) commit(result.data)
@@ -131,6 +152,26 @@ export function useChat(): UseChat {
     },
     [],
   )
+
+  const changePicks = useCallback(async (action: PickAction, config: ConsoleConfig) => {
+    setPicking(true)
+    setPicksError(null)
+    const result = await postPicks(config.apiBase, {
+      session_id: config.sessionId,
+      store_id: config.storeId,
+      action,
+      ...expected(config),
+    })
+    setPicking(false)
+    if (result.ok) {
+      revisionRef.current = result.data.session_revision
+      setRevision(result.data.session_revision)
+      setPicks(result.data.picks)
+      return result.data
+    }
+    setPicksError(result.error.message)
+    return null
+  }, [])
 
   const setPhoto = (id: string, photo: PhotoState) =>
     setTurns((prev) => prev.map((t) => (t.id === id && t.kind === 'photo' ? { ...t, photo } : t)))
@@ -248,6 +289,8 @@ export function useChat(): UseChat {
     photoUrls.current = []
     setTurns([])
     setRevision(null)
+    setPicks([])
+    setPicksError(null)
     revisionRef.current = null
   }, [])
 
@@ -256,7 +299,11 @@ export function useChat(): UseChat {
     sending,
     activity,
     revision,
+    picks,
+    picking,
+    picksError,
     send,
+    changePicks,
     uploadPhoto,
     pickObject,
     visualize,
