@@ -89,8 +89,20 @@ function choiceReplies(question: string): QuickReply[] {
   return parts.map((p) => ({ label: capitalise(p), value: capitalise(p) }))
 }
 
+// The reply the customer reads is often an acknowledgement and then a question
+// in one message ("…I'll plan the living room with seating for 8. Which colours
+// are you drawn to?"). The chips must match the QUESTION, so words in the
+// lead-in ("seating", "bedroom") must not decide them — matching the whole
+// message was giving seat-count chips under a colour question. Isolate the last
+// sentence that actually asks something and match on that alone.
+function lastQuestionSentence(message: string): string {
+  const sentences = message.split(/(?<=[.!?])\s+/).filter(Boolean)
+  const questions = sentences.filter((s) => s.includes('?'))
+  return questions.length ? questions[questions.length - 1] : message
+}
+
 export function deriveQuickReplies(message: string, followUp: string | null): QuickReply[] {
-  const question = followUp ?? message
+  const question = followUp ?? lastQuestionSentence(message)
   // Only offer chips for a turn that is actually asking something.
   if (!question.includes('?')) return []
 
