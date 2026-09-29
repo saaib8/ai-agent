@@ -462,6 +462,15 @@ class CustomerAgentSettings(BaseModel):
     """How many products the picks tray keeps. A shortlist, not a second
     catalogue: past this a tick asks them to remove one first."""
 
+    room_upgrade_enabled: bool = True
+    """Whether a built room is followed by a suggested add-on - "a mirror
+    would finish this room" - with a yes/no, and one more after a yes."""
+
+    room_upgrade_max_over_budget: Decimal = Field(default=Decimal("0.15"), ge=0, le=1)
+    """How far past their budget an add-on may take the room, as a fraction of
+    the budget. The offer always says plainly by how much it goes over, and
+    nothing is added until they say yes (product decision, 2026-09-30)."""
+
     decision_model: str | None = Field(default=None, min_length=1)
     """The model that decides what a customer turn should do.
 

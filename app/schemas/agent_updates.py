@@ -28,7 +28,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
-from app.schemas.agent_state import BundleItemStatus, PurchaseStage
+from app.schemas.agent_state import BundleItemStatus, PurchaseStage, RoomAnchorState
 from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority
 from app.schemas.discovery import PriceConstraint, ProductSearchRequest, SeatingCapacityConstraint
 from app.schemas.geometry import RoomGeometry
@@ -429,6 +429,14 @@ class RoomProjectUpdate(BaseModel):
 
     questions_done: bool = False
     """They asked to skip the remaining room questions."""
+
+    pending_anchor: RoomAnchorState | None = None
+    """Application-only: the verified piece to build the room around once its
+    questions are answered. Never proposed by a model - it is resolved from a
+    product reference, like every bundle line."""
+
+    clear_pending_anchor: bool = False
+    """Application-only: the anchor became a line of the built room."""
 
     bundle_operations: tuple[BundleOperation, ...] = ()
     """Changes to the room bundle, applied in order.

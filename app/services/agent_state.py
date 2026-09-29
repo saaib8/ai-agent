@@ -339,21 +339,31 @@ def _room(
 
 
 def _room_pieces(base: RoomProjectState, update: RoomProjectUpdate) -> dict[str, object]:
-    """The room's kind, its chosen pieces and the questions already asked.
+    """The room's kind, its chosen pieces, the questions already asked and the
+    piece it waits to be built around.
 
     A different kind starts over: the pieces chosen for a bedroom say nothing
-    about a living room, and neither does having asked about one.
+    about a living room, and neither does having asked about one - nor a sofa
+    kept for it. An anchor set in the same update as the kind belongs to the
+    new room, which is how a room started from a pick records both at once.
     """
     kind = update.room_kind or base.room_kind
     fresh = kind != base.room_kind
     asked = () if fresh else base.questions_asked
     if update.question_asked is not None and update.question_asked not in asked:
         asked = (*asked, update.question_asked)
+    if update.pending_anchor is not None:
+        anchor = update.pending_anchor
+    elif update.clear_pending_anchor or fresh:
+        anchor = None
+    else:
+        anchor = base.pending_anchor
     return {
         "room_kind": kind,
         "pieces": (update.pieces if update.pieces is not None or fresh else base.pieces),
         "questions_asked": asked,
         "questions_done": update.questions_done or (not fresh and base.questions_done),
+        "pending_anchor": anchor,
     }
 
 

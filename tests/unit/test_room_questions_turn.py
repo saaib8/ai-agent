@@ -372,3 +372,46 @@ async def test_the_rooms_real_seats_are_counted_from_its_pieces() -> None:
     result = await coordinator.run(_turn(_state(room=room), "go"))
 
     assert result.room_seats == 8
+
+
+async def test_a_room_budget_range_is_recorded_as_its_ceiling() -> None:
+    """"Between 10,000 and 25,000" for a room means up to 25,000: the optimiser
+    plans against a ceiling, and a floor refused the whole room."""
+    coordinator, _ = _parts(
+        decision=_handoff(
+            room_budget=PriceProposal(min_amount="10000", max_amount="25000", currency="SAR")
+        )
+    )
+    state = _state(room=_room(questions_asked=(RoomQuestionKind.BUDGET,)))
+
+    result = await coordinator.run(_turn(state, "between 10000 and 25000 SAR"))
+
+    room = result.state.room_project
+    assert room is not None and room.budget == PriceConstraint.at_most(Decimal("25000"), "SAR")
+
+
+async def test_a_room_budget_floor_alone_is_kept_as_said() -> None:
+    coordinator, _ = _parts(
+        decision=_handoff(room_budget=PriceProposal(min_amount="10000", currency="SAR"))
+    )
+    state = _state(room=_room(questions_asked=(RoomQuestionKind.BUDGET,)))
+
+    result = await coordinator.run(_turn(state, "at least 10000 SAR"))
+
+    room = result.state.room_project
+    assert room is not None and room.budget is not None
+    assert room.budget.min_amount == Decimal("10000") and room.budget.max_amount is None
+
+
+async def test_a_range_saved_before_is_built_against_its_ceiling() -> None:
+    coordinator, parts = _parts(decision=_handoff(room_skip_questions=True))
+    saved = PriceConstraint(
+        currency="SAR", min_amount=Decimal("10000"), max_amount=Decimal("25000")
+    )
+    state = _state(room=_room(budget=saved))
+
+    result = await coordinator.run(_turn(state, "design bedroom"))
+
+    room = result.state.room_project
+    assert room is not None and room.budget == PriceConstraint.at_most(Decimal("25000"), "SAR")
+    assert parts["optimizer"].requests[0].budget == room.budget

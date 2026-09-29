@@ -4,6 +4,7 @@ import type {
   ChatResponse,
   ProductAction,
   RenderView,
+  UpgradePresentation,
 } from '../api/types'
 import type { RejectedRef } from '../hooks/useChat'
 import type { QuickReply } from '../lib/quickReplies'
@@ -114,9 +115,13 @@ export function AssistantBubble({
   // Picks shown back, or a single product, would act on the list behind them.
   const isResultList = presentation?.product_source === 'search'
   const focus = presentation?.focus ?? null
+  const upgrade = presentation?.upgrade ?? null
   // Chips that run an action - the companions of a product - belong under the
   // cards they extend; plain answers to a question stay beside the question.
-  const textReplies = (quickReplies ?? []).filter((r) => !r.product_action)
+  // The yes/no to a step-up sits under the step-up card, not by the text.
+  const isUpgradeReply = (r: QuickReply) => !!r.bundle_action?.kind.startsWith('upgrade_')
+  const upgradeReplies = (quickReplies ?? []).filter(isUpgradeReply)
+  const textReplies = (quickReplies ?? []).filter((r) => !r.product_action && !isUpgradeReply(r))
   const actionReplies = (quickReplies ?? []).filter((r) => r.product_action)
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
@@ -181,6 +186,16 @@ export function AssistantBubble({
             onVisualize={onVisualize}
           />
         )}
+        {upgrade && (
+          <FocusCard
+            product={upgrade.product}
+            label={`Add to your room · ${upgrade.piece}`}
+            note={upgradeNote(upgrade)}
+          />
+        )}
+        {upgrade && upgradeReplies.length > 0 && onQuickReply && (
+          <QuickReplies replies={upgradeReplies} onPick={onQuickReply} disabled={!!busy} />
+        )}
         {render && (
           <RoomRender
             render={render}
@@ -210,4 +225,12 @@ export function AssistantBubble({
       </div>
     </div>
   )
+}
+
+function upgradeNote(upgrade: UpgradePresentation): string {
+  const fmt = (v: string) => Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })
+  const base = `+${fmt(upgrade.extra_cost)} ${upgrade.currency} · room ${fmt(upgrade.new_total)} ${upgrade.currency}`
+  return upgrade.over_budget_by
+    ? `${base} · ${fmt(upgrade.over_budget_by)} ${upgrade.currency} over budget`
+    : base
 }

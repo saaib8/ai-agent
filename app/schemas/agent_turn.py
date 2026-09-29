@@ -25,7 +25,7 @@ from app.schemas.agent_decision import (
     CustomerAgentDecision,
     FollowUpPolicy,
 )
-from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage
+from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage, UpgradeReason
 from app.schemas.agent_view import AgentStateView
 from app.schemas.bundle import BundleOptimizationOutcome
 from app.schemas.bundle_action import BundleActionRequest
@@ -39,7 +39,7 @@ from app.schemas.grounding import (
     TurnFailure,
 )
 from app.schemas.picks import PickView
-from app.schemas.product_action import CompanionOffer, ProductActionRequest
+from app.schemas.product_action import CompanionOffer, ProductActionRequest, RoomOffer
 from app.schemas.product_brief import ProductBrief
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerContext
@@ -215,6 +215,39 @@ class SwapBudgetOffer(BaseModel):
         return self
 
 
+class RoomUpgradeOffer(BaseModel):
+    """A piece suggested as an addition to a built room, as a yes/no.
+
+    Every figure is the application's: the extra cost and the new total are
+    what it adds to the room (its price times the quantity the piece calls
+    for) and the room's total with it, from catalog prices. The new total may
+    pass their budget by a configured stretch, and then says by how much
+    (CLAUDE.md 10.2, 27). `piece` is the room's own word for it - "mirror";
+    the reasons are stored facts, and may be none.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    piece: str = Field(min_length=1)
+    extra_cost: Decimal = Field(gt=0)
+    new_total: Decimal = Field(gt=0)
+    currency: str = Field(min_length=1)
+    reasons: tuple[UpgradeReason, ...] = ()
+    over_budget_by: Decimal | None = Field(default=None, gt=0)
+    """How far the room with the step-up goes past their budget, when it does:
+    the new total less the budget, both the application's. Said plainly."""
+    budget: Decimal | None = Field(default=None, gt=0)
+    """Their budget ceiling, when the step-up goes past it."""
+    product: GroundedProduct | None = None
+    """The suggestion itself, as a card the customer can look at before they
+    answer - drawn from the catalog like any card, never from a model."""
+    quantity: int = Field(default=1, ge=1)
+    round: int = Field(default=1, ge=1)
+    product_id: int = Field(ge=1)
+    """Application-only: which product to add on a yes. Never reaches a model
+    or a client - the card carries no id (CLAUDE.md 20.4)."""
+
+
 class RoomSwapContext(BaseModel):
     """Which room piece a list of alternatives is for, so a tap replaces it.
 
@@ -360,6 +393,21 @@ class CustomerTurnResult(BaseModel):
 
     companions: tuple[CompanionOffer, ...] = ()
     """Other types that go with the product in focus, offered as chips."""
+
+    room_upgrade: RoomUpgradeOffer | None = None
+    """A step-up offered for one piece of the room just built, held for their
+    yes/no (CLAUDE.md 10.2). The room on screen is still the package as built."""
+
+    upgrade_declined: bool = False
+    """They turned the add-on down: the package stands as it is."""
+
+    add_on_added: str | None = None
+    """The piece they just said yes to, now in the room - "mirror"."""
+
+    room_offer: RoomOffer | None = None
+    """The whole room the product in focus starts - "Design the whole living
+    room around it" - offered as a chip beside a pick of a type that starts
+    one, while no room is under way (CLAUDE.md 10)."""
 
     product_brief: ProductBrief | None = None
     """A card of questions for a stated need - first, before anything is

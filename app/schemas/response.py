@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
-from app.schemas.agent_state import SwapBudgetOfferStage
+from app.schemas.agent_state import SwapBudgetOfferStage, UpgradeReason
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
@@ -351,6 +351,29 @@ class SwapOfferGroundingView(BaseModel):
     over_budget: bool = True
 
 
+class UpgradeOfferGroundingView(BaseModel):
+    """A step-up for one piece of the room, as the reply may word it.
+
+    The figures are the application's and may be said exactly: what it adds,
+    and the room's total with it, which is within their budget. The reasons
+    are stored facts about the two products, and the only reasons there are.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    piece: str
+    extra_cost: Decimal
+    new_total: Decimal
+    currency: str
+    reasons: tuple[UpgradeReason, ...] = ()
+    over_budget_by: Decimal | None = None
+    budget: Decimal | None = None
+    unit_price: Decimal | None = None
+    """The add-on's own price, printed on its card under the room."""
+    quantity: int = 1
+    round: int = 1
+
+
 class RoomQuestionGroundingView(BaseModel):
     """The one room question this turn asks, as the reply may word it.
 
@@ -571,6 +594,13 @@ class ResponseGroundingView(BaseModel):
     for, and said so - beside the card that answered them.
     """
 
+    room_offer: str | None = None
+    """The room their pick could start - "living room" - offered as a chip
+    beneath the reply ("Design the whole living room around it"). Only beside a
+    pick of a type a room is built around, and only while no room is under
+    way. The chip is the offer; the reply may close on it in a line.
+    """
+
     best_match_first: bool = False
     """The cards are ordered by how well they match what the customer
     described - their colours, styles, the feel they chose - so the first is
@@ -658,6 +688,14 @@ class ResponseGroundingView(BaseModel):
     """What to ask about the room, for `ROOM_QUESTION` and nothing else."""
 
     swap_offer: SwapOfferGroundingView | None = None
+    upgrade_offer: UpgradeOfferGroundingView | None = None
+    """A step-up offered beside the room just built; the yes/no is chips."""
+
+    upgrade_declined: bool = False
+    """They kept the package as it is rather than take the add-on."""
+
+    add_on_added: str | None = None
+    """The piece they just added to the room at our suggestion."""
     """The held over-budget swap, for `ROOM_SWAP_OFFER` and nothing else."""
 
     brief: ProductBriefGroundingView | None = None

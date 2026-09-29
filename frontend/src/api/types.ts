@@ -89,6 +89,16 @@ export interface GroundedBundlePresentation {
   totals: GroundedBundleTotals
 }
 
+/** The step-up offered for one piece of the room, drawn under the room. */
+export interface UpgradePresentation {
+  product: GroundedProduct
+  piece: string
+  extra_cost: string
+  new_total: string
+  currency: string
+  over_budget_by?: string | null
+}
+
 export interface ChatPresentation {
   products: GroundedProduct[]
   /** Which kind of list `products` is. Only search results are the list that
@@ -104,6 +114,7 @@ export interface ChatPresentation {
   brief?: ProductBrief | null
   /** The pick the customer just chose, drawn above what goes with it. */
   focus?: GroundedProduct | null
+  upgrade?: UpgradePresentation | null
   comparison: ProductComparisonResult | null
   room: GroundedBundlePresentation | null
   /** A picture of the room package, when the turn made one. */
@@ -261,6 +272,13 @@ export interface SwapAlternativesAction {
 export interface SwapDismissAction {
   kind: 'swap_dismiss'
 }
+/** Yes/no to the one step-up offered after a room is built. */
+export interface UpgradeAcceptAction {
+  kind: 'upgrade_accept'
+}
+export interface UpgradeDeclineAction {
+  kind: 'upgrade_decline'
+}
 
 export type BundleAction =
   | BundleAlternativesAction
@@ -269,6 +287,8 @@ export type BundleAction =
   | SwapDeclineAction
   | SwapAlternativesAction
   | SwapDismissAction
+  | UpgradeAcceptAction
+  | UpgradeDeclineAction
 
 export interface MoreOptionsAction {
   kind: 'more_options'
@@ -301,6 +321,7 @@ export type ProductAction =
   | { kind: 'goes_with'; pick: number }
   | { kind: 'compare'; picks: [number, number] }
   | { kind: 'companion'; category: string; subcategory: string }
+  | { kind: 'room_around' }
 
 /** A ready answer to tap; when it carries an action, tapping runs it. */
 export interface ReplyChoice {

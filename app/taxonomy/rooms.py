@@ -10,6 +10,11 @@ One piece may be built from several types. The living room's seating is met
 with however many sofas, sets, sectionals or single seats the customer's head
 count needs (CLAUDE.md 27.1), and the chip names it simply "Sofa".
 
+A room also names the types it is built around - a sofa for a living room, a
+bed for a bedroom. Picking one is when the whole room is offered, with that
+piece kept in it; which types start a room is reviewed here, never decided by
+a model or read off a product.
+
 The loader mirrors the other registries: read the versioned file, validate its
 shape, and reject any type the commerce taxonomy does not approve, so this file
 cannot drift from the vocabulary.
@@ -79,6 +84,13 @@ class RoomTemplate:
     kind: str
     pieces: tuple[RoomPiece, ...]
     asks_seats: bool
+    label: str = ""
+    """The room in customer words - "living room"."""
+    anchors: tuple[str, ...] = ()
+    """The types this room is built around, when one is picked."""
+    add_ons: tuple[str, ...] = ()
+    """Piece keys worth suggesting as additions once the room is built, most
+    worth it first."""
 
     def piece(self, key: str) -> RoomPiece | None:
         return next((p for p in self.pieces if p.key == key), None)
@@ -94,6 +106,11 @@ class RoomPieces:
     def __init__(self, version: str, rooms: Mapping[str, RoomTemplate]) -> None:
         self._version = version
         self._rooms = dict(rooms)
+        self._anchored = {
+            subcategory: template
+            for template in self._rooms.values()
+            for subcategory in template.anchors
+        }
 
     @property
     def version(self) -> str:
@@ -105,6 +122,10 @@ class RoomPieces:
 
     def template(self, kind: str | None) -> RoomTemplate | None:
         return None if kind is None else self._rooms.get(kind)
+
+    def built_around(self, subcategory: str | None) -> RoomTemplate | None:
+        """The room a piece of this type starts, when it starts one."""
+        return None if subcategory is None else self._anchored.get(subcategory)
 
     def __repr__(self) -> str:
         return f"RoomPieces(version={self._version!r}, rooms={sorted(self._rooms)})"
@@ -139,10 +160,19 @@ def load_room_pieces(
         raise TaxonomyConfigurationError(detail=f"{source.name}: 'rooms' must be a mapping")
 
     rooms: dict[str, RoomTemplate] = {}
+    anchored: set[str] = set()
     for kind, raw in raw_rooms.items():
         if not isinstance(kind, str) or not kind or not isinstance(raw, dict):
             raise TaxonomyConfigurationError(detail=f"{source.name}: each room must be a mapping")
-        rooms[kind] = _room(kind, raw, source, taxonomy, seating)
+        room = _room(kind, raw, source, taxonomy, seating)
+        if anchored & set(room.anchors):
+            # A sofa starting two different rooms would leave the offer to
+            # whichever was read last.
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: {kind} shares an anchor with another room"
+            )
+        anchored |= set(room.anchors)
+        rooms[kind] = room
     return RoomPieces(version=version, rooms=rooms)
 
 
@@ -172,7 +202,65 @@ def _room(
         )
     if not any(p.tier is PieceTier.ESSENTIAL for p in pieces):
         raise TaxonomyConfigurationError(detail=f"{source.name}: {kind} has no essential piece")
-    return RoomTemplate(kind=kind, pieces=pieces, asks_seats=asks_seats)
+    label = raw.get("label", kind.replace("_", " "))
+    if not isinstance(label, str) or not label:
+        raise TaxonomyConfigurationError(detail=f"{source.name}: {kind}.label must be a string")
+    anchors = _anchors(kind, raw.get("anchors", []), pieces, source)
+    add_ons = _add_ons(kind, raw.get("add_ons", []), pieces, source)
+    return RoomTemplate(
+        kind=kind,
+        pieces=pieces,
+        asks_seats=asks_seats,
+        label=label,
+        anchors=anchors,
+        add_ons=add_ons,
+    )
+
+
+def _add_ons(
+    kind: str, raw: Any, pieces: tuple[RoomPiece, ...], source: Path
+) -> tuple[str, ...]:
+    """The pieces worth suggesting as additions: this room's own keys, each
+    once, never its seating - an extra sofa is not a finishing touch."""
+    if not isinstance(raw, list) or not all(isinstance(value, str) and value for value in raw):
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: {kind}.add_ons must list piece keys"
+        )
+    if len(raw) != len(set(raw)):
+        raise TaxonomyConfigurationError(detail=f"{source.name}: {kind} repeats an add-on")
+    by_key = {piece.key: piece for piece in pieces}
+    for value in raw:
+        piece = by_key.get(value)
+        if piece is None:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: {kind} add-on {value!r} is not one of its pieces"
+            )
+        if piece.is_seating:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: {kind} add-on {value!r} is the room's seating"
+            )
+    return tuple(raw)
+
+def _anchors(
+    kind: str, raw: Any, pieces: tuple[RoomPiece, ...], source: Path
+) -> tuple[str, ...]:
+    """The types the room is built around: each one it may itself hold, once.
+
+    A type the room cannot hold would be kept in a room that has no place for
+    it, so it is refused here rather than discovered by a customer."""
+    if not isinstance(raw, list) or not all(isinstance(value, str) and value for value in raw):
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: {kind}.anchors must list subcategories"
+        )
+    if len(raw) != len(set(raw)):
+        raise TaxonomyConfigurationError(detail=f"{source.name}: {kind} repeats an anchor")
+    holds = {subcategory for piece in pieces for subcategory in piece.types}
+    for value in raw:
+        if value not in holds:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: {kind} anchor {value!r} is not one of its pieces"
+            )
+    return tuple(raw)
 
 
 def _piece(

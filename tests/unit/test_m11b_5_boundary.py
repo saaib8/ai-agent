@@ -114,6 +114,9 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # budget bands, colours and styles counted from the store-scoped
         # catalog. Its answers run through the ordinary pipeline.
         "briefs",
+        # The one step-up after a room is built: a band and a count, data not
+        # a service. Its searches run through the ordinary pipeline.
+        "upgrade_policy",
     ]
 
 

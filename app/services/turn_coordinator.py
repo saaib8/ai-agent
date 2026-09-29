@@ -53,6 +53,7 @@ from app.schemas.agent_decision import (
     BundleReplacementMode,
     CommercialReason,
     CustomerAgentDecision,
+    DesignAnchorIntent,
     DesignScope,
     FollowUpPolicy,
     ProductInteractionIntent,
@@ -67,7 +68,9 @@ from app.schemas.agent_state import (
     OfferedCombination,
     OfferedCombinationLine,
     ProductInteractionState,
+    RoomAnchorState,
     RoomProjectState,
+    RoomUpgradeOfferState,
     SavedMeasurements,
     SeatingOfferState,
     SwapBudgetOfferStage,
@@ -78,6 +81,7 @@ from app.schemas.agent_turn import (
     CustomerTurnResult,
     DecisionInput,
     RoomSwapContext,
+    RoomUpgradeOffer,
     SwapBudgetOffer,
     TurnGrounding,
 )
@@ -120,6 +124,8 @@ from app.schemas.bundle_action import (
     SwapDeclineAction,
     SwapDismissAction,
     SwapKeepOriginalAction,
+    UpgradeAcceptAction,
+    UpgradeDeclineAction,
 )
 from app.schemas.bundle_reference import BundleItemOrdinal
 from app.schemas.comparison import ProductComparisonResult
@@ -170,6 +176,8 @@ from app.schemas.product_action import (
     ComparePicksAction,
     GoesWithPickAction,
     ProductActionRequest,
+    RoomAroundPickAction,
+    RoomOffer,
 )
 from app.schemas.product_brief import BriefMode, ProductBrief
 from app.schemas.product_reference import (
@@ -266,7 +274,15 @@ from app.services.room_composition import (
     composed_needs,
     default_pieces,
     next_question,
+    offered,
     seating_piece,
+)
+from app.services.room_upgrade import (
+    MAX_ADD_ON_ROUNDS,
+    RoomUpgradePolicy,
+    add_on_pieces,
+    add_on_reasons,
+    choose_add_on,
 )
 from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
@@ -276,9 +292,9 @@ from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.complements import Companion, Complements
 from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
-from app.taxonomy.rooms import RoomPieces, RoomTemplate
+from app.taxonomy.rooms import RoomPiece, RoomPieces, RoomTemplate
 from app.taxonomy.seating import SeatingSemantics
-from app.taxonomy.words import customer_words_or_none
+from app.taxonomy.words import customer_words, customer_words_or_none
 
 logger = get_logger(__name__)
 
@@ -449,6 +465,18 @@ class _Primary:
 
     companions: tuple[CompanionOffer, ...] = ()
     """Other types that go with the product in focus, offered as chips."""
+
+    room_offer: RoomOffer | None = None
+    """The whole room the product in focus starts, offered as a chip."""
+
+    room_upgrade: RoomUpgradeOffer | None = None
+    """A step-up for one piece of the room just built, held for a yes/no."""
+
+    upgrade_declined: bool = False
+    """They kept the package as built rather than take the add-on."""
+
+    add_on_added: str | None = None
+    """The piece they just added to the room at our suggestion."""
 
     product_brief: ProductBrief | None = None
     """A card of questions for a stated need, when one was drawn this turn."""
@@ -816,6 +844,8 @@ def _bundle_action_decision(action: BundleActionRequest) -> CustomerAgentDecisio
             | SwapDeclineAction()
             | SwapKeepOriginalAction()
             | SwapDismissAction()
+            | UpgradeAcceptAction()
+            | UpgradeDeclineAction()
         ):
             return CustomerAgentDecision(
                 action=AgentAction.ANSWER,
@@ -852,6 +882,21 @@ def _goes_with_decision(pick: int) -> CustomerAgentDecision:
         action=AgentAction.PRODUCT_DETAIL,
         commercial_reason=CommercialReason.UPSELL,
         reference=PickedOrdinal(position=pick),
+    )
+
+
+def _room_around_decision() -> CustomerAgentDecision:
+    """The synthesised decision "Design the whole room around it" stands in for.
+
+    Their tap, so their request: a room built around the product in focus,
+    exactly what the typed "design my living room around this sofa" hands off -
+    one path for both, so tapping and typing cannot differ (CLAUDE.md 17.1).
+    """
+    return CustomerAgentDecision(
+        action=AgentAction.DESIGN_HANDOFF,
+        commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+        design_scope=DesignScope.WHOLE_ROOM,
+        design_anchor=DesignAnchorIntent(reference=FocusedProduct()),
     )
 
 
@@ -903,6 +948,32 @@ def _offers(companions: Sequence[Companion]) -> tuple[CompanionOffer, ...]:
             label=companion.label,
         )
         for companion in companions
+    )
+
+
+def _holding_anchor(asked: _Primary, anchored: _Anchored) -> _Primary:
+    """A room question, with the piece to build around kept for the build.
+
+    Only a new line can wait: a question is asked only before the room has
+    any, so an anchor resolved now is always one to add (CLAUDE.md 10.1).
+    """
+    line = next((op.line for op in anchored.operations if isinstance(op, AddBundleLine)), None)
+    if line is None:
+        return asked
+    return replace(
+        asked,
+        state=apply_update(
+            asked.state,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    pending_anchor=RoomAnchorState(
+                        product_id=line.product_id,
+                        quantity=line.quantity,
+                        acquisition=line.acquisition,
+                    )
+                )
+            ),
+        ),
     )
 
 
@@ -978,8 +1049,12 @@ class CustomerTurnCoordinator:
         companion_search: CompanionSearchBuilder | None = None,
         cross_sell_limit: int = 3,
         briefs: ProductBriefBuilder | None = None,
+        upgrade_policy: RoomUpgradePolicy | None = None,
     ) -> None:
         self._taxonomy = taxonomy
+        self._upgrade_policy = upgrade_policy
+        """How a built room's one step-up is chosen. None where rooms are built
+        without one, as they always were."""
         self._closest_type = closest_type
         """The closest stocked type when the asked one is absent. None where the
         capability is not configured, in which case an unstocked type stays a
@@ -1190,6 +1265,7 @@ class CustomerTurnCoordinator:
             seating_solution=primary.seating_solution,
             room_question=primary.room_question,
             room_seats=self._room_seats(primary.bundle_outcome),
+            room_upgrade=primary.room_upgrade,
             offered_instead_of=primary.offered_instead_of,
             unstocked_type=primary.unstocked_type,
             product_brief=primary.product_brief,
@@ -1225,6 +1301,10 @@ class CustomerTurnCoordinator:
                 primary = await self._swap_alternatives(pre_turn, turn)
             case SwapDismissAction():
                 primary = await self._dismiss_swap(pre_turn, turn)
+            case UpgradeAcceptAction():
+                primary = await self._accept_upgrade(pre_turn, turn)
+            case UpgradeDeclineAction():
+                primary = await self._decline_upgrade(pre_turn, turn)
 
         decision = _bundle_action_decision(action)
         final_state = primary.state
@@ -1241,6 +1321,9 @@ class CustomerTurnCoordinator:
             room_seats=self._room_seats(primary.bundle_outcome),
             swap_offer=primary.swap_offer,
             swap_context=primary.swap_context,
+            upgrade_declined=primary.upgrade_declined,
+            room_upgrade=primary.room_upgrade,
+            add_on_added=primary.add_on_added,
         )
         logger.info(
             "bundle_action_completed",
@@ -1301,7 +1384,8 @@ class CustomerTurnCoordinator:
     async def _run_product_action(
         self, turn: CustomerTurnInput, action: ProductActionRequest
     ) -> CustomerTurnResult:
-        """Ask about a pick, compare two, or show a companion a chip offered.
+        """Ask about a pick, compare two, show a companion a chip offered, or
+        design the whole room around the product in focus.
 
         No decision model and no query understanding: a pick is named by its
         position in the picks and resolves against verified state, and a
@@ -1321,6 +1405,9 @@ class CustomerTurnCoordinator:
             case CompanionAction():
                 decision = _search_action_decision()
                 primary = await self._show_companion(action, pre_turn, turn)
+            case RoomAroundPickAction():
+                decision = _room_around_decision()
+                primary = await self._room_around(decision, pre_turn, turn)
 
         final_state = primary.state
         kinds, picks = await self._selection_facts(final_state, turn)
@@ -1333,6 +1420,11 @@ class CustomerTurnCoordinator:
             selection_added=False,
             focus=primary.focus,
             companions=primary.companions,
+            room_offer=primary.room_offer,
+            bundle_outcome=primary.bundle_outcome,
+            room_question=primary.room_question,
+            room_seats=self._room_seats(primary.bundle_outcome),
+            room_upgrade=primary.room_upgrade,
         )
         logger.info(
             "product_action_completed",
@@ -1340,6 +1432,7 @@ class CustomerTurnCoordinator:
             action=action.kind,
             companions_shown=primary.search is not None and primary.design_handoff,
             companions_offered=len(primary.companions),
+            room_offered=primary.room_offer is not None,
             failed=primary.failure is not None,
             clarified=primary.clarification is not None,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
@@ -1410,6 +1503,7 @@ class CustomerTurnCoordinator:
             pre_turn,
             anchor.product_id,
         )
+        room_offer = await self._room_offer(anchor, pre_turn, turn)
         came_to_nothing: list[Companion] = []
         for companion in stocked:
             attempt = await self._companion_search(
@@ -1434,6 +1528,7 @@ class CustomerTurnCoordinator:
                         ],
                         turn,
                     ),
+                    room_offer=room_offer,
                 )
             came_to_nothing.append(companion)
         logger.info(
@@ -1441,7 +1536,76 @@ class CustomerTurnCoordinator:
             store_id=turn.context.store_id,
             companions_stocked=len(stocked),
         )
-        return _Primary(state=focused, product_detail=card)
+        return _Primary(state=focused, product_detail=card, room_offer=room_offer)
+
+    async def _room_offer(
+        self, anchor: ProductCandidate, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> RoomOffer | None:
+        """The whole room this pick starts, when it is worth offering.
+
+        Only for a type the reviewed registry says a room is built around - a
+        sofa, a bed - and only while no room is under way: with a room already
+        planned, the pick belongs to that conversation, and offering a second
+        room beside it would start one they never asked for. And only when the
+        store stocks something else for that room; a room of one sofa is not a
+        room. A capability read that fails offers nothing rather than guessing.
+        """
+        template = self._rooms.built_around(anchor.commerce.subcategory) if self._rooms else None
+        if template is None:
+            return None
+        room = state.room_project
+        if room is not None and (room.bundle_items or room.design_needs):
+            return None
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("room_offer_capabilities_unavailable", store_id=turn.context.store_id)
+            return None
+        others = [
+            piece
+            for piece in offered(template, capabilities)
+            if anchor.commerce.subcategory not in piece.types
+        ]
+        if not others:
+            return None
+        return RoomOffer(room_kind=template.kind, label=template.label)
+
+    async def _room_around(
+        self, decision: CustomerAgentDecision, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """Design the whole room around the product in focus, from a chip.
+
+        The room is the one the registry says this type starts - never a kind
+        the client named - and the rest is the ordinary whole-room handoff with
+        the focused product as its anchor: the same questions, the same
+        optimiser, the same lock (CLAUDE.md 10, 27).
+        """
+        outcome = await self._references.resolve(FocusedProduct(), pre_turn, turn.context)
+        if isinstance(outcome, ReferenceUnresolved):
+            clarification, failure = _reference_outcome(
+                outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            )
+            return _Primary(state=pre_turn, clarification=clarification, failure=failure)
+        products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
+        if not products:
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE)
+            )
+        template = (
+            self._rooms.built_around(products[0].commerce.subcategory) if self._rooms else None
+        )
+        if template is None:
+            logger.info("room_around_not_offered", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.REFERENCE_UNRESOLVED)
+            )
+        return await self._design_handoff(
+            decision,
+            pre_turn,
+            pre_turn,
+            turn,
+            AgentStateUpdate(room_project=RoomProjectUpdate(room_kind=template.kind)),
+        )
 
     async def _show_companion(
         self, action: CompanionAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
@@ -1972,8 +2136,8 @@ class CustomerTurnCoordinator:
         state: AgentStateV1,
         turn: CustomerTurnInput,
         *,
-        swapped_need_id: int,
-        chosen_product_id: int,
+        swapped_need_id: int | None = None,
+        chosen_product_id: int | None = None,
     ) -> RoomBundle | _Primary:
         """Cost the room with one role moved and every other role fixed.
 
@@ -2004,7 +2168,7 @@ class CustomerTurnCoordinator:
         entries: list[DesignNeedCandidates] = []
         for index, need in enumerate(plan.needs):
             need_id = room.design_needs[index].need_id
-            if need_id == swapped_need_id:
+            if need_id == swapped_need_id and chosen_product_id is not None:
                 forced = chosen_product_id
             elif need_id in current:
                 forced = current[need_id]
@@ -3135,7 +3299,7 @@ class CustomerTurnCoordinator:
         bundle is committed.
         """
         started = time.perf_counter()
-        state = apply_update(working, proposals)
+        state = _room_budget_as_ceiling(apply_update(working, proposals))
 
         if decision.design_scope is DesignScope.COMPLEMENT:
             return await self._complement(decision, state, pre_turn, turn)
@@ -3155,11 +3319,17 @@ class CustomerTurnCoordinator:
                 failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
             )
 
+        # The piece to build around is resolved first - it writes nothing - so
+        # it can wait through the questions below rather than be lost to them.
+        anchored = await self._resolve_anchor(decision, state, pre_turn, turn)
+        if anchored.stop is not None:
+            return replace(anchored.stop, state=state, proposals_applied=True)
+
         # A living room or a bedroom asks what it still needs first - one
         # question per turn, each once (CLAUDE.md 10.1).
         asked = await self._room_question(state, turn)
         if asked is not None:
-            return asked
+            return _holding_anchor(asked, anchored)
 
         # Everything the customer ruled in or out is resolved and verified
         # before a single lock is written, so a contradiction found late cannot
@@ -3168,9 +3338,10 @@ class CustomerTurnCoordinator:
         if revision.stop is not None:
             return replace(revision.stop, state=state, proposals_applied=True)
 
-        anchored = await self._resolve_anchor(decision, state, pre_turn, turn)
-        if anchored.stop is not None:
-            return replace(anchored.stop, state=state, proposals_applied=True)
+        if anchored.product is None:
+            anchored = await self._pending_anchor(state, turn)
+            if anchored.stop is not None:
+                return anchored.stop
 
         targets = [
             *revision.preserved,
@@ -3188,12 +3359,18 @@ class CustomerTurnCoordinator:
             )
 
         operations = (*revision.operations, *anchored.operations)
-        if operations:
+        waiting = state.room_project is not None and state.room_project.pending_anchor is not None
+        if operations or waiting:
             # One transition for every piece they named, so the room is never
             # observed half-preserved and the revision advances exactly once.
+            # A piece that waited through the questions is now a line of it.
             state = apply_update(
                 state,
-                AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=operations)),
+                AgentStateUpdate(
+                    room_project=RoomProjectUpdate(
+                        bundle_operations=operations, clear_pending_anchor=waiting
+                    )
+                ),
             )
 
         locks = await self._verify_locks(state, turn.context)
@@ -3246,11 +3423,268 @@ class CustomerTurnCoordinator:
             )
         committed = self._commit(state, plan, outcome)
         self._log_whole_room(turn, state, plan, discovery, outcome, committed, started)
+        offered, upgrade = await self._upgrade(committed, outcome, turn)
         return _Primary(
-            state=committed,
+            state=offered,
             design_handoff=True,
             proposals_applied=True,
             bundle_outcome=outcome,
+            room_upgrade=upgrade,
+        )
+
+    # ── the add-ons offered after a room is built ────────────────────────────
+
+    async def _upgrade(
+        self,
+        state: AgentStateV1,
+        room_bundle: BundleOptimizationOutcome,
+        turn: CustomerTurnInput,
+        *,
+        round_: int = 1,
+        skip: frozenset[str] = frozenset(),
+    ) -> tuple[AgentStateV1, RoomUpgradeOffer | None]:
+        """One piece to add to the room just built, or nothing.
+
+        After every complete room built or re-planned - and once more after
+        they take the first - the way a salesperson closes each proposal:
+        the room's reviewed add-ons it does not already hold, most worth it
+        first, the best-ranked product for the first that the store can fill
+        within their budget (or the stretch past it). Nothing is added until
+        they say yes (CLAUDE.md 10.2, 27).
+
+        An add-on is our idea, never their request: a catalog that cannot be
+        reached simply means no offer, and the room they asked for stands.
+        """
+        room = state.room_project
+        template = self._rooms.template(room.room_kind) if self._rooms and room else None
+        if (
+            self._upgrade_policy is None
+            or room is None
+            or template is None
+            or round_ > MAX_ADD_ON_ROUNDS
+            or not isinstance(room_bundle, RoomBundle)
+            # Only a complete room. With a piece it needs still missing, the
+            # money is for that piece - an add-on would sell past a gap.
+            or room_bundle.status is not BundleStatus.COMPLETE
+            or room_bundle.new_spend_total is None
+            or room_bundle.currency is None
+        ):
+            return state, None
+        spare = _headroom(room_bundle, room)
+        headroom = _headroom(room_bundle, room, self._upgrade_policy.max_over_budget)
+        if headroom is not None and headroom <= 0:
+            return state, None
+        present = {
+            line.product.commerce.subcategory
+            for line in room_bundle.lines
+            if line.product.commerce.subcategory is not None
+        }
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+            for piece in add_on_pieces(template, present | skip, capabilities):
+                offer = await self._add_on(
+                    piece, state, room_bundle, spare, headroom, capabilities, turn, round_
+                )
+                if offer is not None:
+                    logger.info(
+                        "room_add_on_offered",
+                        store_id=turn.context.store_id,
+                        piece=piece.key,
+                        round=round_,
+                        reasons=[str(reason) for reason in offer.reasons],
+                        over_budget=offer.over_budget_by is not None,
+                    )
+                    assert offer.product is not None
+                    return (
+                        _with_upgrade_offer(
+                            state,
+                            RoomUpgradeOfferState(
+                                product_id=offer.product_id,
+                                quantity=offer.quantity,
+                                bundle_revision=room.bundle_revision,
+                                round=round_,
+                            ),
+                        ),
+                        offer,
+                    )
+        except _HANDLED_SEARCH_FAILURES + _HANDLED_DESIGN_FAILURES:
+            logger.warning("room_add_on_unavailable", store_id=turn.context.store_id)
+        return state, None
+
+    async def _add_on(
+        self,
+        piece: RoomPiece,
+        state: AgentStateV1,
+        room_bundle: RoomBundle,
+        spare: Decimal | None,
+        headroom: Decimal | None,
+        capabilities: RetailerCatalogCapabilities,
+        turn: CustomerTurnInput,
+        round_: int,
+    ) -> RoomUpgradeOffer | None:
+        """The product to suggest for one piece, and what it does to the room.
+
+        Searched exactly as the room plan would search that piece - their
+        colours and styles ranking first - and capped at what the budget can
+        take, so nothing is shown that could not be added."""
+        room = state.room_project
+        assert room is not None and room_bundle.new_spend_total is not None
+        quantity = piece.quantity
+        resolved = self._design_discovery.resolve_need(
+            DesignCategoryNeed(
+                commerce_category=piece.commerce_category,
+                commerce_subcategory=piece.commerce_subcategory,
+                priority=DesignPriority.OPTIONAL,
+                quantity=quantity,
+            ),
+            InteriorDesignRequest(
+                task=DesignTask.ROOM_PLAN,
+                room_type=room.room_type,
+                geometry=room.geometry,
+                budget=room.budget,
+                design_preferences=room.design_preferences,
+                catalog_capabilities=capabilities,
+            ),
+        )
+        currency = room_bundle.currency or ""
+        # What the budget can take is ours to decide, and locked: relaxation
+        # must not carry a suggestion past it (CLAUDE.md 13.1).
+        price = (
+            PriceConstraint.at_most(headroom / quantity, currency)
+            if headroom is not None
+            else None
+        )
+        resolved = resolved.model_copy(
+            update={
+                "request": resolved.request.model_copy(update={"price": price}),
+                "semantics": resolved.semantics.model_copy(
+                    update={"price_max": ConstraintStrength.LOCKED if price else None}
+                ),
+            }
+        )
+        pool = await self._pipeline.execute_candidate_pool(resolved, turn.context)
+        in_room = {line.product.product_id for line in room_bundle.lines}
+        product = choose_add_on(
+            [c.product for c in pool.candidates if c.product.product_id not in in_room],
+            quantity,
+            spare,
+            headroom,
+        )
+        if product is None or product.price_unit != currency:
+            return None
+        extra = product.price_amount * quantity
+        new_total = room_bundle.new_spend_total + extra
+        budget = room.budget.max_amount if room.budget else None
+        over = new_total - budget if budget is not None and new_total > budget else None
+        return RoomUpgradeOffer(
+            piece=piece.label.lower(),
+            extra_cost=extra,
+            new_total=new_total,
+            currency=currency,
+            reasons=add_on_reasons(product, room.design_preferences),
+            over_budget_by=over,
+            budget=budget if over is not None else None,
+            product=to_grounded_product(
+                product,
+                grounding_ref=1,
+                # Not a search result and not a room card yet: the one piece
+                # suggested for the room.
+                presented_ordinal=None,
+                relaxation_depth=None,
+            ),
+            quantity=quantity,
+            round=round_,
+            product_id=product.product_id,
+        )
+
+    async def _decline_upgrade(self, pre_turn: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
+        """No to the add-on: the room stays exactly as it is - and, after the
+        first, one different piece is suggested anyway, the way a salesperson
+        tries once more before letting it go. Never the kind they just turned
+        down, and never a third."""
+        offer = pre_turn.room_upgrade_offer
+        cleared = _with_upgrade_offer(pre_turn, None)
+        declined = _Primary(state=cleared, upgrade_declined=True)
+        if (
+            offer is None
+            or offer.round >= MAX_ADD_ON_ROUNDS
+            or _stale_reference(pre_turn, offer.bundle_revision) is not None
+        ):
+            return declined
+        turned_down = await self._hydration.hydrate_ids((offer.product_id,), turn.context)
+        skip = frozenset(
+            p.commerce.subcategory for p in turned_down if p.commerce.subcategory is not None
+        )
+        outcome = await self._swap_outcome(cleared, turn)
+        if isinstance(outcome, _Primary):
+            return declined
+        offered, upgrade = await self._upgrade(
+            cleared, outcome, turn, round_=offer.round + 1, skip=skip
+        )
+        if upgrade is None:
+            return declined
+        return replace(declined, state=offered, bundle_outcome=outcome, room_upgrade=upgrade)
+
+    async def _accept_upgrade(self, pre_turn: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
+        """Yes to the add-on: it joins the room, the room is shown, and - after
+        the first - one more is suggested.
+
+        The product is re-read before it is added, and kept as a locked piece:
+        they chose it, so later changes to the room preserve it (CLAUDE.md 27).
+        Their yes already answered the budget, so a room it takes past the
+        ceiling (as the offer said) has the ceiling raised to fit.
+        """
+        offer = pre_turn.room_upgrade_offer
+        cleared = _with_upgrade_offer(pre_turn, None)
+        if offer is None:
+            return _Primary(state=cleared)
+        stale = _stale_reference(pre_turn, offer.bundle_revision)
+        if stale is not None:
+            return replace(stale, state=cleared)
+        products = await self._hydration.hydrate_ids((offer.product_id,), turn.context)
+        if not products:
+            return _Primary(
+                state=cleared, failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE)
+            )
+        added = apply_update(
+            cleared,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    bundle_operations=(
+                        AddBundleLine(
+                            line=BundleLineSpec(
+                                product_id=offer.product_id,
+                                quantity=offer.quantity,
+                                acquisition=BundleAcquisition.TO_BUY,
+                                status=BundleItemStatus.LOCKED,
+                            )
+                        ),
+                    )
+                )
+            ),
+        )
+        outcome = await self._swap_outcome(added, turn)
+        if isinstance(outcome, _Primary):
+            return replace(outcome, state=cleared)
+        committed = self._commit_refinement(added, outcome, None)
+        if _over_budget(outcome, committed.room_project) is not None:
+            committed = self._raise_budget(committed, outcome)
+        logger.info("room_add_on_accepted", store_id=turn.context.store_id, round=offer.round)
+        room = committed.room_project
+        template = self._rooms.template(room.room_kind) if self._rooms and room else None
+        subcategory = products[0].commerce.subcategory
+        pieces = template.pieces if template else ()
+        piece = next((p for p in pieces if p.commerce_subcategory == subcategory), None)
+        offered, upgrade = await self._upgrade(committed, outcome, turn, round_=offer.round + 1)
+        return _Primary(
+            state=offered,
+            bundle_outcome=outcome,
+            room_upgrade=upgrade,
+            add_on_added=(
+                piece.label.lower()
+                if piece is not None
+                else customer_words(products[0].commerce.subcategory or "piece")
+            ),
         )
 
     # ── a room of chosen pieces ─────────────────────────────────────────────
@@ -4019,6 +4453,48 @@ class CustomerTurnCoordinator:
                 ),
             )
         return _Anchored(product=products[0], operations=operations)
+
+    async def _pending_anchor(self, state: AgentStateV1, turn: CustomerTurnInput) -> _Anchored:
+        """The piece that waited through the room's questions, re-read now.
+
+        Read fresh, like every anchor: it was verified when they chose it, and
+        may have left the catalog since. Then the customer is told, and the
+        anchor is let go so the next attempt builds the room without it,
+        rather than failing on the same missing piece every time.
+        """
+        room = state.room_project
+        pending = room.pending_anchor if room else None
+        if pending is None:
+            return _Anchored()
+        products = await self._hydration.hydrate_ids((pending.product_id,), turn.context)
+        if not products:
+            logger.warning("room_pending_anchor_unavailable", store_id=turn.context.store_id)
+            return _Anchored(
+                stop=_Primary(
+                    state=apply_update(
+                        state,
+                        AgentStateUpdate(
+                            room_project=RoomProjectUpdate(clear_pending_anchor=True)
+                        ),
+                    ),
+                    design_handoff=True,
+                    proposals_applied=True,
+                    failure=TurnFailure(code=TurnFailureCode.PRODUCT_UNAVAILABLE),
+                )
+            )
+        return _Anchored(
+            product=products[0],
+            operations=(
+                AddBundleLine(
+                    line=BundleLineSpec(
+                        product_id=pending.product_id,
+                        quantity=pending.quantity,
+                        acquisition=pending.acquisition,
+                        status=BundleItemStatus.LOCKED,
+                    )
+                ),
+            ),
+        )
 
     def _design_request(
         self,
@@ -5157,6 +5633,53 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
     )
+
+
+def _with_upgrade_offer(
+    state: AgentStateV1, offer: RoomUpgradeOfferState | None
+) -> AgentStateV1:
+    """The state with a held step-up recorded, or cleared - application-owned,
+    like the over-budget swap it mirrors (CLAUDE.md 27)."""
+    return state.model_copy(update={"room_upgrade_offer": offer})
+
+
+def _room_budget_as_ceiling(state: AgentStateV1) -> AgentStateV1:
+    """A room budget recorded as a range, read as its ceiling.
+
+    New room budgets are recorded as ceilings already; this carries a range
+    saved before that into the same meaning - "10,000 to 25,000" for a room is
+    up to 25,000 - rather than refusing the room over it (product decision,
+    2026-09-30)."""
+    room = state.room_project
+    budget = room.budget if room else None
+    if budget is None or budget.min_amount is None or budget.max_amount is None:
+        return state
+    return apply_update(
+        state,
+        AgentStateUpdate(
+            room_project=RoomProjectUpdate(
+                budget=PriceConstraint.at_most(budget.max_amount, budget.currency)
+            )
+        ),
+    )
+
+
+def _headroom(
+    room_bundle: RoomBundle, room: RoomProjectState, stretch: Decimal = Decimal(0)
+) -> Decimal | None:
+    """What their budget, plus the configured stretch, has left after the room -
+    or None when no plain ceiling in the room's own currency was given: the
+    same budgets `_over_budget` compares, and no others."""
+    budget = room.budget
+    if (
+        budget is None
+        or budget.max_amount is None
+        or budget.min_amount is not None
+        or room_bundle.new_spend_total is None
+        or room_bundle.currency != budget.currency
+    ):
+        return None
+    return budget.max_amount * (1 + stretch) - room_bundle.new_spend_total
 
 
 def _with_swap_offer(state: AgentStateV1, offer: SwapBudgetOfferState | None) -> AgentStateV1:

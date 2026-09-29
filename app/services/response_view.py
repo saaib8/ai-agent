@@ -13,6 +13,8 @@ the same way.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
     AgentAction,
@@ -43,6 +45,7 @@ from app.schemas.response import (
     SeatingSolutionGroundingView,
     SideEffectNotice,
     SwapOfferGroundingView,
+    UpgradeOfferGroundingView,
 )
 from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import CustomerVisibleScreenView
@@ -453,7 +456,36 @@ def _room_bundle(
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
         relative_price_reason=(clarification.relative_price_reason if clarification else None),
+        upgrade_offer=_upgrade_view(result),
+        add_on_added=result.add_on_added,
+        upgrade_declined=result.upgrade_declined,
     )
+
+
+def _upgrade_view(result: CustomerTurnResult) -> UpgradeOfferGroundingView | None:
+    """The step-up held beside a room just built, figures and all - every one
+    the application's, from the two costed rooms (CLAUDE.md 10.2)."""
+    offer = result.room_upgrade
+    if offer is None:
+        return None
+    return UpgradeOfferGroundingView(
+        piece=offer.piece,
+        extra_cost=_whole(offer.extra_cost),
+        new_total=_whole(offer.new_total),
+        currency=offer.currency,
+        reasons=offer.reasons,
+        over_budget_by=_whole(offer.over_budget_by) if offer.over_budget_by else None,
+        budget=_whole(offer.budget) if offer.budget else None,
+        unit_price=_whole(offer.product.price_amount) if offer.product else None,
+        quantity=offer.quantity,
+        round=offer.round,
+    )
+
+
+def _whole(amount: Decimal) -> Decimal:
+    """An amount without trailing ".00", so the reply says "220", not "220.00".
+    The same value: only the written scale changes."""
+    return amount.quantize(Decimal(1)) if amount == amount.to_integral_value() else amount
 
 
 def _within_budget(bundle: RoomBundle, budget: PriceConstraint | None) -> bool | None:
@@ -607,6 +639,9 @@ def _view(
         ),
         selected_kinds=result.selected_kinds if result else (),
         picked_kind=_picked_kind(result),
+        room_offer=result.room_offer.label if result and result.room_offer else None,
+        upgrade_declined=bool(result and result.upgrade_declined),
+        add_on_added=result.add_on_added if result else None,
         selection_changed=_selection_changed(result),
         seating_requirement_known=_seating_known(result),
         **fields,

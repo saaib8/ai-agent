@@ -16,6 +16,8 @@ from app.schemas.bundle_action import (
     SwapConfirmAction,
     SwapDeclineAction,
     SwapKeepOriginalAction,
+    UpgradeAcceptAction,
+    UpgradeDeclineAction,
 )
 from app.schemas.chat import PieceChoice, PiecePicker, ReplyChoice
 from app.schemas.room_opener import RoomQuestion, RoomQuestionKind
@@ -53,6 +55,21 @@ _SWAP_ALTERNATIVES_CHOICES: tuple[ReplyChoice, ...] = (
 cheaper version of just the piece they were swapping (CLAUDE.md 27)."""
 
 
+UPGRADE_CHOICES: tuple[ReplyChoice, ...] = (
+    ReplyChoice(
+        label="Yes, add it",
+        value="Yes, add it to the room",
+        bundle_action=UpgradeAcceptAction(),
+    ),
+    ReplyChoice(
+        label="No, I'm good",
+        value="No thanks, I'm good with the room as it is",
+        bundle_action=UpgradeDeclineAction(),
+    ),
+)
+"""Yes/no to the add-on suggested after a room is built (CLAUDE.md 10.2)."""
+
+
 def swap_offer_choices(offer: SwapBudgetOffer) -> tuple[ReplyChoice, ...]:
     """The yes/no chips for a held over-budget swap, keyed off which question it
     is on - so a tap always answers the question actually asked (CLAUDE.md 27)."""
@@ -68,8 +85,8 @@ _SEAT_COUNTS = (2, 3, 4, 5)
 
 _ROOM_BUDGET_BANDS: tuple[ReplyChoice, ...] = (
     ReplyChoice(label="Under 10,000 SAR", value="A budget under 10000 SAR"),
-    ReplyChoice(label="10,000-25,000 SAR", value="A budget between 10000 and 25000 SAR"),
-    ReplyChoice(label="25,000-50,000 SAR", value="A budget between 25000 and 50000 SAR"),
+    ReplyChoice(label="Up to 25,000 SAR", value="A budget up to 25000 SAR"),
+    ReplyChoice(label="Up to 50,000 SAR", value="A budget up to 50000 SAR"),
     ReplyChoice(label="No strict limit", value="No strict budget"),
 )
 """Coarse whole-room ranges, plus the way out the question offers. Deliberately

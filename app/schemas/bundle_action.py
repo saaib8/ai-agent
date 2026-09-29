@@ -110,6 +110,24 @@ class SwapDismissAction(BaseModel):
     kind: Literal["swap_dismiss"] = "swap_dismiss"
 
 
+class UpgradeAcceptAction(BaseModel):
+    """Yes to the step-up offered for one piece of the room: show the room with
+    it. The held `room_upgrade_offer` says which piece and which product; this
+    only says "yes". The swap is re-derived from that verified offer."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["upgrade_accept"] = "upgrade_accept"
+
+
+class UpgradeDeclineAction(BaseModel):
+    """No to the step-up: the package stays exactly as built, offer cleared."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["upgrade_decline"] = "upgrade_decline"
+
+
 BundleActionRequest = Annotated[
     BundleAlternativesAction
     | BundleSwapAction
@@ -117,7 +135,9 @@ BundleActionRequest = Annotated[
     | SwapDeclineAction
     | SwapKeepOriginalAction
     | SwapAlternativesAction
-    | SwapDismissAction,
+    | SwapDismissAction
+    | UpgradeAcceptAction
+    | UpgradeDeclineAction,
     Field(discriminator="kind"),
 ]
 """Any room-edit action, told apart by `kind`."""

@@ -19,6 +19,7 @@ session my screen was drawn from* on the next request.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -194,6 +195,24 @@ class PiecePicker(BaseModel):
     choose_for_me: ReplyChoice
 
 
+class UpgradePresentation(BaseModel):
+    """The step-up offered beside a room just built, drawn under the room.
+
+    The card is the product itself, from the catalog. The figures are the
+    application's, from the two costed rooms: what it adds, the room's total
+    with it, and how far past their budget that goes, when it does.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product: GroundedProduct
+    piece: str
+    extra_cost: Decimal
+    new_total: Decimal
+    currency: str
+    over_budget_by: Decimal | None = None
+
+
 class ChatPresentation(BaseModel):
     """What a client draws beside the assistant's words.
 
@@ -271,6 +290,10 @@ class ChatPresentation(BaseModel):
     piece_picker: PiecePicker | None = None
     """The room's pieces as chips, when the room question asks for them."""
 
+    upgrade: UpgradePresentation | None = None
+    """The step-up offered for one piece of the room just built, shown under
+    the room so they can see it before answering yes or no."""
+
     swap_context: RoomSwapContext | None = None
     """The room piece a shown list of alternatives is for. Set when the customer
     asked for cheaper options for an over-budget swap, so a client sends a `swap`
@@ -295,6 +318,7 @@ class ChatPresentation(BaseModel):
             and not self.choices
             and self.piece_picker is None
             and self.brief is None
+            and self.upgrade is None
         )
 
 

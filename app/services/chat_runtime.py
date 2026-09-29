@@ -38,7 +38,7 @@ from app.schemas.agent_turn import (
     CustomerTurnInput,
     CustomerTurnResult,
 )
-from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse
+from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse, UpgradePresentation
 from app.schemas.conversation import (
     ConversationContext,
     ConversationMessage,
@@ -53,6 +53,7 @@ from app.services.cross_sell import companion_choices
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first
 from app.services.room_presentation import (
+    UPGRADE_CHOICES,
     piece_picker,
     room_answer_choices,
     swap_offer_choices,
@@ -174,12 +175,14 @@ class ChatRuntime:
         # and the question can never drift apart.
         if result.swap_offer is not None:
             choices = swap_offer_choices(result.swap_offer)
+        elif result.room_upgrade is not None:
+            choices = UPGRADE_CHOICES
         elif result.room_question is not None:
             choices = room_answer_choices(result.room_question)
         elif result.seating_solution is not None:
             choices = seating_choices(result.seating_solution)
         else:
-            choices = companion_choices(result.companions)
+            choices = companion_choices(result.companions, result.room_offer)
         results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,
@@ -200,6 +203,7 @@ class ChatRuntime:
                 piece_picker(result.room_question) if result.room_question is not None else None
             ),
             swap_context=result.swap_context,
+            upgrade=_upgrade_presentation(result),
         )
         return None if built.is_empty() else built
 
@@ -465,3 +469,18 @@ def trim_history(
     if kept and kept[0].role is ConversationRole.ASSISTANT:
         kept = kept[1:]
     return kept
+
+
+def _upgrade_presentation(result: CustomerTurnResult) -> UpgradePresentation | None:
+    """The step-up card under the room, when this turn offered one."""
+    offer = result.room_upgrade
+    if offer is None or offer.product is None:
+        return None
+    return UpgradePresentation(
+        product=offer.product,
+        piece=offer.piece,
+        extra_cost=offer.extra_cost,
+        new_total=offer.new_total,
+        currency=offer.currency,
+        over_budget_by=offer.over_budget_by,
+    )

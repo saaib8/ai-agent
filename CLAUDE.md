@@ -507,6 +507,22 @@ among several, chosen as a band from the store's own prices.
   one per turn (10.1): the optimiser needs the total.
 - **Budget otherwise** only once they are engaged: comparing, having picked
   something, talking price without a figure, or refining a wide price range.
+- **A pick that starts a room** (a sofa, a bed - `anchors` in
+  `room_pieces_v1.yaml`) is followed by a "Design the whole <room> around it"
+  chip while no room is under way. Tapping it runs the room's questions (10.1)
+  with the pick waiting as the room's anchor (`pending_anchor`), locked into the
+  room when it is built.
+- **A complete built room always gets an add-on offer** (changed 2026-09-30
+  at the product owner's request; a partial room never does - its missing
+  piece comes first): one piece the room does not already hold, from the
+  reviewed `add_ons` list in `room_pieces_v1.yaml`, shown as a card under the
+  room with "Yes, add it" / "No, I'm good" chips. Never a swap of a piece the
+  package chose. Two are offered whatever the first answer: a yes adds it as a
+  locked piece, a no leaves the room as it is, and either way one different
+  piece is suggested next. After the second, it ends. Their colour or style is given as the reason
+  when the product carries it. It may take the room past their budget by at
+  most a configured stretch (15%), and then says plainly by how much; a yes
+  raises the room budget to fit. Offered after every room built or re-planned.
 
 ### 10.3 A room is built from the pieces they chose
 

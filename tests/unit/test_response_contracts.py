@@ -1297,6 +1297,10 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # The kind of pick they opened ("bed"), whose card leads the screen -
         # a type name, never the product or its facts, which stay on the card.
         "picked_kind",
+        "room_offer",
+        "upgrade_offer",
+        "upgrade_declined",
+        "add_on_added",
         # Whether the cards are ordered by how well they match what they
         # described. A bool - no product, no value.
         "best_match_first",

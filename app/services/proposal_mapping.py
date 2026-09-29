@@ -153,11 +153,17 @@ def _preferences(proposal: PreferenceProposal | None) -> PreferenceListUpdate | 
 def _budget(
     proposal: PriceProposal | None,
 ) -> tuple[PriceConstraint | None, DeterministicClarification | None]:
-    """A budget, or the reason it could not be recorded.
+    """A room budget, or the reason it could not be recorded.
 
     A stated amount with no currency is not an error and not a guess: the
     retailer's currency is never inferred (CLAUDE.md 15), so the figure is held
     back and the customer is asked which currency they meant.
+
+    **A room budget is its ceiling.** "Between 10,000 and 25,000" for a room
+    means spend up to 25,000: nobody furnishing a room wants to be made to
+    spend at least a figure, and the optimiser plans against a ceiling only.
+    So when a ceiling is given, the floor is not recorded (product decision,
+    2026-09-30).
     """
     if proposal is None:
         return None, None
@@ -169,7 +175,11 @@ def _budget(
     try:
         budget = PriceConstraint(
             currency=currency,
-            min_amount=_amount(proposal.min_amount, field="min_amount", money=True),
+            min_amount=(
+                None
+                if proposal.max_amount is not None
+                else _amount(proposal.min_amount, field="min_amount", money=True)
+            ),
             max_amount=_amount(proposal.max_amount, field="max_amount", money=True),
         )
     except ValidationError as exc:

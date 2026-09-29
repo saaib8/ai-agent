@@ -286,6 +286,23 @@ class CustomerResponseGenerator:
                     for piece in (view.bundle.missing_pieces if view.bundle else ())
                     if piece.cheapest_price is not None
                 ),
+                # What a step-up adds to the room, and the room's total with
+                # it - both the difference of two rooms the optimiser costed.
+                *(
+                    tuple(
+                        figure
+                        for figure in (
+                            view.upgrade_offer.extra_cost,
+                            view.upgrade_offer.new_total,
+                            view.upgrade_offer.over_budget_by,
+                            view.upgrade_offer.budget,
+                            view.upgrade_offer.unit_price,
+                        )
+                        if figure is not None
+                    )
+                    if view.upgrade_offer
+                    else ()
+                ),
                 # The nearest real price to a budget nothing met.
                 *(o.nearest_price for o in view.would_find_without if o.nearest_price is not None),
                 # Rules of thumb the specialist supplied as structured
