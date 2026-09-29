@@ -14,8 +14,8 @@ interface BriefCardProps {
 type Picked = Record<string, string[]>
 
 /**
- * A card of short questions for a stated need - the kind, budget, colours, the
- * feel, the style - answered by tapping and sent together.
+ * A card of short questions for a product search - the kind, budget, colours,
+ * the feel, the style - answered by tapping and sent together.
  *
  * Every chip is a choice the server offered and leads to real products; the
  * card sends back only their keys. Anything left blank is simply not asked

@@ -403,7 +403,7 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # One question before a room is designed - which one is the
         # application's, only the words are the model's.
         "room_question",
-        # A card of questions for a stated need - which questions is the
+        # A card of questions for a product search - which questions is the
         # application's; the reply only introduces the card.
         "product_brief",
         "design_advice",

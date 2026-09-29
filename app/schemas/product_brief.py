@@ -167,8 +167,9 @@ class PendingBrief(BaseModel):
 class ProductBriefState(BaseModel):
     """The cards of this session.
 
-    A stated need gets its card every time; `shown` is what keeps the folded
-    card beside results to once per product family (CLAUDE.md 10.4).
+    A search for a kind of product gets its card every time; `shown` is what
+    keeps the folded card beside results to once per product family
+    (CLAUDE.md 10.4).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

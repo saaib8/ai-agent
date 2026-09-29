@@ -56,7 +56,7 @@ class TurnResult:
     body: dict[str, Any] = field(default_factory=dict)
     kind: str = "chat"
     """`chat` for a message or a screen action sent as a chat turn; `picks`
-    for a silent tick or untick."""
+    for a silent tick or untick; `comparison` for the compare pop-up."""
     chosen_budget: str | None = None
     """The budget band tapped on a card, as its label, for checking prices."""
 
@@ -135,6 +135,11 @@ def _check(
     checks: dict[str, Any], turn: TurnResult, previous: TurnResult | None = None
 ) -> list[str]:
     """Every failed check on the final reply, as a short reason."""
+    if checks.get("popup_refused"):
+        code = (turn.body.get("error") or {}).get("code")
+        if turn.kind == "comparison" and turn.status == 422 and code == "comparison_refused":
+            return []
+        return [f"expected the pop-up to refuse, got HTTP {turn.status} {code}"]
     if turn.status != 200:
         return [f"HTTP {turn.status}"]
     failures: list[str] = []
@@ -325,6 +330,10 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
             failures.append(f"seat counts {counts}, expected all at least {least}")
     if checks.get("comparison") and not turn.has_comparison:
         failures.append("no comparison table")
+    if checks.get("popup"):
+        columns = (turn.body.get("comparison") or {}).get("products") or []
+        if turn.kind != "comparison" or len(columns) != 2 or not turn.body.get("message"):
+            failures.append("no pop-up comparison of two products with a take")
     if checks.get("no_follow_up") and turn.follow_up:
         failures.append(f"an extra question: {turn.follow_up!r}")
     if (least := checks.get("companion_chips_min")) is not None:
@@ -416,6 +425,14 @@ class Conversation:
             return await self.chat(turn)
         if "say" in turn:
             return await self.chat(turn["say"])
+        if "search" in turn:
+            # Asked by someone who only wants to see results: a card of
+            # questions that comes first is skipped, as its "Show me ..."
+            # button does with nothing tapped. No card, and it is just said.
+            result = await self.chat(turn["search"])
+            if result.status == 200 and (result.brief or {}).get("mode") == "ask":
+                return await self._answer_card({})
+            return result
         if "answer_card" in turn or "skip_card" in turn:
             return await self._answer_card(turn.get("answer_card") or {})
         if "tick" in turn:
@@ -438,6 +455,14 @@ class Conversation:
             )
         if "chip" in turn:
             return await self._chip(str(turn["chip"]))
+        if "compare_cards" in turn:
+            cards = []
+            for spec in turn["compare_cards"]:
+                grid = self.grid(int(spec.get("grid", -1)))
+                cards.append(
+                    {"list_revision": grid["list_revision"], "ordinal": int(spec["ordinal"])}
+                )
+            return await self._post("/v1/comparisons", {"cards": cards}, "comparison")
         if "more_options" in turn:
             return await self.chat(
                 "Show me different options", search_action={"kind": "more_options"}

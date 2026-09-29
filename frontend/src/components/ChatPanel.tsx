@@ -12,12 +12,14 @@ import type {
 } from '../api/types'
 import type { Activity, Turn } from '../hooks/useChat'
 import { deriveQuickReplies } from '../lib/quickReplies'
+import { CompareBar } from './CompareBar'
 import { Composer } from './Composer'
 import { EmptyState } from './EmptyState'
 import { ErrorCard } from './ErrorCard'
 import { AssistantBubble, UserBubble, ZoryAvatar } from './MessageBubble'
 import { PhotoTurn } from './PhotoTurn'
 import { PicksTray } from './PicksTray'
+import type { CheckedCard } from '../lib/compare'
 import { TypingIndicator } from './TypingIndicator'
 
 interface ChatPanelProps {
@@ -52,7 +54,13 @@ interface ChatPanelProps {
   onRemovePick: (pick: PickView) => void
   /** Show what goes with a pick. */
   onGoesWith: (pick: PickView) => void
-  onComparePicks: (first: PickView, second: PickView) => void
+  /** Cards checked for comparison, how to check one, and comparing them. */
+  comparing: CheckedCard[]
+  familyOf: (product: GroundedProduct) => string | null
+  onToggleCompare: (product: GroundedProduct, listRevision: number) => void
+  onCompare: () => void
+  onUncheckCompare: (card: CheckedCard) => void
+  onClearCompare: () => void
   /** A tapped chip: its words, and the action it runs when it carries one. */
   onChoice: (value: string, action?: ProductAction | null) => void
   /** Answers tapped on a card of questions. */
@@ -88,7 +96,12 @@ export function ChatPanel({
   onTogglePick,
   onRemovePick,
   onGoesWith,
-  onComparePicks,
+  comparing,
+  familyOf,
+  onToggleCompare,
+  onCompare,
+  onUncheckCompare,
+  onClearCompare,
   onChoice,
   onBriefSubmit,
 }: ChatPanelProps) {
@@ -143,6 +156,32 @@ export function ChatPanel({
           .map((position) => position.ordinal),
       ),
     )
+  // Compare checkboxes live on the same result lists as ticks. Only similar
+  // products compare: once one is checked, other kinds are greyed out.
+  const compareFor = (listRevision: number | null | undefined) =>
+    listRevision != null && tickable.has(listRevision)
+      ? {
+          compareFor: (product: GroundedProduct) => {
+            const ordinal = product.presented_ordinal
+            const family = familyOf(product)
+            if (ordinal == null || family == null) return undefined
+            const isThis = (c: CheckedCard) =>
+              c.listRevision === listRevision && c.ordinal === ordinal
+            const checked = comparing.some(isThis)
+            const other = comparing.find((c) => !isThis(c))
+            const otherKind = other !== undefined && other.family !== family
+            return {
+              checked,
+              disabled: !checked && (comparing.length >= 2 || otherKind),
+              hint: otherKind
+                ? 'Compare it with a product of the same kind'
+                : 'Two are checked - compare them, or uncheck one',
+              onToggle: (p: GroundedProduct) => onToggleCompare(p, listRevision),
+            }
+          },
+        }
+      : undefined
+
   const selectionFor = (listRevision: number | null | undefined) =>
     listRevision != null && tickable.has(listRevision)
       ? {
@@ -217,6 +256,7 @@ export function ChatPanel({
                         : undefined
                     }
                     selection={selectionFor(turn.data.presentation?.list_revision)}
+                    compare={compareFor(turn.data.presentation?.list_revision)}
                     onBriefSubmit={onBriefSubmit}
                     quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
                     onQuickReply={onChoice}
@@ -260,13 +300,18 @@ export function ChatPanel({
         )}
       </div>
 
+      <CompareBar
+        checked={comparing}
+        onCompare={onCompare}
+        onUncheck={onUncheckCompare}
+        onClear={onClearCompare}
+      />
       <PicksTray
         picks={picks}
         busy={busy}
         error={picksError}
         onRemove={onRemovePick}
         onGoesWith={onGoesWith}
-        onCompare={onComparePicks}
       />
       <Composer
         value={draft}

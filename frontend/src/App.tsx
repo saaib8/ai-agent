@@ -11,7 +11,10 @@ import type {
   RenderRoomSpec,
   RenderView,
 } from './api/types'
+import { getCompareGroups, postComparison } from './api/client'
 import { CatalogDialog } from './components/catalog/CatalogDialog'
+import { ComparisonDialog } from './components/ComparisonDialog'
+import type { ComparisonPopup } from './components/ComparisonDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
@@ -19,6 +22,8 @@ import { useChat } from './hooks/useChat'
 import { useConfig } from './hooks/useConfig'
 import { useHealth } from './hooks/useHealth'
 import { DEFAULT_ROOM, styleLabel } from './lib/catalog'
+import { compareFamily } from './lib/compare'
+import type { CheckedCard } from './lib/compare'
 import type { RoomDraft, SelectedPiece } from './lib/catalog'
 import { humanise } from './lib/format'
 
@@ -35,6 +40,35 @@ export default function App() {
   // A swap-in-progress: the customer tapped "Swap" on a room piece and is now
   // choosing a replacement from the alternatives on screen.
   const [swap, setSwap] = useState<SwapContext | null>(null)
+
+  // Comparing: the cards checked (at most two, of one family) and the pop-up.
+  const [compareGroups, setCompareGroups] = useState<Record<string, string>>({})
+  const [comparing, setComparing] = useState<CheckedCard[]>([])
+  const [comparePopup, setComparePopup] = useState<ComparisonPopup | null>(null)
+  const compareRequest = useRef(0)
+  const groupsLoaded = useRef(false)
+
+  // Which types compare with which is the server's reviewed data. Read once -
+  // and again until it arrives: loaded while the API was still starting, an
+  // empty list would treat a sofa and an L-shape as different kinds.
+  const loadCompareGroups = useCallback(async (): Promise<Record<string, string> | null> => {
+    const result = await getCompareGroups(config.config.apiBase)
+    if (!result.ok) return null
+    groupsLoaded.current = true
+    setCompareGroups(result.data.groups)
+    return result.data.groups
+  }, [config.config.apiBase])
+
+  useEffect(() => {
+    groupsLoaded.current = false
+    void loadCompareGroups()
+  }, [loadCompareGroups])
+
+  useEffect(() => {
+    if ((health.status === 'ok' || health.status === 'degraded') && !groupsLoaded.current) {
+      void loadCompareGroups()
+    }
+  }, [health.status, loadCompareGroups])
 
   // Browse Catalogue: the picks and the room outlive the dialog, so closing
   // it to ask something in chat loses nothing.
@@ -190,18 +224,76 @@ export default function App() {
     [chat, config.config],
   )
 
-  const handleComparePicks = useCallback(
-    (first: PickView, second: PickView) => {
-      if (chat.sending || chat.picking) return
-      setSwap(null)
-      void chat.send(
-        `Compare the ${first.name_english} and the ${second.name_english}`,
-        config.config,
-        { product: { kind: 'compare', picks: [first.pick, second.pick] } },
-      )
-    },
-    [chat, config.config],
+  // ── comparing two checked cards, in a pop-up ─────────────────────────────
+
+  const familyOf = useCallback(
+    (product: GroundedProduct) => compareFamily(product, compareGroups),
+    [compareGroups],
   )
+
+  const handleToggleCompare = useCallback(
+    async (product: GroundedProduct, listRevision: number) => {
+      const ordinal = product.presented_ordinal
+      const groups = groupsLoaded.current ? compareGroups : await loadCompareGroups()
+      const family = compareFamily(product, groups ?? compareGroups)
+      if (ordinal == null || family == null) return
+      const already = comparing.find(
+        (c) => c.listRevision === listRevision && c.ordinal === ordinal,
+      )
+      if (already) {
+        setComparing(comparing.filter((c) => c !== already))
+        return
+      }
+      if (comparing.length >= 2 || (comparing[0] && comparing[0].family !== family)) return
+      // Checking only marks it: the comparison waits for the Compare button.
+      setComparing([
+        ...comparing,
+        {
+          listRevision,
+          ordinal,
+          family,
+          name: product.name_english,
+          imageUrl: product.image_url || null,
+        },
+      ])
+    },
+    [comparing, compareGroups, loadCompareGroups],
+  )
+
+  const handleCompare = useCallback(async () => {
+    if (comparing.length !== 2) return
+    const [first, second] = comparing
+    const names: [string, string] = [first.name, second.name]
+    const request = ++compareRequest.current
+    setComparePopup({ status: 'loading', names })
+    const result = await postComparison(config.config.apiBase, {
+      session_id: config.config.sessionId,
+      store_id: config.config.storeId,
+      cards: [
+        { list_revision: first.listRevision, ordinal: first.ordinal },
+        { list_revision: second.listRevision, ordinal: second.ordinal },
+      ],
+    })
+    if (request !== compareRequest.current) return // closed while loading
+    setComparePopup(
+      result.ok
+        ? { status: 'ready', names, data: result.data }
+        : { status: 'error', names, message: result.error.message },
+    )
+  }, [comparing, config.config])
+
+  // Closing the pop-up keeps the two checked: one can be swapped for another
+  // and compared again. Clearing is its own action.
+  const handleCloseCompare = useCallback(() => {
+    compareRequest.current += 1
+    setComparePopup(null)
+  }, [])
+
+  const handleUncheckCompare = useCallback((card: CheckedCard) => {
+    setComparing((checked) => checked.filter((c) => c !== card))
+  }, [])
+
+  const handleClearCompare = useCallback(() => setComparing([]), [])
 
   const handleBriefSubmit = useCallback(
     (answer: BriefAnswerAction, summary: string) => {
@@ -288,7 +380,9 @@ export default function App() {
     chat.reset()
     setSwap(null)
     setSelection([])
-  }, [config, chat])
+    handleCloseCompare()
+    handleClearCompare()
+  }, [config, chat, handleCloseCompare, handleClearCompare])
 
   return (
     <div className="flex h-screen flex-col overflow-hidden text-ink">
@@ -325,11 +419,17 @@ export default function App() {
           onTogglePick={handleTogglePick}
           onRemovePick={handleRemovePick}
           onGoesWith={handleGoesWith}
-          onComparePicks={handleComparePicks}
+          comparing={comparing}
+          familyOf={familyOf}
+          onToggleCompare={handleToggleCompare}
+          onCompare={handleCompare}
+          onUncheckCompare={handleUncheckCompare}
+          onClearCompare={handleClearCompare}
           onChoice={handleChoice}
           onBriefSubmit={handleBriefSubmit}
         />
       </main>
+      {comparePopup && <ComparisonDialog popup={comparePopup} onClose={handleCloseCompare} />}
       {catalogStep && (
         <CatalogDialog
           apiBase={config.config.apiBase}
