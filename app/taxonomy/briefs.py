@@ -1,4 +1,4 @@
-"""What to ask before showing products for a stated need, as reviewed data.
+"""What to ask before showing products of a kind, as reviewed data.
 
 "I need a sofa" says what they want and nothing about which one. A card of
 short questions - the kind of piece, the budget, colours, the feel, the style -

@@ -34,6 +34,7 @@ from app.integrations.redis import RedisClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.briefs import Briefs, load_briefs
+from app.taxonomy.compare_groups import CompareGroups, load_compare_groups
 from app.taxonomy.complements import Complements, load_complements
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
 from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
@@ -87,9 +88,12 @@ class AppResources:
     # built without them constructs as before: products open without
     # cross-sell, and nothing else changes.
     complements: Complements | None = None
-    # The cards of questions for a stated need. Defaulted, like the pairings:
-    # without them a stated need is simply searched.
+    # The cards of questions for a product search. Defaulted, like the
+    # pairings: without them every search simply runs.
     briefs: Briefs | None = None
+    # Which types compare with which. Defaulted: without it the comparison
+    # pop-up is refused rather than comparing anything with anything.
+    compare_groups: CompareGroups | None = None
 
 
 def get_resources(app: FastAPI) -> AppResources:
@@ -142,6 +146,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
     complements = load_complements(taxonomy=taxonomy)
     briefs = load_briefs(taxonomy=taxonomy)
+    compare_groups = load_compare_groups(taxonomy=taxonomy)
     logger.info(
         "taxonomy_loaded",
         taxonomy_version=taxonomy.version,
@@ -155,6 +160,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         room_pieces_version=rooms.version,
         complements_version=complements.version,
         briefs_version=briefs.version,
+        compare_groups_version=compare_groups.version,
     )
 
     database = Database.create(settings.db)
@@ -273,6 +279,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         rooms=rooms,
         complements=complements,
         briefs=briefs,
+        compare_groups=compare_groups,
         detector=detector,
         finder_vision=finder_vision,
         finder_embedder=finder_embedder,

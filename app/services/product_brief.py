@@ -1,9 +1,9 @@
-"""The card of questions for a stated need, and the search its answers make.
+"""The card of questions for a product search, and the search its answers make.
 
-"I need a sofa" gets one card - what kind, the budget, colours, the feel, the
-style - before anything is shown, so the three products that follow are the
-three that suit them rather than the first three the catalog returns
-(CLAUDE.md 10.4). Everything on the card leads to real products:
+"I need a sofa", "find me a sofa" or "show me sofas" gets one card - what
+kind, the budget, colours, the feel, the style - before anything is shown, so
+the few products that follow are the ones that suit them rather than the first
+few the catalog returns (CLAUDE.md 10.4). Everything on the card leads to real products:
 
 * the questions and the kinds of piece come from reviewed data
   (`app/taxonomy/briefs_v1.yaml`), never from a model;
@@ -102,11 +102,12 @@ class ProductBriefBuilder:
     ) -> BuiltBrief | None:
         """The card for this search, or None when there is nothing to ask.
 
-        A stated need always gets its card: "I need a bed" said again later in
-        a long chat is a new need, and a card they left unanswered an hour ago
-        is no reason to skip the questions now. Only what they already said
-        is left off it. The folded card beside results they asked to see is
-        offered once per family, so it does not follow every list around.
+        A search for a kind of product always gets its card: "I need a bed"
+        said again later in a long chat is a new need, and a card they left
+        unanswered an hour ago is no reason to skip the questions now. Only
+        what they already said is left off it. The folded card beside results
+        they asked for without questions is offered once per family, so it
+        does not follow every list around.
 
         None when the type has no card, when everything it would ask is
         already known, or for a folded card already offered. Then the search
@@ -209,6 +210,27 @@ class ProductBriefBuilder:
             questions=[question.kind.value for question in questions],
         )
         return BuiltBrief(card=card, pending=pending)
+
+    def answers_card(self, resolved: ResolvedSearch, state: AgentStateV1) -> bool:
+        """Whether this search is their typed answer to the card on screen.
+
+        The same product family, now saying something the card asked: "grey,
+        a 3-seater" under the sofa card. Asking again would put the rest of
+        the same card in front of them twice. A new family is a new card, and
+        the need said again with nothing added is asked again, as any need is.
+        """
+        pending = state.product_brief.pending
+        if pending is None:
+            return False
+        request = resolved.request
+        brief = self._briefs.for_search(request.commerce_category, request.commerce_subcategory)
+        if brief is None or brief.name != pending.name:
+            return False
+        return any(
+            _answered(kind, brief, resolved, state)
+            for kind in brief.ask
+            if not _answered(kind, brief, pending.base, state)
+        )
 
     def answer(self, action: BriefAnswerAction, pending: PendingBrief) -> ResolvedSearch | None:
         """The search their answers make, or None when they name something the

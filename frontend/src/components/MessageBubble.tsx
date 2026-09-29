@@ -6,7 +6,11 @@ import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
 import { FocusCard } from './presentation/FocusCard'
 import { ProductGrid } from './presentation/ProductGrid'
-import type { GridSelection, SearchRefineControls } from './presentation/ProductGrid'
+import type {
+  GridCompare,
+  GridSelection,
+  SearchRefineControls,
+} from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
 import { RoomRender } from './presentation/RoomRender'
 import { PiecePicker } from './PiecePicker'
@@ -69,6 +73,8 @@ interface AssistantBubbleProps {
   refine?: SearchRefineControls
   /** Present on the search results on screen: tick cards into the picks. */
   selection?: GridSelection
+  /** Present on the search results on screen: check cards to compare. */
+  compare?: GridCompare
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: QuickReply[]
   onQuickReply?: (value: string, action?: ProductAction | null) => void
@@ -93,6 +99,7 @@ export function AssistantBubble({
   pick,
   refine,
   selection,
+  compare,
   quickReplies,
   onQuickReply,
   onVisualize,
@@ -153,6 +160,7 @@ export function AssistantBubble({
             pick={pick}
             refine={isResultList ? refine : undefined}
             selection={isResultList ? selection : undefined}
+            compare={isResultList ? compare : undefined}
             bestMatch={isResultList && !!presentation?.best_match}
             busy={busy}
           />

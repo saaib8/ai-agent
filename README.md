@@ -122,19 +122,21 @@ limits with `ZORY_CATALOG__*`.
 
 ## Product discovery: the question card, picks and comparison
 
-A stated need ("I need a sofa") is answered with a card of short questions
-before anything is searched: the kind (2-seater, 3-seater, L-shape, set...),
-the budget, colours, the feel (bouclé, marble, with storage) and the style.
-The decision model only flags the need (`stated_need`). The questions per
+Every new search for a kind of product - "I need a sofa", "find me a sofa",
+"I'd like to see some sofas", "show me sofas", or moving on from sofas to
+dining tables - is answered with a card of short questions before anything is
+searched: the kind (2-seater, 3-seater, L-shape, set...), the budget, colours,
+the feel (bouclé, marble, with storage) and the style. The questions per
 product family and their kinds and feel words are reviewed data,
 `app/taxonomy/briefs_v1.yaml`. Budget bands (price quartiles), colours and
 styles are counted from the store's live catalog when the card is built, and
 a kind the store doesn't stock isn't offered. Anything they already said is
-skipped. A need naming only a category ("I need a table") gets that
-category's card with the kind asked first. A stated need gets its card every
-time; "Show me sofas" shows results
-at once, with the card folded beside them as "Narrow down" (once per family
-per session).
+skipped. A search naming only a category ("I need a table") gets that
+category's card with the kind asked first. Refinements ("only beige"), "show
+me more" and a typed answer to the card on screen never bring a card. The
+decision model only flags a decline (`skip_questions`): "Just show me sofas"
+shows results at once, with the card folded beside them as "Narrow down"
+(once per family per session).
 
 * `POST /v1/chat` with `search_action: {kind: "brief", card, piece, budget,
   colours, styles, feel}` answers the card with the keys it offered. The kind
@@ -155,9 +157,20 @@ per session).
     companion the store stocks (a bed → nightstands), with the other
     companions as chips. Types already picked are skipped, and asking again
     for the same pick moves on to its next companion kind.
-  * `{kind: "compare", picks: [a, b]}` compares exactly two picks.
+  * `{kind: "compare", picks: [a, b]}` compares two picks (kept for typed
+    "compare the two I picked"; the console compares through the pop-up).
   * `{kind: "companion", category, subcategory}` is a chip, checked against
     the pairings for the product in focus.
+
+* `POST /v1/comparisons` (`session_id`, `store_id`, `cards`: two
+  `{list_revision, ordinal}`) compares two cards checked on the results, for the
+  pop-up the console opens from its Compare button once two are checked: the
+  table and a short take. Read only - nothing is added to the chat
+  or the session. Only similar products compare (`compare_groups_v1.yaml`:
+  every type with itself, sofas with L-shapes/sets/sofa beds, armchairs with
+  accent/lounge chairs); a dissimilar pair is refused with `comparison_refused`.
+  `GET /v1/compare-groups` serves those families so the console can grey out
+  cards that cannot be compared.
 
 The pairings are `app/taxonomy/complements_v1.yaml`. Companion searches lean
 towards the pick's style and carry no budget. Configure with

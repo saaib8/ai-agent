@@ -1,0 +1,16 @@
+# Which products are similar enough to compare side by side.
+#
+# A comparison answers "which of these should I buy?", so it only makes sense
+# between two things that do the same job: two sofas, two beds, two rugs. A
+# sofa beside a coffee table is not a choice anyone is making.
+#
+# Every type compares with its own type. A group below lets several types that
+# answer the same need compare with each other too - a 3-seater against an
+# L-shape, an armchair against a lounge chair. A type in no group compares
+# only with itself. Reviewed data: never inferred, never written by a model.
+
+version: v1
+
+groups:
+  sofas: [sofa, sectional-sofa, sofa-set, sofa-bed]
+  armchairs: [chair, single-seater-sofa, lounge-chair, recliner, chaise-lounge]

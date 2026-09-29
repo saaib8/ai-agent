@@ -397,6 +397,15 @@ class PickUnavailableError(ZoryError):
     public_message = "That product isn't on screen any more. Please pick from the latest results."
 
 
+class ComparisonRefusedError(InvalidRequestError):
+    """Two checked cards that cannot be compared: different kinds of thing, or
+    a card that is no longer on screen. The raiser says which, in words the
+    customer can act on."""
+
+    code = "comparison_refused"
+    public_message = "Pick two of the same kind to compare - two sofas, or two rugs."
+
+
 class PickLimitError(InvalidRequestError):
     """A tick past the most picks the tray keeps."""
 
