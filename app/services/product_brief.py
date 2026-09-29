@@ -210,6 +210,16 @@ class ProductBriefBuilder:
         )
         return BuiltBrief(card=card, pending=pending)
 
+    async def store_colours(self, context: RetailerContext, limit: int) -> tuple[str, ...]:
+        """The store's own colours, most common first, approved by the registry.
+
+        For a room's colour question: the chips should be real catalogue values,
+        the same approval path the brief's own colour question uses, so a colour
+        the data holds but the vocabulary does not is never offered. Counted
+        store-wide - a room spans categories - and capped."""
+        facts = await self._repository.facet_counts(context)
+        return self._approved(AttributeFamily.COLOR, facts.colors)[:limit]
+
     def answer(self, action: BriefAnswerAction, pending: PendingBrief) -> ResolvedSearch | None:
         """The search their answers make, or None when they name something the
         card did not offer - a stale card, or a key it never showed."""

@@ -202,7 +202,7 @@ from app.schemas.resolution import (
     SimilarSearchUnavailable,
 )
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
-from app.schemas.room_opener import RoomQuestion
+from app.schemas.room_opener import RoomQuestion, RoomQuestionKind
 from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import (
     BriefAnswerAction,
@@ -338,6 +338,10 @@ invariant violations and anything unexpected. Those mean the system is wrong
 rather than unavailable, and dressing one as "search unavailable" would hide a
 defect behind a retry-later (CLAUDE.md 21).
 """
+
+_ROOM_COLOUR_CHIPS = 6
+"""How many of the store's colours a room's colour question offers as chips.
+Enough to cover the common palette, few enough to stay a row of chips."""
 
 _M7_CLARIFICATION = {
     ClarificationReason.NO_COMMERCE_CATEGORY: (
@@ -2817,6 +2821,17 @@ class CustomerTurnCoordinator:
         question = next_question(room, template, capabilities, _earlier_seat_count(state, template))
         if question is None:
             return None
+        if question.kind is RoomQuestionKind.COLOUR and self._briefs is not None:
+            # The colour chips are the store's real colours, read the same way the
+            # product brief reads them - never a guessed palette. A catalogue
+            # hiccup simply leaves the chips off; the reply still asks in words.
+            try:
+                colours = await self._briefs.store_colours(turn.context, _ROOM_COLOUR_CHIPS)
+            except _HANDLED_DESIGN_FAILURES:
+                logger.warning("room_colour_chips_unavailable", store_id=turn.context.store_id)
+                colours = ()
+            if colours:
+                question = question.model_copy(update={"colours": colours})
         logger.info(
             "room_question_asked",
             store_id=turn.context.store_id,

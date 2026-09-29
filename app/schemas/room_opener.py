@@ -57,10 +57,17 @@ class RoomQuestion(BaseModel):
 
     pieces: tuple[RoomPieceOffer, ...] = ()
 
+    colours: tuple[str, ...] = ()
+    """The store's own colours, most common first, for a colour question - so its
+    chips are real catalogue values, not a guess from the reply's wording. Empty
+    for every other question, and empty when the store records no colour."""
+
     @model_validator(mode="after")
     def _fits_the_question(self) -> Self:
         if (self.kind is RoomQuestionKind.PIECES) != bool(self.pieces):
             raise ValueError("pieces are offered exactly when they are asked for")
         if self.earlier_seat_count is not None and self.kind is not RoomQuestionKind.SEATS:
             raise ValueError("an earlier head count is confirmed only when seats are asked")
+        if self.colours and self.kind is not RoomQuestionKind.COLOUR:
+            raise ValueError("colours are offered only for a colour question")
         return self
