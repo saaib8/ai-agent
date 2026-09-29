@@ -9,11 +9,58 @@ taps is therefore always an answer to the question they were actually asked.
 
 from __future__ import annotations
 
+from app.schemas.agent_state import SwapBudgetOfferStage
+from app.schemas.agent_turn import SwapBudgetOffer
+from app.schemas.bundle_action import (
+    SwapAlternativesAction,
+    SwapConfirmAction,
+    SwapDeclineAction,
+    SwapKeepOriginalAction,
+)
 from app.schemas.chat import PieceChoice, PiecePicker, ReplyChoice
 from app.schemas.room_opener import RoomQuestion, RoomQuestionKind
 from app.taxonomy.rooms import PieceTier
 
 CHOOSE_FOR_ME = ReplyChoice(label="Choose for me", value="Choose the pieces for me")
+
+_SWAP_STRETCH_CHOICES: tuple[ReplyChoice, ...] = (
+    ReplyChoice(
+        label="Yes, let's stretch it",
+        value="Yes, stretch the budget to fit it",
+        bundle_action=SwapConfirmAction(),
+    ),
+    ReplyChoice(
+        label="No, keep me in budget",
+        value="No, keep me within budget",
+        bundle_action=SwapDeclineAction(),
+    ),
+)
+"""Yes/no to keeping a dearer swap that broke the budget."""
+
+_SWAP_ALTERNATIVES_CHOICES: tuple[ReplyChoice, ...] = (
+    ReplyChoice(
+        label="Keep my original room",
+        value="Keep my original room as it was",
+        bundle_action=SwapKeepOriginalAction(),
+    ),
+    ReplyChoice(
+        label="Show cheaper options",
+        value="Show me cheaper options for that piece",
+        bundle_action=SwapAlternativesAction(),
+    ),
+)
+"""The two ways to stay in budget: keep the room they already had, or look for a
+cheaper version of just the piece they were swapping (CLAUDE.md 27)."""
+
+
+def swap_offer_choices(offer: SwapBudgetOffer) -> tuple[ReplyChoice, ...]:
+    """The yes/no chips for a held over-budget swap, keyed off which question it
+    is on - so a tap always answers the question actually asked (CLAUDE.md 27)."""
+    match offer.stage:
+        case SwapBudgetOfferStage.STRETCH:
+            return _SWAP_STRETCH_CHOICES
+        case SwapBudgetOfferStage.ALTERNATIVES:
+            return _SWAP_ALTERNATIVES_CHOICES
 
 _SEAT_COUNTS = (2, 3, 4, 5)
 """The seat counts offered as chips; larger households type the number. The

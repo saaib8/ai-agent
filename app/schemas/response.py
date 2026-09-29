@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
+from app.schemas.agent_state import SwapBudgetOfferStage
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
@@ -90,6 +91,15 @@ class ResponseOutcomeKind(StrEnum):
     ROOM_QUESTION = "room_question"
     """One question before a room is designed - its budget, its pieces (as
     chips), how many will sit, or the colours they like (CLAUDE.md 10.1)."""
+
+    ROOM_SWAP_OFFER = "room_swap_offer"
+    """A dearer swap that broke the budget, put to the customer as a yes/no.
+
+    The salesperson beat: affirm the room warmly, be honest that it runs a
+    little over budget (the card shows the figures - the reply names no
+    number), and ask whether to stretch the budget or stay within it. Its
+    second stage asks instead whether to look for a cheaper piece
+    (CLAUDE.md 27)."""
 
     PRODUCT_BRIEF = "product_brief"
     """They stated a need, and a card of short questions is shown beneath the
@@ -323,6 +333,22 @@ class BundleGroundingView(BaseModel):
         if self.status is BundleStatus.PARTIAL and not self.required_unmet_count:
             raise ValueError("a partial package is short of a required piece")
         return self
+
+
+class SwapOfferGroundingView(BaseModel):
+    """A held over-budget swap, as the reply may word it.
+
+    The stage is which question is on the table; the yes/no is drawn as chips
+    beside the reply. No figure travels - the room card shows the total and the
+    budget, and the overage is a difference the reply must never compute
+    (CLAUDE.md 20.5). `over_budget` is always true here, carried so the model is
+    told plainly what to be honest about.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stage: SwapBudgetOfferStage
+    over_budget: bool = True
 
 
 class RoomQuestionGroundingView(BaseModel):
@@ -630,6 +656,9 @@ class ResponseGroundingView(BaseModel):
 
     room_question: RoomQuestionGroundingView | None = None
     """What to ask about the room, for `ROOM_QUESTION` and nothing else."""
+
+    swap_offer: SwapOfferGroundingView | None = None
+    """The held over-budget swap, for `ROOM_SWAP_OFFER` and nothing else."""
 
     brief: ProductBriefGroundingView | None = None
     """The card of questions shown with the reply: the whole turn for

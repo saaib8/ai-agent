@@ -70,11 +70,15 @@ from app.schemas.agent_state import (
     RoomProjectState,
     SavedMeasurements,
     SeatingOfferState,
+    SwapBudgetOfferStage,
+    SwapBudgetOfferState,
 )
 from app.schemas.agent_turn import (
     CustomerTurnInput,
     CustomerTurnResult,
     DecisionInput,
+    RoomSwapContext,
+    SwapBudgetOffer,
     TurnGrounding,
 )
 from app.schemas.agent_updates import (
@@ -111,6 +115,11 @@ from app.schemas.bundle_action import (
     BundleActionRequest,
     BundleAlternativesAction,
     BundleSwapAction,
+    SwapAlternativesAction,
+    SwapConfirmAction,
+    SwapDeclineAction,
+    SwapDismissAction,
+    SwapKeepOriginalAction,
 )
 from app.schemas.bundle_reference import BundleItemOrdinal
 from app.schemas.comparison import ProductComparisonResult
@@ -135,7 +144,11 @@ from app.schemas.design import (
     InteriorDesignRequest,
     InteriorDesignResult,
 )
-from app.schemas.design_discovery import DesignDiscoveryResult, DesignNeedCandidates
+from app.schemas.design_discovery import (
+    DesignDiscoveryResult,
+    DesignNeedCandidates,
+    DesignNeedSkipReason,
+)
 from app.schemas.design_override import DesignNeedSearchOverride
 from app.schemas.discovery import (
     MAX_EXCLUDED_PRODUCT_IDS,
@@ -446,6 +459,14 @@ class _Primary:
     room" about something nobody changed would be reporting work that did not
     happen."""
 
+    swap_offer: SwapBudgetOffer | None = None
+    """A dearer swap that broke the budget, held for the customer's yes/no. The
+    proposed room rides in `bundle_outcome`; nothing is committed (CLAUDE.md 27)."""
+
+    swap_context: RoomSwapContext | None = None
+    """The room piece a shown list of alternatives is for, so selecting one
+    swaps that role instead of picking a fresh product (CLAUDE.md 27)."""
+
     proposals_applied: bool = False
     """Whether this branch already folded the turn's customer facts in.
 
@@ -503,6 +524,42 @@ A distinct object rather than None, because None already means "no bound
 wanted" - which is what an alternative asks for, and is a different thing from
 a bound that could not be derived.
 """
+
+
+def _bundle_revision(state: AgentStateV1) -> int:
+    """The room's current bundle revision, or zero when there is no room."""
+    return state.room_project.bundle_revision if state.room_project else 0
+
+
+def _swap_offer_expired(state: AgentStateV1) -> _Primary:
+    """A yes/no arrived with no swap offer to answer - the room moved on, or it
+    was already settled. The stale offer is cleared and the turn carries on."""
+    return _Primary(state=_with_swap_offer(state, None))
+
+
+def _over_budget(bundle: RoomBundle, room: RoomProjectState | None) -> Decimal | None:
+    """By how much a room's new spend exceeds a budget it actually gave, or None.
+
+    Only a plain ceiling in the room's own currency is compared: a budget stated
+    as a minimum or a range has no maximum to break, and a total in another
+    currency cannot be compared without inventing a rate (CLAUDE.md 15). A room
+    at or under its ceiling is within budget and returns None.
+    """
+    budget = room.budget if room else None
+    if budget is None or budget.max_amount is None or budget.min_amount is not None:
+        return None
+    total = bundle.new_spend_total
+    if total is None or bundle.currency != budget.currency:
+        return None
+    return total - budget.max_amount if total > budget.max_amount else None
+
+
+def _in_room(state: AgentStateV1, product_id: int) -> bool:
+    """Whether a product is already a piece of the room being designed."""
+    room = state.room_project
+    return room is not None and any(
+        line.product_id == product_id for line in room.bundle_items
+    )
 
 
 def _stale_reference(state: AgentStateV1, resolved_revision: int) -> _Primary | None:
@@ -733,20 +790,37 @@ def _bundle_action_decision(action: BundleActionRequest) -> CustomerAgentDecisio
     """The synthesised decision a screen-driven room edit stands in for.
 
     The customer's clicks already decided the turn, so no model produced this.
-    Recorded as a product replacement made at their request, which is what routes
-    the finished room to be worded like any other room change. The interaction is
-    carried because the contract requires a refinement to name its change; the
+    A piece swap is recorded as a product replacement made at their request,
+    which routes the finished room to be worded like any other room change; the
+    interaction is carried because the contract requires a refinement to name
+    its change. The yes/no follow-ups to an over-budget swap carry no ordinal -
+    they answer a held offer - so they stand in for a plain request instead. The
     response layer routes on the outcome, not on this stand-in.
     """
-    return CustomerAgentDecision(
-        action=AgentAction.BUNDLE_REFINE,
-        commercial_reason=CommercialReason.CUSTOMER_REQUEST,
-        bundle_interaction=BundleInteractionIntent(
-            op=BundleInteractionOp.REPLACE_PRODUCT,
-            selector=BundleItemOrdinal(ordinal=action.bundle_ordinal),
-            replacement=BundleReplacementIntent(mode=BundleReplacementMode.ALTERNATIVE),
-        ),
-    )
+    match action:
+        case BundleSwapAction() | BundleAlternativesAction():
+            return CustomerAgentDecision(
+                action=AgentAction.BUNDLE_REFINE,
+                commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+                bundle_interaction=BundleInteractionIntent(
+                    op=BundleInteractionOp.REPLACE_PRODUCT,
+                    selector=BundleItemOrdinal(ordinal=action.bundle_ordinal),
+                    replacement=BundleReplacementIntent(mode=BundleReplacementMode.ALTERNATIVE),
+                ),
+            )
+        case SwapAlternativesAction():
+            # Lists a role's alternatives, worded exactly like the search it is.
+            return _search_action_decision()
+        case (
+            SwapConfirmAction()
+            | SwapDeclineAction()
+            | SwapKeepOriginalAction()
+            | SwapDismissAction()
+        ):
+            return CustomerAgentDecision(
+                action=AgentAction.ANSWER,
+                commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+            )
 
 
 def _search_action_decision() -> CustomerAgentDecision:
@@ -1136,10 +1210,21 @@ class CustomerTurnCoordinator:
         """
         started = time.perf_counter()
         pre_turn = turn.state
-        if isinstance(action, BundleAlternativesAction):
-            primary = await self._list_alternatives(action, pre_turn, turn)
-        else:
-            primary = await self._apply_swap(action, pre_turn, turn)
+        match action:
+            case BundleAlternativesAction():
+                primary = await self._list_alternatives(action, pre_turn, turn)
+            case BundleSwapAction():
+                primary = await self._apply_swap(action, pre_turn, turn)
+            case SwapConfirmAction():
+                primary = await self._confirm_swap(pre_turn, turn)
+            case SwapDeclineAction():
+                primary = await self._decline_swap(pre_turn, turn)
+            case SwapKeepOriginalAction():
+                primary = await self._keep_original_room(pre_turn, turn)
+            case SwapAlternativesAction():
+                primary = await self._swap_alternatives(pre_turn, turn)
+            case SwapDismissAction():
+                primary = await self._dismiss_swap(pre_turn, turn)
 
         decision = _bundle_action_decision(action)
         final_state = primary.state
@@ -1154,6 +1239,8 @@ class CustomerTurnCoordinator:
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
             room_seats=self._room_seats(primary.bundle_outcome),
+            swap_offer=primary.swap_offer,
+            swap_context=primary.swap_context,
         )
         logger.info(
             "bundle_action_completed",
@@ -1308,6 +1395,13 @@ class CustomerTurnCoordinator:
             presented_ordinal=None,
             relaxation_depth=None,
         )
+
+        if _in_room(pre_turn, anchor.product_id):
+            # A piece already in the room being designed: editing a room never
+            # cross-sells something it already holds - matching rugs beside the
+            # rug they picked reads as tone-deaf, not helpful (CLAUDE.md 27).
+            # Show the piece, offer no companions.
+            return _Primary(state=focused, focus=card)
 
         stocked = _next_round(
             await self._stocked_companions(
@@ -1643,6 +1737,8 @@ class CustomerTurnCoordinator:
         action: BundleAlternativesAction,
         pre_turn: AgentStateV1,
         turn: CustomerTurnInput,
+        *,
+        price_ceiling: PriceConstraint | None = None,
     ) -> _Primary:
         """Show the products that could take one room role, for the customer to pick.
 
@@ -1652,6 +1748,10 @@ class CustomerTurnCoordinator:
         ordinals the swap will reference are exactly what is on screen. No model
         interprets anything, so "show me other beds" can never be mistaken for a
         room refinement (CLAUDE.md 3.6).
+
+        A `price_ceiling` bounds the search when the customer declined to stretch
+        the budget and asked for cheaper options: only pieces the room can still
+        afford are shown, every other piece kept (CLAUDE.md 27).
         """
         room = pre_turn.room_project
         if room is None or not room.bundle_items:
@@ -1710,6 +1810,10 @@ class CustomerTurnCoordinator:
                 catalog_capabilities=capabilities,
             ),
         )
+        if price_ceiling is not None:
+            resolved = resolved.model_copy(
+                update={"request": resolved.request.model_copy(update={"price": price_ceiling})}
+            )
         composed = self._composer.seed_new_task(
             resolved,
             room_preferences=room.design_preferences,
@@ -1780,24 +1884,407 @@ class CustomerTurnCoordinator:
                 ),
             )
 
-        override = DesignNeedSearchOverride(need_id=need_id, forced_product_id=chosen.product_id)
-        refreshed = await self._reoptimise(
-            pre_turn, turn, override=override, released_need_id=need_id
+        return await self._swap_into_role(
+            action.bundle_ordinal, need_id, chosen.product_id, pre_turn, turn
         )
-        if isinstance(refreshed, _Primary):
-            return refreshed
-        if not _forced_into(refreshed.outcome, need_id, chosen.product_id, refreshed.state):
+
+    async def _swap_into_role(
+        self,
+        bundle_ordinal: int,
+        need_id: int,
+        chosen_product_id: int,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> _Primary:
+        """The swap itself: one piece changed, every other piece kept exactly.
+
+        A swap is a targeted edit, not a re-plan. Every other piece keeps its
+        exact product (the customer left them because they liked them), so the
+        room is costed with each role fixed to what it already holds and only the
+        named role moved to the chosen product - no role is re-selected, and no
+        piece is quietly downgraded or dropped to fit the budget (CLAUDE.md 27).
+
+        If that leaves the room within budget it is committed. If it breaks the
+        budget nothing is committed: the proposal is held and put to the customer
+        as a yes/no, so the room they had is never lost while they decide.
+        """
+        outcome = await self._swap_outcome(
+            pre_turn, turn, swapped_need_id=need_id, chosen_product_id=chosen_product_id
+        )
+        if isinstance(outcome, _Primary):
+            return outcome
+        if not any(line.product.product_id == chosen_product_id for line in outcome.lines):
             # The choice could not be placed: it left the catalog between being
-            # shown and being picked, or the room would not fit around it.
+            # shown and being picked.
             return _Primary(
                 state=pre_turn,
-                failure=TurnFailure(code=_no_replacement_reason(refreshed.outcome)),
+                failure=TurnFailure(code=_no_replacement_reason(outcome)),
             )
-        self._log_refinement(turn, BundleInteractionOp.REPLACE_PRODUCT, pre_turn, refreshed.state)
+
+        overage = _over_budget(outcome, pre_turn.room_project)
+        if overage is None:
+            override = DesignNeedSearchOverride(
+                need_id=need_id, forced_product_id=chosen_product_id
+            )
+            committed = _with_swap_offer(
+                self._commit_refinement(pre_turn, outcome, override), None
+            )
+            self._log_refinement(turn, BundleInteractionOp.REPLACE_PRODUCT, pre_turn, committed)
+            return _Primary(
+                state=committed,
+                bundle_outcome=outcome,
+                bundle_change=BundleInteractionOp.REPLACE_PRODUCT,
+            )
+
+        # Over budget: hold the proposal, commit nothing. The room in state stays
+        # the one before the swap, so a "no" leaves it exactly as it was.
+        assert outcome.new_spend_total is not None and outcome.currency is not None
+        budget = pre_turn.room_project.budget if pre_turn.room_project else None
+        assert budget is not None and budget.max_amount is not None
+        held = _with_swap_offer(
+            pre_turn,
+            SwapBudgetOfferState(
+                bundle_ordinal=bundle_ordinal,
+                chosen_product_id=chosen_product_id,
+                bundle_revision=_bundle_revision(pre_turn),
+                stage=SwapBudgetOfferStage.STRETCH,
+            ),
+        )
+        logger.info(
+            "swap_over_budget_offered",
+            store_id=turn.context.store_id,
+            overage=str(overage),
+        )
         return _Primary(
-            state=refreshed.state,
-            bundle_outcome=refreshed.outcome,
+            state=held,
+            bundle_outcome=outcome,
+            swap_offer=SwapBudgetOffer(
+                stage=SwapBudgetOfferStage.STRETCH,
+                new_spend_total=outcome.new_spend_total,
+                budget_max=budget.max_amount,
+                overage=overage,
+                currency=outcome.currency,
+            ),
+        )
+
+    async def _swap_outcome(
+        self,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+        *,
+        swapped_need_id: int,
+        chosen_product_id: int,
+    ) -> RoomBundle | _Primary:
+        """Cost the room with one role moved and every other role fixed.
+
+        The pieces the customer is keeping are pinned to the products they
+        already hold - each its own forced pool of one - and the named role to
+        the chosen product. Prior customer locks stay locks; nothing else is
+        searched or ranked, so the optimiser cannot re-pick a role. Costed with
+        no budget ceiling so a dear swap is never balanced by silently dropping a
+        piece: whether the room now fits is decided afterwards, out loud
+        (CLAUDE.md 27).
+        """
+        room = state.room_project
+        assert room is not None and room.bundle_items, "a swap has a room to edit"
+
+        locks = await self._verify_locks(state, turn.context, swapped_need_id)
+        if locks is None:
+            return _Primary(
+                state=state,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+
+        current: dict[int, int] = {
+            line.need_id: line.product_id
+            for line in room.bundle_items
+            if line.need_id is not None and line.status is not BundleItemStatus.LOCKED
+        }
+        plan = _plan_from(room)
+        entries: list[DesignNeedCandidates] = []
+        for index, need in enumerate(plan.needs):
+            need_id = room.design_needs[index].need_id
+            if need_id == swapped_need_id:
+                forced = chosen_product_id
+            elif need_id in current:
+                forced = current[need_id]
+            else:
+                # A role covered by a lock, or one the room never filled: nothing
+                # to select for it here, so it is not searched.
+                entries.append(
+                    DesignNeedCandidates(
+                        need_index=index,
+                        need=need,
+                        skipped=DesignNeedSkipReason.RETAILER_CANNOT_SUPPLY,
+                    )
+                )
+                continue
+            pool = await self._pipeline.execute_forced_pool(forced, turn.context)
+            entries.append(DesignNeedCandidates(need_index=index, need=need, pool=pool))
+
+        outcome = self._optimizer.optimize(
+            BundleOptimizationRequest(
+                discovery=DesignDiscoveryResult(needs=tuple(entries)),
+                budget=None,
+                locked=tuple(product for _, product in locks),
+            )
+        )
+        if not isinstance(outcome, RoomBundle):
+            # A locked piece the customer is keeping cannot be priced against the
+            # room - an odd or missing price, or another currency. Nothing to
+            # commit and nothing to compare, so the refusal is reported as it is.
+            return _Primary(state=state, bundle_outcome=outcome)
+        return outcome
+
+    async def _confirm_swap(self, pre_turn: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
+        """Keep the dearer swap the customer accepted, and stretch the budget.
+
+        The held offer names the piece and the product; both are re-verified and
+        the room re-derived exactly as when it was offered, then committed with
+        the budget raised to what the room now costs (CLAUDE.md 27).
+        """
+        offer = pre_turn.swap_budget_offer
+        if offer is None or offer.stage is not SwapBudgetOfferStage.STRETCH:
+            return _swap_offer_expired(pre_turn)
+        need_id = await self._resolve_swap_need(offer.bundle_ordinal, pre_turn, turn)
+        if isinstance(need_id, _Primary):
+            return need_id
+        outcome = await self._swap_outcome(
+            pre_turn, turn, swapped_need_id=need_id, chosen_product_id=offer.chosen_product_id
+        )
+        if isinstance(outcome, _Primary):
+            return outcome
+        if not any(line.product.product_id == offer.chosen_product_id for line in outcome.lines):
+            return _Primary(
+                state=_with_swap_offer(pre_turn, None),
+                failure=TurnFailure(code=_no_replacement_reason(outcome)),
+            )
+        override = DesignNeedSearchOverride(
+            need_id=need_id, forced_product_id=offer.chosen_product_id
+        )
+        committed = _with_swap_offer(
+            self._raise_budget(self._commit_refinement(pre_turn, outcome, override), outcome),
+            None,
+        )
+        self._log_refinement(turn, BundleInteractionOp.REPLACE_PRODUCT, pre_turn, committed)
+        logger.info("swap_over_budget_confirmed", store_id=turn.context.store_id)
+        return _Primary(
+            state=committed,
+            bundle_outcome=outcome,
             bundle_change=BundleInteractionOp.REPLACE_PRODUCT,
+        )
+
+    async def _decline_swap(self, pre_turn: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
+        """Don't stretch the budget: the room is left exactly as it was, and the
+        offer moves to its second question - cheaper options for that piece."""
+        offer = pre_turn.swap_budget_offer
+        if offer is None or offer.stage is not SwapBudgetOfferStage.STRETCH:
+            return _swap_offer_expired(pre_turn)
+        payload = await self._swap_offer_payload(
+            pre_turn, turn, offer, SwapBudgetOfferStage.ALTERNATIVES
+        )
+        if isinstance(payload, _Primary):
+            return payload
+        moved = _with_swap_offer(
+            pre_turn, offer.model_copy(update={"stage": SwapBudgetOfferStage.ALTERNATIVES})
+        )
+        return _Primary(state=moved, swap_offer=payload)
+
+    async def _swap_alternatives(
+        self, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """Cheaper options for the held piece, bounded so the room stays in budget.
+
+        Every other piece is kept exactly, so the ceiling for this one is
+        whatever the budget has left once the rest is paid for. The alternatives
+        carry which piece they are for (`swap_context`), so selecting one swaps
+        that role rather than picking a fresh product - a room being edited never
+        cross-sells a piece it already holds. The offer is cleared: they are
+        looking at real alternatives now, not a yes/no (CLAUDE.md 27)."""
+        offer = pre_turn.swap_budget_offer
+        if offer is None or offer.stage is not SwapBudgetOfferStage.ALTERNATIVES:
+            return _swap_offer_expired(pre_turn)
+        need_id = await self._resolve_swap_need(offer.bundle_ordinal, pre_turn, turn)
+        if isinstance(need_id, _Primary):
+            return need_id
+        ceiling = await self._slot_ceiling(pre_turn, turn, offer.bundle_ordinal)
+        if isinstance(ceiling, _Primary):
+            return ceiling
+        room = pre_turn.room_project
+        assert room is not None
+        need = next((n for n in room.design_needs if n.need_id == need_id), None)
+        role = (
+            (need.commerce_subcategory or need.commerce_category)
+            if need is not None
+            else "piece"
+        )
+        primary = await self._list_alternatives(
+            BundleAlternativesAction(bundle_ordinal=offer.bundle_ordinal),
+            _with_swap_offer(pre_turn, None),
+            turn,
+            price_ceiling=ceiling,
+        )
+        if primary.search is None:
+            return primary
+        return replace(
+            primary,
+            swap_context=RoomSwapContext(bundle_ordinal=offer.bundle_ordinal, role=role),
+        )
+
+    async def _dismiss_swap(self, pre_turn: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
+        """No to cheaper options: leave the room exactly as it was, offer gone."""
+        return _Primary(state=_with_swap_offer(pre_turn, None))
+
+    async def _keep_original_room(
+        self, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """Keep the room as it was before the dearer swap, and show it back.
+
+        The over-budget swap never committed, so the original in-budget room is
+        still in state. This re-costs it - every piece fixed to what it already
+        holds, the swapped role fixed back to its own product - and presents it,
+        so the customer sees they are back to the room they had, in budget, with
+        nothing changed (CLAUDE.md 27)."""
+        offer = pre_turn.swap_budget_offer
+        if offer is None or offer.stage is not SwapBudgetOfferStage.ALTERNATIVES:
+            return _swap_offer_expired(pre_turn)
+        need_id = await self._resolve_swap_need(offer.bundle_ordinal, pre_turn, turn)
+        if isinstance(need_id, _Primary):
+            return need_id
+        room = pre_turn.room_project
+        assert room is not None
+        current = next(
+            (line.product_id for line in room.bundle_items if line.need_id == need_id), None
+        )
+        if current is None:
+            return _swap_offer_expired(pre_turn)
+        outcome = await self._swap_outcome(
+            pre_turn, turn, swapped_need_id=need_id, chosen_product_id=current
+        )
+        if isinstance(outcome, _Primary):
+            return outcome
+        logger.info("swap_kept_original_room", store_id=turn.context.store_id)
+        return _Primary(state=_with_swap_offer(pre_turn, None), bundle_outcome=outcome)
+
+    async def _resolve_swap_need(
+        self, bundle_ordinal: int, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> int | _Primary:
+        """The design need one room card fills, re-verified against fresh facts."""
+        room = pre_turn.room_project
+        if room is None or not room.bundle_items:
+            return _unresolved_bundle(BundleReferenceFailureReason.NO_BUNDLE, pre_turn)
+        verified = await self._verify_bundle_products(room, turn.context)
+        if verified is None:
+            return _Primary(
+                state=pre_turn,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+        card = self._bundle_references.resolve(
+            BundleItemOrdinal(ordinal=bundle_ordinal), room, verified
+        )
+        if isinstance(card, BundleReferenceUnresolved):
+            return _unresolved_bundle(card.reason, pre_turn)
+        stale = _stale_reference(pre_turn, card.bundle_revision)
+        if stale is not None:
+            return stale
+        need_id = _single_need(card)
+        if need_id is None:
+            return _Primary(
+                state=pre_turn,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                    need_reason=DesignNeedFailureReason.CARD_SPANS_SEVERAL_NEEDS,
+                ),
+            )
+        return need_id
+
+    async def _swap_offer_payload(
+        self,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+        offer: SwapBudgetOfferState,
+        stage: SwapBudgetOfferStage,
+    ) -> SwapBudgetOffer | _Primary:
+        """The figures for a held over-budget swap, re-derived from live facts."""
+        need_id = await self._resolve_swap_need(offer.bundle_ordinal, pre_turn, turn)
+        if isinstance(need_id, _Primary):
+            return need_id
+        outcome = await self._swap_outcome(
+            pre_turn, turn, swapped_need_id=need_id, chosen_product_id=offer.chosen_product_id
+        )
+        if isinstance(outcome, _Primary):
+            return outcome
+        overage = _over_budget(outcome, pre_turn.room_project)
+        budget = pre_turn.room_project.budget if pre_turn.room_project else None
+        if (
+            overage is None
+            or budget is None
+            or budget.max_amount is None
+            or outcome.new_spend_total is None
+            or outcome.currency is None
+        ):
+            return _swap_offer_expired(pre_turn)
+        return SwapBudgetOffer(
+            stage=stage,
+            new_spend_total=outcome.new_spend_total,
+            budget_max=budget.max_amount,
+            overage=overage,
+            currency=outcome.currency,
+        )
+
+    async def _slot_ceiling(
+        self, pre_turn: AgentStateV1, turn: CustomerTurnInput, bundle_ordinal: int
+    ) -> PriceConstraint | None | _Primary:
+        """What one piece may cost with every other piece kept and paid for.
+
+        The budget less the current spend on everything the customer is keeping,
+        so a cheaper option for that piece lands the whole room back inside the
+        budget. Returns None - no ceiling - when the room's budget is not a plain
+        one this can compare against, or a piece cannot be priced against it
+        (CLAUDE.md 15)."""
+        need_id = await self._resolve_swap_need(bundle_ordinal, pre_turn, turn)
+        if isinstance(need_id, _Primary):
+            return need_id
+        room = pre_turn.room_project
+        assert room is not None
+        budget = room.budget
+        if budget is None or budget.max_amount is None or budget.min_amount is not None:
+            return None
+        verified = await self._verify_bundle_products(room, turn.context)
+        if verified is None:
+            return None
+        products = {p.product_id: p for p in verified}
+        others = Decimal(0)
+        for line in room.bundle_items:
+            if line.need_id == need_id or line.acquisition is not BundleAcquisition.TO_BUY:
+                continue
+            product = products.get(line.product_id)
+            if product is None or product.price_unit != budget.currency:
+                # A piece we cannot price against the budget: no trustworthy
+                # ceiling, so bound nothing rather than invent one.
+                return None
+            others += product.price_amount * line.quantity
+        remaining = budget.max_amount - others
+        if remaining <= 0:
+            return None
+        return PriceConstraint(currency=budget.currency, max_amount=remaining)
+
+    def _raise_budget(
+        self, state: AgentStateV1, outcome: BundleOptimizationOutcome
+    ) -> AgentStateV1:
+        """Lift the room's ceiling to what it now costs, currency unchanged."""
+        room = state.room_project
+        if (
+            room is None
+            or room.budget is None
+            or not isinstance(outcome, RoomBundle)
+            or outcome.new_spend_total is None
+            or outcome.currency is None
+        ):
+            return state
+        raised = PriceConstraint(currency=outcome.currency, max_amount=outcome.new_spend_total)
+        return apply_update(
+            state, AgentStateUpdate(room_project=RoomProjectUpdate(budget=raised))
         )
 
     async def _is_product_for_need(
@@ -4667,8 +5154,15 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=offer,
+        swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
     )
+
+
+def _with_swap_offer(state: AgentStateV1, offer: SwapBudgetOfferState | None) -> AgentStateV1:
+    """The state with a held over-budget swap recorded, or cleared - application-
+    owned, exactly like the seating offer it sits beside (CLAUDE.md 27)."""
+    return state.model_copy(update={"swap_budget_offer": offer})
 
 
 def _with_seating_answer(state: AgentStateV1, decision: CustomerAgentDecision) -> AgentStateV1:
@@ -4715,6 +5209,7 @@ def _with_chosen_combination(
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=offer.model_copy(update={"chosen": chosen}),
+        swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
     )
     logger.info("seating_combination_chosen", choice=choice, pieces=len(chosen.lines))

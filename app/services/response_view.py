@@ -21,11 +21,11 @@ from app.schemas.agent_decision import (
     FollowUpPolicy,
     ProductInteractionOp,
 )
-from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
+from app.schemas.agent_turn import CustomerTurnResult, SwapBudgetOffer, TurnGrounding
 from app.schemas.bundle import BundleStatus, BundleUnavailable, RoomBundle
 from app.schemas.comparison import ComparisonStatus
 from app.schemas.design import DesignPriority
-from app.schemas.discovery import ProductSort
+from app.schemas.discovery import PriceConstraint, ProductSort
 from app.schemas.grounding import GroundedProduct, SearchOutcome, TurnFailureCode
 from app.schemas.product_brief import BriefMode
 from app.schemas.resolution import DeterministicClarification
@@ -42,6 +42,7 @@ from app.schemas.response import (
     RoomQuestionGroundingView,
     SeatingSolutionGroundingView,
     SideEffectNotice,
+    SwapOfferGroundingView,
 )
 from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import CustomerVisibleScreenView
@@ -244,6 +245,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             result=result,
             presented_count=len(grounding.selection.products),
         )
+    if result.swap_offer is not None:
+        # A dearer swap that broke the budget, held for the customer's yes/no.
+        # Checked before the room branch: the proposed room rides in
+        # `bundle_outcome`, and a plain room reply would neither be honest about
+        # the overage nor ask whether to stretch (CLAUDE.md 27).
+        return _swap_offer_view(result, result.swap_offer, clarification)
     if result.seating_solution is not None:
         # A seat count no single piece could meet, recovered by combining pieces.
         # Checked before the search branch it rides beside: that search matched
@@ -436,9 +443,7 @@ def _room_bundle(
                 else None
             ),
             budget_supplied=budget is not None,
-            within_budget=(
-                None if budget is None else bundle.status is not BundleStatus.INFEASIBLE
-            ),
+            within_budget=_within_budget(bundle, budget),
             relaxed_line_count=sum(
                 1
                 for line in bundle.lines
@@ -448,6 +453,50 @@ def _room_bundle(
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
         relative_price_reason=(clarification.relative_price_reason if clarification else None),
+    )
+
+
+def _within_budget(bundle: RoomBundle, budget: PriceConstraint | None) -> bool | None:
+    """Whether a package obeys a budget the customer gave, from the real figures.
+
+    Mirrors the presentation's own comparison so the reply and the card agree: a
+    deterministic swap is costed with no ceiling, so only comparing the total to
+    the budget tells that its complete room is over (CLAUDE.md 27). A total in
+    another currency cannot be compared, so the status is the honest fallback.
+    """
+    if budget is None or budget.max_amount is None:
+        return None
+    if bundle.status is BundleStatus.INFEASIBLE:
+        # Infeasible is over budget by definition - the locks alone exceed it.
+        return False
+    total = bundle.new_spend_total
+    if total is None or bundle.currency != budget.currency:
+        # A package the optimiser selected under a budget obeyed it; only a
+        # currency it cannot compare leaves this unknowable, and there it trusts
+        # the status it was given.
+        return True
+    return total < budget.max_amount if budget.max_exclusive else total <= budget.max_amount
+
+
+def _swap_offer_view(
+    result: CustomerTurnResult,
+    offer: SwapBudgetOffer,
+    clarification: DeterministicClarification | None,
+) -> ResponseGroundingView:
+    """A held over-budget swap, as the response model may see it.
+
+    Only the stage travels: which question is on the table. On the first stage
+    the proposed room is on screen (it reaches the model through `screen`, like
+    every other room), so the reply can speak about it; on the second there is no
+    room, only the question. The yes/no is drawn as chips, and no figure travels
+    because the overage is a difference the reply must never state (CLAUDE.md
+    20.5).
+    """
+    return _view(
+        ResponseOutcomeKind.ROOM_SWAP_OFFER,
+        clarification,
+        result=result,
+        swap_offer=SwapOfferGroundingView(stage=offer.stage),
     )
 
 

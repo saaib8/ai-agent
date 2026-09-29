@@ -1,4 +1,10 @@
-import type { BriefAnswerAction, ChatResponse, ProductAction, RenderView } from '../api/types'
+import type {
+  BriefAnswerAction,
+  BundleAction,
+  ChatResponse,
+  ProductAction,
+  RenderView,
+} from '../api/types'
 import type { RejectedRef } from '../hooks/useChat'
 import type { QuickReply } from '../lib/quickReplies'
 import { BriefCard } from './BriefCard'
@@ -71,7 +77,7 @@ interface AssistantBubbleProps {
   selection?: GridSelection
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: QuickReply[]
-  onQuickReply?: (value: string, action?: ProductAction | null) => void
+  onQuickReply?: (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => void
   /** Present on the current room package only: render it from a view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void
   /** Present while this turn's render can be drawn again from another view. */

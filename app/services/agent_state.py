@@ -79,6 +79,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         room_project=room,
         derived_commerce=commerce,
         seating_offer=state.seating_offer,
+        swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
     )
 
@@ -143,6 +144,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
+        swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
     )
 
@@ -168,6 +170,7 @@ def record_brief(
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
+        swap_budget_offer=state.swap_budget_offer,
         product_brief=ProductBriefState(
             shown=names,
             cards=max(current.cards, pending.card) if pending is not None else current.cards,
@@ -231,6 +234,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
+        swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
     )
 

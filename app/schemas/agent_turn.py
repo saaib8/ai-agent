@@ -14,6 +14,7 @@ every scoped call already receives the context directly (CLAUDE.md 8, 20.2).
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -24,7 +25,7 @@ from app.schemas.agent_decision import (
     CustomerAgentDecision,
     FollowUpPolicy,
 )
-from app.schemas.agent_state import AgentStateV1
+from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage
 from app.schemas.agent_view import AgentStateView
 from app.schemas.bundle import BundleOptimizationOutcome
 from app.schemas.bundle_action import BundleActionRequest
@@ -185,6 +186,51 @@ class TurnGrounding(BaseModel):
         return self
 
 
+class SwapBudgetOffer(BaseModel):
+    """A dearer swap that broke the budget, put to the customer as a yes/no.
+
+    Carries only the figures the reply has to be honest about - all verified by
+    the deterministic swap that produced them, none from a model - and which
+    question is being asked. The proposed room itself travels as the
+    `bundle_outcome` beside it, so the same card rendering serves it; nothing
+    here is a product fact (CLAUDE.md 20.4). On the `ALTERNATIVES` stage the
+    figures describe the same held proposal, now asking whether to look for a
+    cheaper piece instead of stretching.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stage: SwapBudgetOfferStage
+    new_spend_total: Decimal
+    budget_max: Decimal
+    overage: Decimal
+    currency: str
+
+    @model_validator(mode="after")
+    def _overage_is_the_gap(self) -> Self:
+        if self.overage != self.new_spend_total - self.budget_max:
+            raise ValueError("the overage is the total less the budget")
+        if self.overage <= 0:
+            raise ValueError("an offer is only made when the swap is over budget")
+        return self
+
+
+class RoomSwapContext(BaseModel):
+    """Which room piece a list of alternatives is for, so a tap replaces it.
+
+    Set when the customer asked for cheaper options for an over-budget swap: the
+    alternatives are a search, but selecting one must swap that role, not pick a
+    fresh product (which would cross-sell a piece the room already holds). The
+    client reads this to send a `swap` for `bundle_ordinal` rather than a pick
+    (CLAUDE.md 27). No product id crosses the boundary - only the ordinal.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bundle_ordinal: int = Field(ge=1)
+    role: str = Field(min_length=1)
+
+
 class CustomerTurnResult(BaseModel):
     """One handled turn: the state it produced, and what happened.
 
@@ -277,6 +323,17 @@ class CustomerTurnResult(BaseModel):
     are the closest type it does stock - a substitution offered instead of a
     dead end (CLAUDE.md 27). Distinct from `offered_instead_of`: there the type
     exists but seats too few; here the store simply does not carry it."""
+
+    swap_offer: SwapBudgetOffer | None = None
+    """A dearer swap that broke the budget, held for the customer's yes/no. The
+    proposed room rides in `bundle_outcome`; nothing is committed until they say
+    yes, so the room in `state` is still the one before the swap (CLAUDE.md 27).
+    """
+
+    swap_context: RoomSwapContext | None = None
+    """The room piece a shown list of alternatives is for, so selecting one
+    swaps that role instead of picking a fresh product. Set when the customer
+    asked for cheaper options after declining to stretch the budget."""
 
     room_seats: int | None = Field(default=None, ge=1)
     """How many the room's seating really seats, counted from its pieces - so

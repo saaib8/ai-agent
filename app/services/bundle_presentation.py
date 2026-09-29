@@ -67,9 +67,13 @@ def _committed_room(
     """The state this outcome was committed into, or None if it was not.
 
     An infeasible package is never committed, so current state describes a
-    different room and must not be used to order its explanatory rendering.
+    different room and must not be used to order its explanatory rendering. A
+    held over-budget swap is the same: its complete room is a proposal, not
+    committed, so state still describes the room before the swap and ordering by
+    it would look up the swapped-out product's facts and not find them
+    (CLAUDE.md 27).
     """
-    if outcome.status is BundleStatus.INFEASIBLE:
+    if outcome.status is BundleStatus.INFEASIBLE or result.swap_offer is not None:
         return None
     return result.state.room_project
 
@@ -173,13 +177,22 @@ def _totals(
 def _within(bundle: RoomBundle, budget: PriceConstraint | None) -> bool | None:
     """Whether the package obeys a budget the customer actually gave.
 
-    Read from the same comparison the optimiser made, not recomputed from the
-    rendered figures: it treats the ceiling as a hard constraint, so anything
-    it produced other than an infeasible package is inside.
+    Compared against the actual figures, not read from the status: the optimiser
+    treats the ceiling as a hard constraint, so for anything it selected the two
+    agree - but a deterministic swap is costed with no ceiling so a dear one is
+    never balanced by dropping a piece, and only this comparison tells that its
+    complete room is over budget (CLAUDE.md 27). A total in another currency
+    cannot be compared, so the status is the honest fallback there.
     """
     if budget is None or budget.max_amount is None:
         return None
-    return bundle.status is not BundleStatus.INFEASIBLE
+    if bundle.status is BundleStatus.INFEASIBLE:
+        # Infeasible is over budget by definition - the locks alone exceed it.
+        return False
+    total = bundle.new_spend_total
+    if total is None or bundle.currency != budget.currency:
+        return True
+    return total < budget.max_amount if budget.max_exclusive else total <= budget.max_amount
 
 
 # ── the room, rebuilt from state ────────────────────────────────────────────

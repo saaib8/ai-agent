@@ -127,6 +127,11 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # The type they asked for, when the store carries none of it and the
         # cards are the closest type it does stock.
         "unstocked_type",
+        # A dearer swap that broke the budget, held for the customer's yes/no.
+        "swap_offer",
+        # The room piece a shown list of alternatives is for, so selecting one
+        # swaps that role rather than picking a fresh product.
+        "swap_context",
         # Product Q&A: the picks after the turn, for the client's tray; the
         # pick they asked about, shown not described; and the companion types
         # offered beside it as chips. None of them reaches the reply model.

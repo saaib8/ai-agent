@@ -403,6 +403,9 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # One question before a room is designed - which one is the
         # application's, only the words are the model's.
         "room_question",
+        # A dearer swap that broke the budget - the model does the soft-sell and
+        # asks whether to stretch; the yes/no is the application's chips.
+        "room_swap_offer",
         # A card of questions for a stated need - which questions is the
         # application's; the reply only introduces the card.
         "product_brief",
@@ -1316,6 +1319,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "seating",
         # The room question to word: its kind, and counts of pieces offered.
         "room_question",
+        # The held over-budget swap to word: which question it is on. No figure
+        # - the room card shows them and the overage is never computed here.
+        "swap_offer",
         # The card of questions: what it is about and which questions it asks
         # - kinds only, never its choices.
         "brief",

@@ -4,13 +4,15 @@
 // taps instead of typing. Matching is intentionally conservative: when nothing
 // is confidently recognised we show no chips rather than guess wrong ones.
 
-import type { ProductAction } from '../api/types'
+import type { BundleAction, ProductAction } from '../api/types'
 
 export interface QuickReply {
   label: string
   value: string
   /** When set, tapping runs this action rather than sending `value` as text. */
   product_action?: ProductAction | null
+  /** A room edit tapping it performs, for the yes/no on an over-budget swap. */
+  bundle_action?: BundleAction | null
 }
 
 const rule = (test: RegExp, replies: QuickReply[]) => ({ test, replies })

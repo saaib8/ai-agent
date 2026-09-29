@@ -528,6 +528,8 @@ class Conversation:
             raise CaseError(f"no chip {label!r} (offers {[c['label'] for c in choices]})")
         if chip.get("product_action"):
             return await self.chat(chip["value"], product_action=chip["product_action"])
+        if chip.get("bundle_action"):
+            return await self.chat(chip["value"], bundle_action=chip["bundle_action"])
         return await self.chat(chip["value"])
 
 
