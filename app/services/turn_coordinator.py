@@ -74,6 +74,7 @@ from app.schemas.agent_state import (
     SwapBudgetOfferState,
 )
 from app.schemas.agent_turn import (
+    BudgetStretched,
     CustomerTurnInput,
     CustomerTurnResult,
     DecisionInput,
@@ -467,6 +468,11 @@ class _Primary:
     """The room piece a shown list of alternatives is for, so selecting one
     swaps that role instead of picking a fresh product (CLAUDE.md 27)."""
 
+    budget_stretched: BudgetStretched | None = None
+    """Set on the turn a stretch is confirmed: the room is committed over the
+    customer's original budget, so the reply owns that rather than claiming it is
+    within budget (CLAUDE.md 27)."""
+
     proposals_applied: bool = False
     """Whether this branch already folded the turn's customer facts in.
 
@@ -552,6 +558,29 @@ def _over_budget(bundle: RoomBundle, room: RoomProjectState | None) -> Decimal |
     if total is None or bundle.currency != budget.currency:
         return None
     return total - budget.max_amount if total > budget.max_amount else None
+
+
+def _budget_stretched(pre_turn: AgentStateV1, outcome: RoomBundle) -> BudgetStretched | None:
+    """The stretch just accepted, as the reply may own it, or None.
+
+    The original budget is the ceiling the customer set before the stretch - the
+    one `_raise_budget` has just lifted. None when there is no plain ceiling in
+    the room's currency the room went over, so the reply asserts nothing it cannot
+    support (CLAUDE.md 15, 27).
+    """
+    room = pre_turn.room_project
+    budget = room.budget if room else None
+    if budget is None or budget.max_amount is None or budget.min_amount is not None:
+        return None
+    total = outcome.new_spend_total
+    if total is None or outcome.currency != budget.currency or total <= budget.max_amount:
+        return None
+    return BudgetStretched(
+        original_budget_max=budget.max_amount,
+        new_total=total,
+        overage=total - budget.max_amount,
+        currency=outcome.currency,
+    )
 
 
 def _in_room(state: AgentStateV1, product_id: int) -> bool:
@@ -1241,6 +1270,7 @@ class CustomerTurnCoordinator:
             room_seats=self._room_seats(primary.bundle_outcome),
             swap_offer=primary.swap_offer,
             swap_context=primary.swap_context,
+            budget_stretched=primary.budget_stretched,
         )
         logger.info(
             "bundle_action_completed",
@@ -2066,12 +2096,18 @@ class CustomerTurnCoordinator:
             self._raise_budget(self._commit_refinement(pre_turn, outcome, override), outcome),
             None,
         )
+        # The original budget is the one they set before this stretch - the ceiling
+        # `_raise_budget` has just lifted. Recorded so the reply owns the stretch
+        # ("now X, over your original Y") instead of reading the raised ceiling as
+        # "within budget" (CLAUDE.md 27).
+        stretched = _budget_stretched(pre_turn, outcome)
         self._log_refinement(turn, BundleInteractionOp.REPLACE_PRODUCT, pre_turn, committed)
         logger.info("swap_over_budget_confirmed", store_id=turn.context.store_id)
         return _Primary(
             state=committed,
             bundle_outcome=outcome,
             bundle_change=BundleInteractionOp.REPLACE_PRODUCT,
+            budget_stretched=stretched,
         )
 
     async def _decline_swap(self, pre_turn: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
@@ -3358,6 +3394,31 @@ class CustomerTurnCoordinator:
             total += seats * line.quantity
         return total or None
 
+    def _locked_seating_seats(self, locked: tuple[LockedBundleProduct, ...]) -> int:
+        """Seats a locked anchor already provides toward the room's head count.
+
+        When a room is built around a piece the customer locked, its seats are
+        seats the room already has: they count against the head count so the
+        room fills only what is left, and a locked sofa that already seats
+        everyone is never doubled by a second one (CLAUDE.md 27). A recorded
+        capacity, or the reviewed count for a type that seats one; a seating
+        piece whose count nobody established contributes nothing, so the room
+        errs toward seating everyone rather than leaving someone standing.
+        """
+        if self._seating is None:
+            return 0
+        total = 0
+        for lock in locked:
+            commerce = lock.product.commerce
+            if commerce.category != SEATING_CATEGORY:
+                continue
+            seats = commerce.seating_capacity or self._seating.implied_capacity(
+                commerce.subcategory
+            )
+            if seats is not None:
+                total += seats * lock.quantity
+        return total
+
     def _composed_template(
         self, state: AgentStateV1, request: InteriorDesignRequest
     ) -> RoomTemplate | None:
@@ -3411,6 +3472,16 @@ class CustomerTurnCoordinator:
 
         priority = PRIORITY_FOR_TIER[seating.tier]
         count = room.regular_seating_count
+        # A locked anchor the room is built around already seats people: those
+        # seats count toward the head count, so the room fills only what is left
+        # and never buys a second sofa beside one that already seats everyone.
+        # With no head count, a locked seating piece is itself the room's
+        # seating, so nothing more is added (CLAUDE.md 27).
+        covered = self._locked_seating_seats(locked)
+        if covered > 0 and (count is None or covered >= count):
+            return optimise(())
+        if count is not None:
+            count -= covered
         arrangements: tuple[SeatingArrangement, ...] = ()
         if count is not None:
             arrangements = await self._seating_planner.arrangements(

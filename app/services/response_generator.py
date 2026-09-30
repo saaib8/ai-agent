@@ -59,10 +59,12 @@ from app.schemas.response import (
 from app.services.numeric_guard import (
     build_allowance,
     bundle_counts,
+    bundle_stretch_figures,
     guidance_figures,
     screen_figures,
     seating_counts,
     seating_figures,
+    swap_offer_figures,
 )
 from app.services.response_validation import validate_response
 from app.services.response_view import route_response, valid_grounding_refs
@@ -288,6 +290,11 @@ class CustomerResponseGenerator:
                 ),
                 # The nearest real price to a budget nothing met.
                 *(o.nearest_price for o in view.would_find_without if o.nearest_price is not None),
+                # An over-budget swap's figures: the new total, the budget it
+                # broke and the overage - all computed by the swap, so sayable.
+                *(swap_offer_figures(view.swap_offer) if view.swap_offer else ()),
+                # A just-confirmed stretch: the original budget and how far over.
+                *(bundle_stretch_figures(view.bundle) if view.bundle else ()),
                 # Rules of thumb the specialist supplied as structured
                 # measurements. Sayable as guidance about rooms in general,
                 # never as a fact about a product (CLAUDE.md 14, 41).

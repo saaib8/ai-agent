@@ -449,6 +449,16 @@ def _room_bundle(
                 for line in bundle.lines
                 if line.relaxation_depth is not None and line.relaxation_depth > 0
             ),
+            stretched_from_budget=(
+                result.budget_stretched.original_budget_max
+                if result.budget_stretched is not None
+                else None
+            ),
+            stretched_overage=(
+                result.budget_stretched.overage
+                if result.budget_stretched is not None
+                else None
+            ),
         ),
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
@@ -485,18 +495,25 @@ def _swap_offer_view(
 ) -> ResponseGroundingView:
     """A held over-budget swap, as the response model may see it.
 
-    Only the stage travels: which question is on the table. On the first stage
-    the proposed room is on screen (it reaches the model through `screen`, like
-    every other room), so the reply can speak about it; on the second there is no
-    room, only the question. The yes/no is drawn as chips, and no figure travels
-    because the overage is a difference the reply must never state (CLAUDE.md
-    20.5).
+    The stage says which question is on the table. On the first stage the proposed
+    room is on screen too (it reaches the model through `screen`), so the reply can
+    speak about it. The three figures - the new total, the budget it broke, and by
+    how much - travel here so the reply names the overage honestly rather than
+    softening it to "a little": the application computed all three, so the reply
+    states them and computes nothing itself (CLAUDE.md 27). The yes/no is drawn as
+    chips.
     """
     return _view(
         ResponseOutcomeKind.ROOM_SWAP_OFFER,
         clarification,
         result=result,
-        swap_offer=SwapOfferGroundingView(stage=offer.stage),
+        swap_offer=SwapOfferGroundingView(
+            stage=offer.stage,
+            new_spend_total=offer.new_spend_total,
+            budget_max=offer.budget_max,
+            overage=offer.overage,
+            currency=offer.currency,
+        ),
     )
 
 

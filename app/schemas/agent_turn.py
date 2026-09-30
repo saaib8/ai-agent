@@ -215,6 +215,34 @@ class SwapBudgetOffer(BaseModel):
         return self
 
 
+class BudgetStretched(BaseModel):
+    """A room just committed over the customer's original budget, at their word.
+
+    Set on the turn a stretch is confirmed - they tapped "stretch it" on an
+    over-budget swap - so the reply can acknowledge honestly what they agreed to:
+    the room now costs more than they first said. The figures are all computed by
+    the deterministic swap, none from a model, and become sayable for this reply
+    so it can name the new total and how far over the original it went - never
+    "within budget" (CLAUDE.md 27). The room's own ceiling has been raised to the
+    new total for later turns; this records the original it was raised from.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    original_budget_max: Decimal
+    new_total: Decimal
+    overage: Decimal
+    currency: str
+
+    @model_validator(mode="after")
+    def _overage_is_the_gap(self) -> Self:
+        if self.overage != self.new_total - self.original_budget_max:
+            raise ValueError("the overage is the new total less the original budget")
+        if self.overage <= 0:
+            raise ValueError("a room is only stretched when it goes over the original budget")
+        return self
+
+
 class RoomSwapContext(BaseModel):
     """Which room piece a list of alternatives is for, so a tap replaces it.
 
@@ -334,6 +362,11 @@ class CustomerTurnResult(BaseModel):
     """The room piece a shown list of alternatives is for, so selecting one
     swaps that role instead of picking a fresh product. Set when the customer
     asked for cheaper options after declining to stretch the budget."""
+
+    budget_stretched: BudgetStretched | None = None
+    """Set on the turn a stretch is confirmed, so the reply acknowledges the room
+    is now over the customer's original budget rather than claiming it is within
+    it (CLAUDE.md 27)."""
 
     room_seats: int | None = Field(default=None, ge=1)
     """How many the room's seating really seats, counted from its pieces - so

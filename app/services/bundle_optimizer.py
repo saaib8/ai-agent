@@ -121,9 +121,15 @@ class BundleOptimizer:
         """
         started = time.perf_counter()
         budget = request.budget
-        if budget is not None and budget.min_amount is not None:
-            # A floor, or a range. Honouring only the ceiling would answer a
-            # different question, and there is no "spend at least" objective.
+        if (
+            budget is not None
+            and budget.min_amount is not None
+            and budget.max_amount is None
+        ):
+            # A pure floor with no ceiling: nothing bounds the choice, and there
+            # is no "spend at least" objective on its own. A range (floor *and*
+            # ceiling) is supported: the ceiling bounds the room and the floor is
+            # spent up to by `_reach_minimum` below (CLAUDE.md 27).
             return _unavailable(BundleUnavailableReason.UNSUPPORTED_BUDGET_FORM)
 
         locked_lines, covered = _allocate_locks(request)
@@ -138,6 +144,8 @@ class BundleOptimizer:
         residuals = _residuals(request, covered, budget)
         chosen = _choose(residuals, mandatory, budget)
         selected = _select_candidates(chosen, mandatory, budget)
+        if budget is not None and budget.min_amount is not None:
+            selected = _reach_minimum(selected, chosen, mandatory, budget)
 
         return self._bundle(request, locked_lines, residuals, selected, budget, started)
 
@@ -622,6 +630,67 @@ def _select_candidates(
                 spent += line
                 break
     return selected
+
+
+# ── spending up to a range's floor ────────────────────────────────────────────
+
+
+def _reach_minimum(
+    selected: dict[int, RankedProductCandidate],
+    chosen: Sequence[_Residual],
+    mandatory: Decimal,
+    budget: PriceConstraint,
+) -> dict[int, RankedProductCandidate]:
+    """Spend up toward the floor of a budget range.
+
+    The ceiling-optimal room maximises fulfilment and then faithfulness, not
+    spend, so it can sit below a range's minimum - a room the customer said was
+    too cheap. When a floor is set, chosen needs are upgraded, in design plan
+    order, to dearer eligible candidates until the room reaches the floor, and
+    the ceiling is never crossed. Faithfulness (M9 rank) is the one thing traded,
+    and only as far as needed: the earliest needs move first, and for each the
+    smallest upgrade that reaches the floor is preferred, so the rest stay the
+    most faithful the budget allows (CLAUDE.md 27). When the catalog cannot reach
+    the floor without crossing the ceiling, the room lands as close to it as the
+    ceiling allows - the honest best, never an over-budget room.
+    """
+    minimum = budget.min_amount
+    assert minimum is not None, "a floor is present"
+    upgraded = dict(selected)
+    ordered = sorted(chosen, key=lambda residual: residual.index)
+
+    def total() -> Decimal:
+        return mandatory + sum(
+            upgraded[r.index].product.price_amount * r.quantity
+            for r in ordered
+            if r.index in upgraded
+        )
+
+    for residual in ordered:
+        running = total()
+        if running >= minimum or residual.index not in upgraded:
+            if running >= minimum:
+                break
+            continue
+        current_line = upgraded[residual.index].product.price_amount * residual.quantity
+        reacher: tuple[RankedProductCandidate, Decimal] | None = None
+        climber: tuple[RankedProductCandidate, Decimal] | None = None
+        for candidate in residual.candidates:
+            line = candidate.product.price_amount * residual.quantity
+            if line <= current_line:
+                continue  # not an upgrade
+            new_total = running - current_line + line
+            if not _within(new_total, budget):
+                continue  # would cross the ceiling
+            if new_total >= minimum:
+                if reacher is None or line < reacher[1]:
+                    reacher = (candidate, line)  # smallest upgrade that reaches the floor
+            elif climber is None or line > climber[1]:
+                climber = (candidate, line)  # else climb as high as the ceiling allows
+        pick = reacher or climber
+        if pick is not None:
+            upgraded[residual.index] = pick[0]
+    return upgraded
 
 
 # ── the money ───────────────────────────────────────────────────────────────

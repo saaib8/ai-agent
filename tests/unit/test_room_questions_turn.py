@@ -221,6 +221,54 @@ async def test_a_room_the_registry_does_not_know_is_planned_as_before() -> None:
     assert len(parts["design"].requests) == 1
 
 
+async def test_leaving_the_palette_to_us_settles_the_colour_question() -> None:
+    """"Any colour" is a real answer: the colour question is not asked again, and
+    the room is built from what is known (CLAUDE.md 10.1)."""
+    planner = ArrangingPlanner()
+    discovery = FakeDesignDiscovery(_room_discovery("carpet"))
+    coordinator, parts = _parts(
+        decision=_handoff(palette_left_to_us=True),
+        seating_planner=planner,
+        design_discovery=discovery,
+        design=FakeDesign(),
+    )
+    room = _room(
+        budget=BUDGET,
+        pieces=("sofa", "rug"),
+        regular_seating_count=3,
+        questions_asked=(RoomQuestionKind.BUDGET, RoomQuestionKind.PIECES, RoomQuestionKind.SEATS),
+    )
+
+    result = await coordinator.run(_turn(_state(room=room), "any colour is fine"))
+
+    assert result.room_question is None  # the colour question is settled
+    assert result.state.room_project is not None
+    assert result.state.room_project.palette_left_to_us is True
+    assert len(parts["design"].requests) == 1  # the room is built
+
+
+def test_colour_known_counts_the_palette_left_to_us_flag() -> None:
+    from app.services.room_composition import colour_known
+
+    assert colour_known(_room(palette_left_to_us=True)) is True
+    assert colour_known(_room(design_preferences=(BEIGE,))) is True
+    assert colour_known(_room()) is False
+
+
+def test_a_new_room_kind_resets_the_palette_left_to_us_flag() -> None:
+    from app.schemas.agent_state import AgentStateV1
+    from app.schemas.agent_updates import AgentStateUpdate, RoomProjectUpdate
+    from app.services.agent_state import apply_update
+
+    state = AgentStateV1(room_project=_room(palette_left_to_us=True))
+    moved = apply_update(
+        state, AgentStateUpdate(room_project=RoomProjectUpdate(room_kind="bedroom"))
+    )
+
+    assert moved.room_project is not None
+    assert moved.room_project.palette_left_to_us is False
+
+
 # ── the room they chose ─────────────────────────────────────────────────────
 
 

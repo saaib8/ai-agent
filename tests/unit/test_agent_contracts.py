@@ -309,6 +309,9 @@ def test_customer_state_carries_only_stated_facts() -> None:
         "room_pieces",
         "room_pieces_default",
         "room_skip_questions",
+        # Their answer to the colour question when they leave the palette to us
+        # ("any colour") - an answer like any other (CLAUDE.md 10.1).
+        "palette_left_to_us",
     }
 
 

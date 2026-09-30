@@ -566,23 +566,62 @@ def test_no_monetary_value_passes_through_a_float() -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    "budget",
-    [
-        PriceConstraint(currency="SAR", min_amount=Decimal("1000")),
-        PriceConstraint(
-            currency="SAR", min_amount=Decimal("1000"), max_amount=Decimal("5000")
-        ),
-    ],
-    ids=["min-only", "range"],
-)
-def test_an_unsupported_budget_form_is_refused_not_reinterpreted(
-    budget: PriceConstraint,
-) -> None:
-    result = optimize((need(), pool(product(1))), budget=budget)
+def test_a_pure_floor_with_no_ceiling_is_refused_not_reinterpreted() -> None:
+    """A minimum with no maximum bounds nothing and carries no 'spend at least'
+    objective of its own - refused, never quietly reinterpreted as a ceiling."""
+    result = optimize(
+        (need(), pool(product(1))),
+        budget=PriceConstraint(currency="SAR", min_amount=Decimal("1000")),
+    )
 
     assert isinstance(result, BundleUnavailable)
     assert result.reason is BundleUnavailableReason.UNSUPPORTED_BUDGET_FORM
+
+
+def test_a_budget_range_spends_up_to_its_floor() -> None:
+    """A ceiling-optimal room below a range's floor is upgraded to a dearer
+    eligible candidate until it reaches the floor, without crossing the ceiling.
+
+    Rank #1 sofa at 1,000 is the faithful pick but leaves the room under the
+    3,000 floor; the dearer 3,500 sofa fits the 5,000 ceiling and reaches it.
+    """
+    result = optimize(
+        (
+            need("seating", "sofa"),
+            pool(product(1, price="1000"), product(2, price="3500")),
+        ),
+        budget=PriceConstraint(
+            currency="SAR", min_amount=Decimal("3000"), max_amount=Decimal("5000")
+        ),
+    )
+
+    assert isinstance(result, RoomBundle)
+    assert result.status is BundleStatus.COMPLETE
+    assert result.new_spend_total is not None
+    assert Decimal("3000") <= result.new_spend_total <= Decimal("5000")
+    assert chosen(result) == {0: 2}
+
+
+def test_a_budget_range_never_crosses_the_ceiling_to_reach_the_floor() -> None:
+    """When no eligible upgrade reaches the floor within the ceiling, the room
+    lands as close as the ceiling allows - the honest best, never over budget.
+
+    Floor 3,000, ceiling 5,000; the only dearer sofa is 6,000, over the ceiling,
+    so it cannot be taken and the faithful 1,000 pick stands.
+    """
+    result = optimize(
+        (
+            need("seating", "sofa"),
+            pool(product(1, price="1000"), product(2, price="6000")),
+        ),
+        budget=PriceConstraint(
+            currency="SAR", min_amount=Decimal("3000"), max_amount=Decimal("5000")
+        ),
+    )
+
+    assert isinstance(result, RoomBundle)
+    assert result.new_spend_total == Decimal("1000")
+    assert chosen(result) == {0: 1}
 
 
 def test_without_a_budget_every_fillable_need_is_taken_at_rank_one() -> None:

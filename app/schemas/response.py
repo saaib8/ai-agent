@@ -299,6 +299,23 @@ class BundleGroundingView(BaseModel):
     depth: "some pieces required a wider search" is sayable, and by how much
     is not."""
 
+    stretched_from_budget: Decimal | None = None
+    stretched_overage: Decimal | None = None
+    """Set on the turn a stretch is confirmed: the budget the customer first set,
+    and how far the room's new total now runs over it. The room's ceiling has been
+    raised to the new total, so `within_budget` reads true - these say plainly
+    that the customer chose to go over their original figure, so the reply owns the
+    stretch rather than calling the room "within budget" (CLAUDE.md 27). Both
+    computed by the application; the reply states them and computes nothing."""
+
+    @model_validator(mode="after")
+    def _stretch_figures_travel_together(self) -> Self:
+        if (self.stretched_from_budget is None) != (self.stretched_overage is None):
+            raise ValueError("a stretch carries both the original budget and the overage")
+        if self.stretched_overage is not None and self.stretched_overage <= 0:
+            raise ValueError("a stretch runs over the original budget by a positive amount")
+        return self
+
     @model_validator(mode="after")
     def _budget_claims_need_a_budget(self) -> Self:
         if not self.budget_supplied and self.within_budget is not None:
@@ -339,16 +356,24 @@ class SwapOfferGroundingView(BaseModel):
     """A held over-budget swap, as the reply may word it.
 
     The stage is which question is on the table; the yes/no is drawn as chips
-    beside the reply. No figure travels - the room card shows the total and the
-    budget, and the overage is a difference the reply must never compute
-    (CLAUDE.md 20.5). `over_budget` is always true here, carried so the model is
-    told plainly what to be honest about.
+    beside the reply. The three figures - the new total, the budget it broke, and
+    by how much - are all computed by the deterministic swap, none by a model, so
+    the reply may state them plainly and must not soften the overage to "a
+    little": being honest about the money is the point of the turn (CLAUDE.md 27).
+    They are the only figures a difference is included among, because the
+    application computed that difference; the reply still computes nothing itself.
+    `over_budget` is always true here, carried so the model is told plainly what
+    to be honest about.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     stage: SwapBudgetOfferStage
     over_budget: bool = True
+    new_spend_total: Decimal
+    budget_max: Decimal
+    overage: Decimal
+    currency: str = Field(min_length=1)
 
 
 class RoomQuestionGroundingView(BaseModel):

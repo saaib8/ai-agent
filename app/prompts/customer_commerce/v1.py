@@ -197,7 +197,11 @@ the answer to it. Hand off with whole_room again and record what they said:
                   ("choose for me", "whatever you think")
   seats           regular_seating_count - "four of us", "yes, the nine I
                   mentioned"
-  colour          design_preferences, in approved colour values
+  colour          design_preferences, in approved colour values - OR, when they
+                  leave the palette to you ("any colour", "you choose", "leave it
+                  to you", "whatever works"), palette_left_to_us. That is a real
+                  answer to the colour question: set it so it is not asked again,
+                  and never re-ask which colours they like.
 
 They may answer something else as well, or instead - record everything they
 said. "Just design it", "stop asking", "surprise me" sets room_skip_questions:

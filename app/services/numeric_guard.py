@@ -33,7 +33,11 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from app.schemas.design import DesignGuidance
-from app.schemas.response import BundleGroundingView, SeatingSolutionGroundingView
+from app.schemas.response import (
+    BundleGroundingView,
+    SeatingSolutionGroundingView,
+    SwapOfferGroundingView,
+)
 from app.schemas.screen import CustomerVisibleScreenView
 
 ResponseNumericAllowance = frozenset[str]
@@ -146,6 +150,26 @@ def seating_figures(seating: SeatingSolutionGroundingView) -> tuple[Decimal, ...
     of that shape, computed by the application from catalog prices."""
     closest = (seating.closest_total,) if seating.closest_total is not None else ()
     return (*(option.from_price for option in seating.shape_options), *closest)
+
+
+def swap_offer_figures(offer: SwapOfferGroundingView) -> tuple[Decimal, ...]:
+    """The figures an over-budget swap reply may state: the new total, the budget
+    it broke, and by how much. All three were computed by the deterministic swap,
+    so the reply names the overage plainly and does not soften it - the exception
+    the guard makes for an application-computed difference (CLAUDE.md 27)."""
+    return (offer.new_spend_total, offer.budget_max, offer.overage)
+
+
+def bundle_stretch_figures(bundle: BundleGroundingView) -> tuple[Decimal, ...]:
+    """The original budget and the overage a just-stretched room may state.
+
+    The new total is already on the room card; these two - the budget the customer
+    first set and how far the room now runs over it - were computed by the
+    application when the stretch was confirmed, so the reply owns the stretch with
+    real figures rather than a vague "over" (CLAUDE.md 27)."""
+    if bundle.stretched_from_budget is None or bundle.stretched_overage is None:
+        return ()
+    return (bundle.stretched_from_budget, bundle.stretched_overage)
 
 
 def screen_figures(screen: CustomerVisibleScreenView) -> tuple[Decimal | int, ...]:

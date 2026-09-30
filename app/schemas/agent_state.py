@@ -481,6 +481,12 @@ class RoomProjectState(BaseModel):
     budget: PriceConstraint | None = None
     design_preferences: tuple[SemanticPreference, ...] = ()
 
+    palette_left_to_us: bool = False
+    """The customer answered the colour question by leaving it to us - "any
+    colour", "you choose", "leave the palette to me". An answer like any other:
+    it records no colour preference, but the colour question is settled and is
+    never asked again (CLAUDE.md 10.1). Reset when the room kind changes."""
+
     regular_seating_count: int | None = Field(
         default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
     )

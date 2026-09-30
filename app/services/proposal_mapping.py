@@ -114,6 +114,7 @@ def _customer_state(
         or proposal.clear_regular_seating_count
         or proposal.room_kind is not None
         or proposal.room_skip_questions
+        or proposal.palette_left_to_us
     )
     room = (
         RoomProjectUpdate(
@@ -131,6 +132,7 @@ def _customer_state(
             # registry this pure mapping deliberately does not.
             room_kind=proposal.room_kind,
             questions_done=proposal.room_skip_questions,
+            palette_left_to_us=proposal.palette_left_to_us,
         )
         if touches_room
         else None

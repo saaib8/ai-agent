@@ -132,6 +132,9 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # The room piece a shown list of alternatives is for, so selecting one
         # swaps that role rather than picking a fresh product.
         "swap_context",
+        # Set on the turn a stretch is confirmed: the room is committed over the
+        # customer's original budget, so the reply owns the stretch.
+        "budget_stretched",
         # Product Q&A: the picks after the turn, for the client's tray; the
         # pick they asked about, shown not described; and the companion types
         # offered beside it as chips. None of them reaches the reply model.
