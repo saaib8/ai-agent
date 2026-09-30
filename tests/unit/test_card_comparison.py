@@ -14,7 +14,7 @@ import pytest
 from app.api.dependencies import card_comparison_service, resources, retailer_context_provider
 from app.api.errors import register_exception_handlers
 from app.api.routes.comparisons import router as comparisons_router
-from app.core.config import CustomerAgentSettings
+from app.core.config import CustomerAgentSettings, Settings
 from app.core.exceptions import ComparisonRefusedError, TaxonomyConfigurationError
 from app.repositories.products import ProductRepository
 from app.schemas.agent_state import (
@@ -86,7 +86,9 @@ class Responses:
         return CustomerResponse(message="The sectional takes more room; the sofa costs less.")
 
 
-def _service(sessions: FakeSessionStore) -> tuple[CardComparisonService, Responses]:
+def _service(
+    sessions: FakeSessionStore, maximum: int = 10
+) -> tuple[CardComparisonService, Responses]:
     repository = cast(ProductRepository, FakeRepository([_product(pid) for pid in KINDS]))
     responses = Responses()
     return (
@@ -95,13 +97,27 @@ def _service(sessions: FakeSessionStore) -> tuple[CardComparisonService, Respons
             ProductComparisonService(
                 repository,
                 load_dimension_semantics(taxonomy=TAXONOMY),
-                CustomerAgentSettings(),
+                CustomerAgentSettings(comparison_max_products=maximum),
             ),
             responses,  # type: ignore[arg-type]
             sessions,  # type: ignore[arg-type]
             GROUPS,
         ),
         responses,
+    )
+
+
+def _sofas_on_two_lists() -> AgentStateV1:
+    """A sofa first on the earlier list, and another first on the latest."""
+    return AgentStateV1(
+        active_search=ActiveSearchState(
+            request=ProductSearchRequest(commerce_category="seating"), revision=2
+        ),
+        product_interaction=ProductInteractionState(
+            presented_product_ids=(102,),
+            presented_search_revision=2,
+            earlier_lists=(PresentedList(revision=1, product_ids=(101,)),),
+        ),
     )
 
 
@@ -206,17 +222,73 @@ async def test_with_no_session_there_is_nothing_to_compare() -> None:
         await service.compare(_request((1, 1), (1, 2)), CONTEXT)
 
 
-def test_a_comparison_is_of_two_different_cards() -> None:
+def test_a_comparison_is_of_two_or_more_different_cards() -> None:
+    assert len(_request((1, 1), (1, 2), (1, 3)).cards) == 3
     with pytest.raises(ValidationError):
-        _request((1, 1), (1, 1))
+        _request((1, 1))
+    with pytest.raises(ValidationError):
+        _request((1, 1), (1, 2), (1, 1))
     with pytest.raises(ValidationError):
         CardComparisonRequest.model_validate(
             {
                 "session_id": SESSION,
                 "store_id": STORE,
-                "cards": [{"list_revision": 1, "ordinal": n} for n in (1, 2, 3)],
+                "cards": [{"list_revision": 1, "ordinal": n} for n in range(1, 22)],
             }
         )
+
+
+async def test_three_similar_cards_compare_in_the_order_checked() -> None:
+    """Two sofas and a sectional: one family, so all three side by side."""
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state())
+    service, responses = _service(sessions)
+
+    reply = await service.compare(_request((1, 3), (1, 1), (1, 2)), CONTEXT)
+
+    assert [p.name_english for p in reply.comparison.products] == [
+        "Sofa 201",
+        "Sofa 101",
+        "Sofa 102",
+    ]
+    assert all(len(row.cells) == 3 for row in reply.comparison.rows)
+    # Named by the comparison's own columns, never by positions that could
+    # repeat across lists.
+    decision = responses.results[0].decision
+    assert [ref.position for ref in decision.comparison_references] == [1, 2, 3]
+
+
+async def test_cards_sharing_a_position_on_different_lists_compare() -> None:
+    """Card 1 of one list and card 1 of another are different products."""
+    sessions = FakeSessionStore()
+    await _stored(sessions, _sofas_on_two_lists())
+    service, _ = _service(sessions)
+
+    reply = await service.compare(_request((1, 1), (2, 1)), CONTEXT)
+
+    assert [p.name_english for p in reply.comparison.products] == ["Sofa 101", "Sofa 102"]
+
+
+async def test_one_dissimilar_card_among_several_refuses_them_all() -> None:
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state())
+    service, _ = _service(sessions)
+
+    with pytest.raises(ComparisonRefusedError) as refused:
+        await service.compare(_request((1, 1), (1, 2), (2, 1)), CONTEXT)
+
+    assert refused.value.context["reason"] == "dissimilar"
+
+
+async def test_more_than_the_configured_limit_is_refused_in_our_words() -> None:
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state())
+    service, _ = _service(sessions, maximum=2)
+
+    with pytest.raises(ComparisonRefusedError) as refused:
+        await service.compare(_request((1, 1), (1, 2), (1, 3)), CONTEXT)
+
+    assert refused.value.public_message == "You can compare up to 2 products at a time."
 
 
 # ── the routes ══════════════════════════════════════════════════════════════
@@ -224,6 +296,7 @@ def test_a_comparison_is_of_two_different_cards() -> None:
 
 class Resources:
     compare_groups = GROUPS
+    settings = Settings.model_construct(customer_agent=CustomerAgentSettings())
 
 
 def _app(service: CardComparisonService) -> FastAPI:
@@ -292,3 +365,5 @@ async def test_the_groups_route_lists_the_reviewed_families() -> None:
     groups = reply.json()["groups"]
     assert groups["sectional-sofa"] == groups["sofa"] == "sofas"
     assert "center-table" not in groups
+    # How many one comparison may cover, so the console stops at the limit.
+    assert reply.json()["max_products"] == 10

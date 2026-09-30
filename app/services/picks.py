@@ -44,6 +44,7 @@ from app.schemas.retailer import RetailerContext
 from app.services.agent_state import apply_update
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import commit_state, load_for_turn
+from app.services.cross_sell import first_of_its_kind
 from app.services.hydration import ProductHydrationService
 from app.services.product_interaction import build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
@@ -132,12 +133,10 @@ class PicksRuntime:
         context: RetailerContext,
     ) -> int | None:
         """The new pick's number, when it is the first of its kind and the
-        store sells something that goes with it.
+        store sells something that goes with it - the client then asks what
+        goes with it, and is offered those kinds.
 
-        "Its kind" is what goes with it rather than its exact type: a
-        sectional picked after a sofa has the same companions, so it is a
-        second option being weighed, not a new piece of the room. Companion
-        types already picked do not count - they chose one already.
+        Companion types already picked do not count - they chose one already.
         """
         if self._complements is None or self._capabilities is None or not picked:
             return None
@@ -147,10 +146,13 @@ class PicksRuntime:
         if product is None:
             return None
         others = [p.commerce.subcategory for p in products if p.product_id != newest]
-        companions = self._complements.for_type(product.commerce.subcategory)
-        if any(self._complements.for_type(other) == companions for other in others if other):
+        if not first_of_its_kind(product.commerce.subcategory, others, self._complements):
             return None
-        wanted = [c for c in companions if c.commerce_subcategory not in others]
+        wanted = [
+            c
+            for c in self._complements.for_type(product.commerce.subcategory)
+            if c.commerce_subcategory not in others
+        ]
         if not wanted:
             return None
         try:

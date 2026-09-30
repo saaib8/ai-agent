@@ -22,7 +22,7 @@ import { useChat } from './hooks/useChat'
 import { useConfig } from './hooks/useConfig'
 import { useHealth } from './hooks/useHealth'
 import { DEFAULT_ROOM, styleLabel } from './lib/catalog'
-import { compareFamily } from './lib/compare'
+import { DEFAULT_COMPARE_MAX, compareFamily } from './lib/compare'
 import type { CheckedCard } from './lib/compare'
 import type { RoomDraft, SelectedPiece } from './lib/catalog'
 import { humanise } from './lib/format'
@@ -41,8 +41,10 @@ export default function App() {
   // choosing a replacement from the alternatives on screen.
   const [swap, setSwap] = useState<SwapContext | null>(null)
 
-  // Comparing: the cards checked (at most two, of one family) and the pop-up.
+  // Comparing: the cards checked (any number up to the server's limit, all of
+  // one family) and the pop-up.
   const [compareGroups, setCompareGroups] = useState<Record<string, string>>({})
+  const [compareMax, setCompareMax] = useState(DEFAULT_COMPARE_MAX)
   const [comparing, setComparing] = useState<CheckedCard[]>([])
   const [comparePopup, setComparePopup] = useState<ComparisonPopup | null>(null)
   const compareRequest = useRef(0)
@@ -56,6 +58,7 @@ export default function App() {
     if (!result.ok) return null
     groupsLoaded.current = true
     setCompareGroups(result.data.groups)
+    setCompareMax(result.data.max_products)
     return result.data.groups
   }, [config.config.apiBase])
 
@@ -224,7 +227,7 @@ export default function App() {
     [chat, config.config],
   )
 
-  // ── comparing two checked cards, in a pop-up ─────────────────────────────
+  // ── comparing the checked cards, in a pop-up ─────────────────────────────
 
   const familyOf = useCallback(
     (product: GroundedProduct) => compareFamily(product, compareGroups),
@@ -244,7 +247,9 @@ export default function App() {
         setComparing(comparing.filter((c) => c !== already))
         return
       }
-      if (comparing.length >= 2 || (comparing[0] && comparing[0].family !== family)) return
+      if (comparing.length >= compareMax || (comparing[0] && comparing[0].family !== family)) {
+        return
+      }
       // Checking only marks it: the comparison waits for the Compare button.
       setComparing([
         ...comparing,
@@ -257,22 +262,18 @@ export default function App() {
         },
       ])
     },
-    [comparing, compareGroups, loadCompareGroups],
+    [comparing, compareGroups, compareMax, loadCompareGroups],
   )
 
   const handleCompare = useCallback(async () => {
-    if (comparing.length !== 2) return
-    const [first, second] = comparing
-    const names: [string, string] = [first.name, second.name]
+    if (comparing.length < 2) return
+    const names = comparing.map((card) => card.name)
     const request = ++compareRequest.current
     setComparePopup({ status: 'loading', names })
     const result = await postComparison(config.config.apiBase, {
       session_id: config.config.sessionId,
       store_id: config.config.storeId,
-      cards: [
-        { list_revision: first.listRevision, ordinal: first.ordinal },
-        { list_revision: second.listRevision, ordinal: second.ordinal },
-      ],
+      cards: comparing.map((card) => ({ list_revision: card.listRevision, ordinal: card.ordinal })),
     })
     if (request !== compareRequest.current) return // closed while loading
     setComparePopup(
@@ -282,7 +283,7 @@ export default function App() {
     )
   }, [comparing, config.config])
 
-  // Closing the pop-up keeps the two checked: one can be swapped for another
+  // Closing the pop-up keeps the cards checked: one can be swapped for another
   // and compared again. Clearing is its own action.
   const handleCloseCompare = useCallback(() => {
     compareRequest.current += 1
@@ -420,6 +421,7 @@ export default function App() {
           onRemovePick={handleRemovePick}
           onGoesWith={handleGoesWith}
           comparing={comparing}
+          compareMax={compareMax}
           familyOf={familyOf}
           onToggleCompare={handleToggleCompare}
           onCompare={handleCompare}

@@ -1,4 +1,4 @@
-"""Comparing two cards the customer checked, in a pop-up.
+"""Comparing the cards the customer checked, in a pop-up.
 
 Transport contracts. A card is named by the result list it is on and its
 position there, never by a product id: both are resolved server-side against
@@ -12,7 +12,11 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.comparison import ProductComparisonResult
+from app.schemas.comparison import (
+    MAX_COMPARED_PRODUCTS,
+    MIN_COMPARED_PRODUCTS,
+    ProductComparisonResult,
+)
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 
 
@@ -30,13 +34,16 @@ class CardComparisonRequest(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
     store_id: int = Field(ge=1)
-    cards: tuple[CardRef, CardRef]
-    """Exactly two: the product decision for comparison."""
+    cards: tuple[CardRef, ...] = Field(
+        min_length=MIN_COMPARED_PRODUCTS, max_length=MAX_COMPARED_PRODUCTS
+    )
+    """Two or more, as many as they checked. How many one comparison may
+    cover is configuration, checked where the comparison is built."""
 
     @model_validator(mode="after")
-    def _two_different_cards(self) -> Self:
-        if self.cards[0] == self.cards[1]:
-            raise ValueError("a comparison needs two different cards")
+    def _different_cards(self) -> Self:
+        if len(set(self.cards)) != len(self.cards):
+            raise ValueError("a comparison needs different cards")
         return self
 
 
@@ -57,3 +64,6 @@ class CompareGroupsResponse(BaseModel):
 
     version: str
     groups: dict[str, str] = Field(default_factory=dict)
+    max_products: int = Field(ge=MIN_COMPARED_PRODUCTS, le=MAX_COMPARED_PRODUCTS)
+    """How many products one comparison may cover, so a client stops offering
+    the checkbox at the limit rather than being refused after."""

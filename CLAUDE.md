@@ -579,8 +579,8 @@ Chips come in order of how many products stand behind them: the kinds, colours
 and styles the store has most of first. Budget bands stay in price order -
 they are cut at the quartiles, so each already holds about a quarter - and
 feels in their reviewed order, since the catalog records no material to count.
-The companion chips beside a pick ("Matching rugs") are ordered the same way,
-while the companion shown as cards stays the reviewed design priority.
+The kinds offered beside a pick ("Rugs", "Centre tables") are ordered the
+same way.
 
 Which questions each product family is asked, its kinds and its feel words are
 reviewed domain data (`app/taxonomy/briefs_v1.yaml`, loaded and validated
@@ -621,33 +621,45 @@ does not stock is not offered - every chip leads to real products.
   the whole request, and is never asked the card again: the same family,
   saying something the card asked, is its answer even if the decision model
   missed it. The same need said again with nothing added is asked again.
+  "Any size is fine" said with the need ("back to sofas, any size is fine")
+  is kept with the card (`drop_saved_sizes`), so its answers do not bring the
+  saved sizes back (13.5).
 
 **Picking a product.** Cards can be ticked into the customer's picks, which last
-across searches. The first pick of its kind - judged by what goes with it, so a
-sectional after a sofa is a second option, not a new piece - is followed by the
-reviewed pairings (`app/taxonomy/complements_v1.yaml`): a few cards of its first
-companion the store stocks and finds, and the others as chips, never a type
-they already picked. Asking what goes with the same pick again moves on to
-its next companion kind rather than repeating the one on screen. Earlier
-result lists stay tickable for a while
+across searches. The first pick of its kind - ticked or typed ("I like the
+third one"), and judged by what goes with it, so a sectional after a sofa is a
+second option, not a new piece - is **offered, not shown**, what goes well with
+it: their pick's card, and beneath it the kinds from the reviewed pairings
+(`app/taxonomy/complements_v1.yaml`) that the store stocks, as chips under
+"Goes well with it", with "No thanks" beside them. Nothing is searched until
+they tap a kind, which then shows a normal page of it leaning towards the
+pick's style, with the other kinds still offered. A pick's "Goes with" button
+makes the same offer. Never a kind they already picked, and never described as
+"usually bought together": the pairings are a design judgement, not sales
+data. Earlier result lists stay tickable for a while
 (`product_interaction.earlier_lists`), so a second sofa can still be picked to
 compare after the screen has moved on.
 
-**Comparing.** A comparison is between two similar products - two sofas, never
-a sofa and a coffee table. Each card on a result list carries its own Compare
-checkbox, apart from Select; once one is checked, cards of other kinds are
-greyed out. Checking only marks a card: the checked ones sit in a compare bar
+**Comparing.** A comparison is between similar products - sofas with sofas,
+never a sofa and a coffee table - and covers as many as the customer checks:
+two or more, up to `comparison_max_products` (ten by default, the picks
+tray's size; the schema allows up to twenty). Each card on a result list
+carries its own Compare checkbox, apart from Select; once one is checked,
+cards of other kinds are greyed out, and so is every card once the limit is
+reached. Checking only marks a card: the checked ones sit in a compare bar
 above the message box, and its Compare button - active once two are checked -
-opens the comparison in a pop-up: the side-by-side table and a short take on
-what differs. Closing the pop-up keeps the two checked, so one can be swapped
-and compared again; Clear unchecks both. It is a look, not a turn
+opens the comparison in a pop-up: the side-by-side table, one column per
+product, and a short take on what differs. Closing the pop-up keeps the cards
+checked, so one can be swapped and compared again; Clear unchecks them all.
+Typed comparisons ("compare the first three") share the same limit; more is
+answered with a question rather than silently dropped. It is a look, not a turn
 (`POST /v1/comparisons`): the cards are resolved like ticks, the table comes
 from the ordinary comparison service and the words from the ordinary reply
 generator, and nothing is added to the conversation or the session. Which types
 compare with which is reviewed data (`app/taxonomy/compare_groups_v1.yaml`):
 every type with itself, and a few groups across types (sofas with L-shapes,
 sets and sofa beds; armchairs with accent and lounge chairs). The server
-refuses a dissimilar pair whatever the client sent.
+refuses a set with any dissimilar product whatever the client sent.
 
 ---
 

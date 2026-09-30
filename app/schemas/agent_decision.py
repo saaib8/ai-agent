@@ -31,6 +31,7 @@ from app.schemas.bundle_reference import (
     BundleReferenceSelector,
     DesignNeedCategoryMatch,
 )
+from app.schemas.comparison import MAX_COMPARED_PRODUCTS, MIN_COMPARED_PRODUCTS
 from app.schemas.design import MAX_DESIGN_QUESTION_CHARS, MAX_REGULAR_SEATING_COUNT
 from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.product_reference import (
@@ -733,8 +734,8 @@ class BlockingClarification(BaseModel):
 
 # ── the decision ────────────────────────────────────────────────────────────
 
-MIN_COMPARISON_REFERENCES = 2
-MAX_COMPARISON_REFERENCES = 4
+MIN_COMPARISON_REFERENCES = MIN_COMPARED_PRODUCTS
+MAX_COMPARISON_REFERENCES = MAX_COMPARED_PRODUCTS
 """A schema ceiling, not a product setting.
 
 Configuration may choose a smaller maximum; nothing may choose a larger one.

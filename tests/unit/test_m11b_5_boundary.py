@@ -106,7 +106,6 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # pipeline (not a second search system), and how many cards to show.
         "complements",
         "companion_search",
-        "cross_sell_limit",
         # The card of questions for a product search: reviewed questions, and
         # budget bands, colours and styles counted from the store-scoped
         # catalog. Its answers run through the ordinary pipeline.

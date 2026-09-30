@@ -218,8 +218,6 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "presentation_limit",
         "decision_model",
         "response_model",
-        # Product Q&A: how many companion cards sit beside a product the
-        # customer opened, and how many picks the tray keeps.
-        "cross_sell_limit",
+        # Picks: how many the tray keeps.
         "max_picks",
     }

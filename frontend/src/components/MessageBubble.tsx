@@ -117,8 +117,14 @@ export function AssistantBubble({
   const focus = presentation?.focus ?? null
   // Chips that run an action - the companions of a product - belong under the
   // cards they extend; plain answers to a question stay beside the question.
-  const textReplies = (quickReplies ?? []).filter((r) => !r.product_action)
-  const actionReplies = (quickReplies ?? []).filter((r) => r.product_action)
+  // Offered beside a pick with nothing searched, the kinds and "No thanks"
+  // are one row under the pick.
+  const offering =
+    !!focus && !hasProducts && (quickReplies ?? []).some((r) => r.product_action)
+  const textReplies = offering ? [] : (quickReplies ?? []).filter((r) => !r.product_action)
+  const actionReplies = offering
+    ? quickReplies ?? []
+    : (quickReplies ?? []).filter((r) => r.product_action)
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
   const render = presentation?.render ?? null
@@ -171,7 +177,7 @@ export function AssistantBubble({
             replies={actionReplies}
             onPick={onQuickReply}
             disabled={!!busy}
-            label="Also goes with it"
+            label={offering ? 'Goes well with it' : 'Also goes well with it'}
           />
         )}
         {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}

@@ -1,5 +1,9 @@
 import type { GroundedProduct } from '../api/types'
 
+/** How many products one comparison may cover until the server says - the
+ *  server's own default, and the picks tray's size. */
+export const DEFAULT_COMPARE_MAX = 10
+
 /** A card checked for comparison: which result list it is on, where, and the
  *  family it compares within. */
 export interface CheckedCard {

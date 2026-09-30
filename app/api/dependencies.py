@@ -313,7 +313,6 @@ def customer_turn_coordinator(
         app_resources.seating,
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
-        cross_sell_limit=settings.customer_agent.cross_sell_limit,
         briefs=(
             ProductBriefBuilder(
                 repository, app_resources.briefs, app_resources.attributes, app_resources.taxonomy

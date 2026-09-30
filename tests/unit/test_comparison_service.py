@@ -16,6 +16,7 @@ import pytest
 from app.core.config import CustomerAgentSettings
 from app.repositories.products import ProductRepository
 from app.schemas.comparison import (
+    MAX_COMPARED_PRODUCTS,
     ComparisonField,
     ComparisonStatus,
     ProductComparisonResult,
@@ -142,15 +143,20 @@ def test_the_configured_maximum_cannot_exceed_the_schema_ceiling() -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        CustomerAgentSettings(comparison_max_products=5)
+        CustomerAgentSettings(comparison_max_products=MAX_COMPARED_PRODUCTS + 1)
     with pytest.raises(ValidationError):
         CustomerAgentSettings(comparison_max_products=1)
+    assert CustomerAgentSettings(comparison_max_products=MAX_COMPARED_PRODUCTS)
 
 
-def test_the_default_maximum_is_two() -> None:
-    """A product decision: a side-by-side of two reads at a glance, and the
-    Compare button and a typed comparison share the limit."""
-    assert CustomerAgentSettings().comparison_max_products == 2
+def test_the_default_maximum_is_the_picks_trays_size() -> None:
+    """A product decision: customers compare as many as they like, and the
+    default lets "compare my picks" cover a full tray."""
+    assert (
+        CustomerAgentSettings().comparison_max_products
+        == CustomerAgentSettings().max_picks
+        == 10
+    )
 
 
 async def test_the_same_product_twice_is_refused() -> None:

@@ -44,16 +44,21 @@
 #   best_match: true|false  the first card is (not) labelled the best match
 #   picks: N              the tray holds N picks after the turn
 #   cross_sell: true|false  the pick is (not) shown with what goes with it
+#   offer: true|false     the pick is (not) offered the kinds that go with it:
+#                         its card, the kinds as chips and "No thanks", nothing
+#                         searched
+#   chips_include: [...]  the chips under the reply include these labels
 #   silent_tick: true     the tick saved the pick and started no turn
 #   seats: N / min_seats: N  every card seats exactly N / at least N
 #   subcategory_in: [...] every card is one of these types
 #   not_subcategory: key  no card is this type
 #   within_chosen_budget  every card is inside the budget band tapped
 #   comparison: true      a comparison table is shown
-#   popup: true           the pop-up compared two products, with a take
+#   popup: true           the pop-up compared the products, with a take
+#   popup_columns: N      ... and it had N columns (default 2)
 #   popup_refused: true   the pop-up refused - two different kinds of product
 #   no_follow_up: true    the reply asks no question of its own
-#   companion_chips_min: N  at least N "Matching ..." chips
+#   companion_chips_min: N  at least N chips of kinds that go with the pick
 #   card_kind_first: label  the kind the store has most of leads "What kind?"
 #   first_chip: label     the first chip under the reply
 #
@@ -75,8 +80,8 @@
 #   {goes_with: N}        the tray's "Goes with" on pick N
 #   {compare: [A, B]}     compare picks A and B (the old tray action; the API keeps it)
 #   {compare_cards: [{ordinal: 1}, {ordinal: 3, grid: -2}]}  check Compare on two
-#                         cards - the pop-up comparison, read only
-#   {chip: "Matching rugs"}  tap a chip under the last reply
+#                         or more cards - the pop-up comparison, read only
+#   {chip: "Rugs"}        tap a chip under the last reply
 #   {more_options: true}  "Show me different options"
 #   {not_this_one: N}     "Not this one" on card N
 
@@ -671,13 +676,13 @@ cases:
 
   # ── picks and what goes with them ───────────────────────────────────────────
   - id: pick_first_cross_sells
-    issue: "discovery: the first sofa picked shows what goes with it, never another sofa, no best-match label"
+    issue: "discovery: the first sofa picked is offered the kinds that go with it - asked, nothing searched (user, 2026-09-30)"
     turns: [{search: "show me sofas"}, {tick: 1}]
-    checks: {not_fallback: true, cross_sell: true, picks: 1, min_products: 1, not_subcategory: sofa, companion_chips_min: 1, best_match: false, first_chip: Matching rugs}
+    checks: {not_fallback: true, offer: true, picks: 1, max_products: 0, companion_chips_min: 3, chips_include: [Center tables, Rugs, No thanks], no_follow_up: true, not_mentions: ["bought together", "customers also"]}
 
   - id: pick_second_same_kind_silent
     issue: "discovery: a second sofa, ticked on the earlier list, is saved silently"
-    turns: [{search: "show me sofas"}, {tick: 1}, {tick: {ordinal: 2, grid: -2}}]
+    turns: [{search: "show me sofas"}, {tick: 1}, {tick: 2}]
     checks: {silent_tick: true, picks: 2}
 
   - id: pick_sectional_after_sofa_silent
@@ -686,29 +691,44 @@ cases:
     checks: {silent_tick: true, picks: 2}
 
   - id: pick_companion_chain
-    issue: "discovery: a centre table picked from the cross-sell shows its own companions, not sofas"
-    turns: [{search: "show me sofas"}, {tick: 1}, {tick: 1}]
-    checks: {not_fallback: true, cross_sell: true, picks: 2, min_products: 1, not_subcategory: sofa}
+    issue: "discovery: a centre table picked from the offered kind is offered its own companions, not sofas"
+    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "Center tables"}, {tick: 1}]
+    checks: {not_fallback: true, offer: true, picks: 2, chips_include: [Rugs], not_mentions: ["bought together"]}
 
-  - id: pick_bed_nightstands_first
-    issue: "discovery: a bed's first companion is nightstands"
+  - id: pick_bed_offers_nightstands
+    issue: "discovery: a bed is offered nightstands among what goes with it"
     turns: [{search: "show me beds"}, {tick: 1}]
-    checks: {not_fallback: true, cross_sell: true, subcategory: nightstand}
+    checks: {not_fallback: true, offer: true, max_products: 0, chips_include: [Nightstands]}
 
-  - id: goes_with_moves_on
-    issue: "discovery: 'Goes with' after the tick moves to the next companion (user report)"
-    turns: [{search: "show me rugs"}, {tick: 1}, {goes_with: 1}]
-    checks: {not_fallback: true, cross_sell: true, min_products: 1, not_subcategory: center-table}
+  - id: pick_offer_chip_shows_that_kind
+    issue: "discovery: tapping an offered kind shows that kind, with the other kinds still offered"
+    turns: [{search: "show me beds"}, {tick: 1}, {chip: "Nightstands"}]
+    checks: {not_fallback: true, offer: false, min_products: 3, subcategory: nightstand, companion_chips_min: 1}
 
-  - id: goes_with_wraps_round
-    issue: "discovery: pressed again, 'Goes with' wraps back to the first companion"
-    turns: [{search: "show me rugs"}, {tick: 1}, {goes_with: 1}, {goes_with: 1}]
-    checks: {not_fallback: true, cross_sell: true, subcategory: center-table}
+  - id: pick_offer_no_thanks
+    issue: "discovery: 'No thanks' to the offer shows nothing more and keeps the pick"
+    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "No thanks"}]
+    checks: {not_fallback: true, max_products: 0, picks: 1, offer: false, not_mentions: ["bought together"]}
+
+  - id: pick_typed_is_offered
+    issue: "discovery: 'I like the first one' typed is offered what goes with it, nothing searched (user, 2026-09-30)"
+    turns: [{search: "show me beds"}, "I like the first one"]
+    checks: {not_fallback: true, offer: true, picks: 1, max_products: 0, chips_include: [Nightstands], no_follow_up: true}
+
+  - id: pick_typed_with_a_kind_shows_it
+    issue: "discovery: 'I'll take it, show me a rug for it' is their own request - the rug card, not an offer"
+    turns: [{search: "show me sofas"}, "I'll take the first one, show me a rug to go with it"]
+    checks: {not_fallback: true, picks: 1, offer: false, max_products: 0, card_mode: ask}
+
+  - id: goes_with_offers_kinds
+    issue: "discovery: the tray's 'Goes with' asks which kind - it never shows products straight away (user, 2026-09-30)"
+    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "Rugs"}, {goes_with: 1}]
+    checks: {not_fallback: true, offer: true, max_products: 0, companion_chips_min: 2, no_follow_up: true}
 
   - id: companion_chip
-    issue: "discovery: the 'Matching rugs' chip shows rugs"
-    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "Matching rugs"}]
-    checks: {not_fallback: true, min_products: 1, subcategory: carpet}
+    issue: "discovery: the offered 'Rugs' chip shows a page of rugs"
+    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "Rugs"}]
+    checks: {not_fallback: true, min_products: 5, subcategory: carpet}
 
   - id: untick_empties_tray
     issue: "discovery: removing the only pick empties the tray"
@@ -726,19 +746,34 @@ cases:
     turns: [{search: "show me sofas"}, {compare_cards: [{ordinal: 1}, {ordinal: 3}]}]
     checks: {popup: true}
 
+  - id: compare_popup_three_sofas
+    issue: "compare: any number of similar products, not only two (user, 2026-09-30)"
+    turns: [{search: "show me sofas"}, {compare_cards: [{ordinal: 1}, {ordinal: 2}, {ordinal: 3}]}]
+    checks: {popup: true, popup_columns: 3}
+
+  - id: compare_popup_all_five_across_lists
+    issue: "compare: every sofa on a list plus an L-shape from a later list, side by side"
+    turns: [{search: "show me sofas"}, {search: "show me L-shaped sofas"}, {compare_cards: [{ordinal: 1, grid: -2}, {ordinal: 2, grid: -2}, {ordinal: 3, grid: -2}, {ordinal: 4, grid: -2}, {ordinal: 5, grid: -2}, {ordinal: 1}]}]
+    checks: {popup: true, popup_columns: 6}
+
+  - id: compare_typed_three
+    issue: "compare: 'compare the first three' typed compares all three"
+    turns: [{search: "show me sofas"}, "compare the first three"]
+    checks: {not_fallback: true, comparison: true}
+
   - id: compare_popup_refuses_dissimilar
     issue: "compare: a sofa and a centre table are not comparable"
-    turns: [{search: "show me sofas"}, {tick: 1}, {compare_cards: [{ordinal: 1, grid: -2}, {ordinal: 1}]}]
+    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "Center tables"}, {compare_cards: [{ordinal: 1, grid: -2}, {ordinal: 1}]}]
     checks: {popup_refused: true}
 
   - id: compare_two_picks_typed
     issue: "discovery: 'compare the two I picked'"
-    turns: [{search: "show me sofas"}, {tick: 1}, {tick: {ordinal: 2, grid: -2}}, "compare the two I picked"]
+    turns: [{search: "show me sofas"}, {tick: 1}, {tick: 2}, "compare the two I picked"]
     checks: {not_fallback: true, comparison: true}
 
   - id: compare_popup_earlier_list
     issue: "compare: two sofas on a list the screen has moved past still compare"
-    turns: [{search: "show me sofas"}, {tick: 1}, {compare_cards: [{ordinal: 2, grid: -2}, {ordinal: 4, grid: -2}]}]
+    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "Rugs"}, {compare_cards: [{ordinal: 2, grid: -2}, {ordinal: 4, grid: -2}]}]
     checks: {popup: true}
 
   - id: compare_positions_typed

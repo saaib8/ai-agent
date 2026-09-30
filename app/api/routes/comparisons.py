@@ -1,4 +1,4 @@
-"""Comparing two checked cards in a pop-up, and which cards can be compared.
+"""Comparing the checked cards in a pop-up, and which cards can be compared.
 
 Transport only (CLAUDE.md 3.2): validate, resolve the retailer scope, hand
 over. The comparison is read-only - no chat turn, nothing saved.
@@ -28,15 +28,16 @@ async def compare_cards(
     service: CardComparisonServiceDep,
     retailers: RetailerContextProviderDep,
 ) -> CardComparisonResponse:
-    """Two cards on screen, side by side, with a short take on what differs."""
+    """The checked cards, side by side, with a short take on what differs."""
     context = await retailers.resolve(request.store_id)
     return await service.compare(request, context)
 
 
 @router.get("/compare-groups", response_model=CompareGroupsResponse)
 async def compare_groups(app_resources: ResourcesDep) -> CompareGroupsResponse:
-    """The reviewed families products compare within."""
+    """The reviewed families products compare within, and how many at once."""
     groups = app_resources.compare_groups
+    most = app_resources.settings.customer_agent.comparison_max_products
     if groups is None:
-        return CompareGroupsResponse(version="none")
-    return CompareGroupsResponse(version=groups.version, groups=groups.grouped)
+        return CompareGroupsResponse(version="none", max_products=most)
+    return CompareGroupsResponse(version=groups.version, groups=groups.grouped, max_products=most)

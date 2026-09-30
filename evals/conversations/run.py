@@ -332,10 +332,22 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
         failures.append("no comparison table")
     if checks.get("popup"):
         columns = (turn.body.get("comparison") or {}).get("products") or []
-        if turn.kind != "comparison" or len(columns) != 2 or not turn.body.get("message"):
-            failures.append("no pop-up comparison of two products with a take")
+        wanted = checks.get("popup_columns", 2)
+        if turn.kind != "comparison" or len(columns) != wanted or not turn.body.get("message"):
+            failures.append(f"no pop-up comparison of {wanted} products with a take")
     if checks.get("no_follow_up") and turn.follow_up:
         failures.append(f"an extra question: {turn.follow_up!r}")
+    if (want := checks.get("offer")) is not None:
+        labels = [c.get("label") for c in turn.presentation.get("choices") or []]
+        got = bool(turn.presentation.get("focus")) and not products and "No thanks" in labels
+        if got != want:
+            failures.append(
+                "no offer of what goes with the pick" if want else "an unexpected offer"
+            )
+    if wanted := checks.get("chips_include"):
+        labels = [c.get("label") for c in turn.presentation.get("choices") or []]
+        if missing := [w for w in wanted if w not in labels]:
+            failures.append(f"chips {labels} lack {missing}")
     if (least := checks.get("companion_chips_min")) is not None:
         chips = [c for c in turn.presentation.get("choices") or [] if c.get("product_action")]
         if len(chips) < least:

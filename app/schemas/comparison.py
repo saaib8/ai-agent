@@ -22,6 +22,10 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from app.schemas.grounding import GroundedProduct
 
 MIN_COMPARED_PRODUCTS = 2
+MAX_COMPARED_PRODUCTS = 20
+"""A bound on what one request may ask for, not the product limit: how many
+a customer may compare at once is configuration (`comparison_max_products`),
+which may choose anything up to this."""
 
 
 class ComparisonStatus(StrEnum):

@@ -429,10 +429,29 @@ def test_an_opened_pick_is_drawn_above_its_companions_with_chips() -> None:
     assert presentation.product_source == "detail"
     (chip,) = presentation.choices
     assert chip == ReplyChoice(
-        label="Matching rugs",
-        value="Show me matching rugs",
+        label="Rugs",
+        value="Show me rugs to go with it",
         product_action=CompanionAction(category="decor", subcategory="carpet"),
     )
+
+
+def test_a_pick_offered_what_goes_with_it_can_also_say_no() -> None:
+    """Their pick above, the kinds as chips, nothing searched - and a way to
+    decline beside them."""
+    focus = to_grounded_product(
+        _candidate(7), grounding_ref=1, presented_ordinal=None, relaxation_depth=None
+    )
+    presentation = ChatRuntime.presentation(
+        _result(
+            focus=focus,
+            companions=(CompanionOffer(category="decor", subcategory="carpet", label="rugs"),),
+        )
+    )
+
+    assert presentation is not None
+    assert presentation.focus == focus and presentation.products == ()
+    assert [c.label for c in presentation.choices] == ["Rugs", "No thanks"]
+    assert presentation.choices[-1].product_action is None
 
 
 def test_the_focus_card_alone_is_something_to_draw() -> None:
