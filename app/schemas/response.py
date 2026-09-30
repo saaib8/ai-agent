@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
+from app.schemas.agent_state import SwapBudgetOfferStage, UpgradeReason
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
@@ -90,6 +91,15 @@ class ResponseOutcomeKind(StrEnum):
     ROOM_QUESTION = "room_question"
     """One question before a room is designed - its budget, its pieces (as
     chips), how many will sit, or the colours they like (CLAUDE.md 10.1)."""
+
+    ROOM_SWAP_OFFER = "room_swap_offer"
+    """A dearer swap that broke the budget, put to the customer as a yes/no.
+
+    The salesperson beat: affirm the room warmly, be honest that it runs a
+    little over budget (the card shows the figures - the reply names no
+    number), and ask whether to stretch the budget or stay within it. Its
+    second stage asks instead whether to look for a cheaper piece
+    (CLAUDE.md 27)."""
 
     PRODUCT_BRIEF = "product_brief"
     """They stated a need, and a card of short questions is shown beneath the
@@ -325,6 +335,45 @@ class BundleGroundingView(BaseModel):
         return self
 
 
+class SwapOfferGroundingView(BaseModel):
+    """A held over-budget swap, as the reply may word it.
+
+    The stage is which question is on the table; the yes/no is drawn as chips
+    beside the reply. No figure travels - the room card shows the total and the
+    budget, and the overage is a difference the reply must never compute
+    (CLAUDE.md 20.5). `over_budget` is always true here, carried so the model is
+    told plainly what to be honest about.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stage: SwapBudgetOfferStage
+    over_budget: bool = True
+
+
+class UpgradeOfferGroundingView(BaseModel):
+    """A step-up for one piece of the room, as the reply may word it.
+
+    The figures are the application's and may be said exactly: what it adds,
+    and the room's total with it, which is within their budget. The reasons
+    are stored facts about the two products, and the only reasons there are.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    piece: str
+    extra_cost: Decimal
+    new_total: Decimal
+    currency: str
+    reasons: tuple[UpgradeReason, ...] = ()
+    over_budget_by: Decimal | None = None
+    budget: Decimal | None = None
+    unit_price: Decimal | None = None
+    """The add-on's own price, printed on its card under the room."""
+    quantity: int = 1
+    round: int = 1
+
+
 class RoomQuestionGroundingView(BaseModel):
     """The one room question this turn asks, as the reply may word it.
 
@@ -515,6 +564,15 @@ class ResponseGroundingView(BaseModel):
     many and the cards are another type that does - offered as the best fit,
     never as a refusal."""
 
+    unstocked_type: str | None = None
+    """The type they asked for, in words, when the store stocks *none* of it and
+    the cards are the closest type it does stock - offered instead of a dead end.
+
+    Distinct from `offered_instead_of`, and the difference is the whole reason
+    for two fields: there the asked type exists but cannot seat them; here the
+    store simply does not carry it, so the reply says "we don't have that, but
+    here's the closest" rather than "this is the best fit for your number"."""
+
     search_was_suggested: bool = False
     """Whether this set is something we proposed rather than something they
     asked for.
@@ -534,6 +592,13 @@ class ResponseGroundingView(BaseModel):
     The kind, never the product: its facts are on its card, not in the reply.
     Without it the reply saw a customer asking about a product it had no facts
     for, and said so - beside the card that answered them.
+    """
+
+    room_offer: str | None = None
+    """The room their pick could start - "living room" - offered as a chip
+    beneath the reply ("Design the whole living room around it"). Only beside a
+    pick of a type a room is built around, and only while no room is under
+    way. The chip is the offer; the reply may close on it in a line.
     """
 
     best_match_first: bool = False
@@ -621,6 +686,17 @@ class ResponseGroundingView(BaseModel):
 
     room_question: RoomQuestionGroundingView | None = None
     """What to ask about the room, for `ROOM_QUESTION` and nothing else."""
+
+    swap_offer: SwapOfferGroundingView | None = None
+    upgrade_offer: UpgradeOfferGroundingView | None = None
+    """A step-up offered beside the room just built; the yes/no is chips."""
+
+    upgrade_declined: bool = False
+    """They kept the package as it is rather than take the add-on."""
+
+    add_on_added: str | None = None
+    """The piece they just added to the room at our suggestion."""
+    """The held over-budget swap, for `ROOM_SWAP_OFFER` and nothing else."""
 
     brief: ProductBriefGroundingView | None = None
     """The card of questions shown with the reply: the whole turn for
@@ -730,11 +806,20 @@ class ResponseGroundingView(BaseModel):
         ):
             raise ValueError("an unwidened search presents only exact matches")
 
-        for words in (self.commerce_category, self.commerce_subcategory, self.offered_instead_of):
+        for words in (
+            self.commerce_category,
+            self.commerce_subcategory,
+            self.offered_instead_of,
+            self.unstocked_type,
+        ):
             # The registry key is an internal identifier; a model shown one
             # writes it back verbatim.
             if words is not None and "-" in words:
                 raise ValueError("a category reaches the model as words, not a key")
+        if self.offered_instead_of is not None and self.unstocked_type is not None:
+            # Two different substitutions cannot both own one turn: the seat-count
+            # swap and the not-stocked swap are mutually exclusive recoveries.
+            raise ValueError("a turn offers one substitution reason, not both")
         return self
 
 

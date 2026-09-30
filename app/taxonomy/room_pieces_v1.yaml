@@ -15,11 +15,29 @@
 # A piece is one approved type, bought `quantity` times - except the living
 # room's seating, which is built from several types to seat the number of
 # people the customer gives (CLAUDE.md 27.1): the chip reads "Sofa".
+#
+# `label` is the room in customer words, as it reads in "Design the whole
+# <label> around it".
+#
+# `anchors` are the types a room is built around. Picking one of these is when
+# the room is offered - "design the whole living room around it" - with the
+# piece kept in the room. A nightstand or a rug is a piece of a room, not the
+# start of one, so it is not listed. Each type anchors at most one room, and
+# must be a type the room itself may hold.
+#
+# `add_ons` are what a salesperson suggests adding once the room package is
+# on the table, most worth it first: pieces that finish a room and that the
+# package does not already hold - never a second bed, never a swap of
+# something just chosen. One is offered; if they take it, one more. Piece keys
+# of this room; never its seating.
 version: v1
 
 rooms:
   living_room:
+    label: living room
     asks_seats: true
+    anchors: [sofa, sectional-sofa, sofa-set]
+    add_ons: [floor-lamp, accent-chair, console, mirror, side-table, chandelier, shelf, table-lamp]
     pieces:
       - key: sofa
         label: Sofa
@@ -41,7 +59,10 @@ rooms:
       - {key: shelf, label: Shelf, category: storage, subcategory: shelve, tier: optional}
 
   bedroom:
+    label: bedroom
     asks_seats: false
+    anchors: [bed]
+    add_ons: [mirror, floor-lamp, accent-chair, console, chandelier, shelf, rug, vase]
     pieces:
       - {key: bed, label: Bed, category: bedroom, subcategory: bed, tier: essential}
       - {key: nightstands, label: Nightstands, category: tables, subcategory: nightstand, tier: essential, quantity: 2}

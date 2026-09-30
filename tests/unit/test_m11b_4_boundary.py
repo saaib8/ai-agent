@@ -222,4 +222,8 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         # customer opened, and how many picks the tray keeps.
         "cross_sell_limit",
         "max_picks",
+        # The add-ons offered after a room is built: whether, and how far
+        # past the budget one may go.
+        "room_upgrade_enabled",
+        "room_upgrade_max_over_budget",
     }

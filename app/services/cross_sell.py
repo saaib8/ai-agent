@@ -28,7 +28,12 @@ from app.core.logging import get_logger
 from app.schemas.chat import ReplyChoice
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.product import ProductCandidate
-from app.schemas.product_action import CompanionAction, CompanionOffer
+from app.schemas.product_action import (
+    CompanionAction,
+    CompanionOffer,
+    RoomAroundPickAction,
+    RoomOffer,
+)
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
 from app.services.similar_search import leanings_of
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
@@ -76,14 +81,28 @@ class CompanionSearchBuilder:
         )
 
 
-def companion_choices(companions: Sequence[CompanionOffer]) -> tuple[ReplyChoice, ...]:
-    """The other companions of the product in focus, as chips.
+def companion_choices(
+    companions: Sequence[CompanionOffer], room: RoomOffer | None = None
+) -> tuple[ReplyChoice, ...]:
+    """The whole room the pick starts, then its other companions, as chips.
 
     Each chip carries the action it performs, so tapping "Matching rugs" runs
     that search for the focused product directly; `value` is the words
-    recorded for the customer's side of the turn.
+    recorded for the customer's side of the turn. The room leads: it is the
+    bigger idea, and the one the reply closes on.
     """
-    return tuple(
+    lead = (
+        (
+            ReplyChoice(
+                label=f"Design the whole {room.label} around it",
+                value=f"Design the whole {room.label} around this one",
+                product_action=RoomAroundPickAction(),
+            ),
+        )
+        if room is not None
+        else ()
+    )
+    return lead + tuple(
         ReplyChoice(
             label=f"Matching {offer.label}",
             value=f"Show me matching {offer.label}",

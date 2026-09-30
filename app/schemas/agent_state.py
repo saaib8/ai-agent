@@ -450,6 +450,27 @@ class RoomDesignNeedState(BaseModel):
         return value
 
 
+class RoomAnchorState(BaseModel):
+    """A piece the room is to be built around, verified and waiting for it.
+
+    "Design the whole room around this sofa" usually comes before the room's
+    questions have been answered, and the answers arrive over several turns. A
+    lock written at once would read as a room already started and skip every
+    question; a lock written only when the room is built would need the anchor
+    said again. So the verified piece waits here and becomes a locked line the
+    moment the room is built (CLAUDE.md 10.1, 27).
+
+    What the customer said about it, nothing more: which product, how many,
+    and whether they already own it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    quantity: int = Field(default=1, ge=1)
+    acquisition: BundleAcquisition
+
+
 class RoomProjectState(BaseModel):
     """A whole-room task's customer-supplied requirements.
 
@@ -521,6 +542,12 @@ class RoomProjectState(BaseModel):
 
     questions_done: bool = False
     """They asked to skip the rest - "just design it". No further question."""
+
+    pending_anchor: RoomAnchorState | None = None
+    """The piece this room is to be built around, until the room is built.
+
+    Cleared when it becomes the room's locked line, and dropped with the room
+    kind: a sofa kept for a living room says nothing about a bedroom."""
 
     @field_validator("pieces")
     @classmethod
@@ -684,6 +711,83 @@ class SeatingOfferState(BaseModel):
         return self
 
 
+class SwapBudgetOfferStage(StrEnum):
+    """Which question a held over-budget swap is waiting on.
+
+    A swap that lands over budget is never applied silently: the customer is
+    asked, and their answer moves through at most these two questions.
+    """
+
+    STRETCH = "stretch"
+    """ "It runs a little over - shall we stretch the budget to fit it?" """
+
+    ALTERNATIVES = "alternatives"
+    """They declined the stretch; "shall I show cheaper options for that piece?" """
+
+
+class SwapBudgetOfferState(BaseModel):
+    """A piece swapped for a dearer one that pushed the room over budget.
+
+    Held, not applied: the room in state is still the one before the swap, so a
+    "no" leaves it exactly as it was, every other piece untouched (CLAUDE.md 27).
+    Everything needed to re-derive the proposal on a "yes" is a reference the
+    server verifies again - the piece by its position among the room cards, the
+    chosen product by id - never a price or a name it might remember wrongly
+    (CLAUDE.md 10, 19).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bundle_ordinal: int = Field(ge=1)
+    """The swapped piece's position among the room cards it was chosen from."""
+
+    chosen_product_id: int = Field(ge=1)
+    """The dearer product the customer picked for that piece."""
+
+    bundle_revision: int = Field(ge=0)
+    """The room revision the offer was made against, so a room that moved on
+    underneath it is caught rather than edited from a stale reference."""
+
+    stage: SwapBudgetOfferStage = SwapBudgetOfferStage.STRETCH
+
+
+class UpgradeReason(StrEnum):
+    """Why an add-on suits them, each one a stored catalog fact - never a
+    claim about quality."""
+
+    THEIR_COLOUR = "their_colour"
+    """Its stored colour is one they asked for."""
+
+    THEIR_STYLE = "their_style"
+    """It carries a style they asked for."""
+
+
+class RoomUpgradeOfferState(BaseModel):
+    """A piece suggested as an addition to a built room, awaiting yes or no.
+
+    Held, not applied: the room in state is still the package as built, so a
+    "no" leaves it exactly as it was. Everything needed to add it on a "yes"
+    is a reference the server verifies again - the product by id, re-read -
+    never a price it might remember wrongly (CLAUDE.md 10, 19, 27).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    """The product suggested."""
+
+    quantity: int = Field(default=1, ge=1)
+    """How many the room's piece calls for - a pair of table lamps."""
+
+    bundle_revision: int = Field(ge=0)
+    """The room revision the offer was made against, so a room that moved on
+    underneath it is caught rather than edited from a stale reference."""
+
+    round: int = Field(default=1, ge=1)
+    """Which add-on this is. A yes to the first brings one more; a yes to the
+    last brings none."""
+
+
 class PurchaseStage(StrEnum):
     EXPLORING = "exploring"
     CONSIDERING = "considering"
@@ -716,6 +820,14 @@ class AgentStateV1(BaseModel):
     seating_offer: SeatingOfferState | None = None
     """A seating combination in progress. Defaulted, like
     `measurements_by_type`, so every saved session still reads."""
+
+    swap_budget_offer: SwapBudgetOfferState | None = None
+    """A dearer swap awaiting the customer's yes/no on the budget. Defaulted,
+    like `seating_offer`, so every saved session still reads."""
+
+    room_upgrade_offer: RoomUpgradeOfferState | None = None
+    """A step-up for one piece of a built room, awaiting their yes/no.
+    Defaulted, like `swap_budget_offer`, so every saved session still reads."""
 
     product_brief: ProductBriefState = ProductBriefState()
     """The cards of questions asked before a search (CLAUDE.md 10.4).

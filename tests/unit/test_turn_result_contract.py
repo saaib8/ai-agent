@@ -124,12 +124,24 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         "room_seats",
         # The seating type they asked for, when another type seats that many.
         "offered_instead_of",
+        # The type they asked for, when the store carries none of it and the
+        # cards are the closest type it does stock.
+        "unstocked_type",
+        # A dearer swap that broke the budget, held for the customer's yes/no.
+        "swap_offer",
+        # The room piece a shown list of alternatives is for, so selecting one
+        # swaps that role rather than picking a fresh product.
+        "swap_context",
         # Product Q&A: the picks after the turn, for the client's tray; the
         # pick they asked about, shown not described; and the companion types
         # offered beside it as chips. None of them reaches the reply model.
         "picks",
         "focus",
         "companions",
+        "room_offer",
+        "room_upgrade",
+        "upgrade_declined",
+        "add_on_added",
         # The card of questions for a product search, drawn by the client. The
         # reply sees only what it asks about.
         "product_brief",

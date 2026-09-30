@@ -116,6 +116,16 @@ export interface GroundedBundlePresentation {
   totals: GroundedBundleTotals
 }
 
+/** The step-up offered for one piece of the room, drawn under the room. */
+export interface UpgradePresentation {
+  product: GroundedProduct
+  piece: string
+  extra_cost: string
+  new_total: string
+  currency: string
+  over_budget_by?: string | null
+}
+
 export interface ChatPresentation {
   products: GroundedProduct[]
   /** Which kind of list `products` is. Only search results are the list that
@@ -131,6 +141,7 @@ export interface ChatPresentation {
   brief?: ProductBrief | null
   /** The pick the customer just chose, drawn above what goes with it. */
   focus?: GroundedProduct | null
+  upgrade?: UpgradePresentation | null
   comparison: ProductComparisonResult | null
   room: GroundedBundlePresentation | null
   /** A picture of the room package, when the turn made one. */
@@ -143,6 +154,16 @@ export interface ChatPresentation {
   choices?: ReplyChoice[]
   /** A room's pieces as chips to tick, when the room question asks for them. */
   piece_picker?: PiecePickerData | null
+  /** The room piece a shown list of alternatives is for. Set when the customer
+   *  asked for cheaper options for an over-budget swap, so selecting one sends a
+   *  `swap` for that piece rather than picking a fresh product — which is what
+   *  keeps a room edit from cross-selling a piece it already holds. */
+  swap_context?: RoomSwapContext | null
+}
+
+export interface RoomSwapContext {
+  bundle_ordinal: number
+  role: string
 }
 
 // ── The card of questions for a product search ───────────────────────────────
@@ -264,7 +285,37 @@ export interface BundleSwapAction {
   alternative_ordinal: number
 }
 
-export type BundleAction = BundleAlternativesAction | BundleSwapAction
+/** The yes/no answers to an over-budget swap, each an action with no argument:
+ *  they answer the held offer the server remembers, not a piece on screen. */
+export interface SwapConfirmAction {
+  kind: 'swap_confirm'
+}
+export interface SwapDeclineAction {
+  kind: 'swap_decline'
+}
+export interface SwapAlternativesAction {
+  kind: 'swap_alternatives'
+}
+export interface SwapDismissAction {
+  kind: 'swap_dismiss'
+}
+/** Yes/no to the one step-up offered after a room is built. */
+export interface UpgradeAcceptAction {
+  kind: 'upgrade_accept'
+}
+export interface UpgradeDeclineAction {
+  kind: 'upgrade_decline'
+}
+
+export type BundleAction =
+  | BundleAlternativesAction
+  | BundleSwapAction
+  | SwapConfirmAction
+  | SwapDeclineAction
+  | SwapAlternativesAction
+  | SwapDismissAction
+  | UpgradeAcceptAction
+  | UpgradeDeclineAction
 
 export interface MoreOptionsAction {
   kind: 'more_options'
@@ -297,12 +348,15 @@ export type ProductAction =
   | { kind: 'goes_with'; pick: number }
   | { kind: 'compare'; picks: [number, number] }
   | { kind: 'companion'; category: string; subcategory: string }
+  | { kind: 'room_around' }
 
 /** A ready answer to tap; when it carries an action, tapping runs it. */
 export interface ReplyChoice {
   label: string
   value: string
   product_action?: ProductAction | null
+  /** A room edit tapping it performs, for the yes/no on an over-budget swap. */
+  bundle_action?: BundleAction | null
 }
 
 export interface PickView {

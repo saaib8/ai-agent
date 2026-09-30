@@ -14,6 +14,7 @@ every scoped call already receives the context directly (CLAUDE.md 8, 20.2).
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -24,7 +25,7 @@ from app.schemas.agent_decision import (
     CustomerAgentDecision,
     FollowUpPolicy,
 )
-from app.schemas.agent_state import AgentStateV1
+from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage, UpgradeReason
 from app.schemas.agent_view import AgentStateView
 from app.schemas.bundle import BundleOptimizationOutcome
 from app.schemas.bundle_action import BundleActionRequest
@@ -38,7 +39,7 @@ from app.schemas.grounding import (
     TurnFailure,
 )
 from app.schemas.picks import PickView
-from app.schemas.product_action import CompanionOffer, ProductActionRequest
+from app.schemas.product_action import CompanionOffer, ProductActionRequest, RoomOffer
 from app.schemas.product_brief import ProductBrief
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerContext
@@ -185,6 +186,84 @@ class TurnGrounding(BaseModel):
         return self
 
 
+class SwapBudgetOffer(BaseModel):
+    """A dearer swap that broke the budget, put to the customer as a yes/no.
+
+    Carries only the figures the reply has to be honest about - all verified by
+    the deterministic swap that produced them, none from a model - and which
+    question is being asked. The proposed room itself travels as the
+    `bundle_outcome` beside it, so the same card rendering serves it; nothing
+    here is a product fact (CLAUDE.md 20.4). On the `ALTERNATIVES` stage the
+    figures describe the same held proposal, now asking whether to look for a
+    cheaper piece instead of stretching.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stage: SwapBudgetOfferStage
+    new_spend_total: Decimal
+    budget_max: Decimal
+    overage: Decimal
+    currency: str
+
+    @model_validator(mode="after")
+    def _overage_is_the_gap(self) -> Self:
+        if self.overage != self.new_spend_total - self.budget_max:
+            raise ValueError("the overage is the total less the budget")
+        if self.overage <= 0:
+            raise ValueError("an offer is only made when the swap is over budget")
+        return self
+
+
+class RoomUpgradeOffer(BaseModel):
+    """A piece suggested as an addition to a built room, as a yes/no.
+
+    Every figure is the application's: the extra cost and the new total are
+    what it adds to the room (its price times the quantity the piece calls
+    for) and the room's total with it, from catalog prices. The new total may
+    pass their budget by a configured stretch, and then says by how much
+    (CLAUDE.md 10.2, 27). `piece` is the room's own word for it - "mirror";
+    the reasons are stored facts, and may be none.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    piece: str = Field(min_length=1)
+    extra_cost: Decimal = Field(gt=0)
+    new_total: Decimal = Field(gt=0)
+    currency: str = Field(min_length=1)
+    reasons: tuple[UpgradeReason, ...] = ()
+    over_budget_by: Decimal | None = Field(default=None, gt=0)
+    """How far the room with the step-up goes past their budget, when it does:
+    the new total less the budget, both the application's. Said plainly."""
+    budget: Decimal | None = Field(default=None, gt=0)
+    """Their budget ceiling, when the step-up goes past it."""
+    product: GroundedProduct | None = None
+    """The suggestion itself, as a card the customer can look at before they
+    answer - drawn from the catalog like any card, never from a model."""
+    quantity: int = Field(default=1, ge=1)
+    round: int = Field(default=1, ge=1)
+    product_id: int = Field(ge=1)
+    """Application-only: which product to add on a yes. Never reaches a model
+    or a client - the card carries no id (CLAUDE.md 20.4)."""
+
+
+class RoomSwapContext(BaseModel):
+    """Which room piece a list of alternatives is for, so a tap replaces it.
+
+    Set when the customer asked for cheaper options for an over-budget swap: the
+    alternatives are a search, but selecting one must swap that role, not pick a
+    fresh product (which would cross-sell a piece the room already holds). The
+    client reads this to send a `swap` for `bundle_ordinal` rather than a pick
+    (CLAUDE.md 27). No product id crosses the boundary - only the ordinal.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bundle_ordinal: int = Field(ge=1)
+    role: str = Field(min_length=1)
+
+
 class CustomerTurnResult(BaseModel):
     """One handled turn: the state it produced, and what happened.
 
@@ -272,6 +351,23 @@ class CustomerTurnResult(BaseModel):
     """The seating type they asked for, when it never seats that many and the
     cards are another type that does."""
 
+    unstocked_type: str | None = None
+    """The type they asked for, when the store stocks none of it and the cards
+    are the closest type it does stock - a substitution offered instead of a
+    dead end (CLAUDE.md 27). Distinct from `offered_instead_of`: there the type
+    exists but seats too few; here the store simply does not carry it."""
+
+    swap_offer: SwapBudgetOffer | None = None
+    """A dearer swap that broke the budget, held for the customer's yes/no. The
+    proposed room rides in `bundle_outcome`; nothing is committed until they say
+    yes, so the room in `state` is still the one before the swap (CLAUDE.md 27).
+    """
+
+    swap_context: RoomSwapContext | None = None
+    """The room piece a shown list of alternatives is for, so selecting one
+    swaps that role instead of picking a fresh product. Set when the customer
+    asked for cheaper options after declining to stretch the budget."""
+
     room_seats: int | None = Field(default=None, ge=1)
     """How many the room's seating really seats, counted from its pieces - so
     a reply never says "seating for all nine" about a room that seats eight."""
@@ -297,6 +393,21 @@ class CustomerTurnResult(BaseModel):
 
     companions: tuple[CompanionOffer, ...] = ()
     """Other types that go with the product in focus, offered as chips."""
+
+    room_upgrade: RoomUpgradeOffer | None = None
+    """A step-up offered for one piece of the room just built, held for their
+    yes/no (CLAUDE.md 10.2). The room on screen is still the package as built."""
+
+    upgrade_declined: bool = False
+    """They turned the add-on down: the package stands as it is."""
+
+    add_on_added: str | None = None
+    """The piece they just said yes to, now in the room - "mirror"."""
+
+    room_offer: RoomOffer | None = None
+    """The whole room the product in focus starts - "Design the whole living
+    room around it" - offered as a chip beside a pick of a type that starts
+    one, while no room is under way (CLAUDE.md 10)."""
 
     product_brief: ProductBrief | None = None
     """A card of questions for a product search - first, before anything is

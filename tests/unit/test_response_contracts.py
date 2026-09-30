@@ -403,6 +403,9 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # One question before a room is designed - which one is the
         # application's, only the words are the model's.
         "room_question",
+        # A dearer swap that broke the budget - the model does the soft-sell and
+        # asks whether to stretch; the yes/no is the application's chips.
+        "room_swap_offer",
         # A card of questions for a product search - which questions is the
         # application's; the reply only introduces the card.
         "product_brief",
@@ -1277,6 +1280,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # The seating type they asked for, in words, when the cards are another
         # type that seats that many. A type name - no product, no figure.
         "offered_instead_of",
+        # The type they asked for, in words, when the store stocks none of it and
+        # the cards are the closest type it does. A type name - no product.
+        "unstocked_type",
         # Counts of cards in a colour/style the customer asked or wished for,
         # so a reply cannot call black tables red. Counts, never a value.
         "wished_colour_matches",
@@ -1291,6 +1297,10 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # The kind of pick they opened ("bed"), whose card leads the screen -
         # a type name, never the product or its facts, which stay on the card.
         "picked_kind",
+        "room_offer",
+        "upgrade_offer",
+        "upgrade_declined",
+        "add_on_added",
         # Whether the cards are ordered by how well they match what they
         # described. A bool - no product, no value.
         "best_match_first",
@@ -1313,6 +1323,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "seating",
         # The room question to word: its kind, and counts of pieces offered.
         "room_question",
+        # The held over-budget swap to word: which question it is on. No figure
+        # - the room card shows them and the overage is never computed here.
+        "swap_offer",
         # The card of questions: what it is about and which questions it asks
         # - kinds only, never its choices.
         "brief",

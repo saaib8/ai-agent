@@ -697,8 +697,11 @@ def _coordinator(
     decision: CustomerAgentDecision,
     need: ResolvedSearch | None = None,
     capabilities: Any = None,
-) -> tuple[CustomerTurnCoordinator, Pipeline]:
-    pipeline = Pipeline()
+    *,
+    pipeline: Any = None,
+    closest_type: Any = None,
+) -> tuple[CustomerTurnCoordinator, Any]:
+    pipeline = pipeline or Pipeline()
     builder, _ = _builder()
     coordinator = CustomerTurnCoordinator(
         FakeDecisions(decision),  # type: ignore[arg-type]
@@ -721,6 +724,7 @@ def _coordinator(
         complements=COMPLEMENTS,
         companion_search=CompanionSearchBuilder(ATTRIBUTES),
         briefs=builder,
+        closest_type=closest_type,
     )
     return coordinator, pipeline
 
@@ -956,6 +960,88 @@ async def test_a_need_one_piece_can_seat_still_gets_its_card() -> None:
 
     assert result.product_brief is not None
     assert pipeline.requests == []
+
+
+class _Decor(FakeCapabilities):
+    """Stocks candlesticks and vases, but no candles."""
+
+    async def overview(self, context: Any) -> CatalogOverview:
+        return CatalogOverview(
+            store_id=50,
+            currency="SAR",
+            shelves=(
+                SubcategoryShelf(
+                    commerce_category="decor",
+                    commerce_subcategory="candlestick",
+                    active_count=3,
+                    price_minimum=Decimal(50),
+                    price_maximum=Decimal(300),
+                ),
+                SubcategoryShelf(
+                    commerce_category="decor",
+                    commerce_subcategory="vase",
+                    active_count=40,
+                    price_minimum=Decimal(80),
+                    price_maximum=Decimal(900),
+                ),
+            ),
+        )
+
+
+class _ByType(Pipeline):
+    """Finds products only for the named subcategories, empty for the rest."""
+
+    def __init__(self, found: set[str]) -> None:
+        super().__init__()
+        self.found = found
+
+    async def execute(self, resolved: Any, context: Any, **_: Any) -> ProductSearchExecutionResult:
+        self.requests.append(resolved)
+        ids = (31, 32, 33) if resolved.request.commerce_subcategory in self.found else ()
+        return ProductSearchExecutionResult(
+            presented_product_ids=ids,
+            grounding=SearchExecutionGrounding(
+                outcome=SearchOutcome.RESULTS if ids else SearchOutcome.ZERO_RESULTS,
+                products=tuple(
+                    to_grounded_product(
+                        _sofa(pid), grounding_ref=n, presented_ordinal=n, relaxation_depth=0
+                    )
+                    for n, pid in enumerate(ids, start=1)
+                ),
+                eligible_count=len(ids),
+                ranked_count=len(ids),
+                selected_count=len(ids),
+                presented_count=len(ids),
+                exact_candidate_count=len(ids),
+                stop_reason=StopReason.EXACT_SUFFICIENT,
+            ),
+        )
+
+
+class _PickCandlestick:
+    async def closest(self, **_: Any) -> str:
+        return "candlestick"
+
+
+async def test_a_substitution_shows_no_narrowing_card_beside_it() -> None:
+    """The store carries no candles, so candlesticks are offered as the closest
+    type instead. That substitution is its own answer - the narrowing card must
+    not fold beside it, or the reply and the chips would ask two different
+    things (the bug from composing this recovery with the brief flow)."""
+    coordinator, _ = _coordinator(
+        _search(),
+        _need("candle", "decor"),
+        _Decor(),
+        pipeline=_ByType({"candlestick"}),
+        closest_type=_PickCandlestick(),
+    )
+
+    result = await coordinator.run(_typed(AgentStateV1(), "do you have a candle"))
+
+    assert result.unstocked_type == "candle"
+    assert result.state.active_search.request.commerce_subcategory == "candlestick"
+    # The substitution stands alone: no folded brief to contradict the reply.
+    assert result.product_brief is None
 
 
 async def test_a_head_count_on_a_card_on_screen_is_offered_to_the_room() -> None:

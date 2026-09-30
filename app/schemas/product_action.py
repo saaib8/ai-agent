@@ -10,7 +10,8 @@ They carry no product id. A pick is named by its position in the customer's
 picks, and the server resolves it against verified state (CLAUDE.md 20.2). A
 companion is named by product type, and only a type the reviewed pairings
 offer beside the product in focus is accepted - a chip is never a way to run an
-arbitrary search.
+arbitrary search. A room is named by nothing at all: it is the one the product
+in focus starts, read from the reviewed room registry.
 """
 
 from __future__ import annotations
@@ -69,6 +70,33 @@ class CompanionAction(BaseModel):
     subcategory: str = Field(min_length=1, max_length=64)
 
 
+class RoomAroundPickAction(BaseModel):
+    """Design the whole room around the product in focus.
+
+    Offered as a chip beside a pick that starts a room - a sofa, a bed. It
+    names no room and no product: the anchor is the product in focus, and the
+    room is the one the reviewed registry says that type starts, so a client
+    cannot ask for a room around something that does not start one.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["room_around"] = "room_around"
+
+
+class RoomOffer(BaseModel):
+    """The room a pick starts, offered as a chip beside it.
+
+    Application-only until the runtime turns it into a chip. `label` is the
+    room in customer words - "living room".
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    room_kind: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+
+
 class CompanionOffer(BaseModel):
     """A companion type the reply offers as a chip, from the reviewed pairings.
 
@@ -84,7 +112,7 @@ class CompanionOffer(BaseModel):
 
 
 ProductActionRequest = Annotated[
-    GoesWithPickAction | ComparePicksAction | CompanionAction,
+    GoesWithPickAction | ComparePicksAction | CompanionAction | RoomAroundPickAction,
     Field(discriminator="kind"),
 ]
 """Any action on the picks, told apart by `kind`."""

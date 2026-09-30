@@ -29,6 +29,7 @@ from app.services.card_comparison import CardComparisonService
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
+from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.cross_sell import CompanionSearchBuilder
@@ -49,6 +50,7 @@ from app.services.relative_price import RelativePriceResolver
 from app.services.relaxation import RelaxationPlanner
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.retailer_context import RetailerContextProvider
+from app.services.room_upgrade import RoomUpgradePolicy
 from app.services.room_visualization import (
     CatalogVisualizationRuntime,
     RoomVisualizer,
@@ -311,9 +313,17 @@ def customer_turn_coordinator(
         app_resources.taxonomy,
         app_resources.rooms,
         app_resources.seating,
+        closest_type=ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         cross_sell_limit=settings.customer_agent.cross_sell_limit,
+        upgrade_policy=(
+            RoomUpgradePolicy(
+                max_over_budget=settings.customer_agent.room_upgrade_max_over_budget,
+            )
+            if settings.customer_agent.room_upgrade_enabled
+            else None
+        ),
         briefs=(
             ProductBriefBuilder(
                 repository, app_resources.briefs, app_resources.attributes, app_resources.taxonomy
