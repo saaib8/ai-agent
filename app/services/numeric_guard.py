@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from app.schemas.design import DesignGuidance
+from app.schemas.picks import PickView
 from app.schemas.response import (
     BundleGroundingView,
     SeatingSolutionGroundingView,
@@ -170,6 +171,36 @@ def bundle_stretch_figures(bundle: BundleGroundingView) -> tuple[Decimal, ...]:
     if bundle.stretched_from_budget is None or bundle.stretched_overage is None:
         return ()
     return (bundle.stretched_from_budget, bundle.stretched_overage)
+
+
+_NAME_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def picks_figures(picks: Sequence[PickView] | None) -> tuple[Decimal, ...]:
+    """Every figure the picks tray shows: each pick's price, and the numbers its
+    name carries ("6 Seater", "230x330 cm").
+
+    The tray is on screen beside the reply, so saying "your 6-seater set" is
+    reporting what they can read. Without this a second pick's reply - naming
+    the set it sits beside - was refused twice and fell back to a fixed
+    sentence.
+    """
+    figures: list[Decimal] = []
+    for pick in picks or ():
+        figures.append(pick.price_amount)
+        figures.extend(Decimal(n) for n in _NAME_NUMBER.findall(pick.name_english))
+    return tuple(figures)
+
+
+def picks_counts(picks: Sequence[PickView] | None) -> tuple[int, ...]:
+    """The counts the picks tray shows: how many picks, and how many of each
+    kind - "your 2 sofa sets" is read off the tray, not worked out."""
+    if not picks:
+        return ()
+    kinds: dict[str | None, int] = {}
+    for pick in picks:
+        kinds[pick.kind] = kinds.get(pick.kind, 0) + 1
+    return (len(picks), *kinds.values())
 
 
 def screen_figures(screen: CustomerVisibleScreenView) -> tuple[Decimal | int, ...]:

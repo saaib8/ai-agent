@@ -1283,6 +1283,8 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # The seating type they asked for, in words, when the cards are another
         # type that seats that many. A type name - no product, no figure.
         "offered_instead_of",
+        # Which next step to close on - an enum the application chose, no values.
+        "next_step",
         # The type they asked for, in words, when the store stocks none of it and
         # the cards are the closest type it does. A type name - no product.
         "unstocked_type",

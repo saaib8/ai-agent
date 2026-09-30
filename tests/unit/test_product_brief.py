@@ -1240,9 +1240,9 @@ async def test_the_first_pick_of_its_kind_asks_for_what_goes_with_it() -> None:
     assert reply.goes_with == 1
 
 
-async def test_a_second_option_of_the_same_kind_is_picked_silently() -> None:
-    """A sectional after a sofa has the same companions: it is being weighed
-    against the sofa, not added to the room."""
+async def test_a_second_option_of_the_same_kind_is_offered_what_goes_with_it() -> None:
+    """A sectional after a sofa is still a moment to cross-sell, never a prompt
+    to compare the two."""
     sessions = FakeSessionStore()
     await _stored(sessions, _two_lists(picks=(101,)))
 
@@ -1250,7 +1250,7 @@ async def test_a_second_option_of_the_same_kind_is_picked_silently() -> None:
         _tick(3, list_revision=1), CONTEXT
     )
 
-    assert reply.goes_with is None
+    assert reply.goes_with == 2
     assert len(reply.picks) == 2
 
 

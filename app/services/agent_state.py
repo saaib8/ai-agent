@@ -355,6 +355,11 @@ def _room_pieces(base: RoomProjectState, update: RoomProjectUpdate) -> dict[str,
         "questions_asked": asked,
         "questions_done": update.questions_done or (not fresh and base.questions_done),
         "palette_left_to_us": update.palette_left_to_us or (not fresh and base.palette_left_to_us),
+        "anchor_product_ids": (
+            update.anchor_product_ids
+            if update.anchor_product_ids is not None
+            else (() if fresh else base.anchor_product_ids)
+        ),
     }
 
 

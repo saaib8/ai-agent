@@ -37,6 +37,7 @@ from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
 from app.schemas.design import DesignGuidance, DesignPriority
 from app.schemas.grounding import TurnFailureCode
+from app.schemas.next_step import NextStepKind
 from app.schemas.relaxation import RelaxableField, SetAsideOption
 from app.schemas.resolution import (
     DeterministicClarification,
@@ -398,6 +399,14 @@ class RoomQuestionGroundingView(BaseModel):
     """A head count they gave for a seating search earlier - to confirm, never
     to assume."""
 
+    picked_seat_count: int | None = Field(default=None, ge=1)
+    """How many the sofas and chairs they picked for this room seat together,
+    counted from the products - to confirm as everyone, or to add to."""
+
+    picked_pieces: int = Field(default=0, ge=0)
+    """How many of the pieces offered are already their picks - shown on the
+    chips as theirs, so the reply can say the room keeps them."""
+
     pieces_offered: int = Field(default=0, ge=0)
     pieces_preselected: int = Field(default=0, ge=0)
 
@@ -689,6 +698,11 @@ class ResponseGroundingView(BaseModel):
 
     seating: SeatingSolutionGroundingView | None = None
     """The composed combination, for `SEATING_COMBINATION` and nothing else."""
+
+    next_step: NextStepKind | None = None
+    """The one next step to end on, when the turn asks nothing of its own:
+    the application decided it, the chips beside the reply answer it, and the
+    reply words it as its closing question (CLAUDE.md 10.2)."""
 
     room_question: RoomQuestionGroundingView | None = None
     """What to ask about the room, for `ROOM_QUESTION` and nothing else."""

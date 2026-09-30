@@ -22,8 +22,8 @@ from app.schemas.bundle_presentation import (
     GroundedBundlePresentation,
     GroundedBundleTotals,
 )
-from app.schemas.chat import ReplyChoice
 from app.schemas.product import CommerceClassification
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.seating_solution import (
     SeatingBundle,
     SeatingShape,

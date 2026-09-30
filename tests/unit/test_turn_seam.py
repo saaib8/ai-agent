@@ -74,6 +74,8 @@ from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
 
+from tests.unit.replies import worded
+
 STOCKED_WITH_RANGE = 12
 """A capability depth that is not the thing under test.
 
@@ -385,7 +387,7 @@ async def test_a_successful_search_is_grounded_then_framed() -> None:
     assert isinstance(route.primary, ResponseGroundingView)
     assert route.primary.kind is ResponseOutcomeKind.SEARCH_RESULTS
     assert len(client.calls) == 1
-    assert response.message == PROSE
+    assert worded(response.message) == PROSE
     # The committed lineage the coordinator produced is what the generator saw.
     assert result.state.product_interaction.presented_product_ids == (10, 11)
     assert valid_grounding_refs(result.grounding) == {1, 2}
@@ -402,7 +404,7 @@ async def test_a_zero_result_search_still_reaches_the_model() -> None:
     assert isinstance(route.primary, ResponseGroundingView)
     assert route.primary.kind is ResponseOutcomeKind.ZERO_RESULTS
     assert len(client.calls) == 1
-    assert response.message == PROSE, "a zero-result turn is still worded"
+    assert worded(response.message) == PROSE, "a zero-result turn is still worded"
     assert result.grounding.failure is None, "zero results is not a failure"
     assert result.state.active_search is not None
     assert result.state.active_search.revision == 1, "still a committed search"
@@ -420,7 +422,7 @@ async def test_a_handled_search_failure_is_worded_without_a_model() -> None:
     assert isinstance(route.primary, DeterministicResponse)
     assert route.primary.kind is DeterministicResponseKind.HANDLED_FAILURE
     assert client.calls == []
-    assert response.message == FAILURE_WORDING[route.primary.failure_code]  # type: ignore[index]
+    assert worded(response.message) == FAILURE_WORDING[route.primary.failure_code]  # type: ignore[index]
     # Nothing rolled back.
     assert result.state.active_search is not None
     assert result.state.active_search.revision == 1
@@ -441,7 +443,7 @@ async def test_a_model_clarification_passes_straight_through() -> None:
     )
 
     assert client.calls == [], "the decision model already wrote it"
-    assert response.message == question
+    assert worded(response.message) == question
     assert response.follow_up_question is None
 
 
@@ -459,7 +461,7 @@ async def test_a_deterministic_clarification_is_worded_by_the_model() -> None:
     assert isinstance(route.primary, ResponseGroundingView)
     assert route.primary.kind is ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION
     assert len(client.calls) == 1
-    assert response.message == question.message
+    assert worded(response.message) == question.message
     assert result.grounding.deterministic_clarification is not None
 
 
@@ -589,7 +591,7 @@ async def test_the_response_layer_never_alters_the_turn_state() -> None:
         replies=(CatalogUnavailableError(),),
     )
 
-    assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
+    assert worded(response.message) == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
     assert len(client.calls) == 1, "no retry for a provider failure"
     assert result.state.product_interaction.presented_product_ids == (10, 11)
     assert result.state.active_search is not None

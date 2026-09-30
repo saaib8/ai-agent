@@ -72,6 +72,8 @@ from app.services.response_wording import (
     fallback_for,
 )
 
+from tests.unit.replies import worded
+
 APP = Path(__file__).parents[2] / "app"
 CONTEXT = RetailerContext(store_id=50)
 AMBIGUOUS = DeterministicClarification(
@@ -230,7 +232,7 @@ async def test_a_model_written_clarification_is_returned_verbatim() -> None:
         action=AgentAction.CLARIFY,
     )
 
-    assert response.message == question
+    assert worded(response.message) == question
     assert client.calls == [], "no response call at all"
     assert response.follow_up_question is None
     assert response.referenced_grounding_refs == ()
@@ -248,7 +250,7 @@ async def test_a_handled_failure_is_worded_without_a_model(
         action=AgentAction.SEARCH,
     )
 
-    assert response.message == FAILURE_WORDING[code]
+    assert worded(response.message) == FAILURE_WORDING[code]
     assert client.calls == []
     assert response.follow_up_question is None
 
@@ -262,7 +264,7 @@ async def test_a_design_handoff_is_worded_without_a_model() -> None:
         action=AgentAction.DESIGN_HANDOFF,
     )
 
-    assert response.message == DESIGN_HANDOFF_WORDING
+    assert worded(response.message) == DESIGN_HANDOFF_WORDING
     assert client.calls == []
 
 
@@ -315,7 +317,7 @@ async def test_each_generated_branch_makes_exactly_one_call(
     response = await _generate(client, grounding, action=action)
 
     assert len(client.calls) == 1
-    assert response.message == SAFE.message
+    assert worded(response.message) == SAFE.message
 
 
 async def test_the_model_receives_only_the_locked_response_input() -> None:
@@ -437,7 +439,7 @@ async def test_an_unsupported_figure_earns_one_correction_call() -> None:
     response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2
-    assert response.message == "Here are the options I found."
+    assert worded(response.message) == "Here are the options I found."
 
 
 async def test_the_correction_call_sends_back_neither_the_prose_nor_the_number() -> None:
@@ -465,7 +467,7 @@ async def test_a_second_unsupported_figure_falls_back() -> None:
     response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2, "never a third call"
-    assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
+    assert worded(response.message) == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
 
 
 @pytest.mark.parametrize(
@@ -488,7 +490,7 @@ async def test_no_other_violation_earns_a_second_call(reply: CustomerResponse, w
     response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 1, why
-    assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
+    assert worded(response.message) == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
 
 
 async def test_a_bad_citation_on_the_correction_call_falls_back() -> None:
@@ -500,7 +502,7 @@ async def test_a_bad_citation_on_the_correction_call_falls_back() -> None:
     response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2
-    assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
+    assert worded(response.message) == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
 
 
 async def test_a_valid_citation_survives() -> None:
@@ -567,7 +569,7 @@ async def test_a_provider_failure_falls_back_without_a_retry(
     response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 1
-    assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
+    assert worded(response.message) == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
 
 
 async def test_a_provider_failure_on_the_correction_call_falls_back() -> None:
@@ -576,7 +578,7 @@ async def test_a_provider_failure_on_the_correction_call_falls_back() -> None:
     response = await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
 
     assert len(client.calls) == 2
-    assert response.message == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
+    assert worded(response.message) == FALLBACK_WORDING[ResponseOutcomeKind.SEARCH_RESULTS]
 
 
 async def test_an_unexpected_error_still_propagates() -> None:

@@ -260,15 +260,19 @@ async def test_no_internal_identity_reaches_the_caller(client_for: Any, forbidde
     assert f'"{forbidden}"' not in raw, forbidden
 
 
-async def test_an_answer_with_nothing_to_draw_sends_no_presentation(
+async def test_an_answer_with_nothing_to_draw_still_offers_a_next_step(
     client_for: Any,
 ) -> None:
+    """Nothing on screen and nothing picked: no cards, but never a dead end -
+    the next step's chips (a piece, or a room) come with the reply."""
     harness = Harness(CustomerAgentDecision(action=AgentAction.ANSWER))
     client = await client_for(harness)
 
     payload = (await client.post("/v1/chat", json=body("what do you sell?"))).json()
 
-    assert payload["presentation"] is None
+    presentation = payload["presentation"]
+    assert not presentation["products"]
+    assert [chip["label"] for chip in presentation["choices"]] == ["Find a piece", "Design a room"]
     assert payload["session_revision"] == 1
 
 

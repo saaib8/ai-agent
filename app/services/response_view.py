@@ -540,6 +540,8 @@ def _room_question(result: CustomerTurnResult, question: RoomQuestion) -> Respon
             room_kind=question.room_kind.replace("_", " "),
             question=question.kind,
             earlier_seat_count=question.earlier_seat_count,
+            picked_seat_count=question.picked_seat_count,
+            picked_pieces=sum(1 for piece in question.pieces if piece.picked),
             pieces_offered=len(question.pieces),
             pieces_preselected=sum(1 for piece in question.pieces if piece.selected),
         ),
@@ -638,6 +640,7 @@ def _view(
         picked_kind=_picked_kind(result),
         selection_changed=_selection_changed(result),
         seating_requirement_known=_seating_known(result),
+        next_step=(result.next_step.kind if result and result.next_step else None),
         **fields,
     )
 

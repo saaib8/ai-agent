@@ -876,6 +876,8 @@ def test_the_request_cannot_carry_state_or_scope() -> None:
         "discovery",
         "budget",
         "locked",
+        # Need indexes a lock may not fill - still no state and no scope.
+        "fresh_needs",
     }
 
 

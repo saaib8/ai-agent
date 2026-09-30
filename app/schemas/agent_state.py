@@ -450,6 +450,11 @@ class RoomDesignNeedState(BaseModel):
         return value
 
 
+MAX_ROOM_ANCHORS = 12
+"""How many picked products a room may be built around. A room, not a catalogue:
+more than a dozen named pieces is not a room to design around."""
+
+
 class RoomProjectState(BaseModel):
     """A whole-room task's customer-supplied requirements.
 
@@ -527,6 +532,26 @@ class RoomProjectState(BaseModel):
 
     questions_done: bool = False
     """They asked to skip the rest - "just design it". No further question."""
+
+    anchor_product_ids: tuple[int, ...] = Field(default=(), max_length=MAX_ROOM_ANCHORS)
+    """Products the customer asked to build this room around - "around these",
+    "around my picks" - saved until the room is built.
+
+    Saved the moment they ask, before the room's questions, so a budget question
+    in between cannot lose them. Only picks that belong in this kind of room
+    (its registry pieces); when the room is built they become locked lines, and
+    the optimiser counts their seats, fills their slots and charges their price
+    against the budget (CLAUDE.md 10.3, 27). Cleared once locked, and when the
+    room kind changes."""
+
+    @field_validator("anchor_product_ids")
+    @classmethod
+    def _anchors_are_distinct_products(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if any(product_id < 1 for product_id in value):
+            raise ValueError("a product id is 1 or greater")
+        if len(value) != len(set(value)):
+            raise ValueError("a room is built around a product at most once")
+        return value
 
     @field_validator("pieces")
     @classmethod

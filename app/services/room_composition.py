@@ -72,6 +72,9 @@ def next_question(
     template: RoomTemplate,
     capabilities: RetailerCatalogCapabilities,
     earlier_seat_count: int | None,
+    *,
+    picked_seats: int | None = None,
+    covered: frozenset[str] = frozenset(),
 ) -> RoomQuestion | None:
     """The one question to ask this turn, or `None` to build the room now.
 
@@ -91,29 +94,66 @@ def next_question(
         if not missing[kind] or kind in room.questions_asked:
             continue
         if kind is RoomQuestionKind.PIECES:
-            pieces = _offers(template, capabilities)
+            pieces = _offers(template, capabilities, covered)
             if not pieces:
                 continue
             return RoomQuestion(room_kind=template.kind, kind=kind, pieces=pieces)
+        seats = kind is RoomQuestionKind.SEATS
         return RoomQuestion(
             room_kind=template.kind,
             kind=kind,
-            earlier_seat_count=earlier_seat_count if kind is RoomQuestionKind.SEATS else None,
+            # Seats from the sofas they picked outrank a count from an earlier
+            # search: what they chose for this room is the better evidence.
+            picked_seat_count=picked_seats if seats else None,
+            earlier_seat_count=(
+                earlier_seat_count if seats and picked_seats is None else None
+            ),
         )
     return None
 
 
 def _offers(
-    template: RoomTemplate, capabilities: RetailerCatalogCapabilities
+    template: RoomTemplate,
+    capabilities: RetailerCatalogCapabilities,
+    covered: frozenset[str] = frozenset(),
 ) -> tuple[RoomPieceOffer, ...]:
+    """The pieces as chips. One they already picked shows as theirs and stays
+    selected, so the room keeps it rather than buying another."""
     return tuple(
         RoomPieceOffer(
             key=piece.key,
-            label=piece.label,
+            label=f"{piece.label} · your pick" if piece.key in covered else piece.label,
             tier=piece.tier,
-            selected=piece.tier.starts_selected,
+            selected=piece.key in covered or piece.tier.starts_selected,
+            picked=piece.key in covered,
         )
         for piece in offered(template, capabilities)
+    )
+
+
+def piece_for(
+    template: RoomTemplate, category: str | None, subcategory: str | None
+) -> RoomPiece | None:
+    """The room piece a product fills, when it belongs in this room at all.
+
+    Seating first - a sofa or an armchair is the room's seating before it is an
+    accent chair - then the first piece of its exact type."""
+    if category is None or subcategory is None:
+        return None
+    seating = template.seating
+    if (
+        seating is not None
+        and category == seating.commerce_category
+        and subcategory in seating.types
+    ):
+        return seating
+    return next(
+        (
+            piece
+            for piece in template.pieces
+            if piece.commerce_category == category and subcategory in piece.types
+        ),
+        None,
     )
 
 

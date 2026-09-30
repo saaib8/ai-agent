@@ -24,7 +24,7 @@ from app.schemas.agent_state import (
     ProductInteractionState,
 )
 from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
-from app.schemas.chat import ChatRequest, ReplyChoice
+from app.schemas.chat import ChatRequest
 from app.schemas.conversation import ConversationContext, ConversationMessage, ConversationRole
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.discovery import ProductSearchRequest
@@ -37,6 +37,7 @@ from app.schemas.product_action import (
     GoesWithPickAction,
 )
 from app.schemas.product_reference import PickedOrdinal
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.resolution import ReferenceFailureReason, ReferenceUnresolved
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session

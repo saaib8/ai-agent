@@ -513,6 +513,18 @@ question among several, chosen as a band from the store's own prices.
 - **Budget otherwise** only once they are engaged: comparing, having picked
   something, talking price without a figure, or refining a wide price range.
 
+**No reply is a dead end.** Every reply closes on one next step - a question
+with chips that answer it (`app/services/next_step.py`), decided in code from
+what the turn did: picks offer what goes with the newest pick (only a type
+with reviewed pairings) or a room around them - a pick is a moment to
+cross-sell, never to offer a comparison, which stays theirs to ask for; a detail, a comparison or a room each offer
+their own next move; nothing else offers a piece or a room. A turn that already
+asks - a question card, a room question, a seating shape, companions, a
+clarification - keeps its question and gets no second one. If the reply still
+ends without a question, the next step's fixed, digit-free question is added
+after the number check. The counts the picks tray shows ("your 2 sofa sets")
+may be said.
+
 ### 10.3 A room is built from the pieces they chose
 
 Which pieces a room may hold is reviewed domain data
@@ -538,6 +550,19 @@ seats everyone, otherwise a combination (27.1). Each way the store can seat
 them within the budget is tried together with the rest of the room, and the
 room that keeps every seat and the most of its pieces wins - so the sofa never
 crowds out the rug, and the rug never leaves someone standing.
+
+**A room built around their picks keeps them.** "Build my living room around
+these", "around my picks" (the decision's `anchor_picks`) saves every pick that
+belongs in that room (`room_project.anchor_product_ids`) before the room's
+questions, so a budget question in between cannot lose them; a pick that is not
+a piece of that room (a bed, for a living room) is left out. The pieces
+question shows them as "· your pick"; the seats question confirms what the
+picked sofas and chairs seat ("your two sofas seat 5 - is that everyone?", chips
+5 · 6 · 7 · 8+) instead of a head count from an earlier search. When the room is
+built they are locked into it: their seats count toward the head count and only
+the remainder is planned - never filled by the same locked sofa again
+(`fresh_needs`) - a picked piece fills its own slot so it is never bought twice,
+and their prices count against the budget.
 
 **A missing piece is named, never counted.** The reply says which piece is
 missing and why - not stocked, or not within the budget alongside the rest,
@@ -626,10 +651,9 @@ does not stock is not offered - every chip leads to real products.
   saved sizes back (13.5).
 
 **Picking a product.** Cards can be ticked into the customer's picks, which last
-across searches. The first pick of its kind - ticked or typed ("I like the
-third one"), and judged by what goes with it, so a sectional after a sofa is a
-second option, not a new piece - is **offered, not shown**, what goes well with
-it: their pick's card, and beneath it the kinds from the reviewed pairings
+across searches. Every pick - ticked or typed ("I like the third one"), a
+second sofa as much as the first - is **offered, not shown**, what goes well
+with it: their pick's card, and beneath it the kinds from the reviewed pairings
 (`app/taxonomy/complements_v1.yaml`) that the store stocks, as chips under
 "Goes well with it", with "No thanks" beside them. Nothing is searched until
 they tap a kind, which then shows a normal page of it leaning towards the

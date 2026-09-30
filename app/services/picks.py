@@ -44,7 +44,7 @@ from app.schemas.retailer import RetailerContext
 from app.services.agent_state import apply_update
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import commit_state, load_for_turn
-from app.services.cross_sell import first_of_its_kind
+from app.services.cross_sell import has_pairings
 from app.services.hydration import ProductHydrationService
 from app.services.product_interaction import build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
@@ -132,8 +132,8 @@ class PicksRuntime:
         products: Sequence[ProductCandidate],
         context: RetailerContext,
     ) -> int | None:
-        """The new pick's number, when it is the first of its kind and the
-        store sells something that goes with it - the client then asks what
+        """The new pick's number, when the store sells something that goes
+        with it - a second sofa as much as the first - the client then asks what
         goes with it, and is offered those kinds.
 
         Companion types already picked do not count - they chose one already.
@@ -146,7 +146,7 @@ class PicksRuntime:
         if product is None:
             return None
         others = [p.commerce.subcategory for p in products if p.product_id != newest]
-        if not first_of_its_kind(product.commerce.subcategory, others, self._complements):
+        if not has_pairings(product.commerce.subcategory, self._complements):
             return None
         wanted = [
             c

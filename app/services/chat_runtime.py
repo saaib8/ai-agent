@@ -180,6 +180,10 @@ class ChatRuntime:
             choices = seating_choices(result.seating_solution)
         else:
             choices = companion_choices(result.companions, offering=offers_what_goes_with(result))
+        if not choices and result.next_step is not None:
+            # A reply never ends on a dead end: the next step's chips answer the
+            # question it closes on (CLAUDE.md 10.2).
+            choices = result.next_step.chips
         results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,
