@@ -32,6 +32,8 @@
 #   room_seats: N         the room's seating adds up to exactly N seats
 #   not_mentions: [...]   the reply mentions none of these
 #   combination_excludes: key  no combination uses this subcategory
+#   room_locked: N        the room holds exactly N locked pieces (the customer's picks)
+#   room_type_max: {type: N}  the room holds at most N of each listed type
 #
 # Product discovery (question card, picks, cross-sell, comparison):
 #   card: true|false      a question card is (not) asked before searching
@@ -49,6 +51,8 @@
 #                         searched
 #   chips_include: [...]  the chips under the reply include these labels
 #   silent_tick: true     the tick saved the pick and started no turn
+#   next_step: true       never a dead end: the reply asks a question and offers
+#                         chips (or a card) that answer it
 #   seats: N / min_seats: N  every card seats exactly N / at least N
 #   subcategory_in: [...] every card is one of these types
 #   not_subcategory: key  no card is this type
@@ -680,15 +684,56 @@ cases:
     turns: [{search: "show me sofas"}, {tick: 1}]
     checks: {not_fallback: true, offer: true, picks: 1, max_products: 0, companion_chips_min: 3, chips_include: [Center tables, Rugs, No thanks], no_follow_up: true, not_mentions: ["bought together", "customers also"]}
 
-  - id: pick_second_same_kind_silent
-    issue: "discovery: a second sofa, ticked on the earlier list, is saved silently"
+  - id: pick_second_same_kind_cross_sells
+    issue: "discovery: a second sofa is offered what goes with it, never 'shall I compare them?' (user, 2026-10-01)"
     turns: [{search: "show me sofas"}, {tick: 1}, {tick: 2}]
-    checks: {silent_tick: true, picks: 2}
+    checks: {not_fallback: true, offer: true, picks: 2, chips_include: [Rugs, No thanks], not_mentions: ["compare"]}
 
-  - id: pick_sectional_after_sofa_silent
-    issue: "discovery: a sectional after a sofa has the same companions - silent"
+  - id: pick_sectional_after_sofa_cross_sells
+    issue: "discovery: a sectional after a sofa is offered what goes with it too (user, 2026-10-01)"
     turns: [{search: "show me sofas"}, {tick: 1}, {search: "show me L-shaped sofas"}, {tick: 1}]
-    checks: {silent_tick: true, picks: 2}
+    checks: {not_fallback: true, offer: true, picks: 2, chips_include: [Rugs, No thanks], not_mentions: ["compare"]}
+
+  - id: pick_second_typed_cross_sells
+    issue: "the screenshot: a second sofa set, typed, is offered what goes with it - no fallback, no compare"
+    turns: ["skip the questions and show me sofa sets", "I'll take the first one", "I like the second one. Lets lock that"]
+    checks: {not_fallback: true, offer: true, picks: 2, next_step: true, not_mentions: ["compare", "not able to answer"]}
+
+  # ── never a dead end: every reply closes on a next step ─────────────────────
+  - id: next_step_ok_after_picks
+    issue: "'ok' after two picks is never a dead end"
+    turns: ["skip the questions and show me sofa sets", "I'll take the first one", "I like the second one. Lets lock that", "ok"]
+    checks: {not_fallback: true, next_step: true}
+
+  - id: next_step_thank_you
+    issue: "'thank you' after results closes on a next step"
+    turns: ["skip the questions and show me sofas", "thank you"]
+    checks: {not_fallback: true, next_step: true}
+
+  - id: next_step_after_removing_the_pick
+    issue: "an empty tray after a removal still offers a way on"
+    turns: ["skip the questions and show me sofas", "I'll take the first one", "actually remove it from my picks"]
+    checks: {not_fallback: true, next_step: true, picks: 0}
+
+  - id: next_step_what_have_i_chosen
+    issue: "'what have I chosen?' answers and offers what goes with it or a room"
+    turns: ["skip the questions and show me sofas", "I'll take the first one", "what have I chosen so far?"]
+    checks: {not_fallback: true, next_step: true, chips_include: [Design a room around my picks]}
+
+  - id: next_step_unpaired_pick
+    issue: "a pick with nothing paired (a floor lamp) offers a room around it, never an empty 'what goes with it'"
+    turns: ["skip the questions and show me floor lamps", "I'll take the first one"]
+    checks: {not_fallback: true, next_step: true, chips_include: [Design a room around my picks, Keep browsing]}
+
+  - id: next_step_greeting
+    issue: "a greeting asks whether they want a piece or a room"
+    turns: ["hi"]
+    checks: {not_fallback: true, next_step: true, chips_include: [Find a piece, Design a room]}
+
+  - id: next_step_after_detail
+    issue: "'tell me more' about one closes on picking it or what goes with it"
+    turns: ["skip the questions and show me center tables", "tell me more about the second one"]
+    checks: {not_fallback: true, next_step: true, chips_include: [Add it to my picks]}
 
   - id: pick_companion_chain
     issue: "discovery: a centre table picked from the offered kind is offered its own companions, not sofas"
@@ -855,3 +900,56 @@ cases:
     issue: "room chips: a bedroom goes budget -> pieces -> colour (no seats), and its colour chip builds it"
     turns: ["help me design my bedroom", {chip: "Under 10,000 SAR"}, "Choose the pieces for me", {chip: Beige}]
     checks: {not_fallback: true, room_status: complete, room_has: [bed]}
+
+  # ── a room built around the customer's picks ─────────────────────────────────
+  - id: room_around_picks_seats_five
+    issue: "picks: a 3-seater, a centre table and a 2-seater stay in the room; seats 5; no second table or third sofa"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me center tables", "I'll take the first one too", "skip the questions and show me 2 seater sofas", "add the first one as well", "build my living room around these products", "under 15000 SAR", "Choose the pieces for me", "Seating for 5 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_status: complete, room_locked: 3, room_seats: 5, room_type_max: {sofa: 2, center-table: 1}}
+
+  - id: room_around_picks_seven_people
+    issue: "picks seat 5, the room is for 7: only the 2 missing seats are added"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me center tables", "I'll take the first one too", "skip the questions and show me 2 seater sofas", "add the first one as well", "build my living room around these products", "under 20000 SAR", "Choose the pieces for me", "Seating for 7 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 3, room_seats: 7, room_type_max: {center-table: 1}}
+
+  - id: room_around_picks_asks_picked_seats
+    issue: "picks: the seats question confirms what the picked sofas seat (5), never an earlier search's 2"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me 2 seater sofas", "add the first one as well", "build my living room around these products", "under 15000 SAR", "Choose the pieces for me"]
+    checks: {not_fallback: true, first_chip: "Yes, 5"}
+
+  # ── picks: other ways of asking, and the edges ───────────────────────────────
+  - id: room_around_picks_phrase_use_chosen
+    issue: "picks: 'use what I've chosen to design my living room' keeps the sofa and table, adds no second sofa or table"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me center tables", "I'll take the first one too", "use what I've chosen to design my living room", "under 15000 SAR", "Choose the pieces for me", "Seating for 3 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 2, room_type_max: {sofa: 1, center-table: 1}}
+
+  - id: room_around_picks_phrase_with_my_picks
+    issue: "picks: 'design the living room with my picks' keeps the sofa and table, adds no second sofa or table"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me center tables", "I'll take the first one too", "design the living room with my picks", "under 15000 SAR", "Choose the pieces for me", "Seating for 3 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 2, room_type_max: {sofa: 1, center-table: 1}}
+
+  - id: room_around_picks_phrase_selected
+    issue: "picks: 'plan my living room around the pieces I've selected' keeps the sofa and table, adds no second sofa or table"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me center tables", "I'll take the first one too", "plan my living room around the pieces I've selected", "under 15000 SAR", "Choose the pieces for me", "Seating for 3 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 2, room_type_max: {sofa: 1, center-table: 1}}
+
+  - id: room_around_picks_phrase_sofa_and_table
+    issue: "picks: 'I want a living room built with the sofa and table I picked' keeps the sofa and table, adds no second sofa or table"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me center tables", "I'll take the first one too", "I want a living room built with the sofa and table I picked", "under 15000 SAR", "Choose the pieces for me", "Seating for 3 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 2, room_type_max: {sofa: 1, center-table: 1}}
+
+  - id: room_around_picks_over_budget
+    issue: "picks that cost more than the budget stay, and the reply says the budget can't hold them"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me 2 seater sofas", "add the first one as well", "build my living room around these products", "under 5000 SAR", "Choose the pieces for me", "Seating for 5 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 2, mentions: ["budget", "over", "more than"]}
+
+  - id: room_around_picks_sofa_unticked
+    issue: "picks: taking 'Sofa' off the piece list keeps the picked sofa and buys no other"
+    turns: ["skip the questions and show me 3 seater sofas", "I'll take the first one", "skip the questions and show me center tables", "I'll take the first one too", "build my living room around these products", "under 15000 SAR", "I'd like these pieces: Center table · your pick, Rug, Side table, Floor lamp", "Seating for 3 people", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 2, room_type_max: {sofa: 1, center-table: 1}}
+
+  - id: room_around_picks_bedroom
+    issue: "picks: a bedroom around a picked bed and nightstand keeps them and buys no second bed"
+    turns: ["skip the questions and show me beds", "I'll take the first one", "skip the questions and show me nightstands", "I'll take the first one too", "design my bedroom around these", "under 12000 SAR", "Choose the pieces for me", "leave the colours to you"]
+    checks: {not_fallback: true, room_locked: 2, room_type_max: {bed: 1}}
+

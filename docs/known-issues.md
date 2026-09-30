@@ -307,7 +307,21 @@ The store has 16 Grey and 2 Charcoal sofas that should have been shown.
 
 ## 3. Customer preferences are not carried across follow-up queries
 
-**Status:** Open
+**Status:** Partly done (verified live 2026-09-28).
+- Works: a liking stated about themselves ("I love modern style", "I usually
+  prefer beige") is saved as a customer preference and ranks every later
+  search, across product types. "I love modern style" -> sofas -> rugs: the
+  rug search ranked by Modern (`semantic_used: true`), all 5 cards Modern.
+- Still open: a colour or style said inside a request ("show me beige
+  sofas") belongs to that search only and is dropped when the product type
+  changes. "beige sofas" -> rugs and "beige modern sofas" -> center tables
+  both searched with nothing carried (`semantic_skip_reason:
+  no_semantic_intent`). The rug reply even said "beside a beige sofa" while
+  showing grey and mustard rugs.
+- Decision needed before fixing: style should most likely carry (modern
+  sofas -> modern table). Colour is less clear - beige sofas do not mean
+  beige rugs, and a designer may suggest contrast - so it may carry as a soft
+  lean or as the room's palette rather than the same colour.
 
 **Reported:** Preferences the customer states are not remembered in follow-up
 queries.
@@ -900,7 +914,18 @@ button handles.
 
 ## 8. The assistant does not ask how many people will sit, and does not use the answer for sofa searches
 
-**Status:** Open
+**Status:** Mostly done on `feat/agent-catalog-awareness` (2026-09-26).
+- Done, fix 1: "show me sofas" shows results, then asks how many people will
+  sit (sofas, sets, sectionals, while unknown). A stated need ("I need a sofa
+  for the living room") asks it first. Checked live 2026-09-28.
+- Done, fix 2: a living room asks the head count as one of its room
+  questions, one per turn (CLAUDE.md 10.1); a count from an earlier sofa
+  search is confirmed, never reused silently.
+- Done, fix 4: a count no single piece seats goes to seating combinations
+  (issue 4), and "a sofa for 6" is offered the sofa set that seats them.
+- Still open, fix 3: the head count is not a session-wide customer fact. A
+  count said in a search stays with that search and the room count stays with
+  the room, so a later "show me sofas" is not sized for the household.
 
 **Reported:** When designing a living room, and on a plain sofa search, the
 assistant does not ask how many people will be seated. It should, so the
@@ -936,15 +961,39 @@ answer can be used.
 
 ## 9. Replies sometimes dead-end the conversation
 
-**Status:** Partly done (2026-09-25).
+**Status:** Mostly done (2026-09-30).
 - Done: zero results. When nothing matches even after the allowed widening,
   code counts what setting each requirement aside would find (and, for a
   budget, where prices actually start), and the reply offers it as a yes/no
   next step - "Sofas here start at 990 SAR - shall I show you the most
   affordable ones?", "without the width there are 19 - want to see those?".
   The fixed zero-results fallback also names a next step now. Live 6/6.
-- Still open: the other fixed fallback sentences, the prompt rebalance ("stop
-  there" -> "always leave a next step") and quick-reply chips.
+- Done since (2026-09-26): backend quick-reply chips for the seating shape
+  question and the room's piece picker; an over-budget seating request offers
+  the closest real total ("about 3,700 - shall I show it?"); a room with a
+  missing piece names it and gives a next step.
+- Done since (2026-09-30, branch fix/room-around-picks): every reply now
+  closes on one next step, decided in code (`app/services/next_step.py`) with
+  chips: every pick - a second sofa as much as the first - is offered what goes
+  with it (cross-sell, never "shall I compare them?"); picks with nothing
+  paired offer a room around them, a detail /
+  comparison / room each offer their own next move. A reply that still ends
+  without a question gets the step's fixed question added - fixed fallback
+  sentences included. The prompts now say "always leave a next step". The
+  "I'm not able to answer that just now" reply after a second pick (the picks
+  count "2" was refused by the number check) is fixed. Live: 22/22 scenarios
+  end on a next step, twice.
+- Still open:
+  - "What goes with it" is offered only for types with reviewed pairings;
+    16 types have none yet - draft in `docs/complements-draft-v2.md`, awaiting
+    review;
+  - **"Tell me more about the second one" is a thin dead end** (found live
+    2026-09-28). The reply was only "Here it is on its own so you can take a
+    closer look and decide whether it's the right direction for your room" -
+    nothing about the product (price, size, colour, materials, how it suits
+    the room) and no question or next step. A product-detail reply should say
+    what the product is really like, from the card's verified facts, and end
+    with one useful next step (compare it, see similar ones, or check it fits).
 
 **Reported:** Sometimes the sales agent writes a message that stops the
 conversation and leaves the user at a dead end, so they have to start
@@ -1169,6 +1218,58 @@ used on this path.
 ---
 
 # Planned Features
+
+## 13. Greetings and small talk get a polite but empty reply
+
+**Status:** Open (found live 2026-09-28)
+
+**Reported:** Add greetings to the known issues.
+
+**What happens now** (store 50, live):
+
+| Customer | Reply |
+|---|---|
+| "hi" | "Hi! I'm here to help you find pieces that feel right for your home." |
+| "hello" | "Hello! What can I help you find for your home?" |
+| "salam" | "Salam! How can I help with your home today?" |
+| "good morning" | "Good morning! What can I help you with today?" |
+| "how are you?" | "I'm doing well, thanks - ready to help you find something that feels right for your home." |
+| "thanks, bye" | "You're welcome - take care!" |
+| "thank you" (after sofas were shown) | "You're welcome." |
+
+Nothing breaks, but none of these moves the sale forward:
+- **No introduction of what ZORY can do.** A first "hi" does not say it can
+  find a single piece or design a whole room, and names nothing the store
+  sells. The customer has to guess what to ask.
+- **Some replies ask nothing.** "hi" and "how are you?" end without a question
+  or a suggestion, so the customer is left to start from zero (issue 9).
+- **"Salam" is not answered in kind.** A Saudi customer expects "Wa alaykum
+  as-salam"; echoing "Salam!" reads as a bot.
+- **"Thank you" mid-search is a dead end.** After sofas were on screen, the
+  reply was only "You're welcome." - no offer to narrow, compare or look at
+  what goes with them.
+
+**Proposed fix:**
+1. **A first greeting introduces ZORY in one line and offers a starting
+   point** from what the store actually stocks (F2 source): "Hi, welcome! I
+   can help you find a single piece or design a whole room - are you looking
+   for something like a sofa, a bed, or a full living room?" Quick-reply chips
+   for the two journeys.
+2. **A greeting later in the chat** (they come back after a pause) picks up
+   where they left off: "Welcome back - still looking at the beige sofas?"
+3. **Answer greetings in kind**, including Arabic ones ("Salam" -> "Wa alaykum
+   as-salam"), without switching the reply language unless they write in
+   Arabic.
+4. **Thanks and goodbyes close warmly but leave the door open** when something
+   is on screen: "Glad to help - if you'd like, I can find a rug to go with
+   the sofa you liked."
+5. Handled by the decision and writer prompts (it is conversation, not a
+   search); no fixed sentences, so it cannot become a canned reply.
+
+**Related:** issue 9 (dead ends), issue 10 (flat tone), F2 (store-based
+suggestions).
+
+---
 
 ## F1. Select and Compare buttons on product cards
 

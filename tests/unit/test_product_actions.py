@@ -428,14 +428,15 @@ async def test_a_typed_pick_is_offered_what_goes_with_it() -> None:
     assert route.follow_up_allowed is False
 
 
-async def test_a_second_option_of_the_same_kind_is_picked_silently() -> None:
+async def test_a_second_option_of_the_same_kind_is_offered_what_goes_with_it() -> None:
+    """A second bed is cross-sold like the first - comparing is theirs to ask."""
     coordinator, _ = _coordinator(decision=_typed_pick())
     another_bed = _state(picks=(BED,), presented=(OTHER_BED, OTHER))
 
     result = await _run(coordinator, _typed(another_bed))
 
     assert result.state.product_interaction.selected_product_ids == (BED, OTHER_BED)
-    assert result.focus is None and result.companions == ()
+    assert result.focus is not None and result.companions
 
 
 async def test_a_typed_pick_of_something_with_nothing_to_go_with_it_just_answers() -> None:

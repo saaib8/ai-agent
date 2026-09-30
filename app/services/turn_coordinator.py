@@ -59,6 +59,7 @@ from app.schemas.agent_decision import (
     ProductInteractionOp,
 )
 from app.schemas.agent_state import (
+    MAX_ROOM_ANCHORS,
     MAX_SEMANTIC_INTENT_CHARS,
     ActiveSearchState,
     AgentStateV1,
@@ -242,7 +243,7 @@ from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
-from app.services.cross_sell import CompanionSearchBuilder, first_of_its_kind
+from app.services.cross_sell import CompanionSearchBuilder, has_pairings
 from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.design_facts import project_anchors
@@ -254,6 +255,7 @@ from app.services.design_revision import (
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
+from app.services.next_step import next_step
 from app.services.product_brief import ProductBriefBuilder
 from app.services.product_interaction import build_picks, interaction_update
 from app.services.proposal_mapping import MappedProposals, map_proposals
@@ -267,6 +269,7 @@ from app.services.room_composition import (
     composed_needs,
     default_pieces,
     next_question,
+    piece_for,
     seating_piece,
 )
 from app.services.screen_view import cards_from_candidates
@@ -1017,6 +1020,17 @@ class CustomerTurnCoordinator:
         self._dimensions = dimensions
 
     async def run(self, turn: CustomerTurnInput) -> CustomerTurnResult:
+        """One turn, with the next step its reply offers attached.
+
+        Decided here, after the turn, from what it produced and what the
+        customer has picked - so the reply, its chips and the final check that
+        every reply ends on a question all read one answer (CLAUDE.md 10.2).
+        """
+        result = await self._run_turn(turn)
+        step = next_step(result, self._complements)
+        return result.model_copy(update={"next_step": step}) if step is not None else result
+
+    async def _run_turn(self, turn: CustomerTurnInput) -> CustomerTurnResult:
         """One turn in, the next state and what happened out.
 
         A turn carrying a `bundle_action` is a screen-driven room edit and takes
@@ -1423,7 +1437,7 @@ class CustomerTurnCoordinator:
         """A pick they typed - "I like the third one" - offered what goes with it.
 
         The same offer a tick brings: only when the turn did nothing else, the
-        one new pick is the first of its kind, and the store stocks something
+        one new pick has pairings, and the store stocks something
         that goes with it. Otherwise the turn stands as it was.
         """
         if (
@@ -1443,10 +1457,7 @@ class CustomerTurnCoordinator:
         except _HANDLED_SEARCH_FAILURES:
             return None
         anchor = next((p for p in products if p.product_id == added[0]), None)
-        others = [p.commerce.subcategory for p in products if p.product_id != added[0]]
-        if anchor is None or not first_of_its_kind(
-            anchor.commerce.subcategory, others, self._complements
-        ):
+        if anchor is None or not has_pairings(anchor.commerce.subcategory, self._complements):
             return None
         offer = await self._offer_companions(anchor, after, turn)
         if not offer.companions:
@@ -3167,11 +3178,21 @@ class CustomerTurnCoordinator:
                 failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
             )
 
+        # "Around these" / "around my picks" is saved before the room's
+        # questions, so a budget question in between cannot lose it
+        # (CLAUDE.md 10.3).
+        state = await self._save_room_anchors(decision, state, pre_turn, turn)
+
         # A living room or a bedroom asks what it still needs first - one
         # question per turn, each once (CLAUDE.md 10.1).
         asked = await self._room_question(state, turn)
         if asked is not None:
             return asked
+
+        # The questions are done: the picks they asked to build around become
+        # locked pieces of the room, so the optimiser counts their seats, fills
+        # their slots and charges their price against the budget (CLAUDE.md 27).
+        state = _lock_saved_anchors(state)
 
         # Everything the customer ruled in or out is resolved and verified
         # before a single lock is written, so a contradiction found late cannot
@@ -3317,7 +3338,15 @@ class CustomerTurnCoordinator:
                 proposals_applied=True,
                 failure=TurnFailure(code=TurnFailureCode.DESIGN_UNAVAILABLE),
             )
-        question = next_question(room, template, capabilities, _earlier_seat_count(state, template))
+        picked_seats, covered = await self._anchor_facts(room, template, turn)
+        question = next_question(
+            room,
+            template,
+            capabilities,
+            _earlier_seat_count(state, template),
+            picked_seats=picked_seats,
+            covered=covered,
+        )
         if question is None:
             return None
         if question.kind is RoomQuestionKind.COLOUR and self._briefs is not None:
@@ -3347,6 +3376,134 @@ class CustomerTurnCoordinator:
             proposals_applied=True,
             room_question=question,
         )
+
+    async def _save_room_anchors(
+        self,
+        decision: CustomerAgentDecision,
+        state: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+    ) -> AgentStateV1:
+        """Save the products a new room is to be built around.
+
+        "Around these" or "around my picks" means every pick that belongs in
+        this kind of room - a bed is not built into a living room; a single
+        named piece ("around the second sofa") is saved the same way. Only for a
+        room the registry knows and not yet planned: a planned room already
+        takes a named piece through its own anchor path.
+
+        A catalogue that cannot be read leaves nothing saved rather than failing
+        the turn: the room is still built, only without the picks.
+        """
+        if decision.anchor_picks:
+            state = await self._room_kind_from_picks(state, pre_turn, turn)
+        room = state.room_project
+        template = self._rooms.template(room.room_kind) if self._rooms and room else None
+        if room is None or template is None or room.design_needs:
+            return state
+        wanted: list[int] = []
+        if decision.anchor_picks:
+            wanted.extend(pre_turn.product_interaction.selected_product_ids)
+        reference = decision.anchor_reference
+        if reference is not None:
+            resolved = await self._references.resolve(reference, pre_turn, turn.context)
+            if not isinstance(resolved, ReferenceUnresolved):
+                wanted.append(resolved.product_id)
+        if not wanted:
+            return state
+        ids = tuple(dict.fromkeys((*room.anchor_product_ids, *wanted)))
+        try:
+            products = await self._hydration.hydrate_ids(ids, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("room_anchors_unreadable", store_id=turn.context.store_id)
+            return state
+        belongs = {
+            product.product_id
+            for product in products
+            if piece_for(template, product.commerce.category, product.commerce.subcategory)
+            is not None
+        }
+        kept = tuple(product_id for product_id in ids if product_id in belongs)[
+            :MAX_ROOM_ANCHORS
+        ]
+        logger.info(
+            "room_anchors_saved",
+            store_id=turn.context.store_id,
+            room_kind=template.kind,
+            asked=len(ids),
+            kept=len(kept),
+        )
+        return apply_update(
+            state, AgentStateUpdate(room_project=RoomProjectUpdate(anchor_product_ids=kept))
+        )
+
+    async def _room_kind_from_picks(
+        self, state: AgentStateV1, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> AgentStateV1:
+        """The room kind, when "around my picks" did not name one but the picks do.
+
+        The decision model is asked to set the room kind; when it did not, a
+        room built around two sofas is still a living room - the only registry
+        room whose pieces hold them. Taken only when the picks point to exactly
+        one kind: an ambiguous set leaves the room as it was, never guessed.
+        """
+        room = state.room_project
+        if self._rooms is None or (room is not None and (room.room_kind or room.design_needs)):
+            return state
+        picks = pre_turn.product_interaction.selected_product_ids
+        if not picks:
+            return state
+        try:
+            products = await self._hydration.hydrate_ids(picks, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            return state
+        counts = {
+            kind: sum(
+                piece_for(template, p.commerce.category, p.commerce.subcategory) is not None
+                for p in products
+            )
+            for kind in self._rooms.kinds
+            if (template := self._rooms.template(kind)) is not None
+        }
+        best = max(counts.values(), default=0)
+        leaders = [kind for kind, count in counts.items() if count == best]
+        if best == 0 or len(leaders) != 1:
+            return state
+        logger.info("room_kind_from_picks", store_id=turn.context.store_id, room_kind=leaders[0])
+        return apply_update(
+            state, AgentStateUpdate(room_project=RoomProjectUpdate(room_kind=leaders[0]))
+        )
+
+    async def _anchor_facts(
+        self, room: RoomProjectState, template: RoomTemplate, turn: CustomerTurnInput
+    ) -> tuple[int | None, frozenset[str]]:
+        """How many the saved picks seat, and which of the room's pieces they
+        already are - read fresh, so a price or a capacity is today's.
+
+        Seats are a recorded capacity or the reviewed count for a type that
+        seats one; a seating pick whose count nobody established adds nothing,
+        so the question never claims seats that are not known.
+        """
+        if not room.anchor_product_ids:
+            return None, frozenset()
+        try:
+            products = await self._hydration.hydrate_ids(room.anchor_product_ids, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("room_anchor_facts_unreadable", store_id=turn.context.store_id)
+            return None, frozenset()
+        seats = 0
+        covered: set[str] = set()
+        for product in products:
+            commerce = product.commerce
+            piece = piece_for(template, commerce.category, commerce.subcategory)
+            if piece is None:
+                continue
+            covered.add(piece.key)
+            if piece.is_seating and self._seating is not None:
+                seats += commerce.seating_capacity or (
+                    self._seating.implied_capacity(commerce.subcategory) or 0
+                )
+        return (seats or None), frozenset(covered)
 
     def _room_seats(self, outcome: BundleOptimizationOutcome | None) -> int | None:
         """How many the room's seating really seats, counted from its pieces.
@@ -3434,12 +3591,22 @@ class CustomerTurnCoordinator:
         seating = seating_piece(template, keys, capabilities)
         budget = room.budget
 
+        # Seats a locked anchor already provides, counted once, here.
+        covered = self._locked_seating_seats(locked)
+
         def optimise(
             seats: Sequence[tuple[DesignCategoryNeed, CandidatePoolResult]],
         ) -> _ComposedRoom:
             plan, discovery = _with_seating(others, found, seats)
             outcome = self._optimizer.optimize(
-                BundleOptimizationRequest(discovery=discovery, budget=budget, locked=locked)
+                BundleOptimizationRequest(
+                    discovery=discovery,
+                    budget=budget,
+                    locked=locked,
+                    # The seating planned here is what the locked seats leave
+                    # over, so a locked sofa may not fill it too.
+                    fresh_needs=frozenset(range(len(seats))) if covered else frozenset(),
+                )
             )
             return plan, discovery, outcome
 
@@ -3453,7 +3620,6 @@ class CustomerTurnCoordinator:
         # and never buys a second sofa beside one that already seats everyone.
         # With no head count, a locked seating piece is itself the room's
         # seating, so nothing more is added (CLAUDE.md 27).
-        covered = self._locked_seating_seats(locked)
         if covered > 0 and (count is None or covered >= count):
             return optimise(())
         if count is not None:
@@ -5323,6 +5489,45 @@ def _with_subcategory(composed: ComposedSearch, subcategory: str | None) -> Comp
                 }
             ),
         }
+    )
+
+
+def _lock_saved_anchors(state: AgentStateV1) -> AgentStateV1:
+    """The saved picks as locked lines of the room, in one step, then cleared.
+
+    A pick already in the room is locked where it is; any other is added as one
+    unit to buy. Nothing about quantity or ownership is assumed beyond that -
+    those are things only the customer can say (CLAUDE.md 3.3).
+    """
+    room = state.room_project
+    if room is None or not room.anchor_product_ids:
+        return state
+    existing = {line.product_id: line for line in room.bundle_items}
+    operations: list[BundleOperation] = []
+    for product_id in room.anchor_product_ids:
+        line = existing.get(product_id)
+        if line is not None:
+            operations.append(
+                SetBundleLineStatus(line_id=line.line_id, status=BundleItemStatus.LOCKED)
+            )
+        else:
+            operations.append(
+                AddBundleLine(
+                    line=BundleLineSpec(
+                        product_id=product_id,
+                        quantity=1,
+                        acquisition=BundleAcquisition.TO_BUY,
+                        status=BundleItemStatus.LOCKED,
+                    )
+                )
+            )
+    return apply_update(
+        state,
+        AgentStateUpdate(
+            room_project=RoomProjectUpdate(
+                bundle_operations=tuple(operations), anchor_product_ids=()
+            )
+        ),
     )
 
 

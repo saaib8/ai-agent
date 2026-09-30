@@ -42,11 +42,13 @@ from app.prompts.customer_commerce.response_v1 import (
     build_instructions,
 )
 from app.schemas.agent_turn import (
+    MAX_RESPONSE_CHARS,
     CustomerResponse,
     CustomerTurnInput,
     CustomerTurnResult,
 )
 from app.schemas.conversation import ConversationRole
+from app.schemas.next_step import ANY_NEXT_STEP
 from app.schemas.response import (
     DeterministicResponse,
     DeterministicResponseKind,
@@ -56,11 +58,14 @@ from app.schemas.response import (
     ResponseRoute,
     ResponseViolation,
 )
+from app.services.next_step import already_asks
 from app.services.numeric_guard import (
     build_allowance,
     bundle_counts,
     bundle_stretch_figures,
     guidance_figures,
+    picks_counts,
+    picks_figures,
     screen_figures,
     seating_counts,
     seating_figures,
@@ -83,6 +88,33 @@ from app.services.response_wording import (
 )
 
 logger = get_logger(__name__)
+
+
+def _ends_on_a_question(response: CustomerResponse, result: CustomerTurnResult) -> CustomerResponse:
+    """Never a dead end: every reply leaves the customer a question to answer.
+
+    The reply model is asked to close on the turn's next step; when it did not
+    - or the reply is a fixed sentence (a failure, a fallback) - the next step's
+    own question is added, and failing that a plain "what next?". Digit-free,
+    so nothing added here can trip the number check (CLAUDE.md 10.2).
+    """
+    if "?" in response.message or (
+        response.follow_up_question is not None and "?" in response.follow_up_question
+    ):
+        return response
+    # A turn with its own question - a question card, a room question, cards of
+    # what goes with a pick - already leaves them something to answer on screen.
+    if already_asks(result):
+        return response
+    question = result.next_step.question if result.next_step is not None else ANY_NEXT_STEP
+    message = f"{response.message.rstrip()} {question}"
+    if len(message) > MAX_RESPONSE_CHARS:
+        return response
+    logger.info(
+        "reply_question_added",
+        next_step=str(result.next_step.kind) if result.next_step else None,
+    )
+    return response.model_copy(update={"message": message})
 
 
 def _asked_once(response: CustomerResponse) -> CustomerResponse:
@@ -129,6 +161,7 @@ def _their_own_words(turn: CustomerTurnInput) -> tuple[str, ...]:
         if message.role is ConversationRole.USER
     )
 
+
 _HANDLED_PROVIDER_FAILURES = (
     IntegrationUnavailableError,
     LLMRequestError,
@@ -164,7 +197,7 @@ class CustomerResponseGenerator:
         route = route_response(result)
 
         response, calls, used_fallback = await self._primary_response(turn, result, route)
-        final = self._with_side_notice(_asked_once(response), route)
+        final = _ends_on_a_question(self._with_side_notice(_asked_once(response), route), result)
 
         self._log(route, calls, used_fallback, started)
         return final
@@ -273,12 +306,19 @@ class CustomerResponseGenerator:
                 # What each requirement set aside would find, when nothing met
                 # them all - counted by the application, so sayable.
                 *(option.eligible_count for option in view.would_find_without),
+                # How many picks they have, and how many of the newest pick's
+                # kind - the tray shows them, so "your 2 sofa sets" is a count
+                # they can read, not one we invented (CLAUDE.md 10.2).
+                *picks_counts(result.picks),
             ),
             # Figures the customer can read off the cards beside the reply.
             # Repeating one is reporting what is on screen; the guard still
             # refuses anything that had to be computed (CLAUDE.md 14).
             figures=(
                 *screen_figures(view.screen),
+                # The picks tray is on screen too: their prices and the numbers
+                # in their names ("6 Seater") are theirs to read and ours to say.
+                *picks_figures(result.picks),
                 # The lowest real total of each shape a seating question offers.
                 *(seating_figures(view.seating) if view.seating else ()),
                 # The lowest real total that would fill a piece the budget
@@ -325,9 +365,7 @@ class CustomerResponseGenerator:
         )
         response, calls = await self._call_and_validate(
             request,
-            allowance=build_allowance(
-                turn.message, said_earlier=_their_own_words(turn)
-            ),
+            allowance=build_allowance(turn.message, said_earlier=_their_own_words(turn)),
             # Nothing is grounded on this branch, so nothing may be cited.
             refs=frozenset(),
         )
@@ -474,6 +512,8 @@ def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
             n
             for n in (
                 question.earlier_seat_count,
+                question.picked_seat_count,
+                question.picked_pieces,
                 question.pieces_offered,
                 question.pieces_preselected,
             )

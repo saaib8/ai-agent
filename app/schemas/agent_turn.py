@@ -38,6 +38,7 @@ from app.schemas.grounding import (
     SelectionGrounding,
     TurnFailure,
 )
+from app.schemas.next_step import NextStep
 from app.schemas.picks import PickView
 from app.schemas.product_action import CompanionOffer, ProductActionRequest
 from app.schemas.product_brief import ProductBrief
@@ -393,6 +394,11 @@ class CustomerTurnResult(BaseModel):
 
     companions: tuple[CompanionOffer, ...] = ()
     """Other types that go with the product in focus, offered as chips."""
+
+    next_step: NextStep | None = None
+    """The one next step this turn's reply offers, with its chips, when the turn
+    asks nothing of its own - so the conversation never dead-ends. Set by the
+    coordinator after the turn (CLAUDE.md 10.2)."""
 
     product_brief: ProductBrief | None = None
     """A card of questions for a product search - first, before anything is

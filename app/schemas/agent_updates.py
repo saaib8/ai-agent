@@ -433,6 +433,10 @@ class RoomProjectUpdate(BaseModel):
     palette_left_to_us: bool = False
     """They answered the colour question by leaving it to us ("any colour")."""
 
+    anchor_product_ids: tuple[int, ...] | None = None
+    """Application-only: the picks to build the room around, replacing any saved
+    before. `()` clears them once they are locked into the room."""
+
     bundle_operations: tuple[BundleOperation, ...] = ()
     """Changes to the room bundle, applied in order.
 

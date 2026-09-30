@@ -72,6 +72,14 @@ class BundleOptimizationRequest(BaseModel):
     budget: PriceConstraint | None = None
     locked: tuple[LockedBundleProduct, ...] = ()
 
+    fresh_needs: frozenset[int] = frozenset()
+    """Needs, by index, that only a new product may fill - never a locked one.
+
+    For seats added *beyond* what locked seating already provides: those locked
+    seats were counted before these needs were planned, so letting a locked
+    two-seater fill a "two more seats" need would count its seats twice and add
+    nobody's chair (CLAUDE.md 27)."""
+
 
 class UnmetReason(StrEnum):
     """Why a need did not get its full quantity. Reasons, never prose."""

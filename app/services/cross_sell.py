@@ -23,15 +23,15 @@ search. Executing it belongs to the pipeline.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Final
 
 from app.core.logging import get_logger
-from app.schemas.chat import ReplyChoice
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.product import ProductCandidate
 from app.schemas.product_action import CompanionAction, CompanionOffer
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
+from app.schemas.reply_choice import ReplyChoice
 from app.services.similar_search import leanings_of
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.complements import Companion, Complements
@@ -104,17 +104,11 @@ def companion_choices(
     return chips
 
 
-def first_of_its_kind(
-    subcategory: str | None, others: Iterable[str | None], complements: Complements
-) -> bool:
-    """Whether a pick is a new piece of the room rather than another option.
+def has_pairings(subcategory: str | None, complements: Complements) -> bool:
+    """Whether anything reviewed goes with a pick of this type.
 
-    "Its kind" is what goes with it rather than its exact type: a sectional
-    picked after a sofa has the same companions, so it is a second option
-    being weighed, not a new piece. A type with no pairings has nothing to go
-    with it at all.
+    Every such pick is offered what goes with it - a second sofa as much as the
+    first: another option of the same kind is still a moment to cross-sell, and
+    kinds they already picked are left out of the offer anyway.
     """
-    companions = complements.for_type(subcategory)
-    return bool(companions) and not any(
-        complements.for_type(other) == companions for other in others if other
-    )
+    return bool(complements.for_type(subcategory))

@@ -26,8 +26,8 @@ from app.schemas.bundle_action import (
     SwapDismissAction,
     SwapKeepOriginalAction,
 )
-from app.schemas.chat import ReplyChoice
 from app.schemas.discovery import PriceConstraint
+from app.schemas.reply_choice import ReplyChoice
 from app.services.room_presentation import swap_offer_choices
 from app.services.turn_coordinator import _bundle_action_decision, _over_budget
 from pydantic import TypeAdapter, ValidationError

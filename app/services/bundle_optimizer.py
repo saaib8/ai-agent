@@ -348,6 +348,8 @@ def _allocate_locks(
     covered: dict[int, int] = {}
 
     for entry in request.discovery.needs:
+        if entry.need_index in request.fresh_needs:
+            continue
         wanted = entry.need.quantity
         for position, lock in enumerate(locks):
             if wanted == 0:

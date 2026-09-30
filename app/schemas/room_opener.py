@@ -40,6 +40,8 @@ class RoomPieceOffer(BaseModel):
     label: str = Field(min_length=1, max_length=40)
     tier: PieceTier
     selected: bool
+    picked: bool = False
+    """Already one of their picks: the room keeps it rather than buying another."""
 
 
 class RoomQuestion(BaseModel):
@@ -55,6 +57,12 @@ class RoomQuestion(BaseModel):
     used for the room unasked: the question confirms it ("is it for the nine
     you mentioned?")."""
 
+    picked_seat_count: int | None = Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT)
+    """How many the sofas and chairs they picked for this room seat together -
+    counted from the products, not from anything they said. The seats question
+    then confirms it ("your two sofas seat 5 - is that everyone?") instead of a
+    head count from an earlier search, which it replaces."""
+
     pieces: tuple[RoomPieceOffer, ...] = ()
 
     colours: tuple[str, ...] = ()
@@ -68,6 +76,10 @@ class RoomQuestion(BaseModel):
             raise ValueError("pieces are offered exactly when they are asked for")
         if self.earlier_seat_count is not None and self.kind is not RoomQuestionKind.SEATS:
             raise ValueError("an earlier head count is confirmed only when seats are asked")
+        if self.picked_seat_count is not None and self.kind is not RoomQuestionKind.SEATS:
+            raise ValueError("the picks' seats are confirmed only when seats are asked")
+        if self.picked_seat_count is not None and self.earlier_seat_count is not None:
+            raise ValueError("the picks' seats replace an earlier head count, never join it")
         if self.colours and self.kind is not RoomQuestionKind.COLOUR:
             raise ValueError("colours are offered only for a colour question")
         return self

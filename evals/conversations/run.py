@@ -226,6 +226,18 @@ def _check(
         present = {(i.get("commerce") or {}).get("subcategory") for i in turn.room.get("items", [])}
         if not set(kinds) <= present:
             failures.append(f"room holds {sorted(map(str, present))}, missing some of {kinds}")
+    if (locked := checks.get("room_locked")) is not None:
+        count = sum(1 for i in turn.room.get("items", []) if i.get("locked"))
+        if count != locked:
+            failures.append(f"room has {count} locked pieces, expected {locked}")
+    if limits := checks.get("room_type_max"):
+        present: dict[str, int] = {}
+        for i in turn.room.get("items", []):
+            kind = str((i.get("commerce") or {}).get("subcategory"))
+            present[kind] = present.get(kind, 0) + int(i.get("quantity", 1))
+        over = {k: present.get(k, 0) for k, n in limits.items() if present.get(k, 0) > n}
+        if over:
+            failures.append(f"room has too many of {over}, limits {limits}")
     if seats := checks.get("room_seats"):
         items = turn.room.get("items", [])
         total = sum(
@@ -335,6 +347,10 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
         wanted = checks.get("popup_columns", 2)
         if turn.kind != "comparison" or len(columns) != wanted or not turn.body.get("message"):
             failures.append(f"no pop-up comparison of {wanted} products with a take")
+    if checks.get("next_step"):
+        choices = turn.presentation.get("choices") or []
+        if "?" not in turn.message or not (choices or brief):
+            failures.append("dead end: the reply does not close on a question with chips")
     if checks.get("no_follow_up") and turn.follow_up:
         failures.append(f"an extra question: {turn.follow_up!r}")
     if (want := checks.get("offer")) is not None:

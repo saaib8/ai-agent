@@ -17,7 +17,8 @@ from app.schemas.bundle_action import (
     SwapDeclineAction,
     SwapKeepOriginalAction,
 )
-from app.schemas.chat import PieceChoice, PiecePicker, ReplyChoice
+from app.schemas.chat import PieceChoice, PiecePicker
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.room_opener import RoomQuestion, RoomQuestionKind
 from app.taxonomy.rooms import PieceTier
 
@@ -93,6 +94,8 @@ def room_answer_choices(question: RoomQuestion) -> tuple[ReplyChoice, ...]:
         case RoomQuestionKind.PIECES:
             return ()
         case RoomQuestionKind.SEATS:
+            if question.picked_seat_count is not None:
+                return _picked_seat_choices(question.picked_seat_count)
             return _seat_choices(question.earlier_seat_count)
         case RoomQuestionKind.BUDGET:
             return _ROOM_BUDGET_BANDS
@@ -111,6 +114,21 @@ def _seat_choices(earlier: int | None) -> tuple[ReplyChoice, ...]:
             chips.append(ReplyChoice(label=f"{count} people", value=f"Seating for {count} people"))
     chips.append(ReplyChoice(label="6+ people", value="Seating for 6 or more people"))
     return tuple(chips)
+
+
+def _picked_seat_choices(picked: int) -> tuple[ReplyChoice, ...]:
+    """Their picks already seat `picked`: a tap confirms that is everyone, or
+    says how many more - never fewer, since the sofas they chose stay."""
+    return (
+        ReplyChoice(label=f"Yes, {picked}", value=f"Seating for {picked} people"),
+        *(
+            ReplyChoice(label=f"{count} people", value=f"Seating for {count} people")
+            for count in (picked + 1, picked + 2)
+        ),
+        ReplyChoice(
+            label=f"{picked + 3}+ people", value=f"Seating for {picked + 3} or more people"
+        ),
+    )
 
 
 def _colour_choices(colours: tuple[str, ...]) -> tuple[ReplyChoice, ...]:

@@ -864,6 +864,12 @@ class CustomerAgentDecision(BaseModel):
     an order, and nothing establishes one.
     """
 
+    anchor_picks: bool = False
+    """They asked to build the room around the products they have picked -
+    "around these", "around my picks", "with what I've chosen". For
+    `DESIGN_HANDOFF` only. A flag, never the products: which picks belong in the
+    room is the application's to work out from the picks it recorded."""
+
     design_anchor: DesignAnchorIntent | None = None
     """The piece a room is to be designed around, for `DESIGN_HANDOFF` only.
 
