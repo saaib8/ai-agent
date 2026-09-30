@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Oakline Home — furniture for rooms you live in</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2317191c'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='17' font-weight='700' fill='white' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #17191c;
+        --muted: #6a717b;
+        --line: #e4e7eb;
+        --soft: #f3f4f6;
+        --accent: #3e8da8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 16px/1.6 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        color: var(--ink);
+        background: #fff;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: inherit;
+      }
+      .wrap {
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 0 32px;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: rgba(255, 255, 255, 0.94);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line);
+      }
+      header .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 72px;
+      }
+      .logo {
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        text-decoration: none;
+      }
+      nav {
+        display: flex;
+        gap: 30px;
+        font-size: 14.5px;
+        color: #4b525b;
+      }
+      nav a {
+        text-decoration: none;
+      }
+      nav a:hover {
+        color: var(--ink);
+      }
+      .by {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1fr 1.05fr;
+        gap: 56px;
+        align-items: center;
+        padding: 64px 0 72px;
+      }
+      .eyebrow {
+        font-size: 11.5px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      h1 {
+        margin: 14px 0 18px;
+        font-size: clamp(40px, 5vw, 60px);
+        font-weight: 500;
+        line-height: 1.04;
+        letter-spacing: -0.025em;
+      }
+      .lede {
+        margin: 0 0 30px;
+        max-width: 38ch;
+        font-size: 17px;
+        color: var(--muted);
+      }
+      .cta {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        height: 48px;
+        padding: 0 22px;
+        border-radius: 12px;
+        border: 1px solid var(--ink);
+        background: var(--ink);
+        color: #fff;
+        font: 600 15px 'DM Sans', sans-serif;
+        cursor: pointer;
+      }
+      .btn.ghost {
+        background: var(--soft);
+        border-color: var(--line);
+        color: var(--ink);
+      }
+      .hero-img {
+        aspect-ratio: 4 / 4.2;
+        border-radius: 18px;
+        background: #e7e3dd center / cover no-repeat;
+      }
+      h2 {
+        margin: 0 0 24px;
+        font-size: 30px;
+        font-weight: 500;
+        letter-spacing: -0.015em;
+      }
+      .products {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        padding-bottom: 72px;
+      }
+      .product {
+        text-align: left;
+      }
+      .product .img {
+        aspect-ratio: 4 / 5;
+        border-radius: 14px;
+        background: #ece9e4 center / cover no-repeat;
+        margin-bottom: 12px;
+      }
+      .product h3 {
+        margin: 0;
+        font-size: 15.5px;
+        font-weight: 600;
+      }
+      .product p {
+        margin: 2px 0 10px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .ask {
+        padding: 0;
+        border: 0;
+        background: none;
+        font: 600 13.5px 'DM Sans', sans-serif;
+        color: var(--accent);
+        cursor: pointer;
+      }
+      .ask:hover {
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .install {
+        margin: 0 0 80px;
+        padding: 40px;
+        border-radius: 20px;
+        background: #f6f7f9;
+        border: 1px solid var(--line);
+      }
+      .install h2 {
+        margin-bottom: 8px;
+      }
+      .install p {
+        margin: 0 0 20px;
+        color: var(--muted);
+        max-width: 70ch;
+      }
+      pre {
+        margin: 0;
+        padding: 20px 22px;
+        border-radius: 14px;
+        background: #17191c;
+        color: #e8ebef;
+        font: 13.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow-x: auto;
+      }
+      pre .k {
+        color: #8fc7da;
+      }
+      pre .v {
+        color: #f2c98f;
+      }
+      .api {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 18px;
+      }
+      .api button {
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fff;
+        font: 500 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+        cursor: pointer;
+      }
+      .api button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 28px 0 110px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      footer .wrap {
+        display: flex;
+        justify-content: space-between;
+      }
+      @media (max-width: 860px) {
+        nav {
+          display: none;
+        }
+        .hero {
+          grid-template-columns: 1fr;
+          gap: 32px;
+          padding-top: 40px;
+        }
+        .products {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .install {
+          padding: 24px;
+        }
+        .wrap {
+          padding: 0 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <a class="logo" href="/">OAKLINE</a>
+        <nav aria-label="Shop">
+          <a href="#pieces">Living</a>
+          <a href="#pieces">Bedroom</a>
+          <a href="#pieces">Dining</a>
+          <a href="#pieces">Our collection</a>
+        </nav>
+        <span class="by">Shopping with ZORY</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="wrap hero">
+        <div>
+          <div class="eyebrow">Considered pieces. Everyday living.</div>
+          <h1>A home that<br />feels like you.</h1>
+          <p class="lede">Thoughtful furniture for the moments that make a house your home.</p>
+          <div class="cta">
+            <button class="btn" onclick="ZoryAgent.open('catalog')">Explore furniture</button>
+            <button class="btn ghost" onclick="ZoryAgent.open('room-planner')">Find my style</button>
+          </div>
+        </div>
+        <div
+          class="hero-img"
+          role="img"
+          aria-label="A calm bedroom with a dark upholstered bed"
+          style="background-image: url('https://images.unsplash.com/photo-1586105251261-72a756497a11?w=1400&auto=format&fit=crop')"
+        ></div>
+      </section>
+
+      <section class="wrap" id="pieces">
+        <h2>Pieces to make your own.</h2>
+        <div class="products">
+          <article class="product">
+            <div class="img" style="background-image: url('https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=700&auto=format&fit=crop')"></div>
+            <h3>Hana three-seat sofa</h3>
+            <p>SAR 3,850</p>
+            <button class="ask" onclick="ZoryAgent.ask('Show me green three-seat sofas')">Ask Nora about sofas →</button>
+          </article>
+          <article class="product">
+            <div class="img" style="background-image: url('https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=700&auto=format&fit=crop')"></div>
+            <h3>Nura accent chair</h3>
+            <p>SAR 1,290</p>
+            <button class="ask" onclick="ZoryAgent.ask('Show me yellow accent chairs')">Ask Nora about chairs →</button>
+          </article>
+          <article class="product">
+            <div class="img" style="background-image: url('https://images.unsplash.com/photo-1532372576444-dda954194ad0?w=700&auto=format&fit=crop')"></div>
+            <h3>Basit coffee table</h3>
+            <p>SAR 950</p>
+            <button class="ask" onclick="ZoryAgent.ask('Show me round coffee tables under 1,500 SAR')">Ask Nora about tables →</button>
+          </article>
+          <article class="product">
+            <div class="img" style="background-image: url('https://images.unsplash.com/photo-1540518614846-7eded433c457?w=700&auto=format&fit=crop')"></div>
+            <h3>Zaid king bed</h3>
+            <p>SAR 4,100</p>
+            <button class="ask" onclick="ZoryAgent.ask('Show me king beds')">Ask Nora about beds →</button>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap">
+        <div class="install">
+          <div class="eyebrow">For store owners</div>
+          <h2>Add Nora to your store with one line.</h2>
+          <p>
+            Paste this before <code>&lt;/body&gt;</code>. The assistant answers from your own catalogue — prices,
+            sizes and stock come from your store, never from the AI. This page installs it with exactly this snippet.
+          </p>
+<pre><code>&lt;<span class="k">script</span>
+  <span class="k">src</span>=<span class="v">"http://localhost:3000/embed.js"</span>
+  <span class="k">data-api</span>=<span class="v">"https://stage.ai-agent.zory.ai"</span>
+  <span class="k">data-store-id</span>=<span class="v">"50"</span>
+  <span class="k">data-store-name</span>=<span class="v">"Oakline"</span>
+  <span class="k">data-assistant-name</span>=<span class="v">"Nora"</span>
+  <span class="k">async</span>
+&gt;&lt;/<span class="k">script</span>&gt;</code></pre>
+          <div class="api" aria-label="Try the page API">
+            <button onclick="ZoryAgent.open()">ZoryAgent.open()</button>
+            <button onclick="ZoryAgent.open('room-planner')">open('room-planner')</button>
+            <button onclick="ZoryAgent.open('photo')">open('photo')</button>
+            <button onclick="ZoryAgent.ask('I need a sofa for 4 people under 5000 SAR')">ask('I need a sofa…')</button>
+            <button onclick="ZoryAgent.close()">ZoryAgent.close()</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>Oakline Home · a demo store for the ZORY shopping assistant</span>
+        <span>Powered by ZORY AI</span>
+      </div>
+    </footer>
+
+    <!-- Calls made before the loader arrives are queued and replayed. -->
+    <script>
+      window.ZoryAgent = window.ZoryAgent || { q: [] }
+      ;['open', 'ask', 'close', 'toggle', 'on'].forEach(function (name) {
+        if (!window.ZoryAgent[name]) {
+          window.ZoryAgent[name] = function () {
+            window.ZoryAgent.q.push([name].concat([].slice.call(arguments)))
+          }
+        }
+      })
+    </script>
+
+    <!-- The ZORY shopping assistant — the snippet a store pastes.
+         The widget comes from localhost:3000 (the one local origin the
+         deployed stage API allows in CORS); every /v1 call goes straight to
+         the deployed API named in data-api. -->
+    <script
+      src="http://localhost:3000/embed.js"
+      data-api="https://stage.ai-agent.zory.ai"
+      data-store-id="50"
+      data-store-name="Oakline"
+      data-assistant-name="Nora"
+      async
+    ></script>
+  </body>
+</html>

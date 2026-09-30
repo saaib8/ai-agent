@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -12,6 +13,17 @@ const target = process.env.VITE_PROXY_TARGET ?? 'http://localhost:8000'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Two pages from one build: the console at / and the embeddable shopping
+  // widget at /widget/ (its loader, public/embed.js, is copied as-is). Both are
+  // served same-origin with /v1, so the widget needs no CORS either.
+  build: {
+    rollupOptions: {
+      input: {
+        console: fileURLToPath(new URL('./index.html', import.meta.url)),
+        widget: fileURLToPath(new URL('./widget/index.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     port: 3000,
     // If 3000 is taken, Vite picks the next free port — the proxy still works,

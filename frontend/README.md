@@ -88,3 +88,61 @@ Notes for maintainers:
   wire.
 - Quick-reply chips are derived client-side from the agent's free-text question
   (`lib/quickReplies.ts`), since the backend returns no structured options.
+
+## Embeddable shopping widget
+
+The same build also ships an assistant that stores embed on their own pages:
+a launcher ("Ask Nora") drawn by `public/embed.js`, opening an iframe onto
+`/widget/` (entry `widget/index.html`, code in `src/widget/`). It talks to the
+same `/v1` API through the same client (`src/api/client.ts`), so on the
+deployed host it is served same-origin with the API and needs no CORS.
+
+A store installs it with one tag:
+
+```html
+<script
+  src="https://stage.ai-agent.zory.ai/embed.js"
+  data-store-id="50"
+  data-store-name="Oakline"
+  async
+></script>
+```
+
+| attribute | default | |
+| --- | --- | --- |
+| `data-store-id` | *required* | the ZORY store whose catalogue it sells from |
+| `data-store-name` | `store` | "Your Oakline assistant" |
+| `data-assistant-name` | `Nora` | launcher and header name |
+| `data-accent` | `#3e8da8` | brand colour (hex) |
+| `data-avatar` | monogram | https URL of the assistant's picture |
+| `data-position` | `right` | or `left` |
+| `data-greeting` | "A little help with your home?" | teaser beside the launcher; `off` hides it |
+| `data-open` | `false` | open on page load |
+| `data-origin` | the script's origin | where `/widget/` is hosted |
+| `data-api` | the widget's own host | where `/v1` is, e.g. `https://stage.ai-agent.zory.ai`; that API must allow the widget's origin in CORS (`ZORY_API__CORS_ORIGINS`) |
+
+The page can drive it: `ZoryAgent.open(tool?)` (`room-planner`, `budget`,
+`catalog`, `photo`, `visualize`, `compare`, `advice`, `room-context`, `basket`,
+`chat`), `ZoryAgent.ask(message)`, `close()`, `toggle()`, `isOpen()` and
+`on('open' | 'close' | 'basket:updated', fn)`. Calls made before the loader
+arrives can be queued with `window.ZoryAgent = { q: [] }` stubs (see
+`../widget-demo/index.html`).
+
+What the panel does, each through the real API: chat (`/v1/chat`), question
+cards, product cards with add-to-basket and compare (`/v1/picks`, product
+actions), room plans with swaps and renders (`/v1/visualizations`), catalogue
+browse (`/v1/catalog/*`) and search by photo (`/v1/furniture-finder/*`). The
+thread is kept in the widget origin's localStorage for 55 minutes (renders are
+not), so it survives the shopper moving between product pages.
+
+Try it against the deployed stage API with the demo store. The demo's snippet
+sets `data-api="https://stage.ai-agent.zory.ai"`, so the widget calls the
+deployed API directly; stage's CORS allowlist has `http://localhost:3000`, which
+is why the widget must run on exactly that port:
+
+```bash
+npm run dev -- --port 3000 --strictPort
+node ../widget-demo/server.js      # http://localhost:5600
+```
+
+`/widget/?store=50` can also be opened on its own to work on the panel.
