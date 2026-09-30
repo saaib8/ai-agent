@@ -106,6 +106,12 @@ class ResponseOutcomeKind(StrEnum):
     reply before anything is searched (CLAUDE.md 10.4). The card asks; the
     reply only introduces it."""
 
+    GOES_WITH_OFFER = "goes_with_offer"
+    """They picked a piece, and the kinds that go well with it are offered as
+    chips beneath its card. Nothing was searched: the reply asks whether
+    they would like anything to go with it, and a tap shows that kind
+    (CLAUDE.md 10.4)."""
+
     SELECTION = "selection"
     """The customer's own choices, shown again.
 
@@ -589,12 +595,17 @@ class ResponseGroundingView(BaseModel):
 
     picked_kind: str | None = None
     """The kind of pick they just chose - "bed" - whose card is shown above
-    the pieces that go with it.
+    the kinds that go with it.
 
     The kind, never the product: its facts are on its card, not in the reply.
     Without it the reply saw a customer asking about a product it had no facts
     for, and said so - beside the card that answered them.
     """
+
+    goes_well_with: tuple[str, ...] = ()
+    """The kinds offered as chips beneath their pick - "nightstands", "rugs" -
+    for `GOES_WITH_OFFER` and nothing else. Offered, not searched: nothing
+    about them is known beyond the store stocking them."""
 
     best_match_first: bool = False
     """The cards are ordered by how well they match what the customer
@@ -754,6 +765,9 @@ class ResponseGroundingView(BaseModel):
             ResponseOutcomeKind.SEARCH_RESULTS,
         ):
             raise ValueError("a card of questions is shown only first or beside results")
+
+        if (self.kind is ResponseOutcomeKind.GOES_WITH_OFFER) != bool(self.goes_well_with):
+            raise ValueError("an offer of what goes with a pick names the kinds, and only it does")
 
         if self.best_match_first and self.kind is not ResponseOutcomeKind.SEARCH_RESULTS:
             raise ValueError("only results on screen have a best match")

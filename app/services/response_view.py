@@ -48,6 +48,7 @@ from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import CustomerVisibleScreenView
 from app.schemas.seating_solution import SeatingSolution, SeatingSolutionOutcome
 from app.services.bundle_presentation import build_bundle_presentation
+from app.services.cross_sell import MAX_COMPANION_CHIPS
 from app.services.screen_view import screen_from_presentation
 from app.taxonomy.attributes import AttributeFamily
 
@@ -83,6 +84,7 @@ def route_response(result: CustomerTurnResult) -> ResponseRoute:
             grounding.follow_up_policy is FollowUpPolicy.OPTIONAL
             and required is None
             and result.product_brief is None
+            and not offers_what_goes_with(result)
         ),
     )
 
@@ -214,6 +216,16 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         return DeterministicResponse(
             kind=DeterministicResponseKind.HANDLED_FAILURE,
             failure_code=grounding.failure.code,
+        )
+
+    if offers_what_goes_with(result):
+        # Their pick, with the kinds that go with it as chips: the offer is
+        # the turn's question, and nothing was searched (CLAUDE.md 10.4).
+        return _view(
+            ResponseOutcomeKind.GOES_WITH_OFFER,
+            None,
+            result=result,
+            goes_well_with=tuple(offer.label for offer in result.companions[:MAX_COMPANION_CHIPS]),
         )
 
     if grounding.design_guidance:
@@ -652,6 +664,19 @@ def _screen(result: CustomerTurnResult | None) -> CustomerVisibleScreenView:
         products=products,
         comparison=grounding.comparison,
         room=build_bundle_presentation(result),
+    )
+
+
+def offers_what_goes_with(result: CustomerTurnResult) -> bool:
+    """Whether this turn offers the kinds that go with a pick, searching none.
+
+    One reader for the route, the chips and the follow-up rule, so the reply
+    and the screen agree on what the turn is.
+    """
+    return (
+        result.focus is not None
+        and bool(result.companions)
+        and result.grounding.search is None
     )
 
 

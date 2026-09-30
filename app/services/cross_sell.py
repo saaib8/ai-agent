@@ -1,6 +1,8 @@
-"""Searches for the pieces that go with a product the customer asked about.
+"""What goes with a product the customer picked: the offer, and its searches.
 
-"These nightstands go with that bed" is a search for nightstands, leaning
+Picking a bed is offered what goes well with it - nightstands, wardrobes,
+rugs - as chips; nothing is searched until they tap one. "Nightstands to go
+with that bed" is then a search for nightstands, leaning
 towards the bed's own styles - built from reviewed catalog facts about the
 bed, exactly as a similar-product search is (CLAUDE.md 6.1). Which
 types go with which comes from the reviewed pairings, never from a model; which
@@ -21,7 +23,7 @@ search. Executing it belongs to the pipeline.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Final
 
 from app.core.logging import get_logger
@@ -32,13 +34,16 @@ from app.schemas.product_action import CompanionAction, CompanionOffer
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
 from app.services.similar_search import leanings_of
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.complements import Companion
+from app.taxonomy.complements import Companion, Complements
 
 logger = get_logger(__name__)
 
 MAX_COMPANION_CHIPS: Final[int] = 4
-"""A row of chips, not a menu. The pairings are in design order, so the ones
-left off are the least worth offering."""
+"""A row of chips, not a menu. The chips lead with the kinds the store has
+most of, so the ones left off are the least stocked."""
+
+NO_THANKS: Final[str] = "No thanks"
+"""Turning down what goes with a pick, beside the kinds offered."""
 
 
 class CompanionSearchBuilder:
@@ -76,18 +81,40 @@ class CompanionSearchBuilder:
         )
 
 
-def companion_choices(companions: Sequence[CompanionOffer]) -> tuple[ReplyChoice, ...]:
-    """The other companions of the product in focus, as chips.
+def companion_choices(
+    companions: Sequence[CompanionOffer], *, offering: bool = False
+) -> tuple[ReplyChoice, ...]:
+    """The companions of the product in focus, as chips.
 
-    Each chip carries the action it performs, so tapping "Matching rugs" runs
-    that search for the focused product directly; `value` is the words
-    recorded for the customer's side of the turn.
+    Each chip carries the action it performs, so tapping "Rugs" runs that
+    search for the focused product directly; `value` is the words recorded
+    for the customer's side of the turn. When the chips are the offer itself
+    - their pick on screen, nothing searched - they can also say no.
     """
-    return tuple(
+    chips = tuple(
         ReplyChoice(
-            label=f"Matching {offer.label}",
-            value=f"Show me matching {offer.label}",
+            label=offer.label[:1].upper() + offer.label[1:],
+            value=f"Show me {offer.label} to go with it",
             product_action=CompanionAction(category=offer.category, subcategory=offer.subcategory),
         )
         for offer in companions[:MAX_COMPANION_CHIPS]
+    )
+    if offering and chips:
+        return (*chips, ReplyChoice(label="No thanks", value=NO_THANKS))
+    return chips
+
+
+def first_of_its_kind(
+    subcategory: str | None, others: Iterable[str | None], complements: Complements
+) -> bool:
+    """Whether a pick is a new piece of the room rather than another option.
+
+    "Its kind" is what goes with it rather than its exact type: a sectional
+    picked after a sofa has the same companions, so it is a second option
+    being weighed, not a new piece. A type with no pairings has nothing to go
+    with it at all.
+    """
+    companions = complements.for_type(subcategory)
+    return bool(companions) and not any(
+        complements.for_type(other) == companions for other in others if other
     )

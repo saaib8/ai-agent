@@ -3,7 +3,10 @@ import type {
   CatalogPage,
   CatalogQuery,
   CatalogVisualizeRequest,
+  CardComparisonRequest,
+  CardComparisonResponse,
   ChatRequest,
+  CompareGroupsResponse,
   ChatResponse,
   ErrorBody,
   FinderPhotoResponse,
@@ -122,6 +125,21 @@ export async function postCatalogVisualize(
 export async function postPicks(base: string, body: PicksRequest): Promise<Fetched<PicksResponse>> {
   return postJson<PicksResponse>(base, '/v1/picks', body, (p) =>
     typeof p === 'object' && p !== null && 'picks' in p,
+  )
+}
+
+export async function postComparison(
+  base: string,
+  body: CardComparisonRequest,
+): Promise<Fetched<CardComparisonResponse>> {
+  return postJson<CardComparisonResponse>(base, '/v1/comparisons', body, (p) =>
+    typeof p === 'object' && p !== null && 'comparison' in p,
+  )
+}
+
+export async function getCompareGroups(base: string): Promise<Fetched<CompareGroupsResponse>> {
+  return getJson<CompareGroupsResponse>(base, '/v1/compare-groups', {}, (p) =>
+    typeof p === 'object' && p !== null && 'groups' in p,
   )
 }
 

@@ -12,7 +12,11 @@ import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
 import { FocusCard } from './presentation/FocusCard'
 import { ProductGrid } from './presentation/ProductGrid'
-import type { GridSelection, SearchRefineControls } from './presentation/ProductGrid'
+import type {
+  GridCompare,
+  GridSelection,
+  SearchRefineControls,
+} from './presentation/ProductGrid'
 import { RoomBundle } from './presentation/RoomBundle'
 import { RoomRender } from './presentation/RoomRender'
 import { PiecePicker } from './PiecePicker'
@@ -75,6 +79,8 @@ interface AssistantBubbleProps {
   refine?: SearchRefineControls
   /** Present on the search results on screen: tick cards into the picks. */
   selection?: GridSelection
+  /** Present on the search results on screen: check cards to compare. */
+  compare?: GridCompare
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: QuickReply[]
   onQuickReply?: (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => void
@@ -99,6 +105,7 @@ export function AssistantBubble({
   pick,
   refine,
   selection,
+  compare,
   quickReplies,
   onQuickReply,
   onVisualize,
@@ -116,8 +123,14 @@ export function AssistantBubble({
   const focus = presentation?.focus ?? null
   // Chips that run an action - the companions of a product - belong under the
   // cards they extend; plain answers to a question stay beside the question.
-  const textReplies = (quickReplies ?? []).filter((r) => !r.product_action)
-  const actionReplies = (quickReplies ?? []).filter((r) => r.product_action)
+  // Offered beside a pick with nothing searched, the kinds and "No thanks"
+  // are one row under the pick.
+  const offering =
+    !!focus && !hasProducts && (quickReplies ?? []).some((r) => r.product_action)
+  const textReplies = offering ? [] : (quickReplies ?? []).filter((r) => !r.product_action)
+  const actionReplies = offering
+    ? quickReplies ?? []
+    : (quickReplies ?? []).filter((r) => r.product_action)
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
   const render = presentation?.render ?? null
@@ -159,6 +172,7 @@ export function AssistantBubble({
             pick={pick}
             refine={isResultList ? refine : undefined}
             selection={isResultList ? selection : undefined}
+            compare={isResultList ? compare : undefined}
             bestMatch={isResultList && !!presentation?.best_match}
             busy={busy}
           />
@@ -169,7 +183,7 @@ export function AssistantBubble({
             replies={actionReplies}
             onPick={onQuickReply}
             disabled={!!busy}
-            label="Also goes with it"
+            label={offering ? 'Goes well with it' : 'Also goes well with it'}
           />
         )}
         {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}

@@ -729,11 +729,11 @@ def _coordinator(
     return coordinator, pipeline
 
 
-def _search(*, stated_need: bool) -> CustomerAgentDecision:
+def _search(*, skip_questions: bool = False) -> CustomerAgentDecision:
     return CustomerAgentDecision(
         action=AgentAction.SEARCH,
         commercial_reason=CommercialReason.CUSTOMER_REQUEST,
-        stated_need=stated_need,
+        skip_questions=skip_questions,
     )
 
 
@@ -741,10 +741,15 @@ def _typed(state: AgentStateV1, message: str = "I need a sofa") -> CustomerTurnI
     return CustomerTurnInput(message=message, state=state, context=CONTEXT)
 
 
-async def test_a_stated_need_shows_the_card_and_searches_nothing() -> None:
-    coordinator, pipeline = _coordinator(_search(stated_need=True))
+@pytest.mark.parametrize(
+    "message",
+    ["I need a sofa", "find me a sofa", "I'd like to see some sofas", "show me sofas"],
+)
+async def test_a_search_for_a_kind_shows_the_card_and_searches_nothing(message: str) -> None:
+    """However they put it: needing one, finding one, seeing some."""
+    coordinator, pipeline = _coordinator(_search())
 
-    result = await coordinator.run(_typed(AgentStateV1()))
+    result = await coordinator.run(_typed(AgentStateV1(), message))
 
     assert pipeline.requests == []
     assert result.product_brief is not None and result.product_brief.mode is BriefMode.ASK
@@ -759,7 +764,7 @@ async def test_a_stated_need_shows_the_card_and_searches_nothing() -> None:
 
 
 async def test_a_need_stated_again_later_in_the_chat_is_asked_again() -> None:
-    coordinator, pipeline = _coordinator(_search(stated_need=True))
+    coordinator, pipeline = _coordinator(_search())
     shown = record_brief(AgentStateV1(), None, shown="sofas")
 
     result = await coordinator.run(_typed(shown))
@@ -769,19 +774,19 @@ async def test_a_need_stated_again_later_in_the_chat_is_asked_again() -> None:
 
 
 async def test_results_asked_for_again_do_not_fold_the_card_beside_them_twice() -> None:
-    coordinator, pipeline = _coordinator(_search(stated_need=False))
+    coordinator, pipeline = _coordinator(_search(skip_questions=True))
     shown = record_brief(AgentStateV1(), None, shown="sofas")
 
-    result = await coordinator.run(_typed(shown, "show me sofas"))
+    result = await coordinator.run(_typed(shown, "just show me sofas"))
 
     assert len(pipeline.requests) == 1
     assert result.product_brief is None
 
 
-async def test_asking_to_see_shows_results_with_the_card_folded_beside_them() -> None:
-    coordinator, pipeline = _coordinator(_search(stated_need=False))
+async def test_declining_the_questions_shows_results_with_the_card_folded_beside_them() -> None:
+    coordinator, pipeline = _coordinator(_search(skip_questions=True))
 
-    result = await coordinator.run(_typed(AgentStateV1(), "show me sofas"))
+    result = await coordinator.run(_typed(AgentStateV1(), "just show me sofas, no questions"))
 
     assert len(pipeline.requests) == 1
     assert result.product_brief is not None and result.product_brief.mode is BriefMode.NARROW
@@ -793,7 +798,7 @@ async def test_asking_to_see_shows_results_with_the_card_folded_beside_them() ->
 
 
 async def test_tapped_answers_run_one_search_and_close_the_card() -> None:
-    coordinator, pipeline = _coordinator(_search(stated_need=True))
+    coordinator, pipeline = _coordinator(_search())
     asked = await coordinator.run(_typed(AgentStateV1()))
     pending = asked.state.product_brief.pending
     assert pending is not None
@@ -823,24 +828,144 @@ async def test_tapped_answers_run_one_search_and_close_the_card() -> None:
 async def test_answering_the_card_in_words_is_not_asked_another_question() -> None:
     """They typed instead of tapping: the card was the question, so the
     search it runs carries no follow-up of its own."""
-    asking, _ = _coordinator(_search(stated_need=True))
+    asking, _ = _coordinator(_search())
     asked = await asking.run(_typed(AgentStateV1()))
+    # Even unflagged: the same family, now saying something the card asked.
     typed_answer = CustomerAgentDecision(
         action=AgentAction.SEARCH,
         commercial_reason=CommercialReason.CUSTOMER_REQUEST,
-        search_request="a grey 3-seater sofa",
+        search_request="a 3-seater sofa",
     )
-    searching, pipeline = _coordinator(typed_answer)
+    searching, pipeline = _coordinator(
+        typed_answer, _need(seating_capacity=SeatingCapacityConstraint.exactly(3))
+    )
 
-    result = await searching.run(_typed(asked.state, "grey, a 3-seater"))
+    result = await searching.run(_typed(asked.state, "a 3-seater"))
 
     assert len(pipeline.requests) == 1
+    assert result.product_brief is None
     assert result.state.product_brief.pending is None
     assert route_response(result).follow_up_allowed is False
 
 
+async def test_just_show_me_under_the_card_searches_what_they_first_asked() -> None:
+    asking, _ = _coordinator(_search())
+    asked = await asking.run(_typed(AgentStateV1()))
+    searching, pipeline = _coordinator(_search(skip_questions=True))
+
+    result = await searching.run(_typed(asked.state, "just show me"))
+
+    assert len(pipeline.requests) == 1
+    assert result.product_brief is None
+    assert result.state.product_brief.pending is None
+
+
+async def test_the_need_said_again_under_its_card_is_asked_again() -> None:
+    """Nothing the card asked is answered, so it is no answer: asked again."""
+    asking, _ = _coordinator(_search())
+    asked = await asking.run(_typed(AgentStateV1()))
+
+    again = await asking.run(_typed(asked.state, "I need a sofa"))
+
+    assert again.product_brief is not None and again.product_brief.mode is BriefMode.ASK
+
+
+async def test_another_kind_asked_for_under_a_card_gets_its_own_card() -> None:
+    asking, _ = _coordinator(_search())
+    asked = await asking.run(_typed(AgentStateV1()))
+    beds, pipeline = _coordinator(_search(), _need("bed", "bedroom"))
+
+    result = await beds.run(_typed(asked.state, "actually, show me beds"))
+
+    assert pipeline.requests == []
+    assert result.state.product_brief.pending is not None
+    assert result.state.product_brief.pending.name == "beds"
+
+
+async def test_moving_on_to_another_category_is_asked_its_card() -> None:
+    """ "Now show me coffee tables" after sofas: a new task, so a new card."""
+    moving_on = CustomerAgentDecision(
+        action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True
+    )
+    coordinator, pipeline = _coordinator(moving_on, _need("center-table", "tables"))
+    sofas = AgentStateV1(
+        active_search=ActiveSearchState(
+            request=ProductSearchRequest(commerce_category="seating", commerce_subcategory="sofa"),
+            revision=1,
+        )
+    )
+
+    result = await coordinator.run(_typed(sofas, "now show me coffee tables"))
+
+    assert pipeline.requests == []
+    assert result.product_brief is not None and result.product_brief.mode is BriefMode.ASK
+    assert result.state.product_brief.pending is not None
+    assert result.state.product_brief.pending.name == "tables"
+
+
+async def test_any_size_is_fine_said_with_the_need_holds_for_its_card() -> None:
+    """ "Back to sofas, any size is fine": the card comes first, and the search
+    its answers run does not bring back the width they gave earlier."""
+    from tests.unit.test_sizes_per_product_type import _saved, _size
+
+    with_a_saved_width = AgentStateV1(
+        customer_preferences=CustomerPreferenceState(
+            measurements_by_type=(_saved("sofa", _size("200")),)
+        )
+    )
+    letting_go = CustomerAgentDecision(
+        action=AgentAction.SEARCH,
+        commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+        drop_saved_sizes=True,
+    )
+    asking, _ = _coordinator(letting_go)
+    asked = await asking.run(_typed(with_a_saved_width, "back to sofas, any size is fine"))
+    pending = asked.state.product_brief.pending
+    assert pending is not None and pending.drop_saved_sizes
+
+    skipping, pipeline = _coordinator(_search())
+    await skipping.run(
+        CustomerTurnInput(
+            message="Show me sofas",
+            state=asked.state,
+            context=CONTEXT,
+            search_action=BriefAnswerAction(card=pending.card),
+        )
+    )
+
+    (ran,) = pipeline.requests
+    assert ran.request.dimensions == ()
+
+
+async def test_a_saved_size_still_applies_when_they_did_not_let_go_of_it() -> None:
+    from tests.unit.test_sizes_per_product_type import _saved, _size
+
+    with_a_saved_width = AgentStateV1(
+        customer_preferences=CustomerPreferenceState(
+            measurements_by_type=(_saved("sofa", _size("200")),)
+        )
+    )
+    asking, _ = _coordinator(_search())
+    asked = await asking.run(_typed(with_a_saved_width, "back to sofas"))
+    pending = asked.state.product_brief.pending
+    assert pending is not None and not pending.drop_saved_sizes
+
+    skipping, pipeline = _coordinator(_search())
+    await skipping.run(
+        CustomerTurnInput(
+            message="Show me sofas",
+            state=asked.state,
+            context=CONTEXT,
+            search_action=BriefAnswerAction(card=pending.card),
+        )
+    )
+
+    (ran,) = pipeline.requests
+    assert [d.max_cm for d in ran.request.dimensions] == [Decimal("200")]
+
+
 async def test_answers_to_a_card_no_longer_on_screen_search_nothing() -> None:
-    coordinator, pipeline = _coordinator(_search(stated_need=True))
+    coordinator, pipeline = _coordinator(_search())
 
     result = await coordinator.run(
         CustomerTurnInput(
@@ -880,7 +1005,7 @@ async def test_a_need_no_single_piece_seats_asks_the_shape_not_the_card() -> Non
     """ "A sofa for 9": which shape - separate sofas, or a sofa with armchairs -
     is the question that matters, so it comes first (CLAUDE.md 10.2, 27.1)."""
     need = _need(seating_capacity=SeatingCapacityConstraint.at_least(9))
-    coordinator, pipeline = _coordinator(_search(stated_need=True), need, SeatCeiling())
+    coordinator, pipeline = _coordinator(_search(), need, SeatCeiling())
 
     result = await coordinator.run(_typed(AgentStateV1(), "I need a sofa for 9 people"))
 
@@ -890,7 +1015,7 @@ async def test_a_need_no_single_piece_seats_asks_the_shape_not_the_card() -> Non
 
 async def test_a_need_one_piece_can_seat_still_gets_its_card() -> None:
     need = _need(seating_capacity=SeatingCapacityConstraint.exactly(4))
-    coordinator, pipeline = _coordinator(_search(stated_need=True), need, SeatCeiling())
+    coordinator, pipeline = _coordinator(_search(), need, SeatCeiling())
 
     result = await coordinator.run(_typed(AgentStateV1(), "I need a sofa for 4 people"))
 
@@ -965,7 +1090,7 @@ async def test_a_substitution_shows_no_narrowing_card_beside_it() -> None:
     not fold beside it, or the reply and the chips would ask two different
     things (the bug from composing this recovery with the brief flow)."""
     coordinator, _ = _coordinator(
-        _search(stated_need=False),
+        _search(skip_questions=True),
         _need("candle", "decor"),
         _Decor(),
         pipeline=_ByType({"candlestick"}),
@@ -1002,8 +1127,8 @@ async def test_a_head_count_on_a_card_on_screen_is_offered_to_the_room() -> None
 
 
 async def test_the_first_card_is_the_best_match_only_when_their_words_ordered_them() -> None:
-    coordinator, _ = _coordinator(_search(stated_need=False))
-    result = await coordinator.run(_typed(AgentStateV1(), "show me sofas"))
+    coordinator, _ = _coordinator(_search(skip_questions=True))
+    result = await coordinator.run(_typed(AgentStateV1(), "just show me sofas"))
     assert best_match_first(result) is True
 
     by_price = result.model_copy(

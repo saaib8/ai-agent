@@ -51,7 +51,7 @@ from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import companion_choices
 from app.services.response_generator import CustomerResponseGenerator
-from app.services.response_view import best_match_first
+from app.services.response_view import best_match_first, offers_what_goes_with
 from app.services.room_presentation import (
     piece_picker,
     room_answer_choices,
@@ -179,7 +179,7 @@ class ChatRuntime:
         elif result.seating_solution is not None:
             choices = seating_choices(result.seating_solution)
         else:
-            choices = companion_choices(result.companions)
+            choices = companion_choices(result.companions, offering=offers_what_goes_with(result))
         results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,

@@ -1,4 +1,4 @@
-"""Asking about a pick, comparing two, and the companions offered beside one.
+"""Asking about a pick, comparing two, and the kinds offered beside one.
 
 The screen-driven actions on the customer's picks, end to end through the
 coordinator, with the catalog and the pipeline faked. The composer, the
@@ -13,7 +13,6 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from app.core.exceptions import LLMUnavailableError
 from app.schemas.agent_decision import (
     AgentAction,
     BlockingClarificationReason,
@@ -32,6 +31,7 @@ from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome, TurnF
 from app.schemas.product import CommerceClassification, ProductCandidate
 from app.schemas.product_action import (
     CompanionAction,
+    CompanionOffer,
     ComparePicksAction,
     GoesWithPickAction,
 )
@@ -45,7 +45,7 @@ from app.schemas.resolution import (
 )
 from app.schemas.response import ResponseGroundingView, ResponseOutcomeKind
 from app.services.bundle_reference import BundleReferenceResolver
-from app.services.cross_sell import CompanionSearchBuilder
+from app.services.cross_sell import CompanionSearchBuilder, companion_choices
 from app.services.grounding_builder import to_grounded_product
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.response_view import route_response
@@ -87,10 +87,15 @@ BEDROOM_STOCK = (
     ("seating", "sofa"),
 )
 
+WARDROBE, OTHER_BED = 10, 11
+"""A wardrobe to have picked already, and a second bed to weigh against the first."""
+
 KINDS = {
     BED: ("bedroom", "bed"),
     SOFA: ("seating", "sofa"),
     OTHER: ("seating", "sofa"),
+    WARDROBE: ("bedroom", "wardrobe"),
+    OTHER_BED: ("bedroom", "bed"),
 }
 
 
@@ -209,11 +214,11 @@ def _coordinator(
     references: References | None = None,
     catalog: Catalog | None = None,
     complements: Any = COMPLEMENTS,
-    cross_sell_limit: int = 3,
     capabilities: Any = None,
+    decision: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     parts: dict[str, Any] = {
-        "decisions": FakeDecisions(_never_decided()),
+        "decisions": FakeDecisions(decision or _never_decided()),
         "references": references or References(),
         "comparison": comparison or FakeComparison(None),
         "pipeline": pipeline or ScriptedPipeline((30, 31, 32)),
@@ -240,7 +245,6 @@ def _coordinator(
         TAXONOMY,
         complements=complements,
         companion_search=CompanionSearchBuilder(ATTRIBUTES),
-        cross_sell_limit=cross_sell_limit,
     )
     return coordinator, parts
 
@@ -279,92 +283,90 @@ async def _run(coordinator: CustomerTurnCoordinator, turn: CustomerTurnInput) ->
 # ── asking about a pick ═════════════════════════════════════════════════════
 
 
-async def test_asking_about_a_pick_shows_it_with_its_first_stocked_companion() -> None:
+async def test_asking_about_a_pick_offers_the_kinds_that_go_with_it() -> None:
+    """Nothing is searched: which kind comes next is theirs to say."""
     coordinator, parts = _coordinator()
 
     result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
 
-    # The bed's first companion the store stocks: nightstands, three of them.
-    (request,) = parts["pipeline"].requests
-    assert (request.commerce_category, request.commerce_subcategory) == ("tables", "nightstand")
-    assert parts["pipeline"].limits == [3]
-    # Leaning towards the bed's own style, never filtering by it - and not
-    # its colour: a walnut bed is not asking for walnut nightstands.
-    assert parts["pipeline"].preferences[0] == ("Scandinavian",)
-    assert request.colors_any_of == () and request.styles_all_of == ()
-
+    assert parts["pipeline"].requests == []
     assert result.focus is not None and result.focus.name_english == f"Piece {BED}"
     assert result.focus.presented_ordinal is None
-    assert result.grounding.search is not None
-    assert [p.presented_ordinal for p in result.grounding.search.products] == [1, 2, 3]
-    assert result.grounding.product_detail is None
-
-
-async def test_the_other_stocked_companions_become_chips_in_design_order() -> None:
-    coordinator, _ = _coordinator()
-
-    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
-
-    # Mattresses and table lamps are paired with a bed but not stocked here.
+    assert result.grounding.search is None and result.grounding.product_detail is None
+    # Every kind that goes with a bed and is stocked here - mattresses and
+    # table lamps are paired with a bed but not sold by this store.
     assert [(c.subcategory, c.label) for c in result.companions] == [
+        ("nightstand", "nightstands"),
         ("wardrobe", "wardrobes"),
         ("carpet", "rugs"),
     ]
 
 
-async def test_the_pick_stays_in_focus_and_the_companions_are_the_list_on_screen() -> None:
-    coordinator, _ = _coordinator()
-
-    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
-
-    interaction = result.state.product_interaction
-    assert interaction.focused_product_id == BED
-    assert interaction.presented_product_ids == (30, 31, 32)
-    assert interaction.selected_product_ids == (BED, SOFA), "asking picks nothing new"
-    assert result.state.active_search is not None
-    assert result.state.active_search.request.commerce_subcategory == "nightstand"
-
-
-async def test_the_companions_are_introduced_as_our_suggestion() -> None:
+async def test_the_offer_is_the_turns_question_and_the_reply_knows_the_kinds() -> None:
     coordinator, _ = _coordinator()
 
     result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
 
     assert result.decision.commercial_reason is CommercialReason.UPSELL
-    assert result.grounding.design_handoff_requested is True
     route = route_response(result)
     assert isinstance(route.primary, ResponseGroundingView)
-    assert route.primary.kind is ResponseOutcomeKind.SEARCH_RESULTS
-    assert route.primary.search_was_suggested is True
-    # The reply knows the pick's card leads the screen, so it frames it
-    # instead of saying it has no details for it.
+    assert route.primary.kind is ResponseOutcomeKind.GOES_WITH_OFFER
+    assert route.primary.goes_well_with == ("nightstands", "wardrobes", "rugs")
+    # The pick's card leads the screen, so the reply frames it rather than
+    # saying it has no details for it.
     assert route.primary.picked_kind == "bed"
+    assert route.follow_up_allowed is False
 
 
-async def test_asking_again_moves_on_to_the_next_kind_that_goes_with_it() -> None:
-    """The bed's nightstands are on screen: "what goes with it" again shows
-    the next kind the store stocks, and nightstands come round last."""
-    coordinator, parts = _coordinator()
-    nightstands_on_screen = AgentStateV1(
-        active_search=ActiveSearchState(
-            request=ProductSearchRequest(
-                commerce_category="tables", commerce_subcategory="nightstand"
-            ),
-            revision=2,
-        ),
-        product_interaction=ProductInteractionState(
-            presented_product_ids=(OTHER,),
-            presented_search_revision=2,
-            selected_product_ids=(BED,),
-            focused_product_id=BED,
-        ),
+async def test_offering_changes_only_the_focus() -> None:
+    coordinator, _ = _coordinator()
+    state = _state()
+
+    result = await _run(coordinator, _turn(state, GoesWithPickAction(pick=1)))
+
+    interaction = result.state.product_interaction
+    assert interaction.focused_product_id == BED
+    assert interaction.presented_product_ids == state.product_interaction.presented_product_ids
+    assert interaction.selected_product_ids == (BED, SOFA), "asking picks nothing new"
+    assert result.state.active_search == state.active_search
+
+
+async def test_the_offer_puts_the_most_stocked_kind_first() -> None:
+    coordinator, _ = _coordinator(capabilities=CountedStock(pairs=BEDROOM_STOCK))
+
+    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
+
+    assert [offer.subcategory for offer in result.companions] == [
+        "carpet",
+        "wardrobe",
+        "nightstand",
+    ]
+
+
+async def test_a_kind_already_picked_is_not_offered_again() -> None:
+    coordinator, _ = _coordinator()
+    with_a_wardrobe = _state(picks=(BED, WARDROBE))
+
+    result = await _run(coordinator, _turn(with_a_wardrobe, GoesWithPickAction(pick=1)))
+
+    assert [offer.subcategory for offer in result.companions] == ["nightstand", "carpet"]
+
+
+def test_the_offer_chips_are_the_kinds_and_a_way_to_say_no() -> None:
+    offers = (
+        CompanionOffer(category="tables", subcategory="center-table", label="centre tables"),
+        CompanionOffer(category="decor", subcategory="carpet", label="rugs"),
     )
 
-    result = await _run(coordinator, _turn(nightstands_on_screen, GoesWithPickAction(pick=1)))
+    offered = companion_choices(offers, offering=True)
+    beside_results = companion_choices(offers)
 
-    (request,) = parts["pipeline"].requests
-    assert request.commerce_subcategory == "wardrobe"
-    assert [offer.subcategory for offer in result.companions] == ["carpet", "nightstand"]
+    assert [chip.label for chip in offered] == ["Centre tables", "Rugs", "No thanks"]
+    assert offered[0].product_action == CompanionAction(
+        category="tables", subcategory="center-table"
+    )
+    assert offered[-1].product_action is None
+    assert [chip.label for chip in beside_results] == ["Centre tables", "Rugs"]
 
 
 class CountedStock(FakeCapabilities):
@@ -386,37 +388,67 @@ class CountedStock(FakeCapabilities):
         )
 
 
-async def test_companion_chips_put_the_most_stocked_first() -> None:
-    """Nightstands are still the cards beside a bed - the reviewed design
-    priority - but the chips lead with rugs, which the store has most of."""
-    coordinator, parts = _coordinator(capabilities=CountedStock(pairs=BEDROOM_STOCK))
-
-    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
-
-    assert parts["pipeline"].requests[0].commerce_subcategory == "nightstand"
-    assert [offer.subcategory for offer in result.companions] == ["carpet", "wardrobe"]
+# ── a pick they typed ═══════════════════════════════════════════════════════
 
 
-async def test_a_pick_not_in_focus_starts_from_its_first_companion() -> None:
-    coordinator, parts = _coordinator()
-    other_focus = _state(picks=(BED, SOFA), focus=SOFA)
+def _typed_pick(position: int = 1) -> Any:
+    from app.schemas.agent_decision import (
+        CustomerAgentDecision,
+        ProductInteractionIntent,
+        ProductInteractionOp,
+    )
 
-    await _run(coordinator, _turn(other_focus, GoesWithPickAction(pick=1)))
+    return CustomerAgentDecision(
+        action=AgentAction.ANSWER,
+        interaction=ProductInteractionIntent(
+            op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=position)
+        ),
+    )
 
-    assert parts["pipeline"].requests[0].commerce_subcategory == "nightstand"
+
+def _typed(state: AgentStateV1, message: str = "I like the first one") -> CustomerTurnInput:
+    return CustomerTurnInput(message=message, state=state, context=CONTEXT)
 
 
-async def test_a_companion_that_finds_nothing_is_passed_over_and_not_offered() -> None:
-    pipeline = ScriptedPipeline((), (40, 41))
-    coordinator, _ = _coordinator(pipeline=pipeline)
+async def test_a_typed_pick_is_offered_what_goes_with_it() -> None:
+    """ "I like the first one": the same offer a tick brings, nothing searched."""
+    coordinator, parts = _coordinator(decision=_typed_pick())
+    beds_on_screen = _state(picks=(), presented=(BED, OTHER))
 
-    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
+    result = await _run(coordinator, _typed(beds_on_screen))
 
-    assert [r.commerce_subcategory for r in pipeline.requests] == ["nightstand", "wardrobe"]
-    assert result.grounding.search is not None
-    assert [p.name_english for p in result.grounding.search.products] == ["Piece 40", "Piece 41"]
-    # Nightstands found nothing, so no chip leads to an empty screen.
-    assert [c.subcategory for c in result.companions] == ["carpet"]
+    assert result.state.product_interaction.selected_product_ids == (BED,)
+    assert result.selection_added is True
+    assert parts["pipeline"].requests == []
+    assert result.focus is not None and result.focus.name_english == f"Piece {BED}"
+    assert [c.subcategory for c in result.companions] == ["nightstand", "wardrobe", "carpet"]
+    route = route_response(result)
+    assert isinstance(route.primary, ResponseGroundingView)
+    assert route.primary.kind is ResponseOutcomeKind.GOES_WITH_OFFER
+    assert route.follow_up_allowed is False
+
+
+async def test_a_second_option_of_the_same_kind_is_picked_silently() -> None:
+    coordinator, _ = _coordinator(decision=_typed_pick())
+    another_bed = _state(picks=(BED,), presented=(OTHER_BED, OTHER))
+
+    result = await _run(coordinator, _typed(another_bed))
+
+    assert result.state.product_interaction.selected_product_ids == (BED, OTHER_BED)
+    assert result.focus is None and result.companions == ()
+
+
+async def test_a_typed_pick_of_something_with_nothing_to_go_with_it_just_answers() -> None:
+    coordinator, _ = _coordinator(decision=_typed_pick(), stock=(("seating", "sofa"),))
+    beds_on_screen = _state(picks=(), presented=(BED, OTHER))
+
+    result = await _run(coordinator, _typed(beds_on_screen))
+
+    assert result.state.product_interaction.selected_product_ids == (BED,)
+    assert result.focus is None and result.companions == ()
+    route = route_response(result)
+    assert isinstance(route.primary, ResponseGroundingView)
+    assert route.primary.kind is ResponseOutcomeKind.ANSWER
 
 
 async def test_with_nothing_to_offer_the_turn_is_simply_the_product() -> None:
@@ -434,27 +466,6 @@ async def test_with_nothing_to_offer_the_turn_is_simply_the_product() -> None:
     assert route.primary.kind is ResponseOutcomeKind.PRODUCT_DETAIL
     # Shown as the turn's one product, not above anything: no focus card.
     assert route.primary.picked_kind is None
-
-
-async def test_companions_that_all_come_to_nothing_are_never_reported() -> None:
-    coordinator, _ = _coordinator(pipeline=ScriptedPipeline((), (), ()))
-
-    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
-
-    assert result.grounding.failure is None
-    assert result.grounding.product_detail is not None
-    assert result.companions == ()
-
-
-async def test_an_unreachable_catalog_while_suggesting_still_shows_the_product() -> None:
-    pipeline = ScriptedPipeline(LLMUnavailableError(provider="index"))
-    coordinator, _ = _coordinator(pipeline=pipeline)
-
-    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
-
-    assert len(pipeline.requests) == 1, "a failing catalog is not queried again"
-    assert result.grounding.failure is None
-    assert result.grounding.product_detail is not None
 
 
 async def test_a_type_with_no_pairings_shows_just_the_product() -> None:
@@ -489,14 +500,6 @@ async def test_a_pick_that_left_the_catalog_is_a_failure_not_a_question() -> Non
 
     assert result.grounding.failure is not None
     assert result.grounding.failure.code is TurnFailureCode.PRODUCT_UNAVAILABLE
-
-
-async def test_the_card_count_comes_from_configuration() -> None:
-    coordinator, parts = _coordinator(cross_sell_limit=2)
-
-    await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
-
-    assert parts["pipeline"].limits == [2]
 
 
 async def test_no_model_is_consulted_for_a_tap() -> None:
@@ -537,6 +540,30 @@ async def test_comparing_two_picks_compares_those_products_in_the_order_asked() 
         PickedOrdinal(position=1),
     )
     assert parts["pipeline"].requests == []
+
+
+def test_any_number_of_different_picks_can_be_compared() -> None:
+    from pydantic import ValidationError
+
+    assert ComparePicksAction(picks=(1, 2, 3)).picks == (1, 2, 3)
+    for picks in [(1,), (1, 1), (2, 3, 2)]:
+        with pytest.raises(ValidationError):
+            ComparePicksAction(picks=picks)
+
+
+async def test_comparing_three_picks_names_all_three() -> None:
+    comparison = FakeComparison(_comparison())
+    coordinator, _ = _coordinator(comparison=comparison)
+    three = _state(picks=(BED, SOFA, OTHER))
+
+    result = await _run(coordinator, _turn(three, ComparePicksAction(picks=(3, 1, 2))))
+
+    assert comparison.calls == [[OTHER, BED, SOFA]]
+    assert result.decision.comparison_references == (
+        PickedOrdinal(position=3),
+        PickedOrdinal(position=1),
+        PickedOrdinal(position=2),
+    )
 
 
 async def test_a_pick_that_is_not_there_stops_the_comparison() -> None:
@@ -613,7 +640,10 @@ async def test_every_action_reports_the_picks_after_it() -> None:
 async def test_a_pick_on_screen_carries_its_card_number() -> None:
     coordinator, _ = _coordinator(pipeline=ScriptedPipeline((SOFA, 31, 32)))
 
-    result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
+    result = await _run(
+        coordinator,
+        _turn(_state(focus=BED), CompanionAction(category="bedroom", subcategory="wardrobe")),
+    )
 
     assert result.picks is not None
     by_pick = {p.pick: p.presented_ordinal for p in result.picks}
@@ -638,7 +668,10 @@ async def test_companion_preferences_are_preferences_not_requirements(
 ) -> None:
     coordinator, parts = _coordinator()
 
-    await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
+    await _run(
+        coordinator,
+        _turn(_state(focus=BED), CompanionAction(category="tables", subcategory="nightstand")),
+    )
 
     (request,) = parts["pipeline"].requests
     required = request.colors_any_of if family is AttributeFamily.COLOR else request.styles_all_of

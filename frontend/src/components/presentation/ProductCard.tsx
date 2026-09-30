@@ -21,6 +21,16 @@ export interface AlternativePick {
   onPick: (alternativeOrdinal: number) => void
 }
 
+/** Checking a card for a side-by-side comparison. */
+export interface CardCompare {
+  checked: boolean
+  /** Another kind of product is already checked, or two already are. */
+  disabled: boolean
+  onToggle: (product: GroundedProduct) => void
+  /** Why it cannot be checked, when it cannot. */
+  hint?: string
+}
+
 /** Ticking a card into the customer's picks. */
 export interface CardSelect {
   picked: boolean
@@ -33,6 +43,7 @@ export function ProductCard({
   pick,
   onExclude,
   select,
+  compare,
   bestMatch = false,
 }: {
   product: GroundedProduct
@@ -42,6 +53,8 @@ export function ProductCard({
   onExclude?: (product: GroundedProduct) => void
   /** Present on the search results on screen: tick it into the picks. */
   select?: CardSelect
+  /** Present on search results: check it to compare with a similar one. */
+  compare?: CardCompare
   /** The closest to what they described: their own words ordered the list. */
   bestMatch?: boolean
 }) {
@@ -122,6 +135,25 @@ export function ProductCard({
         {dims && <div className="text-[11.5px] text-muted">{dims}</div>}
 
         <div className="mt-auto flex flex-col gap-2 pt-1">
+          {compare && !pick && product.presented_ordinal != null && (
+            <label
+              title={compare.disabled && !compare.checked ? compare.hint : undefined}
+              className={`inline-flex w-fit items-center gap-2 text-xs font-medium ${
+                compare.disabled && !compare.checked
+                  ? 'cursor-not-allowed text-muted/50'
+                  : 'cursor-pointer text-muted hover:text-ink'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={compare.checked}
+                disabled={compare.disabled && !compare.checked}
+                onChange={() => compare.onToggle(product)}
+                className="h-3.5 w-3.5 accent-[var(--color-clay)]"
+              />
+              Compare
+            </label>
+          )}
           {select && !pick && product.presented_ordinal != null && (
             <button
               onClick={() => select.onToggle(product)}

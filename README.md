@@ -122,19 +122,21 @@ limits with `ZORY_CATALOG__*`.
 
 ## Product discovery: the question card, picks and comparison
 
-A stated need ("I need a sofa") is answered with a card of short questions
-before anything is searched: the kind (2-seater, 3-seater, L-shape, set...),
-the budget, colours, the feel (bouclé, marble, with storage) and the style.
-The decision model only flags the need (`stated_need`). The questions per
+Every new search for a kind of product - "I need a sofa", "find me a sofa",
+"I'd like to see some sofas", "show me sofas", or moving on from sofas to
+dining tables - is answered with a card of short questions before anything is
+searched: the kind (2-seater, 3-seater, L-shape, set...), the budget, colours,
+the feel (bouclé, marble, with storage) and the style. The questions per
 product family and their kinds and feel words are reviewed data,
 `app/taxonomy/briefs_v1.yaml`. Budget bands (price quartiles), colours and
 styles are counted from the store's live catalog when the card is built, and
 a kind the store doesn't stock isn't offered. Anything they already said is
-skipped. A need naming only a category ("I need a table") gets that
-category's card with the kind asked first. A stated need gets its card every
-time; "Show me sofas" shows results
-at once, with the card folded beside them as "Narrow down" (once per family
-per session).
+skipped. A search naming only a category ("I need a table") gets that
+category's card with the kind asked first. Refinements ("only beige"), "show
+me more" and a typed answer to the card on screen never bring a card. The
+decision model only flags a decline (`skip_questions`): "Just show me sofas"
+shows results at once, with the card folded beside them as "Narrow down"
+(once per family per session).
 
 * `POST /v1/chat` with `search_action: {kind: "brief", card, piece, budget,
   colours, styles, feel}` answers the card with the keys it offered. The kind
@@ -149,19 +151,36 @@ per session).
   (`presentation.list_revision`), and the latest 7 lists stay tickable.
   `goes_with` is set when the tick picked the first product of its kind that
   has companions the store sells; the client then sends
-  `product_action: {kind: "goes_with", pick}`.
+  `product_action: {kind: "goes_with", pick}`. A pick typed in chat ("I like
+  the third one") gets the same offer.
 * `POST /v1/chat` with `product_action`:
-  * `{kind: "goes_with", pick}` shows the pick, then 3 cards of its first
-    companion the store stocks (a bed → nightstands), with the other
-    companions as chips. Types already picked are skipped, and asking again
-    for the same pick moves on to its next companion kind.
-  * `{kind: "compare", picks: [a, b]}` compares exactly two picks.
-  * `{kind: "companion", category, subcategory}` is a chip, checked against
-    the pairings for the product in focus.
+  * `{kind: "goes_with", pick}` shows the pick and offers the kinds that go
+    well with it (a bed → nightstands, wardrobes, rugs) as chips, with "No
+    thanks" - nothing is searched until they tap one. Only stocked kinds, most
+    stocked first, never a kind already picked.
+  * `{kind: "compare", picks: [a, b, ...]}` compares two or more picks (kept
+    for typed "compare the ones I picked"; the console compares through the
+    pop-up).
+  * `{kind: "companion", category, subcategory}` is one of those chips,
+    checked against the pairings for the product in focus: a normal page of
+    that kind, leaning towards the pick's style.
+
+* `POST /v1/comparisons` (`session_id`, `store_id`, `cards`: two or more
+  `{list_revision, ordinal}`) compares the cards checked on the results, for
+  the pop-up the console opens from its Compare button once two are checked:
+  the table, one column per product, and a short take. Read only - nothing is
+  added to the chat or the session. Only similar products compare
+  (`compare_groups_v1.yaml`: every type with itself, sofas with
+  L-shapes/sets/sofa beds, armchairs with accent/lounge chairs); a set with
+  any dissimilar product is refused with `comparison_refused`, and so is one
+  over the limit. `GET /v1/compare-groups` serves those families and the
+  limit (`max_products`) so the console can grey out cards that cannot be
+  compared. Configure the limit with `ZORY_CUSTOMER_AGENT__COMPARISON_MAX_PRODUCTS`
+  (default 10, at most 20).
 
 The pairings are `app/taxonomy/complements_v1.yaml`. Companion searches lean
-towards the pick's style and carry no budget. Configure with
-`ZORY_CUSTOMER_AGENT__CROSS_SELL_LIMIT` and `ZORY_CUSTOMER_AGENT__MAX_PICKS`.
+towards the pick's style and carry no budget. Configure the tray's size with
+`ZORY_CUSTOMER_AGENT__MAX_PICKS`.
 
 ## Configuration
 

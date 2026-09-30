@@ -406,9 +406,12 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # A dearer swap that broke the budget - the model does the soft-sell and
         # asks whether to stretch; the yes/no is the application's chips.
         "room_swap_offer",
-        # A card of questions for a stated need - which questions is the
+        # A card of questions for a product search - which questions is the
         # application's; the reply only introduces the card.
         "product_brief",
+        # A pick, offered the kinds that go with it as chips - which kinds is
+        # the application's; nothing was searched, so there is nothing to find.
+        "goes_with_offer",
         "design_advice",
         # M17: the customer's own choices, shown again. Not a search - nothing
         # was looked for, so the reply must not describe finding anything.
@@ -1297,6 +1300,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # The kind of pick they opened ("bed"), whose card leads the screen -
         # a type name, never the product or its facts, which stay on the card.
         "picked_kind",
+        # The kinds offered beside that pick, in customer words ("rugs") -
+        # type names only: none of them was searched.
+        "goes_well_with",
         # Whether the cards are ordered by how well they match what they
         # described. A bool - no product, no value.
         "best_match_first",

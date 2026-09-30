@@ -175,6 +175,10 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
         "That choice looks lovely in the room - it does bring the total a little "
         "over your budget. Shall we stretch to fit it, or keep within budget?"
     ),
+    ResponseOutcomeKind.GOES_WITH_OFFER: (
+        "Good choice - it's saved in your picks. Would you like anything to go "
+        "with it?"
+    ),
     ResponseOutcomeKind.PRODUCT_BRIEF: (
         "Let's find the right one for you. Tap whatever matters below - or skip "
         "straight to the results."

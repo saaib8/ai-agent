@@ -448,10 +448,11 @@ Default UX behavior:
 
 ### 10.1 The room questions
 
-A whole room is the only place this service asks before delivering. A single
-product search proceeds on almost nothing - "show me sofas" is answerable - but
-a room commits the customer to a set of pieces and a total, and one built
-around a guessed budget is a room they cannot buy.
+A whole room is the only place this service asks before delivering in words.
+A single product search proceeds on almost nothing - "show me sofas" is
+answerable, and its one card of tappable questions (10.4) can be skipped with a
+tap - but a room commits the customer to a set of pieces and a total, and one
+built around a guessed budget is a room they cannot buy.
 
 **Rooms the registry knows - a living room, a bedroom - are asked about by the
 application, one question per turn**, in this order, skipping anything already
@@ -486,18 +487,22 @@ model as before: budget first, at most two questions, together, once.
 
 At most one question per reply, and never budget as an opener: asking it first
 anchors the price down and reads as "can you afford this?". The one exception
-is the card for a stated need (10.4), where the budget is one tappable question
-among several, chosen as a band from the store's own prices.
+is the card for a product search (10.4), where the budget is one tappable
+question among several, chosen as a band from the store's own prices.
 
-- **An explicit ask to see** ("show me sofas") shows products first. The one
-  optional follow-up is, in order: how many people will sit, for multi-seat
-  seating (sofas, sets, sectionals) while unknown; otherwise the colour or
-  style taste, while neither is on record - the designer's one question.
-  Nothing when the key facts are given ("beige 3-seaters").
-- **A stated need** ("I need a sofa for the living room") gets the card of
+- **A new search for a kind of product**, however it is put - "I need a sofa",
+  "find me a sofa", "I'd like to see some sofas", "show me sofas", "any
+  rugs?", or moving on from sofas to dining tables - gets the card of
   questions first (10.4); nothing is searched until they answer or skip it.
-  The decision model only flags the need (`stated_need`); it never writes the
-  card's questions.
+  The decision model never writes the card's questions; it only flags a
+  decline (`skip_questions`: "just show me sofas", or answering the card on
+  screen in words).
+- **Results without a card** - they declined it, a refinement of the results
+  on screen, a kind with no card, nothing left to ask - carry at most one
+  optional follow-up: how many people will sit, for multi-seat seating (sofas,
+  sets, sectionals) while unknown; otherwise the colour or style taste, while
+  neither is on record - the designer's one question. Nothing when the key
+  facts are given ("beige 3-seaters"), and nothing beside a folded card.
 - **A seat count no single piece meets** asks first which shape - separate
   sofas together, or a sofa with armchairs - offering only shapes that really
   exist, each "from" its real lowest total, plus the colour if none is known.
@@ -551,9 +556,10 @@ If a customer accepts/locks an item, later optimization must preserve it unless 
 
 Distinguish required, recommended, and optional furnishing categories so budget optimization can remove lower-priority items before degrading core room requirements.
 
-### 10.4 The card for a stated need
+### 10.4 The card for a product search
 
-"I need a sofa" says what they want and nothing about which one. Instead of
+"I need a sofa" - or "find me a sofa", "show me sofas" - says what they want
+and nothing about which one. Instead of
 showing the first few products the catalog returns, the application shows one
 card of short questions, answered by tapping and sent together:
 
@@ -573,8 +579,8 @@ Chips come in order of how many products stand behind them: the kinds, colours
 and styles the store has most of first. Budget bands stay in price order -
 they are cut at the quartiles, so each already holds about a quarter - and
 feels in their reviewed order, since the catalog records no material to count.
-The companion chips beside a pick ("Matching rugs") are ordered the same way,
-while the companion shown as cards stays the reviewed design priority.
+The kinds offered beside a pick ("Rugs", "Centre tables") are ordered the
+same way.
 
 Which questions each product family is asked, its kinds and its feel words are
 reviewed domain data (`app/taxonomy/briefs_v1.yaml`, loaded and validated
@@ -582,9 +588,13 @@ against the taxonomy at startup). Budget bands, colours and styles are counted
 from the live, store-scoped catalog when the card is built, and a kind the store
 does not stock is not offered - every chip leads to real products.
 
-- **A stated need always gets its card**, however long the chat: "I need a
-  bed" said again is a new need, and an earlier card they left unanswered is
-  no reason to skip the questions. The card never asks what they already said,
+- **Every new search for a kind of product gets its card**, whatever the
+  wording and however long the chat: "I need a bed" said again is a new need,
+  and an earlier card they left unanswered is no reason to skip the questions.
+  A change to another category ("now show me coffee tables") is a new search
+  and gets its card; a change of type within the running task ("sectional
+  ones instead") is a refinement and does not. Refinements, "show me more"
+  and "not this one" never bring a card. The card never asks what they already said,
   in the message or on record earlier; a card with nothing left to ask is
   skipped and the search simply runs. A head count no single piece in the
   store seats ("a sofa for 9") skips the card too: which seating shape is the
@@ -603,23 +613,53 @@ does not stock is not offered - every chip leads to real products.
   is labelled the best match only when their own words ordered the list (16.1)
   and it met their request exactly - never beside a price sort, and never on
   what goes with a pick, which is ordered by the pick's look.
-- **An explicit ask to see** ("show me sofas") shows products at once; the card
-  sits folded beside them as "Narrow down" - offered once per family per
-  session, so it does not follow every list around - and the reply asks no
-  other question.
+- **Declining the card** ("just show me sofas", "no questions") shows
+  products at once; the card sits folded beside them as "Narrow down" -
+  offered once per family per session, so it does not follow every list
+  around - and the reply asks no other question.
 - A typed answer to the card ("grey, around 3000") is a new search restating
-  the whole request.
+  the whole request, and is never asked the card again: the same family,
+  saying something the card asked, is its answer even if the decision model
+  missed it. The same need said again with nothing added is asked again.
+  "Any size is fine" said with the need ("back to sofas, any size is fine")
+  is kept with the card (`drop_saved_sizes`), so its answers do not bring the
+  saved sizes back (13.5).
 
 **Picking a product.** Cards can be ticked into the customer's picks, which last
-across searches. The first pick of its kind - judged by what goes with it, so a
-sectional after a sofa is a second option, not a new piece - is followed by the
-reviewed pairings (`app/taxonomy/complements_v1.yaml`): a few cards of its first
-companion the store stocks and finds, and the others as chips, never a type
-they already picked. Asking what goes with the same pick again moves on to
-its next companion kind rather than repeating the one on screen. Earlier
-result lists stay tickable for a while
+across searches. The first pick of its kind - ticked or typed ("I like the
+third one"), and judged by what goes with it, so a sectional after a sofa is a
+second option, not a new piece - is **offered, not shown**, what goes well with
+it: their pick's card, and beneath it the kinds from the reviewed pairings
+(`app/taxonomy/complements_v1.yaml`) that the store stocks, as chips under
+"Goes well with it", with "No thanks" beside them. Nothing is searched until
+they tap a kind, which then shows a normal page of it leaning towards the
+pick's style, with the other kinds still offered. A pick's "Goes with" button
+makes the same offer. Never a kind they already picked, and never described as
+"usually bought together": the pairings are a design judgement, not sales
+data. Earlier result lists stay tickable for a while
 (`product_interaction.earlier_lists`), so a second sofa can still be picked to
-compare after the screen has moved on. Comparison is of exactly two picks.
+compare after the screen has moved on.
+
+**Comparing.** A comparison is between similar products - sofas with sofas,
+never a sofa and a coffee table - and covers as many as the customer checks:
+two or more, up to `comparison_max_products` (ten by default, the picks
+tray's size; the schema allows up to twenty). Each card on a result list
+carries its own Compare checkbox, apart from Select; once one is checked,
+cards of other kinds are greyed out, and so is every card once the limit is
+reached. Checking only marks a card: the checked ones sit in a compare bar
+above the message box, and its Compare button - active once two are checked -
+opens the comparison in a pop-up: the side-by-side table, one column per
+product, and a short take on what differs. Closing the pop-up keeps the cards
+checked, so one can be swapped and compared again; Clear unchecks them all.
+Typed comparisons ("compare the first three") share the same limit; more is
+answered with a question rather than silently dropped. It is a look, not a turn
+(`POST /v1/comparisons`): the cards are resolved like ticks, the table comes
+from the ordinary comparison service and the words from the ordinary reply
+generator, and nothing is added to the conversation or the session. Which types
+compare with which is reviewed data (`app/taxonomy/compare_groups_v1.yaml`):
+every type with itself, and a few groups across types (sofas with L-shapes,
+sets and sofa beds; armchairs with accent and lounge chairs). The server
+refuses a set with any dissimilar product whatever the client sent.
 
 ---
 

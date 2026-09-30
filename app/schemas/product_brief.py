@@ -162,13 +162,18 @@ class PendingBrief(BaseModel):
     colours: tuple[str, ...] = ()
     styles: tuple[str, ...] = ()
     feels: tuple[BriefFeelOption, ...] = ()
+    drop_saved_sizes: bool = False
+    """They let go of the sizes saved for this kind in the message the card
+    answers - "back to sofas, any size is fine". Kept with the card, so the
+    search its answers run does not bring those sizes back."""
 
 
 class ProductBriefState(BaseModel):
     """The cards of this session.
 
-    A stated need gets its card every time; `shown` is what keeps the folded
-    card beside results to once per product family (CLAUDE.md 10.4).
+    A search for a kind of product gets its card every time; `shown` is what
+    keeps the folded card beside results to once per product family
+    (CLAUDE.md 10.4).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

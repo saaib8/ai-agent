@@ -313,7 +313,7 @@ class SeatingOfferView(BaseModel):
 
 
 class QuestionCardView(BaseModel):
-    """A card of questions on screen for a stated need (CLAUDE.md 10.4).
+    """A card of questions on screen for a product search (CLAUDE.md 10.4).
 
     What they were asked about, in customer words - never the choices, which
     are the application's. Their reply is most likely the answers, typed

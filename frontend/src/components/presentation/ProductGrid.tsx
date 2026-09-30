@@ -1,6 +1,6 @@
 import type { GroundedProduct } from '../../api/types'
 import { ProductCard } from './ProductCard'
-import type { AlternativePick, CardSelect } from './ProductCard'
+import type { AlternativePick, CardCompare, CardSelect } from './ProductCard'
 
 export interface SearchRefineControls {
   /** Re-run the search, excluding everything on screen — a different page. */
@@ -20,7 +20,14 @@ interface ProductGridProps {
   selection?: GridSelection
   /** The first card is the closest to what they described. */
   bestMatch?: boolean
+  /** Present on search results: each card can be checked for comparison. */
+  compare?: GridCompare
   busy?: boolean
+}
+
+/** Which cards are checked for comparison, and which may still be. */
+export interface GridCompare {
+  compareFor: (product: GroundedProduct) => CardCompare | undefined
 }
 
 /** Which cards are picked, by card number, and how to tick one. */
@@ -35,6 +42,7 @@ export function ProductGrid({
   refine,
   selection,
   bestMatch = false,
+  compare,
   busy,
 }: ProductGridProps) {
   if (products.length === 0) return null
@@ -55,6 +63,7 @@ export function ProductGrid({
             pick={pick}
             onExclude={refine?.onExclude}
             select={cardSelect(p, selection, !!busy)}
+            compare={compare?.compareFor(p)}
             bestMatch={bestMatch && index === 0}
           />
         ))}

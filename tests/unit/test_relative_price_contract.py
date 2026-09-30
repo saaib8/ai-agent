@@ -21,6 +21,7 @@ from app.schemas.agent_decision import (
     AgentAction,
     CustomerAgentDecision,
 )
+from app.schemas.comparison import MAX_COMPARED_PRODUCTS, MIN_COMPARED_PRODUCTS
 from app.schemas.product_reference import (
     ExtremumDirection,
     FocusedProduct,
@@ -325,8 +326,8 @@ def _ordinals(count: int) -> tuple[ProductReferenceSelector, ...]:
     return tuple(PresentedOrdinal(position=i) for i in range(1, count + 1))
 
 
-@pytest.mark.parametrize("count", [2, 3, 4])
-def test_a_comparison_of_up_to_four_is_accepted(count: int) -> None:
+@pytest.mark.parametrize("count", [2, 3, 4, 10, 20])
+def test_a_comparison_of_any_number_up_to_the_ceiling_is_accepted(count: int) -> None:
     decision = CustomerAgentDecision(
         action=AgentAction.COMPARE, comparison_references=_ordinals(count)
     )
@@ -334,10 +335,10 @@ def test_a_comparison_of_up_to_four_is_accepted(count: int) -> None:
     assert len(decision.comparison_references) == count
 
 
-@pytest.mark.parametrize("count", [5, 9])
+@pytest.mark.parametrize("count", [21, 30])
 def test_a_longer_comparison_is_refused_by_the_schema(count: int) -> None:
     """Configuration may choose a smaller maximum; nothing may exceed this."""
-    with pytest.raises(ValidationError, match="at most 4 products"):
+    with pytest.raises(ValidationError, match="at most 20 products"):
         CustomerAgentDecision(
             action=AgentAction.COMPARE, comparison_references=_ordinals(count)
         )
@@ -362,5 +363,5 @@ def test_duplicate_comparison_targets_are_refused() -> None:
 
 
 def test_the_bounds_are_named_not_scattered() -> None:
-    assert MIN_COMPARISON_REFERENCES == 2
-    assert MAX_COMPARISON_REFERENCES == 4
+    assert MIN_COMPARISON_REFERENCES == MIN_COMPARED_PRODUCTS == 2
+    assert MAX_COMPARISON_REFERENCES == MAX_COMPARED_PRODUCTS == 20

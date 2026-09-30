@@ -25,6 +25,7 @@ from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
+from app.services.card_comparison import CardComparisonService
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
@@ -314,7 +315,6 @@ def customer_turn_coordinator(
         closest_type=ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
-        cross_sell_limit=settings.customer_agent.cross_sell_limit,
         briefs=(
             ProductBriefBuilder(
                 repository, app_resources.briefs, app_resources.attributes, app_resources.taxonomy
@@ -450,6 +450,31 @@ def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRunt
 
 
 PicksRuntimeDep = Annotated[PicksRuntime, Depends(picks_runtime)]
+
+
+def card_comparison_service(
+    session: SessionDep, app_resources: ResourcesDep
+) -> CardComparisonService:
+    """Two checked cards in a pop-up: resolved like ticks, compared by the
+    ordinary service, worded by the ordinary reply generator."""
+    if app_resources.compare_groups is None:
+        raise ConfigurationError(
+            detail="compare groups are not loaded",
+            public_message="Comparing products is not available.",
+        )
+    repository = ProductRepository(session)
+    return CardComparisonService(
+        ProductReferenceResolver(repository, app_resources.attributes),
+        ProductComparisonService(
+            repository, app_resources.dimensions, app_resources.settings.customer_agent
+        ),
+        customer_response_generator(app_resources),
+        session_store(app_resources),
+        app_resources.compare_groups,
+    )
+
+
+CardComparisonServiceDep = Annotated[CardComparisonService, Depends(card_comparison_service)]
 
 
 def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntime:

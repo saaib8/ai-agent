@@ -19,6 +19,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.comparison import MAX_COMPARED_PRODUCTS, MIN_COMPARED_PRODUCTS
+
 
 class GoesWithPickAction(BaseModel):
     """What goes with one pick: put it in focus, and show its companions.
@@ -34,24 +36,25 @@ class GoesWithPickAction(BaseModel):
 
 
 class ComparePicksAction(BaseModel):
-    """Two picks side by side, in the order given.
+    """Two or more picks side by side, in the order given.
 
-    Exactly two: a comparison of two is one the customer can read at a glance,
-    and the product decision was to keep it there. The service's own limit is
-    configuration and is checked again where the comparison is built.
+    As many as they like, up to the schema's ceiling; how many one comparison
+    may cover is configuration, checked again where the comparison is built.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: Literal["compare"] = "compare"
-    picks: tuple[int, int]
+    picks: tuple[int, ...] = Field(
+        min_length=MIN_COMPARED_PRODUCTS, max_length=MAX_COMPARED_PRODUCTS
+    )
 
     @model_validator(mode="after")
-    def _two_different_picks(self) -> Self:
+    def _different_picks(self) -> Self:
         if any(pick < 1 for pick in self.picks):
             raise ValueError("a pick is 1 or greater")
-        if self.picks[0] == self.picks[1]:
-            raise ValueError("a comparison needs two different picks")
+        if len(set(self.picks)) != len(self.picks):
+            raise ValueError("a comparison needs different picks")
         return self
 
 
