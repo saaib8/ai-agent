@@ -49,8 +49,75 @@ class BundleSwapAction(BaseModel):
     alternative_ordinal: int = Field(ge=1)
 
 
+class SwapConfirmAction(BaseModel):
+    """Keep the dearer swap the customer was just offered, over budget and all.
+
+    The held `swap_budget_offer` says which piece and which product; this action
+    only says "yes". The room is re-derived from that verified offer and the
+    budget raised to fit it (CLAUDE.md 27).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["swap_confirm"] = "swap_confirm"
+
+
+class SwapDeclineAction(BaseModel):
+    """Do not stretch the budget for the swap just offered.
+
+    Applies nothing: the room stays exactly as it was before the swap. It moves
+    the held offer to its second question - whether to show cheaper options for
+    that one piece.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["swap_decline"] = "swap_decline"
+
+
+class SwapKeepOriginalAction(BaseModel):
+    """Keep the room exactly as it was before the dearer swap was tried.
+
+    The over-budget swap never committed, so the original in-budget room is
+    still in state: this clears the held offer and re-presents that room, so the
+    customer sees they are back to what they had (CLAUDE.md 27).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["swap_keep_original"] = "swap_keep_original"
+
+
+class SwapAlternativesAction(BaseModel):
+    """Show cheaper options for the piece the customer was swapping.
+
+    Lists alternatives for the held piece alone, bounded so the room stays
+    within budget, every other piece kept exactly as it is. Selecting one
+    performs the swap into that role - it is never a fresh product pick, so a
+    room being edited never cross-sells a piece it already holds (CLAUDE.md 27).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["swap_alternatives"] = "swap_alternatives"
+
+
+class SwapDismissAction(BaseModel):
+    """No to cheaper options: leave the room exactly as it was, offer cleared."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["swap_dismiss"] = "swap_dismiss"
+
+
 BundleActionRequest = Annotated[
-    BundleAlternativesAction | BundleSwapAction,
+    BundleAlternativesAction
+    | BundleSwapAction
+    | SwapConfirmAction
+    | SwapDeclineAction
+    | SwapKeepOriginalAction
+    | SwapAlternativesAction
+    | SwapDismissAction,
     Field(discriminator="kind"),
 ]
-"""Either action, told apart by `kind`."""
+"""Any room-edit action, told apart by `kind`."""

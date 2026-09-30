@@ -29,6 +29,7 @@ from app.services.card_comparison import CardComparisonService
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
+from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.cross_sell import CompanionSearchBuilder
@@ -311,6 +312,7 @@ def customer_turn_coordinator(
         app_resources.taxonomy,
         app_resources.rooms,
         app_resources.seating,
+        closest_type=ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         briefs=(

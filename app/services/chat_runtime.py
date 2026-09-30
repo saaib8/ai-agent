@@ -52,7 +52,11 @@ from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import companion_choices
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first, offers_what_goes_with
-from app.services.room_presentation import piece_picker
+from app.services.room_presentation import (
+    piece_picker,
+    room_answer_choices,
+    swap_offer_choices,
+)
 from app.services.seating_presentation import present_seating_solution, seating_choices
 from app.services.turn_coordinator import CustomerTurnCoordinator
 
@@ -165,11 +169,17 @@ class ChatRuntime:
             if result.seating_solution is not None
             else ()
         )
-        choices = (
-            seating_choices(result.seating_solution)
-            if result.seating_solution is not None
-            else companion_choices(result.companions, offering=offers_what_goes_with(result))
-        )
+        # A room question's chips are its real answers, keyed off the kind the
+        # application asked - never derived from the reply's wording, so the chip
+        # and the question can never drift apart.
+        if result.swap_offer is not None:
+            choices = swap_offer_choices(result.swap_offer)
+        elif result.room_question is not None:
+            choices = room_answer_choices(result.room_question)
+        elif result.seating_solution is not None:
+            choices = seating_choices(result.seating_solution)
+        else:
+            choices = companion_choices(result.companions, offering=offers_what_goes_with(result))
         results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,
@@ -189,6 +199,7 @@ class ChatRuntime:
             piece_picker=(
                 piece_picker(result.room_question) if result.room_question is not None else None
             ),
+            swap_context=result.swap_context,
         )
         return None if built.is_empty() else built
 

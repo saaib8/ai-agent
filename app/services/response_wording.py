@@ -171,6 +171,10 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.PRODUCT_DETAIL: "Here are the details for that one.",
     ResponseOutcomeKind.COMPARISON: "Here's how those compare.",
     ResponseOutcomeKind.ROOM_QUESTION: ROOM_QUESTION_DEFAULT,
+    ResponseOutcomeKind.ROOM_SWAP_OFFER: (
+        "That choice looks lovely in the room - it does bring the total a little "
+        "over your budget. Shall we stretch to fit it, or keep within budget?"
+    ),
     ResponseOutcomeKind.GOES_WITH_OFFER: (
         "Good choice - it's saved in your picks. Would you like anything to go "
         "with it?"

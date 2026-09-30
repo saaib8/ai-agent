@@ -430,6 +430,9 @@ class RoomProjectUpdate(BaseModel):
     questions_done: bool = False
     """They asked to skip the remaining room questions."""
 
+    palette_left_to_us: bool = False
+    """They answered the colour question by leaving it to us ("any colour")."""
+
     bundle_operations: tuple[BundleOperation, ...] = ()
     """Changes to the room bundle, applied in order.
 

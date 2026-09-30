@@ -146,6 +146,16 @@ export interface ChatPresentation {
   choices?: ReplyChoice[]
   /** A room's pieces as chips to tick, when the room question asks for them. */
   piece_picker?: PiecePickerData | null
+  /** The room piece a shown list of alternatives is for. Set when the customer
+   *  asked for cheaper options for an over-budget swap, so selecting one sends a
+   *  `swap` for that piece rather than picking a fresh product — which is what
+   *  keeps a room edit from cross-selling a piece it already holds. */
+  swap_context?: RoomSwapContext | null
+}
+
+export interface RoomSwapContext {
+  bundle_ordinal: number
+  role: string
 }
 
 // ── The card of questions for a product search ───────────────────────────────
@@ -267,7 +277,28 @@ export interface BundleSwapAction {
   alternative_ordinal: number
 }
 
-export type BundleAction = BundleAlternativesAction | BundleSwapAction
+/** The yes/no answers to an over-budget swap, each an action with no argument:
+ *  they answer the held offer the server remembers, not a piece on screen. */
+export interface SwapConfirmAction {
+  kind: 'swap_confirm'
+}
+export interface SwapDeclineAction {
+  kind: 'swap_decline'
+}
+export interface SwapAlternativesAction {
+  kind: 'swap_alternatives'
+}
+export interface SwapDismissAction {
+  kind: 'swap_dismiss'
+}
+
+export type BundleAction =
+  | BundleAlternativesAction
+  | BundleSwapAction
+  | SwapConfirmAction
+  | SwapDeclineAction
+  | SwapAlternativesAction
+  | SwapDismissAction
 
 export interface MoreOptionsAction {
   kind: 'more_options'
@@ -306,6 +337,8 @@ export interface ReplyChoice {
   label: string
   value: string
   product_action?: ProductAction | null
+  /** A room edit tapping it performs, for the yes/no on an over-budget swap. */
+  bundle_action?: BundleAction | null
 }
 
 export interface PickView {

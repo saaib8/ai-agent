@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RENDER_VIEWS } from './api/types'
 import type {
   BriefAnswerAction,
+  BundleAction,
   CatalogItem,
   CatalogSelection,
   FinderObject,
@@ -93,6 +94,17 @@ export default function App() {
     setSelection([])
     picked.current.clear()
   }, [storeId])
+
+  // Cheaper options for an over-budget swap arrive as a search, but selecting one
+  // must swap that room piece rather than pick a fresh product (which would
+  // cross-sell a piece the room already holds). The backend marks the list with
+  // the piece it is for; re-enter swap mode so an alternative's "Select" swaps.
+  const lastTurn = chat.turns[chat.turns.length - 1]
+  const swapCtx =
+    lastTurn?.kind === 'assistant' ? (lastTurn.data.presentation?.swap_context ?? null) : null
+  useEffect(() => {
+    if (swapCtx) setSwap({ bundleOrdinal: swapCtx.bundle_ordinal, role: swapCtx.role })
+  }, [lastTurn?.id, swapCtx?.bundle_ordinal, swapCtx?.role])
 
   const handleSend = useCallback(
     (text: string) => {
@@ -306,7 +318,15 @@ export default function App() {
   )
 
   const handleChoice = useCallback(
-    (value: string, action?: ProductAction | null) => {
+    (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => {
+      if (bundle) {
+        // The yes/no on an over-budget swap: a structured room edit that answers
+        // the held offer deterministically, never routed through the model.
+        if (chat.sending || chat.picking) return
+        setSwap(null)
+        void chat.send(value, config.config, { bundle })
+        return
+      }
       if (!action) {
         handleSend(value)
         return

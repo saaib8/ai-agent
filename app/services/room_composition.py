@@ -60,7 +60,11 @@ def chosen_keys(
 
 
 def colour_known(room: RoomProjectState) -> bool:
-    return any(p.family is AttributeFamily.COLOR for p in room.design_preferences)
+    """Whether the colour question is settled: a colour they named, or a palette
+    they explicitly left to us ("any colour"). Both are answers (CLAUDE.md 10.1)."""
+    return room.palette_left_to_us or any(
+        p.family is AttributeFamily.COLOR for p in room.design_preferences
+    )
 
 
 def next_question(

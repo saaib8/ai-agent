@@ -481,6 +481,12 @@ class RoomProjectState(BaseModel):
     budget: PriceConstraint | None = None
     design_preferences: tuple[SemanticPreference, ...] = ()
 
+    palette_left_to_us: bool = False
+    """The customer answered the colour question by leaving it to us - "any
+    colour", "you choose", "leave the palette to me". An answer like any other:
+    it records no colour preference, but the colour question is settled and is
+    never asked again (CLAUDE.md 10.1). Reset when the room kind changes."""
+
     regular_seating_count: int | None = Field(
         default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
     )
@@ -684,6 +690,46 @@ class SeatingOfferState(BaseModel):
         return self
 
 
+class SwapBudgetOfferStage(StrEnum):
+    """Which question a held over-budget swap is waiting on.
+
+    A swap that lands over budget is never applied silently: the customer is
+    asked, and their answer moves through at most these two questions.
+    """
+
+    STRETCH = "stretch"
+    """ "It runs a little over - shall we stretch the budget to fit it?" """
+
+    ALTERNATIVES = "alternatives"
+    """They declined the stretch; "shall I show cheaper options for that piece?" """
+
+
+class SwapBudgetOfferState(BaseModel):
+    """A piece swapped for a dearer one that pushed the room over budget.
+
+    Held, not applied: the room in state is still the one before the swap, so a
+    "no" leaves it exactly as it was, every other piece untouched (CLAUDE.md 27).
+    Everything needed to re-derive the proposal on a "yes" is a reference the
+    server verifies again - the piece by its position among the room cards, the
+    chosen product by id - never a price or a name it might remember wrongly
+    (CLAUDE.md 10, 19).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bundle_ordinal: int = Field(ge=1)
+    """The swapped piece's position among the room cards it was chosen from."""
+
+    chosen_product_id: int = Field(ge=1)
+    """The dearer product the customer picked for that piece."""
+
+    bundle_revision: int = Field(ge=0)
+    """The room revision the offer was made against, so a room that moved on
+    underneath it is caught rather than edited from a stale reference."""
+
+    stage: SwapBudgetOfferStage = SwapBudgetOfferStage.STRETCH
+
+
 class PurchaseStage(StrEnum):
     EXPLORING = "exploring"
     CONSIDERING = "considering"
@@ -716,6 +762,10 @@ class AgentStateV1(BaseModel):
     seating_offer: SeatingOfferState | None = None
     """A seating combination in progress. Defaulted, like
     `measurements_by_type`, so every saved session still reads."""
+
+    swap_budget_offer: SwapBudgetOfferState | None = None
+    """A dearer swap awaiting the customer's yes/no on the budget. Defaulted,
+    like `seating_offer`, so every saved session still reads."""
 
     product_brief: ProductBriefState = ProductBriefState()
     """The cards of questions asked before a search (CLAUDE.md 10.4).

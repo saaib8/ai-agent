@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
+from app.schemas.agent_state import SwapBudgetOfferStage
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
@@ -90,6 +91,15 @@ class ResponseOutcomeKind(StrEnum):
     ROOM_QUESTION = "room_question"
     """One question before a room is designed - its budget, its pieces (as
     chips), how many will sit, or the colours they like (CLAUDE.md 10.1)."""
+
+    ROOM_SWAP_OFFER = "room_swap_offer"
+    """A dearer swap that broke the budget, put to the customer as a yes/no.
+
+    The salesperson beat: affirm the room warmly, be honest that it runs a
+    little over budget (the card shows the figures - the reply names no
+    number), and ask whether to stretch the budget or stay within it. Its
+    second stage asks instead whether to look for a cheaper piece
+    (CLAUDE.md 27)."""
 
     PRODUCT_BRIEF = "product_brief"
     """They stated a need, and a card of short questions is shown beneath the
@@ -295,6 +305,23 @@ class BundleGroundingView(BaseModel):
     depth: "some pieces required a wider search" is sayable, and by how much
     is not."""
 
+    stretched_from_budget: Decimal | None = None
+    stretched_overage: Decimal | None = None
+    """Set on the turn a stretch is confirmed: the budget the customer first set,
+    and how far the room's new total now runs over it. The room's ceiling has been
+    raised to the new total, so `within_budget` reads true - these say plainly
+    that the customer chose to go over their original figure, so the reply owns the
+    stretch rather than calling the room "within budget" (CLAUDE.md 27). Both
+    computed by the application; the reply states them and computes nothing."""
+
+    @model_validator(mode="after")
+    def _stretch_figures_travel_together(self) -> Self:
+        if (self.stretched_from_budget is None) != (self.stretched_overage is None):
+            raise ValueError("a stretch carries both the original budget and the overage")
+        if self.stretched_overage is not None and self.stretched_overage <= 0:
+            raise ValueError("a stretch runs over the original budget by a positive amount")
+        return self
+
     @model_validator(mode="after")
     def _budget_claims_need_a_budget(self) -> Self:
         if not self.budget_supplied and self.within_budget is not None:
@@ -329,6 +356,30 @@ class BundleGroundingView(BaseModel):
         if self.status is BundleStatus.PARTIAL and not self.required_unmet_count:
             raise ValueError("a partial package is short of a required piece")
         return self
+
+
+class SwapOfferGroundingView(BaseModel):
+    """A held over-budget swap, as the reply may word it.
+
+    The stage is which question is on the table; the yes/no is drawn as chips
+    beside the reply. The three figures - the new total, the budget it broke, and
+    by how much - are all computed by the deterministic swap, none by a model, so
+    the reply may state them plainly and must not soften the overage to "a
+    little": being honest about the money is the point of the turn (CLAUDE.md 27).
+    They are the only figures a difference is included among, because the
+    application computed that difference; the reply still computes nothing itself.
+    `over_budget` is always true here, carried so the model is told plainly what
+    to be honest about.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stage: SwapBudgetOfferStage
+    over_budget: bool = True
+    new_spend_total: Decimal
+    budget_max: Decimal
+    overage: Decimal
+    currency: str = Field(min_length=1)
 
 
 class RoomQuestionGroundingView(BaseModel):
@@ -521,6 +572,15 @@ class ResponseGroundingView(BaseModel):
     many and the cards are another type that does - offered as the best fit,
     never as a refusal."""
 
+    unstocked_type: str | None = None
+    """The type they asked for, in words, when the store stocks *none* of it and
+    the cards are the closest type it does stock - offered instead of a dead end.
+
+    Distinct from `offered_instead_of`, and the difference is the whole reason
+    for two fields: there the asked type exists but cannot seat them; here the
+    store simply does not carry it, so the reply says "we don't have that, but
+    here's the closest" rather than "this is the best fit for your number"."""
+
     search_was_suggested: bool = False
     """Whether this set is something we proposed rather than something they
     asked for.
@@ -633,6 +693,9 @@ class ResponseGroundingView(BaseModel):
     room_question: RoomQuestionGroundingView | None = None
     """What to ask about the room, for `ROOM_QUESTION` and nothing else."""
 
+    swap_offer: SwapOfferGroundingView | None = None
+    """The held over-budget swap, for `ROOM_SWAP_OFFER` and nothing else."""
+
     brief: ProductBriefGroundingView | None = None
     """The card of questions shown with the reply: the whole turn for
     `PRODUCT_BRIEF`, or folded beneath results as "Narrow down" for
@@ -744,11 +807,20 @@ class ResponseGroundingView(BaseModel):
         ):
             raise ValueError("an unwidened search presents only exact matches")
 
-        for words in (self.commerce_category, self.commerce_subcategory, self.offered_instead_of):
+        for words in (
+            self.commerce_category,
+            self.commerce_subcategory,
+            self.offered_instead_of,
+            self.unstocked_type,
+        ):
             # The registry key is an internal identifier; a model shown one
             # writes it back verbatim.
             if words is not None and "-" in words:
                 raise ValueError("a category reaches the model as words, not a key")
+        if self.offered_instead_of is not None and self.unstocked_type is not None:
+            # Two different substitutions cannot both own one turn: the seat-count
+            # swap and the not-stocked swap are mutually exclusive recoveries.
+            raise ValueError("a turn offers one substitution reason, not both")
         return self
 
 

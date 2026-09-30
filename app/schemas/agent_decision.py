@@ -602,6 +602,13 @@ class CustomerStateProposal(BaseModel):
     """They want the room now, without more questions - "just design it",
     "surprise me", "stop asking". Whatever is still missing is chosen for them."""
 
+    palette_left_to_us: bool = False
+    """They answered the room's colour question by leaving it to us - "any
+    colour", "you choose", "leave the palette to me", "whatever works". An answer
+    like any other: it settles the colour question so it is not asked again. Set
+    it only when they leave colour to us, never when they name a colour (that is
+    `design_preferences`)."""
+
     @model_validator(mode="after")
     def _setting_and_clearing_are_exclusive(self) -> Self:
         if self.room_pieces is not None and self.room_pieces_default:
