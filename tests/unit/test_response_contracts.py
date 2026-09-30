@@ -406,7 +406,7 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # A dearer swap that broke the budget - the model does the soft-sell and
         # asks whether to stretch; the yes/no is the application's chips.
         "room_swap_offer",
-        # A card of questions for a stated need - which questions is the
+        # A card of questions for a product search - which questions is the
         # application's; the reply only introduces the card.
         "product_brief",
         "design_advice",

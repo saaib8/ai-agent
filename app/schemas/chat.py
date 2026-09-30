@@ -257,7 +257,7 @@ class ChatPresentation(BaseModel):
     so; a price sort or an unordered list has no best match."""
 
     brief: ProductBrief | None = None
-    """A card of questions for a stated need: first, before anything is
+    """A card of questions for a product search: first, before anything is
     searched, or folded beside results to narrow them (CLAUDE.md 10.4)."""
 
     focus: GroundedProduct | None = None

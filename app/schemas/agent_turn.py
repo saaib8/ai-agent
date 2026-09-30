@@ -410,7 +410,7 @@ class CustomerTurnResult(BaseModel):
     one, while no room is under way (CLAUDE.md 10)."""
 
     product_brief: ProductBrief | None = None
-    """A card of questions for a stated need - first, before anything is
+    """A card of questions for a product search - first, before anything is
     searched, or folded beside results to narrow them (CLAUDE.md 10.4).
     Built by the application; the reply only introduces it."""
 

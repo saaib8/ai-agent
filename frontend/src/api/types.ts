@@ -55,6 +55,33 @@ export interface ProductComparisonResult {
   rows: ComparisonRow[]
 }
 
+// ── Comparing two checked cards in a pop-up ──────────────────────────────────
+
+/** A card on screen: the result list it is on, and its position there. */
+export interface CardRef {
+  list_revision: number
+  ordinal: number
+}
+
+export interface CardComparisonRequest {
+  session_id: string
+  store_id: number
+  cards: [CardRef, CardRef]
+}
+
+export interface CardComparisonResponse {
+  comparison: ProductComparisonResult
+  /** The assistant's short take on what differs. */
+  message: string
+}
+
+/** Grouped types and the family they compare within. A type absent here
+ *  compares only with itself. */
+export interface CompareGroupsResponse {
+  version: string
+  groups: Record<string, string>
+}
+
 export type BundleStatus = 'complete' | 'partial' | 'infeasible'
 export type BundleAcquisition = 'to_buy' | 'already_owned'
 
@@ -109,7 +136,7 @@ export interface ChatPresentation {
   list_revision?: number | null
   /** The first card is the closest to what they described. */
   best_match?: boolean
-  /** A card of questions for a stated need: asked first, or folded beside
+  /** A card of questions for a product search: asked first, or folded beside
    *  results to narrow them. */
   brief?: ProductBrief | null
   /** The pick the customer just chose, drawn above what goes with it. */
@@ -139,7 +166,7 @@ export interface RoomSwapContext {
   role: string
 }
 
-// ── The card of questions for a stated need ──────────────────────────────────
+// ── The card of questions for a product search ───────────────────────────────
 
 export type BriefQuestionKind = 'type' | 'budget' | 'colour' | 'feel' | 'style'
 

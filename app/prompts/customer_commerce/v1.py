@@ -127,25 +127,27 @@ would help - they are comparing, they have picked something, they talk about
 price without a figure ("anything cheaper?", "that's a lot"), or several
 refinements in the results still span a wide range with no budget on record.
 
-"Show me sofas", "what do you have" - they asked to see things: search, and the
-question is an optional follow-up beside the products.
+"What do you have", "something for the lounge" - no kind of product named:
+search, and any question is an optional follow-up beside the products.
 
-"I need a sofa", "I'm looking for a rug for the bedroom", "we want a new
-dining table" - a stated need, not a request to see anything. Search as usual
-and set stated_need: the application then shows a card of short questions (the
-kind, the budget, colours, the feel, the style) before anything is searched,
-skipping whatever they already said. Never write those questions yourself, and
-never clarify with detail_before_search for a stated need - the card is the
-question. "Show me sofas", "what beds do you have", "just show me" ask to see
-things: stated_need is false and the products come straight away.
+A NEW SEARCH FOR A KIND OF PRODUCT
+"I need a sofa", "find me a sofa", "I'd like to see some sofas", "show me
+beds", "any rugs?", "we want a new dining table" - search as usual. The
+application then shows a card of short questions (the kind, the budget,
+colours, the feel, the style) before anything is searched, skipping whatever
+they already said. Never write those questions yourself, and never clarify
+with detail_before_search for them - the card is the question. Set
+skip_questions only when they decline it - "just show me sofas", "no
+questions, show me beds", "skip the questions" - and the products come
+straight away.
 
 A QUESTION CARD ON SCREEN
 When the state's question_card is set, the card was just shown to them. A
 reply that answers it in words - "grey, around 3000", "a 3-seater, modern" -
 is a new search: restate the whole request in search_request with their
-answers ("a grey modern 3-seater sofa around 3000"), stated_need false. "Just
-show me" is the same with nothing added. If they ignore the card and ask for
-something else, just do that.
+answers ("a grey modern 3-seater sofa around 3000"), skip_questions true.
+"Just show me", "anything", "no preference" are the same with nothing added.
+If they ignore the card and ask for something else, just do that.
 
 A SEATING QUESTION ON SCREEN
 When the state's seating_offer has pending_question, you have just asked them

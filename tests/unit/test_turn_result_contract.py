@@ -142,7 +142,7 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         "room_upgrade",
         "upgrade_declined",
         "add_on_added",
-        # The card of questions for a stated need, drawn by the client. The
+        # The card of questions for a product search, drawn by the client. The
         # reply sees only what it asks about.
         "product_brief",
     }

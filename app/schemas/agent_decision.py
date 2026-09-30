@@ -564,9 +564,7 @@ class CustomerStateProposal(BaseModel):
     clear_room_budget: bool = False
     design_preferences: PreferenceProposal | None = None
 
-    regular_seating_count: int | None = Field(
-        default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
-    )
+    regular_seating_count: int | None = Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT)
     """How many people regularly use the room, when they said so.
 
     "Family of five", "we're five people", "seating for four" - the same fact
@@ -830,16 +828,17 @@ class CustomerAgentDecision(BaseModel):
     everywhere else, since dropping a size is never worth refusing a turn.
     """
 
-    stated_need: bool = False
-    """They said what they need rather than asking to see anything - "I need a
-    sofa", "I'm looking for a rug for the bedroom", "we want a new dining
-    table".
+    skip_questions: bool = False
+    """Show the products now, without the card of questions first.
 
-    The application then shows a card of short questions (the kind, the
-    budget, colours, the feel, the style) before searching, so the few
-    products that follow are the ones that suit them (CLAUDE.md 10.4). "Show
-    me sofas", "what beds do you have" and "just show me" ask to see things:
-    false, and the products come straight away.
+    Every new search for a kind of product - "I need a sofa", "find me a
+    sofa", "I'd like to see some sofas", "show me beds", "any rugs?" - gets a
+    card of short questions (the kind, the budget, colours, the feel, the
+    style) before anything is searched, so the few products that follow are
+    the ones that suit them (CLAUDE.md 10.4). True only when they declined
+    it - "just show me sofas", "no questions, show me beds" - or when this
+    message answers, in words, the card already on screen: "grey, around
+    3000", "anything", "just show me".
 
     A flag, never the questions: which questions, and their choices, are the
     application's. Read only on a new search; ignored everywhere else, since
@@ -1075,8 +1074,7 @@ class CustomerAgentDecision(BaseModel):
         )
         references_inert = (AgentAction.ANSWER, AgentAction.CLARIFY)
         advice = (
-            self.action is AgentAction.DESIGN_HANDOFF
-            and self.design_scope is DesignScope.ADVICE
+            self.action is AgentAction.DESIGN_HANDOFF and self.design_scope is DesignScope.ADVICE
         )
         if (
             self.reference is not None
@@ -1164,7 +1162,6 @@ class CustomerAgentDecision(BaseModel):
             raise ValueError("focus cannot accompany a search that replaces results")
 
 
-
 def build_constrained_decision(attributes: CatalogAttributes) -> type[CustomerAgentDecision]:
     """`CustomerAgentDecision` with every colour and style restricted to the registry.
 
@@ -1209,7 +1206,7 @@ def build_constrained_decision(attributes: CatalogAttributes) -> type[CustomerAg
         "ConstrainedSemanticPreference",
         __base__=SemanticPreference,
         __doc__=SemanticPreference.__doc__,
-        canonical_value=canonical
+        canonical_value=canonical,
     )
     preferences = create_model(
         "ConstrainedPreferenceProposal",
@@ -1243,6 +1240,7 @@ def to_plain_decision(decision: CustomerAgentDecision) -> CustomerAgentDecision:
     if type(decision) is CustomerAgentDecision:
         return decision
     return CustomerAgentDecision.model_validate(decision.model_dump())
+
 
 __all__ = [
     "MAX_CLARIFICATION_CHARS",
