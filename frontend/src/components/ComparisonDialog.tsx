@@ -4,9 +4,9 @@ import { CloseIcon, CompareIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
 
 export type ComparisonPopup =
-  | { status: 'loading'; names: [string, string] }
-  | { status: 'ready'; names: [string, string]; data: CardComparisonResponse }
-  | { status: 'error'; names: [string, string]; message: string }
+  | { status: 'loading'; names: string[] }
+  | { status: 'ready'; names: string[]; data: CardComparisonResponse }
+  | { status: 'error'; names: string[]; message: string }
 
 interface ComparisonDialogProps {
   popup: ComparisonPopup
@@ -14,12 +14,12 @@ interface ComparisonDialogProps {
 }
 
 /**
- * Two checked products side by side, over the chat.
+ * The checked products side by side, over the chat.
  *
- * Opened by the Compare button once two cards are checked. A look, not a
- * turn: the server compares the two cards it can see on screen and words a
+ * Opened by the Compare button once two or more cards are checked. A look,
+ * not a turn: the server compares the cards it can see on screen and words a
  * short take, and closing leaves the conversation exactly as it was, with the
- * two still checked. Only similar products reach here - the checkboxes of
+ * cards still checked. Only similar products reach here - the checkboxes of
  * other kinds are disabled, and the server refuses them regardless.
  */
 export function ComparisonDialog({ popup, onClose }: ComparisonDialogProps) {
@@ -47,7 +47,9 @@ export function ComparisonDialog({ popup, onClose }: ComparisonDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="comparison-title"
-        className="relative z-10 flex max-h-[92dvh] w-full max-w-3xl animate-rise flex-col overflow-hidden rounded-t-2xl border border-line bg-canvas shadow-soft sm:rounded-2xl"
+        className={`relative z-10 flex max-h-[92dvh] w-full animate-rise flex-col overflow-hidden rounded-t-2xl border border-line bg-canvas shadow-soft sm:rounded-2xl ${
+          popup.names.length > 2 ? 'max-w-6xl' : 'max-w-3xl'
+        }`}
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-4 py-3 sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
@@ -55,7 +57,14 @@ export function ComparisonDialog({ popup, onClose }: ComparisonDialogProps) {
               <CompareIcon size={18} />
             </span>
             <h2 id="comparison-title" className="truncate text-[15px] font-semibold text-ink">
-              {popup.names[0]} <span className="font-normal text-muted">vs</span> {popup.names[1]}
+              {popup.names.length === 2 ? (
+                <>
+                  {popup.names[0]} <span className="font-normal text-muted">vs</span>{' '}
+                  {popup.names[1]}
+                </>
+              ) : (
+                `Comparing ${popup.names.length} products`
+              )}
             </h2>
           </div>
           <button
@@ -72,7 +81,7 @@ export function ComparisonDialog({ popup, onClose }: ComparisonDialogProps) {
           {popup.status === 'loading' && (
             <div className="flex items-center gap-3 py-10 text-sm text-muted">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-clay/30 border-t-clay" />
-              Comparing the two…
+              Comparing them…
             </div>
           )}
           {popup.status === 'error' && (

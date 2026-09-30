@@ -55,7 +55,7 @@ export interface ProductComparisonResult {
   rows: ComparisonRow[]
 }
 
-// ── Comparing two checked cards in a pop-up ──────────────────────────────────
+// ── Comparing the checked cards in a pop-up ──────────────────────────────────
 
 /** A card on screen: the result list it is on, and its position there. */
 export interface CardRef {
@@ -66,7 +66,8 @@ export interface CardRef {
 export interface CardComparisonRequest {
   session_id: string
   store_id: number
-  cards: [CardRef, CardRef]
+  /** Two or more, as many as they checked. */
+  cards: CardRef[]
 }
 
 export interface CardComparisonResponse {
@@ -80,6 +81,8 @@ export interface CardComparisonResponse {
 export interface CompareGroupsResponse {
   version: string
   groups: Record<string, string>
+  /** How many products one comparison may cover. */
+  max_products: number
 }
 
 export type BundleStatus = 'complete' | 'partial' | 'infeasible'

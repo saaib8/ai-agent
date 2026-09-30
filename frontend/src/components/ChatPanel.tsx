@@ -56,6 +56,8 @@ interface ChatPanelProps {
   onGoesWith: (pick: PickView) => void
   /** Cards checked for comparison, how to check one, and comparing them. */
   comparing: CheckedCard[]
+  /** How many products one comparison may cover. */
+  compareMax: number
   familyOf: (product: GroundedProduct) => string | null
   onToggleCompare: (product: GroundedProduct, listRevision: number) => void
   onCompare: () => void
@@ -97,6 +99,7 @@ export function ChatPanel({
   onRemovePick,
   onGoesWith,
   comparing,
+  compareMax,
   familyOf,
   onToggleCompare,
   onCompare,
@@ -172,10 +175,10 @@ export function ChatPanel({
             const otherKind = other !== undefined && other.family !== family
             return {
               checked,
-              disabled: !checked && (comparing.length >= 2 || otherKind),
+              disabled: !checked && (comparing.length >= compareMax || otherKind),
               hint: otherKind
-                ? 'Compare it with a product of the same kind'
-                : 'Two are checked - compare them, or uncheck one',
+                ? 'Compare it with products of the same kind'
+                : `Up to ${compareMax} products at a time - uncheck one first`,
               onToggle: (p: GroundedProduct) => onToggleCompare(p, listRevision),
             }
           },

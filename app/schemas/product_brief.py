@@ -162,6 +162,10 @@ class PendingBrief(BaseModel):
     colours: tuple[str, ...] = ()
     styles: tuple[str, ...] = ()
     feels: tuple[BriefFeelOption, ...] = ()
+    drop_saved_sizes: bool = False
+    """They let go of the sizes saved for this kind in the message the card
+    answers - "back to sofas, any size is fine". Kept with the card, so the
+    search its answers run does not bring those sizes back."""
 
 
 class ProductBriefState(BaseModel):

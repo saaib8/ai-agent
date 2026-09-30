@@ -899,6 +899,67 @@ async def test_moving_on_to_another_category_is_asked_its_card() -> None:
     assert result.state.product_brief.pending.name == "tables"
 
 
+async def test_any_size_is_fine_said_with_the_need_holds_for_its_card() -> None:
+    """ "Back to sofas, any size is fine": the card comes first, and the search
+    its answers run does not bring back the width they gave earlier."""
+    from tests.unit.test_sizes_per_product_type import _saved, _size
+
+    with_a_saved_width = AgentStateV1(
+        customer_preferences=CustomerPreferenceState(
+            measurements_by_type=(_saved("sofa", _size("200")),)
+        )
+    )
+    letting_go = CustomerAgentDecision(
+        action=AgentAction.SEARCH,
+        commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+        drop_saved_sizes=True,
+    )
+    asking, _ = _coordinator(letting_go)
+    asked = await asking.run(_typed(with_a_saved_width, "back to sofas, any size is fine"))
+    pending = asked.state.product_brief.pending
+    assert pending is not None and pending.drop_saved_sizes
+
+    skipping, pipeline = _coordinator(_search())
+    await skipping.run(
+        CustomerTurnInput(
+            message="Show me sofas",
+            state=asked.state,
+            context=CONTEXT,
+            search_action=BriefAnswerAction(card=pending.card),
+        )
+    )
+
+    (ran,) = pipeline.requests
+    assert ran.request.dimensions == ()
+
+
+async def test_a_saved_size_still_applies_when_they_did_not_let_go_of_it() -> None:
+    from tests.unit.test_sizes_per_product_type import _saved, _size
+
+    with_a_saved_width = AgentStateV1(
+        customer_preferences=CustomerPreferenceState(
+            measurements_by_type=(_saved("sofa", _size("200")),)
+        )
+    )
+    asking, _ = _coordinator(_search())
+    asked = await asking.run(_typed(with_a_saved_width, "back to sofas"))
+    pending = asked.state.product_brief.pending
+    assert pending is not None and not pending.drop_saved_sizes
+
+    skipping, pipeline = _coordinator(_search())
+    await skipping.run(
+        CustomerTurnInput(
+            message="Show me sofas",
+            state=asked.state,
+            context=CONTEXT,
+            search_action=BriefAnswerAction(card=pending.card),
+        )
+    )
+
+    (ran,) = pipeline.requests
+    assert [d.max_cm for d in ran.request.dimensions] == [Decimal("200")]
+
+
 async def test_answers_to_a_card_no_longer_on_screen_search_nothing() -> None:
     coordinator, pipeline = _coordinator(_search())
 

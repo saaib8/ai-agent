@@ -398,12 +398,12 @@ class PickUnavailableError(ZoryError):
 
 
 class ComparisonRefusedError(InvalidRequestError):
-    """Two checked cards that cannot be compared: different kinds of thing, or
-    a card that is no longer on screen. The raiser says which, in words the
+    """Checked cards that cannot be compared: different kinds of thing, too
+    many, or a card no longer on screen. The raiser says which, in words the
     customer can act on."""
 
     code = "comparison_refused"
-    public_message = "Pick two of the same kind to compare - two sofas, or two rugs."
+    public_message = "Compare products of the same kind - sofas with sofas, or rugs with rugs."
 
 
 class PickLimitError(InvalidRequestError):
