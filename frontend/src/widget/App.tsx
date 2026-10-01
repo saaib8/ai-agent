@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getCatalogFacets } from '../api/client'
 import type { CatalogFacets } from '../api/types'
+import { DEFAULT_ROOM } from '../lib/catalog'
+import type { RoomDraft, SelectedPiece } from '../lib/catalog'
 import { createBridge } from './bridge'
 import { Avatar } from './components/Avatar'
 import { Composer } from './components/Composer'
+import { CompareTray } from './components/CompareTray'
 import { ToolsSheet } from './components/ToolsSheet'
 import type { WidgetConfig } from './config'
 import { WidgetContext, useWidget as useWidgetContext } from './context'
@@ -32,6 +35,8 @@ export function App({ config }: { config: WidgetConfig }) {
   const [view, setView] = useState<ViewName>(agent.turns.length ? 'chat' : 'home')
   const [facets, setFacets] = useState<CatalogFacets | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [selection, setSelection] = useState<SelectedPiece[]>([])
+  const [room, setRoom] = useState<RoomDraft>(DEFAULT_ROOM)
   const [host, setHost] = useState({ open: true, expanded: false, mobile: false })
   const [wide, setWide] = useState(() => window.innerWidth >= WIDE)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -132,6 +137,10 @@ export function App({ config }: { config: WidgetConfig }) {
 
   const context: WidgetContextValue = {
     config,
+    selection,
+    setSelection,
+    room,
+    setRoom,
     agent,
     bridge,
     facets,
@@ -173,6 +182,7 @@ export function App({ config }: { config: WidgetConfig }) {
       <div className="scroll">
         <ViewBody view={view} />
       </div>
+      {view !== 'compare' && view !== 'basket' && <CompareTray />}
       {WITH_COMPOSER.includes(view) && (
         <div className="composer-wrap">
           <Composer onTools={() => setToolsOpen(true)} />
@@ -302,8 +312,8 @@ function Header({
           <button
             className="icon-btn"
             onClick={() => bridge.post({ type: host.expanded ? 'collapse' : 'expand' })}
-            aria-label={host.expanded ? 'Exit full screen' : 'Expand to full screen'}
-            title={host.expanded ? 'Exit full screen' : 'Full screen'}
+            aria-label={host.expanded ? 'Make the panel smaller' : 'Make the panel larger'}
+            title={host.expanded ? 'Shrink' : 'Expand'}
           >
             <Icon name={host.expanded ? 'collapse' : 'expand'} size={16} />
           </button>

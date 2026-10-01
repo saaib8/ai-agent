@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  postCatalogVisualize,
   postChat,
   postFinderPhoto,
   postFinderPick,
@@ -8,6 +9,7 @@ import {
 } from '../api/client'
 import type {
   BriefAnswerAction,
+  CatalogSelection,
   ChatResponse,
   FinderObject,
   GroundedProduct,
@@ -58,6 +60,10 @@ export interface Agent {
   removePick: (pick: PickView) => void
   goesWith: (pick: PickView) => void
   compare: (first: PickView, second: PickView) => void
+  /** Takes one piece out of the compare tray (it stays a pick). */
+  uncompare: (pick: number) => void
+  clearCompare: () => void
+  runCompare: () => void
   showMore: () => void
   exclude: (product: GroundedProduct) => void
   startSwap: (bundleOrdinal: number, role: string) => void
@@ -66,6 +72,10 @@ export interface Agent {
   uploadPhoto: (file: File) => Promise<void>
   pickObject: (photoTurnId: string, imageId: string, object: FinderObject) => Promise<void>
   visualize: (view: RenderView, viewLabel: string) => void
+  /** Render the pieces picked in Browse Catalogue, in the room described. */
+  visualizeSelection: (selection: CatalogSelection, view: RenderView, summary: string) => void
+  /** The last catalogue selection rendered, so another view can be drawn. */
+  lastSelection: CatalogSelection | null
   newChat: () => void
   /** A short-lived message for the shopper, e.g. "Added to your basket". */
   flash: (message: string) => void
@@ -83,6 +93,7 @@ export function useAgent(config: WidgetConfig): Agent {
   const [notice, setNotice] = useState<string | null>(null)
   const [swap, setSwap] = useState<SwapContext | null>(null)
   const [comparing, setComparing] = useState<number[]>([])
+  const [lastSelection, setLastSelection] = useState<CatalogSelection | null>(null)
   // Refs mirror what async handlers must read without being re-created.
   const busy = useRef(false)
   const sessionRef = useRef(sessionId)
@@ -212,8 +223,9 @@ export function useAgent(config: WidgetConfig): Agent {
   )
 
   /** Mark a card for a side-by-side. Comparison is of two picks, so a card
-   *  not yet picked is picked first (silently: no "goes with" turn); the
-   *  second card marked runs the comparison. */
+   *  not yet picked is picked first (silently: no "goes with" turn). Marked
+   *  cards wait in the compare tray until the shopper runs it; a third mark
+   *  replaces the oldest. */
   const toggleCompare = async (product: GroundedProduct, listRevision: number) => {
     const ordinal = product.presented_ordinal
     if (busy.current || picking || ordinal == null) return
@@ -227,18 +239,19 @@ export function useAgent(config: WidgetConfig): Agent {
       if (!pick) return
     }
     const chosen = pick.pick
-    if (comparing.includes(chosen)) {
-      setComparing((queue) => queue.filter((n) => n !== chosen))
-      return
-    }
-    const queue = [...comparing.filter((n) => current.some((p) => p.pick === n)), chosen].slice(-2)
-    const [first, second] = queue.map((n) => current.find((p) => p.pick === n))
-    if (first && second) {
-      compare(first, second)
-      return
-    }
-    setComparing(queue)
-    setNotice('Choose one more piece to compare')
+    setComparing((queue) =>
+      queue.includes(chosen)
+        ? queue.filter((n) => n !== chosen)
+        : [...queue.filter((n) => current.some((p) => p.pick === n)), chosen].slice(-2),
+    )
+  }
+
+  const uncompare = (pick: number) => setComparing((queue) => queue.filter((n) => n !== pick))
+
+  /** Runs the side-by-side of the two pieces waiting in the tray. */
+  const runCompare = () => {
+    const [first, second] = comparing.map((n) => picksRef.current.find((p) => p.pick === n))
+    if (first && second) compare(first, second)
   }
 
   const removePick = (pick: PickView) => {
@@ -375,6 +388,23 @@ export function useAgent(config: WidgetConfig): Agent {
       busy.current = false
     })()
   }
+  const visualizeSelection = (selection: CatalogSelection, view: RenderView, summary: string) => {
+    if (busy.current) return
+    void (async () => {
+      busy.current = true
+      setLastSelection(selection)
+      setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text: summary }])
+      setSending(true)
+      setActivity('rendering')
+      const result = await postCatalogVisualize(config.apiBase, { ...base, ...selection, view })
+      if (result.ok) commit(result.data)
+      else fail(result)
+      setSending(false)
+      setActivity(null)
+      busy.current = false
+    })()
+  }
+
 
   const newChat = () => {
     if (busy.current) return
@@ -386,6 +416,7 @@ export function useAgent(config: WidgetConfig): Agent {
     setPicks([])
     setSwap(null)
     setComparing([])
+    setLastSelection(null)
     setNotice(null)
   }
 
@@ -408,6 +439,9 @@ export function useAgent(config: WidgetConfig): Agent {
     removePick,
     goesWith,
     compare,
+    uncompare,
+    clearCompare: () => setComparing([]),
+    runCompare,
     showMore,
     exclude,
     startSwap,
@@ -416,6 +450,8 @@ export function useAgent(config: WidgetConfig): Agent {
     uploadPhoto,
     pickObject,
     visualize,
+    visualizeSelection,
+    lastSelection,
     newChat,
     flash: setNotice,
     dismissNotice: () => setNotice(null),

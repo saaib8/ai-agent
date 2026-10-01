@@ -90,16 +90,6 @@ export function ProductCard({ product, listRevision, latest, bestMatch }: Produc
           {choosing ? null : actionable ? (
             <>
               <button
-                className="mini-btn"
-                onClick={() => void agent.toggleCompare(product, listRevision!)}
-                disabled={busy}
-                aria-pressed={comparing}
-                aria-label={comparing ? 'Remove from comparison' : 'Compare'}
-                title="Compare"
-              >
-                <Icon name="columns" size={15} />
-              </button>
-              <button
                 className="add-btn"
                 onClick={() => void agent.toggleBasket(product, listRevision!)}
                 disabled={busy}
@@ -112,6 +102,17 @@ export function ProductCard({ product, listRevision, latest, bestMatch }: Produc
             </>
           ) : null}
         </div>
+        {!choosing && actionable && (
+          <label className={`compare-check${comparing ? ' on' : ''}`}>
+            <input
+              type="checkbox"
+              checked={comparing}
+              onChange={() => void agent.toggleCompare(product, listRevision!)}
+              disabled={busy}
+            />
+            Compare
+          </label>
+        )}
         {choosing && (
           <button className="use-btn" onClick={() => agent.chooseAlternative(ordinal!)} disabled={busy}>
             Use this one

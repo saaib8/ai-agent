@@ -18,7 +18,8 @@
  *   data-accent          brand colour, hex (default #3e8da8)
  *   data-avatar          https URL of the assistant's picture
  *   data-position        "right" (default) or "left"
- *   data-greeting        teaser text beside the launcher; "off" hides it
+ *   data-greeting        one teaser message, or "off" to hide the teaser
+ *   data-greetings       several teaser messages separated by "|"; they rotate
  *   data-open            "true" opens the panel on load
  *   data-origin          where the widget is hosted (default: this script's origin)
  *   data-api             where the /v1 API is, e.g. https://stage.ai-agent.zory.ai
@@ -85,27 +86,52 @@
   var avatar = option('avatar', 'avatar')
   if (avatar && !/^https:\/\//.test(avatar)) avatar = ''
   var side = option('position', 'position') === 'left' ? 'left' : 'right'
+  // The teaser cycles through a few short offers, each opening the tool it
+  // names. A store can replace them, give one, or turn the teaser off.
+  var DEFAULT_GREETINGS = [
+    { text: 'Looking for the perfect sofa?', tool: 'catalog' },
+    { text: 'Need help furnishing your home?', tool: 'room-planner' },
+    { text: "Tell me your budget \u2014 I'll narrow the options.", tool: 'budget' },
+    { text: "Snap a photo \u2014 I'll find similar pieces.", tool: 'photo' },
+  ]
   var greetingOption = option('greeting', 'greeting')
-  var greeting = greetingOption === 'off' ? '' : greetingOption || 'A little help with your home?'
+  var greetingsOption = option('greetings', 'greetings')
+  var greetings =
+    greetingOption === 'off'
+      ? []
+      : greetingsOption
+        ? greetingsOption.split('|').map(function (s) { return { text: s.trim().slice(0, 120), tool: '' } }).filter(function (g) { return g.text })
+        : greetingOption
+          ? [{ text: greetingOption.slice(0, 120), tool: '' }]
+          : DEFAULT_GREETINGS
   var autoOpen = option('open', 'open') === 'true'
   var apiOrigin = originOf(option('api', 'api'))
 
   // ── styles (all under one prefix so nothing touches the store's page) ──────
 
   var css =
-    '.zory-agent-launcher{position:fixed;bottom:24px;' + side + ':24px;z-index:' + Z + ';display:flex;align-items:center;gap:10px;height:52px;padding:0 20px 0 8px;border:0;border-radius:16px;background:#17191c;color:#fff;font:600 16px/1 "DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer;box-shadow:0 10px 30px rgba(24,33,45,.28),0 2px 6px rgba(24,33,45,.12);transition:transform .15s ease,box-shadow .15s ease;-webkit-font-smoothing:antialiased}' +
-    '.zory-agent-launcher:hover{transform:translateY(-1px);box-shadow:0 14px 36px rgba(24,33,45,.32),0 2px 6px rgba(24,33,45,.12)}' +
-    '.zory-agent-launcher:focus-visible,.zory-agent-teaser:focus-visible{outline:3px solid ' + accent + ';outline-offset:3px}' +
-    '.zory-agent-face{position:relative;display:grid;place-items:center;width:36px;height:36px;border-radius:50%;overflow:hidden;background:linear-gradient(145deg,#fff,' + accent + ');color:#17191c;font-weight:700;font-size:15px;line-height:1;box-shadow:0 0 0 2px rgba(255,255,255,.9)}' +
-    '.zory-agent-face img{width:100%;height:100%;object-fit:cover}' +
-    '.zory-agent-dot{position:absolute;top:-3px;' + side + ':-3px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#e5484d;color:#fff;font:700 11px/18px system-ui,sans-serif;text-align:center;box-shadow:0 0 0 2px #fff;display:none}' +
-    '.zory-agent-teaser{position:fixed;bottom:88px;' + side + ':24px;z-index:' + Z + ';max-width:260px;padding:10px 14px;border:1px solid #dce0e5;border-radius:14px;background:#fff;color:#3c434b;font:400 13px/1.4 "DM Sans",ui-sans-serif,system-ui,sans-serif;text-align:left;cursor:pointer;box-shadow:0 8px 24px rgba(24,33,45,.12);opacity:0;transform:translateY(6px);transition:opacity .25s ease,transform .25s ease;pointer-events:none}' +
+    '.zory-agent-launcher{position:fixed;bottom:24px;' + side + ':24px;z-index:' + Z + ';display:flex;align-items:center;gap:12px;height:56px;padding:0 18px 0 7px;border:0;border-radius:28px;background:#17191c;color:#fff;font:600 17px/1 "DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:-.01em;cursor:pointer;box-shadow:0 12px 32px rgba(24,33,45,.28),0 2px 6px rgba(24,33,45,.12);transition:transform .15s ease,box-shadow .15s ease;-webkit-font-smoothing:antialiased}' +
+    '.zory-agent-launcher:hover{transform:translateY(-1px);box-shadow:0 16px 38px rgba(24,33,45,.32),0 2px 6px rgba(24,33,45,.12)}' +
+    '.zory-agent-launcher:focus-visible,.zory-agent-teaser button:focus-visible{outline:3px solid ' + accent + ';outline-offset:3px}' +
+    '.zory-agent-chev{width:16px;height:16px;margin-left:2px;color:#9aa4ab}' +
+    '.zory-agent-face{position:relative;display:grid;place-items:center;width:42px;height:42px;flex-shrink:0;border-radius:50%;background:linear-gradient(145deg,#fff,' + accent + ');color:#17191c;font-weight:700;font-size:16px;line-height:1;box-shadow:0 0 0 2.5px #fff}' +
+    '.zory-agent-face img{width:100%;height:100%;border-radius:50%;object-fit:cover}' +
+    '.zory-agent-dot{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#e5484d;color:#fff;font:700 11px/18px system-ui,sans-serif;text-align:center;box-shadow:0 0 0 2px #17191c;display:none}' +
+    '.zory-agent-teaser{position:fixed;bottom:96px;' + side + ':24px;z-index:' + Z + ';width:270px;max-width:calc(100vw - 48px);padding:12px 12px 14px 16px;border:1px solid #dce0e5;border-radius:20px;background:#fff;color:#17191c;font:400 13px/1.4 "DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;box-shadow:0 12px 32px rgba(24,33,45,.12),0 2px 6px rgba(24,33,45,.05);opacity:0;transform:translateY(8px);transition:opacity .25s ease,transform .25s ease;pointer-events:none;-webkit-font-smoothing:antialiased;cursor:pointer}' +
     '.zory-agent-teaser.is-on{opacity:1;transform:none;pointer-events:auto}' +
-    '.zory-agent-panel{position:fixed;bottom:24px;' + side + ':24px;z-index:' + Z + ';width:376px;height:min(676px,calc(100vh - 48px));max-width:calc(100vw - 32px);border:1px solid #ccd2da;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 26px 72px rgba(24,33,45,.19),0 4px 15px rgba(24,33,45,.08);opacity:0;transform:translateY(12px) scale(.985);transform-origin:bottom ' + side + ';transition:opacity .2s ease,transform .2s ease;visibility:hidden}' +
+    '.zory-agent-teaser .zt-top{display:flex;align-items:center;gap:6px;color:#59616c;font-size:12px}' +
+    '.zory-agent-teaser .zt-spark{width:18px;height:18px;margin:-6px 0 0 -2px;color:' + accent + '}' +
+    '.zory-agent-teaser .zt-ctrl{margin-left:auto;display:flex;align-items:center;gap:2px}' +
+    '.zory-agent-teaser .zt-ctrl button{display:inline-flex;align-items:center;gap:3px;height:24px;min-width:24px;padding:0 5px;border:0;border-radius:7px;background:none;color:#59616c;font:500 12px/1 "DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;cursor:pointer}' +
+    '.zory-agent-teaser .zt-ctrl button:hover{background:#eceef1;color:#17191c}' +
+    '.zory-agent-teaser .zt-ctrl svg{width:13px;height:13px}' +
+    '.zory-agent-teaser .zt-msg{margin-top:4px;font-size:14px;font-weight:600;line-height:1.35;letter-spacing:-.01em;transition:opacity .2s ease}' +
+    '.zory-agent-panel{position:fixed;bottom:24px;' + side + ':24px;z-index:' + Z + ';width:376px;height:min(676px,calc(100vh - 48px));max-width:calc(100vw - 32px);border:1px solid #ccd2da;border-radius:20px;overflow:hidden;background:#fff;box-shadow:0 26px 72px rgba(24,33,45,.19),0 4px 15px rgba(24,33,45,.08);opacity:0;transform:translateY(12px) scale(.985);transform-origin:bottom ' + side + ';transition:opacity .2s ease,transform .2s ease,width .25s ease,height .25s ease;visibility:hidden}' +
     '.zory-agent-panel.is-open{opacity:1;transform:none;visibility:visible}' +
+    '.zory-agent-panel.is-large{width:min(1560px,calc(100vw - 48px));height:calc(100vh - 48px);max-width:none}' +
     '.zory-agent-panel.is-full{top:0;left:0;right:0;bottom:0;width:100%;height:100%;max-width:none;border:0;border-radius:0}' +
     '.zory-agent-panel iframe{display:block;width:100%;height:100%;border:0;background:#fff}' +
-    '@media (prefers-reduced-motion:reduce){.zory-agent-launcher,.zory-agent-teaser,.zory-agent-panel{transition:none}}'
+    '@media (prefers-reduced-motion:reduce){.zory-agent-launcher,.zory-agent-teaser,.zory-agent-teaser .zt-msg,.zory-agent-panel{transition:none}}'
 
   var style = document.createElement('style')
   style.setAttribute('data-zory-agent', '')
@@ -120,34 +146,164 @@
   launcher.setAttribute('aria-expanded', 'false')
   launcher.setAttribute('aria-label', 'Ask ' + assistantName + ', your shopping assistant')
 
-  var face = document.createElement('span')
-  face.className = 'zory-agent-face'
-  if (avatar) {
-    var img = document.createElement('img')
-    img.alt = ''
-    img.src = avatar
-    img.onerror = function () {
-      face.removeChild(img)
-      face.textContent = assistantName.charAt(0).toUpperCase()
-    }
-    face.appendChild(img)
-  } else {
-    face.textContent = assistantName.charAt(0).toUpperCase()
+  var SVG = 'http://www.w3.org/2000/svg'
+  function icon(path, className, width) {
+    var svg = document.createElementNS(SVG, 'svg')
+    svg.setAttribute('viewBox', '0 0 24 24')
+    svg.setAttribute('fill', 'none')
+    svg.setAttribute('stroke', 'currentColor')
+    svg.setAttribute('stroke-width', width || '2')
+    svg.setAttribute('stroke-linecap', 'round')
+    svg.setAttribute('stroke-linejoin', 'round')
+    svg.setAttribute('aria-hidden', 'true')
+    if (className) svg.setAttribute('class', className)
+    var p = document.createElementNS(SVG, 'path')
+    p.setAttribute('d', path)
+    svg.appendChild(p)
+    return svg
   }
+  var CHEVRON = 'M9 6l6 6-6 6'
+  function makeFace(className) {
+    var el = document.createElement('span')
+    el.className = 'zory-agent-face' + (className ? ' ' + className : '')
+    if (avatar) {
+      var img = document.createElement('img')
+      img.alt = ''
+      img.src = avatar
+      img.onerror = function () {
+        if (img.parentNode) img.parentNode.removeChild(img)
+        el.insertBefore(document.createTextNode(assistantName.charAt(0).toUpperCase()), el.firstChild)
+      }
+      el.appendChild(img)
+    } else {
+      el.textContent = assistantName.charAt(0).toUpperCase()
+    }
+    return el
+  }
+
+  var face = makeFace('')
   var dot = document.createElement('span')
   dot.className = 'zory-agent-dot'
   face.appendChild(dot)
   launcher.appendChild(face)
   launcher.appendChild(document.createTextNode('Ask ' + assistantName))
+  launcher.appendChild(icon(CHEVRON, 'zory-agent-chev', '2'))
 
+  // ── teaser: rotating offers beside the launcher ───────────────────────────
   var teaser = null
-  if (greeting) {
-    teaser = document.createElement('button')
-    teaser.type = 'button'
+  var teaserMsg = null
+  var teaserCount = null
+  var pauseBtn = null
+  var greetingIndex = 0
+  var rotation = null
+  var paused = false
+  var PAUSE = 'M9 5v14M15 5v14'
+  var PLAY = 'M8 5l11 7-11 7z'
+
+  if (greetings.length) {
+    teaser = document.createElement('div')
     teaser.className = 'zory-agent-teaser'
-    teaser.textContent = greeting.slice(0, 120)
-    teaser.setAttribute('aria-hidden', 'true')
-    teaser.tabIndex = -1
+    teaser.setAttribute('role', 'status')
+    teaser.setAttribute('aria-live', 'polite')
+
+    var top = document.createElement('div')
+    top.className = 'zt-top'
+    top.appendChild(icon('M6 4l1.5 3M3 10l3.3.6M5 16.5l2.7-1.8', 'zt-spark', '2'))
+    var label = document.createElement('span')
+    label.textContent = assistantName + ' can help'
+    top.appendChild(label)
+
+    var ctrl = document.createElement('span')
+    ctrl.className = 'zt-ctrl'
+    if (greetings.length > 1) {
+      var next = document.createElement('button')
+      next.type = 'button'
+      next.setAttribute('aria-label', 'Next message')
+      teaserCount = document.createElement('span')
+      next.appendChild(teaserCount)
+      next.appendChild(icon(CHEVRON, '', '2.2'))
+      next.addEventListener('click', function (event) {
+        event.stopPropagation()
+        showGreeting(greetingIndex + 1)
+      })
+      ctrl.appendChild(next)
+
+      pauseBtn = document.createElement('button')
+      pauseBtn.type = 'button'
+      pauseBtn.addEventListener('click', function (event) {
+        event.stopPropagation()
+        paused = !paused
+        renderPause()
+        if (paused) stopRotation()
+        else startRotation()
+      })
+      ctrl.appendChild(pauseBtn)
+    }
+    var dismiss = document.createElement('button')
+    dismiss.type = 'button'
+    dismiss.setAttribute('aria-label', 'Dismiss')
+    dismiss.appendChild(icon('M18 6L6 18M6 6l12 12', '', '2'))
+    dismiss.addEventListener('click', function (event) {
+      event.stopPropagation()
+      hideTeaser(true)
+    })
+    ctrl.appendChild(dismiss)
+    top.appendChild(ctrl)
+    teaser.appendChild(top)
+
+    teaserMsg = document.createElement('div')
+    teaserMsg.className = 'zt-msg'
+    teaser.appendChild(teaserMsg)
+    showGreeting(0)
+    renderPause()
+  }
+
+  function renderPause() {
+    if (!pauseBtn) return
+    pauseBtn.textContent = ''
+    pauseBtn.appendChild(icon(paused ? PLAY : PAUSE, '', '2.4'))
+    pauseBtn.setAttribute('aria-label', paused ? 'Resume messages' : 'Pause messages')
+  }
+
+  function showGreeting(index) {
+    greetingIndex = (index + greetings.length) % greetings.length
+    teaserMsg.style.opacity = '0'
+    setTimeout(function () {
+      teaserMsg.textContent = greetings[greetingIndex].text
+      teaserMsg.style.opacity = '1'
+    }, teaserMsg.textContent ? 150 : 0)
+    if (teaserCount) teaserCount.textContent = greetingIndex + 1 + '/' + greetings.length
+  }
+
+  function teaserDismissed() {
+    try {
+      return sessionStorage.getItem('zory-agent:teaser') === 'dismissed'
+    } catch (e) {
+      return false
+    }
+  }
+
+  function showTeaserSoon() {
+    if (!teaser || teaserDismissed()) return
+    setTimeout(function () {
+      if (open || teaserDismissed()) return
+      teaser.classList.add('is-on')
+      startRotation()
+    }, 1200)
+  }
+
+  function startRotation() {
+    stopRotation()
+    if (greetings.length > 1 && !paused) {
+      rotation = setInterval(function () {
+        showGreeting(greetingIndex + 1)
+      }, 5000)
+    }
+  }
+
+  function stopRotation() {
+    if (rotation) clearInterval(rotation)
+    rotation = null
   }
 
   var panel = document.createElement('div')
@@ -194,7 +350,8 @@
     if (iframe) return
     iframe = document.createElement('iframe')
     iframe.title = assistantName + ', shopping assistant'
-    iframe.setAttribute('allow', 'clipboard-write')
+    iframe.setAttribute('allow', 'clipboard-write; fullscreen')
+    iframe.setAttribute('allowfullscreen', '')
     iframe.src = widgetUrl()
     panel.appendChild(iframe)
   }
@@ -210,8 +367,11 @@
   }
 
   function syncState() {
-    var full = open && (expanded || isMobile())
+    // Expanding makes a larger window in the corner, never the whole page;
+    // only a phone, where the small panel would not fit, gets full screen.
+    var full = open && isMobile()
     panel.classList.toggle('is-full', full)
+    panel.classList.toggle('is-large', open && expanded && !full)
     if (full) {
       if (document.documentElement.style.overflow !== 'hidden') {
         previousOverflow = document.documentElement.style.overflow
@@ -235,10 +395,11 @@
 
   function hideTeaser(remember) {
     if (!teaser) return
+    stopRotation()
     teaser.classList.remove('is-on')
     if (remember) {
       try {
-        sessionStorage.setItem('zory-agent:teaser', 'seen')
+        sessionStorage.setItem('zory-agent:teaser', 'dismissed')
       } catch (e) {}
     }
   }
@@ -248,10 +409,11 @@
     open = value
     if (open) {
       ensureFrame()
-      hideTeaser(true)
+      hideTeaser(false)
       dot.style.display = 'none'
     } else {
       expanded = false
+      showTeaserSoon()
     }
     panel.classList.toggle('is-open', open)
     launcher.style.display = open ? 'none' : ''
@@ -272,7 +434,9 @@
   })
   if (teaser) {
     teaser.addEventListener('click', function () {
+      var tool = greetings[greetingIndex].tool
       setOpen(true)
+      if (tool) command('tool', { tool: tool })
     })
   }
   document.addEventListener('keydown', function (event) {
@@ -365,15 +529,7 @@
       if (typeof api[name] === 'function') api[name].apply(null, Array.prototype.slice.call(call, 1))
     })
     if (autoOpen) setOpen(true)
-    var seen = false
-    try {
-      seen = sessionStorage.getItem('zory-agent:teaser') === 'seen'
-    } catch (e) {}
-    if (teaser && !seen) {
-      setTimeout(function () {
-        if (!open) teaser.classList.add('is-on')
-      }, 1200)
-    }
+    if (!autoOpen) showTeaserSoon()
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount)

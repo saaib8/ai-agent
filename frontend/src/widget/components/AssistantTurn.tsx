@@ -113,7 +113,7 @@ export function AssistantTurn({ data, latest, currentRoom, renderDropped }: Assi
 
         {p?.comparison && <Comparison comparison={p.comparison} />}
         {p?.room && <RoomPlan room={p.room} current={currentRoom} />}
-        {p?.render && <Render render={p.render} canRedraw={latest && p.render.source !== 'catalog'} />}
+        {p?.render && <Render render={p.render} canRedraw={latest && (p.render.source !== 'catalog' || agent.lastSelection != null)} />}
         {renderDropped && <div className="hint">The room picture isn&apos;t kept after the page reloads.</div>}
 
         {(p?.seating_bundles ?? []).map((bundle, index, all) => (
@@ -328,27 +328,74 @@ function RoomPlan({
 
 function Render({ render, canRedraw }: { render: RoomRenderPresentation; canRedraw: boolean }) {
   const { agent } = useWidget()
+  const [viewer, setViewer] = useState(false)
   const busy = agent.sending || agent.picking
   const others = RENDER_VIEWS.filter((view) => view.value !== render.view)
+  const alt = `Your room, ${render.view_label.toLowerCase()} view`
+  const fileName = `room-${render.view.replace(/_/g, '-')}.jpg`
+  // A catalogue room is drawn again from the selection it was made from.
+  const redraw = (view: RenderView, label: string) =>
+    render.source === 'catalog' && agent.lastSelection
+      ? agent.visualizeSelection(agent.lastSelection, view, `Show my selection — ${label.toLowerCase()} view`)
+      : agent.visualize(view, label)
+
+  /** The browser's own full screen where it is allowed, otherwise a viewer
+   *  over the panel - an iframe without the permission is refused, and some
+   *  embedded browsers never answer the request at all. */
+  const openFullScreen = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const figure = event.currentTarget.closest('figure')
+    const img = figure?.querySelector('img')
+    if (!img || !document.fullscreenEnabled || !img.requestFullscreen) {
+      setViewer(true)
+      return
+    }
+    const fallback = () => {
+      if (!document.fullscreenElement) setViewer(true)
+    }
+    const timer = window.setTimeout(fallback, 600)
+    img.requestFullscreen().catch(() => {
+      window.clearTimeout(timer)
+      setViewer(true)
+    })
+  }
+
   return (
-    <figure className="render" style={{ margin: 0 }}>
-      <img src={render.image_url} alt={`Your room, ${render.view_label.toLowerCase()} view`} />
-      <figcaption>
-        <span>{render.view_label} view</span>
-        <span>{render.items.length} pieces</span>
-      </figcaption>
+    <figure className="render card">
+      <div className="card-head">
+        <span>Your room</span>
+        <span className="status">{render.view_label} view</span>
+      </div>
+      <img src={render.image_url} alt={alt} />
+      <div className="render-actions">
+        <button className="link-btn" onClick={openFullScreen}>
+          <Icon name="fullscreen" size={14} /> Full screen
+        </button>
+        <a className="link-btn" href={render.image_url} download={fileName}>
+          <Icon name="download" size={14} /> Download
+        </a>
+        <span className="muted render-count">{render.items.length} pieces</span>
+      </div>
       {canRedraw && (
-        <div className="views" style={{ marginTop: 8 }}>
+        <div className="views render-views">
+          <span className="chip-label">Try another view</span>
           {others.map((view) => (
             <button
               key={view.value}
               className="chip"
               disabled={busy}
-              onClick={() => agent.visualize(view.value as RenderView, view.label)}
+              onClick={() => redraw(view.value as RenderView, view.label)}
             >
               {view.label}
             </button>
           ))}
+        </div>
+      )}
+      {viewer && (
+        <div className="lightbox" role="dialog" aria-modal="true" aria-label={alt} onClick={() => setViewer(false)}>
+          <img src={render.image_url} alt={alt} />
+          <button className="lightbox-close" onClick={() => setViewer(false)} aria-label="Close full screen">
+            <Icon name="close" size={18} />
+          </button>
         </div>
       )}
     </figure>

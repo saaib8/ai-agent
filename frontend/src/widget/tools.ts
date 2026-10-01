@@ -71,3 +71,31 @@ export const VIEW_TITLES: Record<ViewName, string> = {
   'room-context': 'Room context',
   basket: 'Basket',
 }
+
+/** The home carousel, in order. A card either opens a tool or asks Nora a
+ *  ready-made question; `label` is the small eyebrow over an example. */
+export interface HomeCard {
+  icon: IconName
+  title: string
+  description?: string
+  label?: string
+  action: { view: ViewName } | { ask: string }
+}
+
+export const HOME_CARDS: HomeCard[] = [
+  {
+    icon: 'home',
+    title: 'Furnish a whole room',
+    description:
+      "Give me a room size, a budget and a style — I'll propose a complete, coherent bundle from the catalog.",
+    // The same request the agent console's card sends to /v1/chat; the
+    // agent answers with the room's piece chips and its room questions.
+    action: { ask: 'Furnish my 4x5m bedroom under SAR 12,000 in a modern style' },
+  },
+  { icon: 'image', title: 'Find furniture in the image', action: { view: 'photo' } },
+  { icon: 'grid', title: 'Browse the catalogue and visualize a room', action: { view: 'catalog' } },
+  { icon: 'search', label: 'Discovery', title: 'A modern sofa under 6,000 SAR', action: { ask: 'A modern sofa under 6,000 SAR' } },
+  { icon: 'spark', label: 'Semantic', title: 'Something comfortable for reading', action: { ask: 'Something comfortable for reading' } },
+  { icon: 'sofa', label: 'Discovery', title: 'Dining chairs under 800 SAR', action: { ask: 'Dining chairs under 800 SAR' } },
+  { icon: 'help', label: 'Design Q&A', title: 'How big should a rug be under a sofa?', action: { ask: 'How big should a rug be under a sofa?' } },
+]
