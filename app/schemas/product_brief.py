@@ -167,6 +167,11 @@ class PendingBrief(BaseModel):
     answers - "back to sofas, any size is fine". Kept with the card, so the
     search its answers run does not bring those sizes back."""
 
+    substituted_for: str | None = Field(default=None, min_length=1)
+    """The type they asked for, when this card is for the closest stocked type
+    instead (CLAUDE.md 14.7). Its answers are still disclosed as that
+    substitute, and the agent loop never looks past it to a third type."""
+
 
 class ProductBriefState(BaseModel):
     """The cards of this session.

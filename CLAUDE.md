@@ -613,6 +613,8 @@ against the taxonomy at startup). Budget bands, colours and styles are counted
 from the live, store-scoped catalog when the card is built, and a kind the store
 does not stock is not offered - every chip leads to real products.
 
+- **A type the store does not stock never gets its own card** (14.7): the
+  closest stocked type's card is asked instead, disclosed, or none.
 - **Every new search for a kind of product gets its card**, whatever the
   wording and however long the chat: "I need a bed" said again is a new need,
   and an earlier card they left unanswered is no reason to skip the questions.
@@ -755,7 +757,10 @@ retrieval needs. It carries:
 
 - `commerce_category` (required)
 - `commerce_subcategory` (optional, validated as a pair against the registry)
-- an optional price constraint, with an explicit currency
+- an optional price constraint, with an explicit currency - the one the
+  customer named, or else the store's own when its catalog names exactly one
+  (`CatalogOverview.currency`, a catalog fact); only when neither exists is the
+  customer asked which currency they meant
 - an optional seating-capacity constraint
 - exact colour and style requirements (see 12.4)
 - a bounded `limit`, defaulted and capped from configuration
@@ -1002,6 +1007,13 @@ bounds, each stated measurement and any planar pair.
 `commerce_category` has no strength and is never relaxed. The product family is
 the customer's basic intent: someone asking for lighting has not asked for
 tables, and no relaxation policy may decide otherwise.
+
+Relaxation never changes the type. A *different* type is shown only as a
+disclosed alternative - when the store does not stock the one asked for (14.7),
+or when nothing of it met the customer's limits and the agent loop found a
+stocked sibling in the same category that does (14.8):
+that is the salesperson's "we don't carry that - here's the closest", said out
+loud, never a quiet widening of the search.
 
 ### 13.4 Recording is not relaxing
 
@@ -1273,6 +1285,87 @@ D. PRODUCT DISCOVERY          (services / repositories)
 ```
 
 ---
+
+### 14.7 Stock and fit are checked before the card
+
+Before a new search asks its card or runs (behind
+`customer_agent.stock_fit_check`), the application checks the resolved type
+against the store's live catalog, so the customer is never asked questions
+about - or shown - something the store does not have, as if it did:
+
+- **Not stocked** (no active product of that type, or none in its whole
+  category): the closest stocked type is chosen by one constrained model call
+  over every stocked type, its own category listed first and preferred - or
+  none when nothing honestly serves the same purpose. A chosen type replaces
+  the asked one for this search (its card, or its results), and the reply says
+  plainly that the store does not carry what they asked for and that this is
+  the closest (`unstocked_type`) - even when the substitute then finds nothing
+  under their other limits. Measurements are dropped - a size belongs to the
+  type it was given for (13.5) - and reported as dropped, never replaced by
+  sizes saved for the substitute; a seat count only stays within seating.
+  With no close type, no card is asked and the honest zero result stands. A
+  category's same-named catch-all child (`lighting/lighting`) the store lacks
+  is read as the category itself, which it does carry.
+- **Narrower than any approved type** ("bunk bed" is a `bed`, "bean bag" a
+  `chair`): query understanding marks the type as broader than asked and keeps
+  the customer's own words for the kind (`asked_kind` - every word must be one
+  they wrote; another name for an approved type, such as couch for sofa, is
+  not a narrower kind). The application then looks for that kind by product
+  name across the whole store, spaces and hyphens ignored ("Love Seat" answers
+  "loveseat"). Found, the search proceeds as usual. Not found, it still
+  proceeds with the broader type, and the reply says it could not find that
+  kind in the range (`kind_not_found`) - never describing a shown product as
+  being that kind. The model never decides whether the store carries
+  something: that is a catalog lookup, and a lookup that cannot be made claims
+  nothing.
+
+The check is fail-open: a catalog or provider failure leaves the search exactly
+as it was. It runs once per new search and never for a card being answered -
+including a typed answer to the card shown for a substitute - paging or a
+refinement. The query-understanding fields (`type_fit`, `asked_kind`) are
+produced whether or not the check is switched on; only the check reads them.
+
+### 14.8 The agent loop after a weak search
+
+Behind `customer_agent.agent_loop`, a search the customer asked for (a new
+search, or a card answered) that found nothing within their limits - after
+relaxation and after the seating recoveries, for a type the store stocks - is
+not answered blind. It does not run when the request carries a size (the size
+may be the whole gap, and which limit to set aside is theirs to choose), when
+they ruled other kinds out ("it has to be L-shaped, nothing else" -
+`kind_required`, which also stops the stock check from substituting), or when
+no reviewed stand-in for the type is stocked - then no model call is made. The model sees what happened and chooses the next move,
+one structured step at a time (`app/services/agent_loop.py`):
+
+- **try_type**: the same search for one stocked type that does the same job -
+  by the reviewed comparison groups (`compare_groups_v1.yaml`: a sofa and an
+  L-shape do; a coffee table and a side table, an armchair and a dining chair,
+  do not) - every other limit kept - price, seat count, strict colour
+  and style, wishes and their words. Sizes stay with the type they were given
+  for and are reported as dropped (13.5). Only siblings the catalog says could
+  fit are offered: none whose cheapest piece is above their ceiling (compared
+  only in the store's own currency), and for several seats none that seats one
+  or whose pieces are not recorded as seating that many (27.1). A try is
+  executed, never committed.
+- **finish**: present a type tried that found products meeting every limit
+  exactly - none widened, no strict colour or style lifted - or keep the
+  original reply, which already offers to set one limit aside (13.5). The test
+  is whether the other kind does the same job for them: an L-shape and a sofa
+  do; an armchair and a sofa do not.
+
+What the model may name is restricted per step to those choices in the
+response schema and checked again in code; the observation carries facts in
+words, never ids or product rows. At most `agent_loop_max_tries` tries (2),
+then one step to choose. Only the chosen type is run again and committed, and
+the reply says plainly it is another kind (`alternative_to`). The chosen try is
+committed from its own execution, never run twice, on top of the state the
+original search left: the sizes given for the asked type stay saved, and none
+is saved for the alternative. Any provider failure or unusable answer keeps the
+original reply exactly. A type the store does not stock, or one the stock check
+already judged (a substitute, or not carried), is never looked at - nor is the
+answer to a card shown for a substitute, which searches that substitute and
+says again that the asked type is not carried. A search that found results
+never reaches the loop, so ordinary turns cost nothing extra.
 
 ## 15. PostgreSQL Responsibilities
 
@@ -1607,6 +1700,20 @@ Do not expose hidden chain-of-thought. Store only explicit structured planning/s
 
 ---
 
+### 18.1 Reading a search while the turn is decided
+
+Behind `customer_agent.speculative_interpretation`, query understanding starts
+on the typed message at the same time as the decision instead of after it. Its
+answer is used only when the decision hands query understanding exactly that
+message (whitespace aside); a restated request, a failed early reading, or a
+turn that searches nothing falls back to today's path, and an unused reading is
+cancelled or collected, never raised. It does not start while a card, the
+seating-shape question or a room's questions are open - those answers are
+restated by the decision. It changes when the search is read, never what it
+reads: the outcome, its validation and the 21.1 ladder are exactly as before -
+a reading that failed is handled once, as a fresh one would be, and never read
+again. Speculative readings carry `speculative_interpretation` on their logs.
+
 ## 19. Session State
 
 Use Redis for short-term V1 state.
@@ -1782,6 +1889,10 @@ stops at the first step that works:
 3. **Fall back** to a fixed, friendly "please say it another way" reply, with
    the conversation state exactly as it was before the turn. No model call,
    nothing half-applied.
+
+A field the chosen action never reads is ignored rather than refused - a
+refinement payload beside a new search, as `design_scope` beside a handoff -
+because refusing it only costs another decision for nothing it could change.
 
 Only outages (database, provider, index) and genuine defects surface as errors.
 Every rejection is logged with the rule that failed, never the offending value.
@@ -2039,7 +2150,8 @@ budget - both summed in code.
   combinations at once.
 - **When the asked type never seats that many but another main type does in
   one piece** ("a sofa for six", where sofa sets seat six), that type is
-  searched with everything else kept and presented as the best fit - never
+  searched with everything else kept - except a size, which stays with the type
+  it was given for and is reported as dropped (13.5) - and presented as the best fit - never
   opened with "none of our sofas". Only when the asked type itself cannot seat
   them: a colour or budget problem never changes the type.
 - **In a room**, each seating piece carries its own seat count, so swapping one

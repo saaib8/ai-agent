@@ -831,6 +831,29 @@ class ProductRepository:
             styles=tuple((row[0], int(row[1])) for row in styles.all() if row[0]),
         )
 
+    async def count_named(self, words: Sequence[str], context: RetailerContext) -> int:
+        """How many of the store's active products carry every word in their name.
+
+        The catalog's answer to "do we have bunk beds?" (CLAUDE.md 14.7, 15),
+        asked of the whole store rather than the one type the request resolved
+        to: a kind filed under a neighbouring type is still carried, and saying
+        otherwise would be a claim the catalog does not support. Spaces and
+        hyphens are ignored in the name, so "Love Seat" answers "loveseat".
+
+        Words are plain lowercase letters, bound as parameters; anything else is
+        refused rather than escaped, so no customer text shapes a pattern.
+        """
+        if not words or not all(word.isalpha() and word.islower() for word in words):
+            raise ValueError("count_named takes plain lowercase words")
+        joined = func.replace(func.replace(core_product.c.name_english, " ", ""), "-", "")
+        statement = (
+            select(func.count())
+            .select_from(core_product)
+            .where(*self._scope_clauses(context), *(joined.ilike(f"%{word}%") for word in words))
+        )
+        result = await self._session.execute(statement)
+        return int(result.scalar_one())
+
     async def count_active(self, context: RetailerContext) -> int:
         """How many active products the store has. Backs health and capability checks."""
         statement = (

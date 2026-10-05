@@ -1,0 +1,428 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ZORY Agent - One Customer Turn",
+    "locale": "en",
+    "output": "agent-turn-flow.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/saaib8/ai-agent",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "9d3d868d03748d7d4c33bd40292bc959e2e40c82"
+    },
+    "views": [
+      {
+        "id": "search-path",
+        "label": "Product search",
+        "focus": [
+          "ui",
+          "chatapi",
+          "coord",
+          "models",
+          "search",
+          "postgres",
+          "pinecone"
+        ],
+        "note": "A message becomes a validated search: PostgreSQL decides what is eligible, Pinecone only orders it."
+      },
+      {
+        "id": "room-path",
+        "label": "Whole room",
+        "focus": [
+          "coord",
+          "room",
+          "designer",
+          "seating",
+          "search"
+        ],
+        "note": "Room questions one per turn, then exactly the chosen pieces, seating sized to the head count."
+      },
+      {
+        "id": "reply-path",
+        "label": "Reply and session",
+        "focus": [
+          "chatapi",
+          "redis",
+          "writer",
+          "ui"
+        ],
+        "note": "The writer words verified facts only; the session is saved after the reply is built."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "Chat UI",
+      "sublabel": "React · cards + chips",
+      "pos": [
+        40,
+        180
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "frontend/src/components/ChatPanel.tsx"
+        }
+      ]
+    },
+    {
+      "id": "chatapi",
+      "type": "backend",
+      "label": "POST /v1/chat",
+      "sublabel": "FastAPI · LangGraph",
+      "pos": [
+        300,
+        180
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "store scope fixed here",
+      "sources": [
+        {
+          "path": "app/api/routes/chat.py"
+        },
+        {
+          "path": "app/orchestration/graph.py"
+        },
+        {
+          "path": "app/services/chat_runtime.py"
+        }
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis session",
+      "sublabel": "agent state per store",
+      "pos": [
+        300,
+        50
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/repositories/sessions.py"
+        }
+      ]
+    },
+    {
+      "id": "writer",
+      "type": "backend",
+      "label": "Response writer",
+      "sublabel": "OpenAI · numeric guard",
+      "pos": [
+        300,
+        310
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/services/response_generator.py"
+        },
+        {
+          "path": "app/services/numeric_guard.py"
+        }
+      ]
+    },
+    {
+      "id": "coord",
+      "type": "backend",
+      "label": "Turn coordinator",
+      "sublabel": "decide → act → state",
+      "pos": [
+        580,
+        180
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "main path",
+      "sources": [
+        {
+          "path": "app/services/turn_coordinator.py"
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "type": "external",
+      "label": "Decision + query models",
+      "sublabel": "OpenAI structured output",
+      "pos": [
+        580,
+        50
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/services/customer_decision.py"
+        },
+        {
+          "path": "app/services/query_understanding.py"
+        }
+      ]
+    },
+    {
+      "id": "search",
+      "type": "backend",
+      "label": "Search pipeline",
+      "sublabel": "filter · relax · rank",
+      "pos": [
+        860,
+        180
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/services/search_pipeline.py"
+        },
+        {
+          "path": "app/services/relaxation.py"
+        },
+        {
+          "path": "app/services/discovery.py"
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL catalog",
+      "sublabel": "core_product · read-only",
+      "pos": [
+        1140,
+        180
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/repositories/products.py"
+        }
+      ]
+    },
+    {
+      "id": "pinecone",
+      "type": "database",
+      "label": "Pinecone",
+      "sublabel": "semantic order only",
+      "pos": [
+        1140,
+        50
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/services/semantic_ranking.py"
+        }
+      ]
+    },
+    {
+      "id": "room",
+      "type": "backend",
+      "label": "Room builder",
+      "sublabel": "questions · pieces · optimiser",
+      "pos": [
+        580,
+        310
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/services/room_composition.py"
+        },
+        {
+          "path": "app/services/bundle_optimizer.py"
+        },
+        {
+          "path": "app/taxonomy/room_pieces_v1.yaml"
+        }
+      ]
+    },
+    {
+      "id": "seating",
+      "type": "backend",
+      "label": "Seating planner",
+      "sublabel": "combinations to a head count",
+      "pos": [
+        860,
+        310
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/services/seating_solution.py"
+        },
+        {
+          "path": "app/taxonomy/seating_v1.yaml"
+        }
+      ]
+    },
+    {
+      "id": "designer",
+      "type": "external",
+      "label": "Interior design agent",
+      "sublabel": "OpenAI · feel of each piece",
+      "pos": [
+        580,
+        440
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/services/interior_design.py"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "ui-to-api",
+      "from": "ui",
+      "to": "chatapi",
+      "label": "message",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-session",
+      "from": "chatapi",
+      "to": "redis",
+      "label": "load / save"
+    },
+    {
+      "id": "api-to-coord",
+      "from": "chatapi",
+      "to": "coord",
+      "label": "run turn",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-to-writer",
+      "from": "chatapi",
+      "to": "writer",
+      "label": "word reply",
+      "labelDy": 46
+    },
+    {
+      "id": "coord-models",
+      "from": "coord",
+      "to": "models",
+      "label": "decide"
+    },
+    {
+      "id": "coord-search",
+      "from": "coord",
+      "to": "search",
+      "label": "search",
+      "variant": "emphasis"
+    },
+    {
+      "id": "search-sql",
+      "from": "search",
+      "to": "postgres",
+      "label": "scoped SQL",
+      "variant": "emphasis"
+    },
+    {
+      "id": "search-rank",
+      "from": "search",
+      "to": "pinecone",
+      "label": "rank ids",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "coord-room",
+      "from": "coord",
+      "to": "room",
+      "label": "room",
+      "labelDy": 46
+    },
+    {
+      "id": "room-designer",
+      "from": "room",
+      "to": "designer",
+      "label": "plan",
+      "variant": "dashed",
+      "labelDy": 46
+    },
+    {
+      "id": "room-seating",
+      "from": "room",
+      "to": "seating",
+      "label": "seats"
+    },
+    {
+      "id": "seating-search",
+      "from": "seating",
+      "to": "search",
+      "label": "pools"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One turn",
+      "items": [
+        "Load session → decide → act → word reply → save",
+        "Store scope comes from the request, never a model",
+        "One question at most per reply"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Facts vs words",
+      "items": [
+        "PostgreSQL decides what exists and what it costs",
+        "Pinecone only orders eligible products",
+        "Numeric guard blocks any figure not on screen"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Reviewed registries",
+      "items": [
+        "Taxonomy, colours and styles, dimensions",
+        "Seat counts and room pieces (YAML)",
+        "Loaded and validated at startup"
+      ]
+    }
+  ]
+}

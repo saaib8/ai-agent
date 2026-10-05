@@ -62,6 +62,8 @@ class MappedProposals(NamedTuple):
 def map_proposals(
     state_proposal: CustomerStateProposal | None,
     commerce_proposal: DerivedCommerceProposal | None,
+    *,
+    store_currency: str | None = None,
 ) -> MappedProposals:
     """Both proposals from one decision, as a single typed update.
 
@@ -69,7 +71,7 @@ def map_proposals(
     two sequential updates would each rebuild the state, and a failure between
     them would leave half of what the customer said recorded.
     """
-    customer, room, clarification = _customer_state(state_proposal)
+    customer, room, clarification = _customer_state(state_proposal, store_currency)
     return MappedProposals(
         update=AgentStateUpdate(
             customer_preferences=customer,
@@ -82,6 +84,7 @@ def map_proposals(
 
 def _customer_state(
     proposal: CustomerStateProposal | None,
+    store_currency: str | None = None,
 ) -> tuple[
     CustomerPreferenceUpdate | None,
     RoomProjectUpdate | None,
@@ -96,7 +99,7 @@ def _customer_state(
         else None
     )
 
-    budget, clarification = _budget(proposal.room_budget)
+    budget, clarification = _budget(proposal.room_budget, store_currency)
     geometry, geometry_clarification = _geometry(proposal.room_geometry)
     # One question per turn, and the currency outranks the unit only because
     # something has to: both are the same kind of gap, and the coordinator
@@ -154,16 +157,18 @@ def _preferences(proposal: PreferenceProposal | None) -> PreferenceListUpdate | 
 
 def _budget(
     proposal: PriceProposal | None,
+    store_currency: str | None = None,
 ) -> tuple[PriceConstraint | None, DeterministicClarification | None]:
     """A budget, or the reason it could not be recorded.
 
-    A stated amount with no currency is not an error and not a guess: the
-    retailer's currency is never inferred (CLAUDE.md 15), so the figure is held
-    back and the customer is asked which currency they meant.
+    A stated amount with no currency is in the store's own currency when its
+    catalog names exactly one - a catalog fact, not a guess. Only when it does
+    not is the figure held back and the customer asked which currency they
+    meant: never inferred from anything less (CLAUDE.md 3.3).
     """
     if proposal is None:
         return None, None
-    currency = (proposal.currency or "").strip()
+    currency = (proposal.currency or "").strip() or (store_currency or "")
     if not currency:
         return None, DeterministicClarification(
             reason=BlockingClarificationReason.MISSING_PRICE_CURRENCY

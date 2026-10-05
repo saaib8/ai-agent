@@ -103,10 +103,16 @@ def test_an_answer_carries_no_execution_payload() -> None:
     assert decision.comparison_references == ()
 
 
-@pytest.mark.parametrize("action", [AgentAction.ANSWER, AgentAction.SEARCH, AgentAction.COMPARE])
-def test_only_a_refinement_may_carry_a_delta(action: AgentAction) -> None:
-    with pytest.raises(ValidationError, match="only a refinement"):
-        CustomerAgentDecision(action=action, refinement=CHEAPER)
+@pytest.mark.parametrize("action", [AgentAction.ANSWER, AgentAction.SEARCH])
+def test_a_stray_refinement_payload_is_ignored_not_refused(action: AgentAction) -> None:
+    """Only `_refine` reads it, so beside another action it can change nothing;
+    refusing it only cost a second decision (CLAUDE.md 21.1, step 1)."""
+    decision = CustomerAgentDecision(
+        action=action, refinement=CHEAPER, taxonomy_change_requested=True
+    )
+
+    assert decision.refinement is None
+    assert decision.taxonomy_change_requested is False
 
 
 def test_a_refinement_needs_something_to_change() -> None:
@@ -444,3 +450,22 @@ def test_detail_is_an_action_not_an_interaction() -> None:
     action with a reference (locked M11A), not a silent state edit."""
     assert {o.value for o in ProductInteractionOp} == {"select", "deselect", "focus"}
     assert AgentAction.PRODUCT_DETAIL in AgentAction
+
+
+def test_the_constrained_schema_forgives_a_stray_refinement_too() -> None:
+    """The provider's answer is parsed into the constrained subclass: the same
+    forgiveness applies there, before any rule runs."""
+    import json
+
+    from app.schemas.agent_decision import build_constrained_decision
+    from app.taxonomy.attributes import load_catalog_attributes
+
+    schema = build_constrained_decision(load_catalog_attributes())
+    raw = json.dumps(
+        {
+            **CustomerAgentDecision(action=AgentAction.ANSWER).model_dump(mode="json"),
+            "taxonomy_change_requested": True,
+        }
+    )
+
+    assert schema.model_validate_json(raw).taxonomy_change_requested is False

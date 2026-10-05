@@ -30,6 +30,7 @@ here, not by whichever branch happened to run last.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -41,7 +42,9 @@ from app.core.exceptions import (
     LLMResponseInvalidError,
     TaxonomyValidationError,
 )
-from app.core.logging import get_logger
+from app.core.logging import bind_log_fields, get_logger
+from app.core.request_trace import record_turn_action
+from app.core.text import same_words
 from app.prompts.customer_commerce.v1 import describe_unusable
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import (
@@ -158,6 +161,7 @@ from app.schemas.discovery import (
     SeatingCapacityConstraint,
 )
 from app.schemas.grounding import (
+    DroppedConstraint,
     GroundedProduct,
     SearchExecutionGrounding,
     SelectionGrounding,
@@ -207,6 +211,7 @@ from app.schemas.resolution import (
     DesignNeedFailureReason,
     DesignNeedUnresolved,
     DeterministicClarification,
+    ProductSearchExecutionResult,
     ReferenceFailureReason,
     ReferenceUnresolved,
     RelativePriceFailureReason,
@@ -230,6 +235,7 @@ from app.schemas.seating_solution import (
     SeatingSolution,
     SeatingSolutionOutcome,
 )
+from app.services.agent_loop import WeakSearchLoop
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
@@ -263,6 +269,7 @@ from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.relative_price import RelativePriceResolver
+from app.services.retype import composed_as_type
 from app.services.room_composition import (
     PRIORITY_FOR_TIER,
     chosen_keys,
@@ -276,6 +283,7 @@ from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
+from app.services.stock_fit import StockFit, StockFitCheck, StockFitOutcome
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.complements import Companion, Complements
 from app.taxonomy.dimensions import DimensionSemantics
@@ -443,6 +451,15 @@ class _Primary:
     unstocked_type: str | None = None
     """The type they asked for, when the store stocks none of it and the cards
     are the closest type it does stock - offered instead of a dead end."""
+
+    alternative_to: str | None = None
+    """The type they asked for, when nothing of it met their limits and the
+    agent loop found another stocked type that does (CLAUDE.md 14.8)."""
+
+    kind_not_found: str | None = None
+    """Their own name for a kind narrower than the type ("bunk bed"), when
+    nothing in the store's catalog is named that way and the turn shows the
+    broader type instead (CLAUDE.md 14.7)."""
 
     room_question: RoomQuestion | None = None
     """This turn's one question about a room being designed, when something it
@@ -940,6 +957,23 @@ class _Revision:
     stop: _Primary | None = None
 
 
+@dataclass(slots=True)
+class _Speculation:
+    """The message being read for a search while the turn is decided."""
+
+    message: str
+    task: asyncio.Task[QueryInterpretation]
+    used: bool = False
+
+
+_SPECULATION_FAILURES = (
+    IntegrationUnavailableError,
+    LLMResponseInvalidError,
+    TaxonomyValidationError,
+)
+"""How a reading may expectedly fail; anything else in one is a defect."""
+
+
 @dataclass(frozen=True, slots=True)
 class _Interaction:
     """The optional side effect, and why it may not have happened."""
@@ -978,8 +1012,20 @@ class CustomerTurnCoordinator:
         complements: Complements | None = None,
         companion_search: CompanionSearchBuilder | None = None,
         briefs: ProductBriefBuilder | None = None,
+        stock_fit: StockFitCheck | None = None,
+        agent_loop: WeakSearchLoop | None = None,
+        speculative_interpretation: bool = False,
     ) -> None:
+        self._speculative_interpretation = speculative_interpretation
+        """Read the message for a search while the turn is decided (plan 11)."""
+        self._speculation: _Speculation | None = None
         self._taxonomy = taxonomy
+        self._stock_fit = stock_fit
+        """The stock-and-fit check before a new search's card (CLAUDE.md 14.7).
+        None where it is switched off: the search runs as it always did."""
+        self._agent_loop = agent_loop
+        """The agent loop after a weak search (CLAUDE.md 14.8). None where it is
+        switched off: an empty search keeps its honest reply, as always."""
         self._closest_type = closest_type
         """The closest stocked type when the asked one is absent. None where the
         capability is not configured, in which case an unstocked type stays a
@@ -1027,10 +1073,93 @@ class CustomerTurnCoordinator:
         every reply ends on a question all read one answer (CLAUDE.md 10.2).
         """
         result = await self._run_turn(turn)
+        screen = turn.bundle_action or turn.search_action or turn.product_action
+        record_turn_action("screen" if screen is not None else str(result.decision.action))
         step = next_step(result, self._complements)
         return result.model_copy(update={"next_step": step}) if step is not None else result
 
     async def _run_turn(self, turn: CustomerTurnInput) -> CustomerTurnResult:
+        """The turn, with its message read for a search while it is decided.
+
+        Query understanding reads one message and nothing else, so on most
+        search turns it can start at the same time as the decision instead of
+        after it (plan 11, 3b). Its answer is used only when the decision hands
+        it exactly that message; otherwise - or if it failed - the turn runs as
+        it always did. Whatever is not used is discarded before the turn ends.
+        """
+        self._speculation = await self._speculate(turn)
+        try:
+            return await self._decide_and_run(turn)
+        finally:
+            await self._discard_speculation()
+
+    async def _speculate(self, turn: CustomerTurnInput) -> _Speculation | None:
+        """Start reading the message now, when a search is the likely use of it.
+
+        Not for a screen action, which no model reads, and not while a question
+        is open - a card, the seating shape, a room's questions - because the
+        answer to one is restated by the decision, never searched as typed.
+        """
+        if not self._speculative_interpretation:
+            return None
+        if turn.bundle_action or turn.search_action or turn.product_action:
+            return None
+        state = turn.state
+        if (
+            state.product_brief.pending is not None
+            or (
+                state.seating_offer is not None
+                and state.seating_offer.shape_asked
+                and state.seating_offer.chosen_shape is None
+            )
+            or (state.room_project is not None and not state.room_project.bundle_items)
+        ):
+            return None
+        # Read here, before the reading starts: the catalog session is not
+        # shared with a task running alongside the decision.
+        currency = await self._store_currency(turn.context)
+        task = asyncio.create_task(self._read_speculatively(turn.message, currency))
+        return _Speculation(message=turn.message, task=task)
+
+    async def _read_speculatively(
+        self, message: str, store_currency: str | None
+    ) -> QueryInterpretation:
+        # The tag lands only on this reading's own logs, so query
+        # understanding's metrics can tell readings nobody used from the rest.
+        bind_log_fields(speculative_interpretation=True)
+        return await self._query_understanding.interpret(message, store_currency=store_currency)
+
+    async def _store_currency(self, context: RetailerContext) -> str | None:
+        """The store's own currency, when its catalog names exactly one.
+
+        An amount a customer states without a currency is in it - a catalog
+        fact, not a guess - and only a store whose catalog is mixed is asked
+        about (known issue 16). Read from the overview this request already
+        caches; unreadable means unknown, never an error."""
+        try:
+            return (await self._capabilities.overview(context)).currency
+        except _HANDLED_SEARCH_FAILURES:
+            return None
+
+    async def _discard_speculation(self) -> None:
+        speculation, self._speculation = self._speculation, None
+        if speculation is None:
+            return
+        if not speculation.task.done():
+            speculation.task.cancel()
+        # Collected, never raised: an unused reading must not fail the turn -
+        # but a failure in one is still reported, and a defect loudly.
+        (outcome,) = await asyncio.gather(speculation.task, return_exceptions=True)
+        if (
+            not speculation.used
+            and isinstance(outcome, BaseException)
+            and not isinstance(outcome, asyncio.CancelledError)
+        ):
+            report = logger.info if isinstance(outcome, _SPECULATION_FAILURES) else logger.warning
+            report("speculative_interpretation_failed", error_type=type(outcome).__name__)
+        logger.info("speculative_interpretation", used=speculation.used)
+
+    async def _decide_and_run(self, turn: CustomerTurnInput) -> CustomerTurnResult:
         """One turn in, the next state and what happened out.
 
         A turn carrying a `bundle_action` is a screen-driven room edit and takes
@@ -1159,7 +1288,13 @@ class CustomerTurnCoordinator:
         )
 
         proposals = self._with_room_pieces(
-            decision, map_proposals(decision.state_proposal, decision.commerce_proposal), pre_turn
+            decision,
+            map_proposals(
+                decision.state_proposal,
+                decision.commerce_proposal,
+                store_currency=await self._store_currency(turn.context),
+            ),
+            pre_turn,
         )
         interaction = await self._apply_interaction(decision, pre_turn, turn.context)
         primary = await self._execute(decision, interaction.state, pre_turn, turn, proposals.update)
@@ -1203,6 +1338,8 @@ class CustomerTurnCoordinator:
             room_seats=self._room_seats(primary.bundle_outcome),
             offered_instead_of=primary.offered_instead_of,
             unstocked_type=primary.unstocked_type,
+            kind_not_found=primary.kind_not_found,
+            alternative_to=primary.alternative_to,
             product_brief=primary.product_brief,
             focus=primary.focus,
             companions=primary.companions,
@@ -1298,6 +1435,11 @@ class CustomerTurnCoordinator:
             bundle_change=primary.bundle_change,
             seating_solution=primary.seating_solution,
             offered_instead_of=primary.offered_instead_of,
+            # A card answered can show the substitute it was for, or the
+            # agent loop's alternative: the reply must be able to say so.
+            unstocked_type=primary.unstocked_type,
+            kind_not_found=primary.kind_not_found,
+            alternative_to=primary.alternative_to,
         )
         logger.info(
             "search_action_completed",
@@ -4404,7 +4546,9 @@ class CustomerTurnCoordinator:
         reads - still one self-contained request, interpreted and validated
         exactly as a message would be (M22 1).
         """
-        interpretation = await self._interpret(decision.search_request or turn.message)
+        interpretation = await self._interpret(
+            decision.search_request or turn.message, await self._store_currency(turn.context)
+        )
         if isinstance(interpretation, TurnFailure):
             return _Primary(state=working, failure=interpretation)
         if isinstance(interpretation, UnresolvedStrictRequirement):
@@ -4430,11 +4574,25 @@ class CustomerTurnCoordinator:
         need more seats than any single piece has (CLAUDE.md 10.4).
         """
         # A typed answer to the card on screen is searched, never asked again.
-        answering = self._briefs is not None and self._briefs.answers_card(interpretation, working)
+        answering = self._answers_card(interpretation, working)
+        fit: StockFitOutcome | None = None
+        if self._stock_fit is not None and not answering:
+            # The shelf before the questions: a type the store does not carry
+            # never gets its own card (CLAUDE.md 14.7).
+            fit = await self._stock_fit.check(interpretation, turn.context)
+            interpretation = fit.resolved
+            if fit.fit is StockFit.SUBSTITUTED and self._answers_card(interpretation, working):
+                # "Grey ones" typed to the card shown for the substitute: an
+                # answer to that card, whose reply already said the rest.
+                answering = True
+                fit = replace(fit, asked=None)
         pending = working.product_brief.pending
         if answering and pending is not None and pending.drop_saved_sizes:
             decision = decision.model_copy(update={"drop_saved_sizes": True})
-        asking = self._briefs is not None and not (decision.skip_questions or answering)
+        not_carried = fit is not None and fit.fit is StockFit.NOT_CARRIED
+        asking = self._briefs is not None and not (
+            decision.skip_questions or answering or not_carried
+        )
         combining = asking and await self._needs_combining(interpretation, turn)
         if asking and not combining:
             # "I need a sofa", "find me a sofa", "show me sofas": the card
@@ -4446,17 +4604,41 @@ class CustomerTurnCoordinator:
                 turn,
                 BriefMode.ASK,
                 drop_saved_sizes=decision.drop_saved_sizes,
+                substituted_for=(
+                    fit.asked if fit is not None and fit.fit is StockFit.SUBSTITUTED else None
+                ),
             )
             if asked is not None:
-                return asked
+                return _disclosed(asked, fit)
         if working.product_brief.pending is not None:
             # A new search replaces the card on screen; its answers would now
             # refine a request nobody is making.
             working = record_brief(working, None)
-        primary = await self._seed_and_execute(interpretation, decision, working, turn)
-        if answering or combining:
+        primary = _disclosed(
+            await self._seed_and_execute(
+                interpretation,
+                decision,
+                working,
+                turn,
+                # A fitting type - or a check that failed open - keeps the old
+                # fallback after an empty search, exactly as before; only a
+                # type the check already judged skips it.
+                offer_closest=fit is None or fit.fit is StockFit.FITS,
+                dropped=fit.dropped if fit is not None else (),
+                substitute=fit is not None and fit.fit is StockFit.SUBSTITUTED,
+                # The loop looks again only at a type the store stocks: a
+                # substitute or a type not carried was already judged.
+                explore=fit is None or fit.fit in (StockFit.FITS, StockFit.KIND_NOT_FOUND),
+            ),
+            fit,
+        )
+        if answering or combining or not_carried:
+            # Not carried: no card of its own, folded or asked (CLAUDE.md 14.7).
             return primary
         return await self._offer_narrowing(interpretation, primary, turn)
+
+    def _answers_card(self, interpretation: ResolvedSearch, working: AgentStateV1) -> bool:
+        return self._briefs is not None and self._briefs.answers_card(interpretation, working)
 
     async def _needs_combining(self, resolved: ResolvedSearch, turn: CustomerTurnInput) -> bool:
         """Whether no single piece in the store seats as many as they need.
@@ -4490,6 +4672,7 @@ class CustomerTurnCoordinator:
         mode: BriefMode,
         *,
         drop_saved_sizes: bool = False,
+        substituted_for: str | None = None,
     ) -> _Primary | None:
         """The card for this search, recorded as shown - or None to search.
 
@@ -4506,10 +4689,11 @@ class CustomerTurnCoordinator:
             return None
         if built is None:
             return None
-        pending = (
-            built.pending.model_copy(update={"drop_saved_sizes": True})
-            if drop_saved_sizes
-            else built.pending
+        pending = built.pending.model_copy(
+            update={
+                "drop_saved_sizes": drop_saved_sizes or built.pending.drop_saved_sizes,
+                "substituted_for": substituted_for,
+            }
         )
         return _Primary(
             state=record_brief(working, pending, shown=pending.name),
@@ -4536,6 +4720,7 @@ class CustomerTurnCoordinator:
             or primary.seating_solution is not None
             or primary.offered_instead_of is not None
             or primary.unstocked_type is not None
+            or primary.alternative_to is not None
         ):
             return primary
         executed = ResolvedSearch(
@@ -4605,7 +4790,19 @@ class CustomerTurnCoordinator:
             styles=len(action.styles),
             feel=action.feel is not None,
         )
-        return await self._run_search(composed, answered, turn.context, save_sizes=True)
+        substituted_for = pending.substituted_for if pending is not None else None
+        if substituted_for is not None:
+            # The card was for the closest stocked type: its answers search that
+            # type, say so again beside what they find, and go no further - the
+            # stock check already chose it (CLAUDE.md 14.7, 14.8).
+            primary = await self._run_search(
+                composed, answered, turn.context, save_sizes=False, offer_closest=False
+            )
+            if primary.failure is not None or primary.offered_instead_of is not None:
+                return primary
+            return replace(primary, unstocked_type=substituted_for)
+        primary = await self._run_search(composed, answered, turn.context, save_sizes=True)
+        return await self._explore_weak(composed, primary, answered, turn.context)
 
     async def _seed_and_execute(
         self,
@@ -4613,8 +4810,17 @@ class CustomerTurnCoordinator:
         decision: CustomerAgentDecision,
         working: AgentStateV1,
         turn: CustomerTurnInput,
+        *,
+        offer_closest: bool = True,
+        dropped: tuple[DroppedConstraint, ...] = (),
+        substitute: bool = False,
+        explore: bool = False,
     ) -> _Primary:
         """Seed a new task and run it.
+
+        `dropped` are sizes the customer gave for a type the store does not
+        carry: reported beside the substitute's results, and never replaced by
+        sizes saved earlier for the substitute (CLAUDE.md 13.5, 14.7).
 
         This turn's proposals are passed explicitly rather than persisted
         first: "I usually prefer Modern, show me sofas" must seed this search,
@@ -4629,12 +4835,70 @@ class CustomerTurnCoordinator:
             ),
             customer_defaults=working.customer_preferences.semantic_preferences,
             semantic_intent=(decision.new_search.semantic_intent if decision.new_search else None),
-            saved_measurements=_saved_sizes(
-                decision, working, resolved.request.commerce_subcategory
+            # A substitute states no size of its own: none restored, none saved.
+            saved_measurements=(
+                None
+                if substitute
+                else _saved_sizes(decision, working, resolved.request.commerce_subcategory)
             ),
             revision=_current_revision(working),
         )
-        return await self._run_search(composed, working, turn.context, save_sizes=True)
+        if dropped:
+            composed = composed.model_copy(
+                update={"dropped_constraints": (*composed.dropped_constraints, *dropped)}
+            )
+        primary = await self._run_search(
+            composed,
+            working,
+            turn.context,
+            # Saving a substitute's empty sizes would erase ones the customer
+            # gave that type earlier (13.5).
+            save_sizes=not substitute,
+            offer_closest=offer_closest,
+        )
+        if not explore:
+            return primary
+        return await self._explore_weak(composed, primary, working, turn.context)
+
+    async def _explore_weak(
+        self,
+        composed: ComposedSearch,
+        primary: _Primary,
+        working: AgentStateV1,
+        context: RetailerContext,
+    ) -> _Primary:
+        """A search they asked for that found nothing: look, then decide.
+
+        The agent loop (CLAUDE.md 14.8) may try a related stocked type with
+        every other limit kept. The try it chooses is committed from its own
+        execution - the tries it did not choose changed nothing - on top of the
+        state the original search left, so the sizes they gave for the type
+        they asked for stay saved and no size is saved for the alternative,
+        which states none of its own (13.5). The reply says plainly that it is
+        another type (`alternative_to`). Anything else leaves the original
+        reply exactly as it was.
+        """
+        if self._agent_loop is None or not _weak(primary) or primary.search is None:
+            return primary
+        request = composed.resolved.request
+        try:
+            overview = await self._capabilities.overview(context)
+        except _HANDLED_SEARCH_FAILURES:
+            return primary
+        if request.commerce_subcategory is None or not overview.stocks(
+            request.commerce_category, request.commerce_subcategory
+        ):
+            # Only for a type the store stocks: one it does not carry is the
+            # stock check's question, not "nothing met your limits".
+            return primary
+        outcome = await self._agent_loop.explore(composed, primary.search, overview, context)
+        if outcome.chosen is None:
+            return primary
+        chosen = outcome.chosen
+        presented = _commit_search(
+            chosen.composed, chosen.execution, primary.state, save_sizes=False
+        )
+        return replace(presented, alternative_to=request.commerce_subcategory)
 
     async def _maybe_compose_seating(
         self,
@@ -4819,6 +5083,7 @@ class CustomerTurnCoordinator:
         *,
         save_sizes: bool = False,
         recover_seating: bool = True,
+        offer_closest: bool = True,
         presentation_limit: int | None = None,
     ) -> _Primary:
         """Execute, then promote and commit in one step.
@@ -4855,24 +5120,7 @@ class CustomerTurnCoordinator:
                 failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE),
             )
 
-        promoted = apply_update(
-            working,
-            AgentStateUpdate(
-                active_search=ActiveSearchUpdate(
-                    request=composed.candidate.request,
-                    semantics=composed.candidate.semantics,
-                    semantic_preferences=ReplaceItems(
-                        items=composed.candidate.semantic_preferences
-                    ),
-                    semantic_intent=_intent_update(composed.candidate.semantic_intent),
-                )
-            ),
-        )
-        committed = commit_search_results(promoted, execution.presented_product_ids)
-        primary = _Primary(
-            state=remember_measurements(committed) if save_sizes else committed,
-            search=execution.grounding,
-        )
+        primary = _commit_search(composed, execution, working, save_sizes=save_sizes)
         if not recover_seating:
             return primary
         another = await self._another_type_seats_them(composed, primary, working, context)
@@ -4881,6 +5129,11 @@ class CustomerTurnCoordinator:
         seated = await self._maybe_compose_seating(composed.resolved, primary, context)
         if seated is not primary:
             return seated
+        if not offer_closest:
+            # The stock check already chose the type before the search ran
+            # (CLAUDE.md 14.7); asking the same question again would cost a
+            # second model call for the answer it already gave.
+            return primary
         closest = await self._offer_closest_type_instead(composed, primary, working, context)
         if closest is not None:
             return closest
@@ -4935,7 +5188,9 @@ class CustomerTurnCoordinator:
             key=lambda shelf: shelf.price_minimum,
         )
         for shelf in others:
-            instead = _with_subcategory(composed, shelf.commerce_subcategory)
+            if shelf.commerce_subcategory is None:
+                continue
+            instead = composed_as_type(composed, shelf.commerce_subcategory)
             found = await self._run_search(instead, working, context, recover_seating=False)
             if found.search is not None and found.search.products:
                 logger.info(
@@ -5002,7 +5257,7 @@ class CustomerTurnCoordinator:
         if picked is None:
             return None
 
-        instead = _with_subcategory(composed, picked)
+        instead = composed_as_type(composed, picked)
         found = await self._run_search(instead, working, context, recover_seating=False)
         if found.search is not None and found.search.products:
             logger.info(
@@ -5025,6 +5280,9 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
     ) -> _Primary:
         delta = decision.refinement or SearchRefinementDelta()
+        delta = _priced_in(
+            delta, working.active_search, await self._store_currency(turn.context)
+        )
         if delta.price is not None and delta.price.op is PriceRefinementOp.SET_RELATIVE:
             rewritten = await self._resolve_relative_price(delta, pre_turn, turn.context)
             if isinstance(rewritten, _Primary):
@@ -5058,7 +5316,9 @@ class CustomerTurnCoordinator:
         only to say "make them sectionals" replace the conversation's durable
         intent.
         """
-        interpretation = await self._interpret(turn.message)
+        interpretation = await self._interpret(
+            turn.message, await self._store_currency(turn.context)
+        )
         if isinstance(interpretation, TurnFailure):
             return _Primary(state=working, failure=interpretation)
         if isinstance(interpretation, UnresolvedStrictRequirement):
@@ -5255,15 +5515,30 @@ class CustomerTurnCoordinator:
 
     # ── query understanding ─────────────────────────────────────────────────
 
-    async def _interpret(self, message: str) -> QueryInterpretation | TurnFailure:
+    async def _interpret(
+        self, message: str, store_currency: str | None = None
+    ) -> QueryInterpretation | TurnFailure:
         """M7 on the current message alone.
 
         No history and no state: it interprets what was just said, and giving
         it the conversation would make the same sentence mean different things
         on different turns.
         """
+        speculation = self._speculation
+        reuse = speculation is not None and same_words(speculation.message) == same_words(
+            message
+        )
         try:
-            return await self._query_understanding.interpret(message)
+            if speculation is not None and reuse:
+                # The reading already under way is this one: its outcome - or
+                # its failure - is handled below exactly as a fresh reading's
+                # would be. Never read twice: query understanding already spent
+                # its own corrective attempt (CLAUDE.md 21.1).
+                speculation.used = True
+                return await speculation.task
+            return await self._query_understanding.interpret(
+                message, store_currency=store_currency
+            )
         except IntegrationUnavailableError:
             logger.warning("turn_query_understanding_unavailable")
             return TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
@@ -5468,28 +5743,6 @@ def _with_chosen_combination(
     )
     logger.info("seating_combination_chosen", choice=choice, pieces=len(chosen.lines))
     return with_picks
-
-
-def _with_subcategory(composed: ComposedSearch, subcategory: str | None) -> ComposedSearch:
-    """The same search for another type: every other requirement kept."""
-    return composed.model_copy(
-        update={
-            "candidate": composed.candidate.model_copy(
-                update={
-                    "request": composed.candidate.request.model_copy(
-                        update={"commerce_subcategory": subcategory}
-                    )
-                }
-            ),
-            "resolved": composed.resolved.model_copy(
-                update={
-                    "request": composed.resolved.request.model_copy(
-                        update={"commerce_subcategory": subcategory}
-                    )
-                }
-            ),
-        }
-    )
 
 
 def _lock_saved_anchors(state: AgentStateV1) -> AgentStateV1:
@@ -5749,6 +6002,101 @@ def _comparison_outcome(
     )
 
 
+def _commit_search(
+    composed: ComposedSearch,
+    execution: ProductSearchExecutionResult,
+    working: AgentStateV1,
+    *,
+    save_sizes: bool,
+) -> _Primary:
+    """An executed search made the one on screen: promoted, then committed.
+
+    Separate from executing it, so a search the agent loop only tried can be
+    committed from its own execution when it is chosen - never run twice, and
+    never committed when it is not (CLAUDE.md 14.8).
+    """
+    promoted = apply_update(
+        working,
+        AgentStateUpdate(
+            active_search=ActiveSearchUpdate(
+                request=composed.candidate.request,
+                semantics=composed.candidate.semantics,
+                semantic_preferences=ReplaceItems(items=composed.candidate.semantic_preferences),
+                semantic_intent=_intent_update(composed.candidate.semantic_intent),
+            )
+        ),
+    )
+    committed = commit_search_results(promoted, execution.presented_product_ids)
+    return _Primary(
+        state=remember_measurements(committed) if save_sizes else committed,
+        search=execution.grounding,
+    )
+
+
+def _priced_in(
+    delta: SearchRefinementDelta,
+    active: ActiveSearchState | None,
+    store_currency: str | None,
+) -> SearchRefinementDelta:
+    """A new budget stated without a currency, in the store's own.
+
+    "Under 500 please" refines a search that had no budget: its amount is in
+    the currency the store prices in, when the catalog names exactly one.
+    A search that already has a budget keeps its own currency - the composer
+    inherits it - and a relative or cleared price names no amount at all.
+    """
+    price = delta.price
+    if (
+        price is None
+        or store_currency is None
+        or (price.currency or "").strip()
+        or price.op in (PriceRefinementOp.SET_RELATIVE, PriceRefinementOp.CLEAR)
+        or (active is not None and active.request.price is not None)
+    ):
+        return delta
+    return delta.model_copy(update={"price": price.model_copy(update={"currency": store_currency})})
+
+
+def _weak(primary: _Primary) -> bool:
+    """A search they asked for that found nothing, and nothing else stepped in:
+    no seating combination, no substitute type already offered."""
+    return (
+        primary.failure is None
+        and primary.search is not None
+        and not primary.search.products
+        and primary.seating_solution is None
+        and primary.offered_instead_of is None
+        and primary.unstocked_type is None
+    )
+
+
+def _disclosed(primary: _Primary, fit: StockFitOutcome | None) -> _Primary:
+    """What the stock check found, for the reply to say (CLAUDE.md 14.7).
+
+    Only beside a turn that shows something for it - a card or results - and
+    never on top of another substitution: one turn gives one reason.
+    """
+    if fit is None or fit.asked is None or primary.failure is not None:
+        return primary
+    if (
+        primary.offered_instead_of is not None
+        or primary.unstocked_type is not None
+        or primary.alternative_to is not None
+    ):
+        return primary
+    if fit.fit is StockFit.SUBSTITUTED and (
+        primary.product_brief is not None or primary.search is not None
+    ):
+        # Even when the substitute found nothing under their other limits:
+        # "we don't carry recliners, and no lounge chairs under 500 either".
+        return replace(primary, unstocked_type=fit.asked)
+    if primary.product_brief is None and (primary.search is None or not primary.search.products):
+        return primary
+    if fit.fit is StockFit.KIND_NOT_FOUND:
+        return replace(primary, kind_not_found=fit.asked)
+    return primary
+
+
 def _search_despite(unresolved: UnresolvedStrictRequirement) -> ResolvedSearch:
     """Search anyway when a strict colour or style names no approved value.
 
@@ -5784,6 +6132,8 @@ def _search_despite(unresolved: UnresolvedStrictRequirement) -> ResolvedSearch:
             ),
         ),
         semantic_text=unresolved.semantic_text,
+        asked_kind=unresolved.asked_kind,
+        kind_required=unresolved.kind_required,
         unmatched_strict=tuple(a for a in unresolved.unresolved if not filtered[a.family]),
     )
 

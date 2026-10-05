@@ -113,6 +113,9 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # budget bands, colours and styles counted from the store-scoped
         # catalog. Its answers run through the ordinary pipeline.
         "briefs",
+        "stock_fit",
+        "agent_loop",
+        "speculative_interpretation",
     ]
 
 

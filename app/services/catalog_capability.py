@@ -56,6 +56,10 @@ class CatalogCapabilityService:
         self._repository = repository
         self._taxonomy = taxonomy
         self._seating = seating
+        self._overviews: dict[int, CatalogOverview] = {}
+        """Overviews already read by this request. The service is built per
+        request, so one turn that asks several times - the stock check, the
+        seat ceiling, the closest type - scans once (CLAUDE.md 9)."""
 
     async def capabilities(self, context: RetailerContext) -> RetailerCatalogCapabilities:
         """What this retailer stocks, in approved vocabulary only.
@@ -108,9 +112,18 @@ class CatalogCapabilityService:
         when no single piece fits, or offer the nearest type when the exact one
         is absent, instead of running a search that comes back empty.
 
-        Not cached in this first cut: it is one grouped scan, and correctness
-        comes before the cache TTL the design calls for (CLAUDE.md 9).
+        Read once per request (the service lives for one request); not cached
+        across requests yet - correctness comes before the cache TTL the design
+        calls for (CLAUDE.md 9).
         """
+        cached = self._overviews.get(context.store_id)
+        if cached is not None:
+            return cached
+        overview = await self._read_overview(context)
+        self._overviews[context.store_id] = overview
+        return overview
+
+    async def _read_overview(self, context: RetailerContext) -> CatalogOverview:
         rows = await self._repository.catalog_overview(context)
         shelves: list[SubcategoryShelf] = []
         units: set[str] = set()

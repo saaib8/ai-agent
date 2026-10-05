@@ -39,6 +39,8 @@ CASES_PATH = Path(__file__).parent / "cases.yaml"
 STORE_ID = 50
 REQUEST_TIMEOUT_S = 240.0
 CONCURRENCY = 4
+MODEL_CALLS_HEADER = "X-Model-Calls"
+TURN_ACTION_HEADER = "X-Turn-Action"
 FALLBACK_PREFIX = "Sorry, I didn't quite catch that"
 _NO_MATCH = re.compile(r"\b(no|none|not|don't|do not|couldn't|could not|isn't|aren't|nothing)\b")
 """A reply that admits the request had no exact match uses one of these."""
@@ -59,6 +61,12 @@ class TurnResult:
     for a silent tick or untick; `comparison` for the compare pop-up."""
     chosen_budget: str | None = None
     """The budget band tapped on a card, as its label, for checking prices."""
+    model_calls: int | None = None
+    """How many model calls the server made for this turn, when it reports them
+    (`ZORY_OBSERVABILITY__MODEL_CALLS_HEADER=X-Model-Calls`)."""
+    turn_action: str | None = None
+    """The action the turn took - search, refine_search, screen, ... - when the
+    server reports it (`ZORY_OBSERVABILITY__TURN_ACTION_HEADER=X-Turn-Action`)."""
 
     @property
     def message(self) -> str:
@@ -216,7 +224,8 @@ def _check(
         turn.message.lower().replace("\u2019", "'")
     ):
         failures.append("reply does not say that nothing matched")
-    if (words := checks.get("mentions")) and not any(w in turn.message.lower() for w in words):
+    said = turn.message.lower().replace("\u2019", "'")
+    if (words := checks.get("mentions")) and not any(w in said for w in words):
         failures.append(f"reply mentions none of {words}")
     if checks.get("piece_picker") and not turn.has_piece_picker:
         failures.append("no piece chips shown")
@@ -255,7 +264,7 @@ def _check(
         ]
         if kind in used:
             failures.append(f"a combination uses {kind}")
-    if (words := checks.get("not_mentions")) and any(w in turn.message.lower() for w in words):
+    if (words := checks.get("not_mentions")) and any(w in said for w in words):
         failures.append(f"reply mentions one of {words}")
     failures.extend(_discovery_checks(checks, turn))
     if checks.get("engages"):
@@ -438,6 +447,9 @@ class Conversation:
             )
             data = reply.json() if reply.content else {}
             result = TurnResult(reply.status_code, time.perf_counter() - started, data, kind)
+            calls = reply.headers.get(MODEL_CALLS_HEADER)
+            result.model_calls = int(calls) if calls and calls.isdigit() else None
+            result.turn_action = reply.headers.get(TURN_ACTION_HEADER)
         except httpx.HTTPError as exc:
             result = TurnResult(
                 0, time.perf_counter() - started, {"error": {"code": type(exc).__name__}}, kind
@@ -657,6 +669,39 @@ def _report(
         passed = sum(1 for r in results[label] if not r.failures)
         errors = sum(1 for r in results[label] for t in r.turns if t.status != 200)
         print(f"  {label}: {passed}/{len(cases)} passed, {errors} error responses")
+        print(f"    {_cost(results[label])}")
+
+
+def _percentile(values: list[float], share: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(share * len(ordered)))]
+
+
+def _cost(results: list[CaseResult]) -> str:
+    """What a chat turn costs: latency and model calls, so a phase that adds
+    model steps is measured the same way every time (agent-loop plan, 6)."""
+    chats = [t for r in results for t in r.turns if t.kind == "chat" and t.status == 200]
+    if not chats:
+        return "no chat turns"
+    seconds = [t.elapsed_s for t in chats]
+    line = (
+        f"chat turns {len(chats)}: latency p50 {_percentile(seconds, 0.5):.1f}s, "
+        f"p95 {_percentile(seconds, 0.95):.1f}s"
+    )
+    calls = [t.model_calls for t in chats if t.model_calls is not None]
+    if calls:
+        line += (
+            f"; model calls mean {sum(calls) / len(calls):.2f}, "
+            f"p95 {_percentile([float(c) for c in calls], 0.95):.0f}, max {max(calls)}"
+        )
+    by_action: dict[str, list[float]] = {}
+    for turn in chats:
+        if turn.turn_action:
+            by_action.setdefault(turn.turn_action, []).append(turn.elapsed_s)
+    for action, seconds_of in sorted(by_action.items(), key=lambda kv: -len(kv[1])):
+        p50 = _percentile(seconds_of, 0.5)
+        line += f"\n      {action}: {len(seconds_of)} turns, p50 {p50:.1f}s"
+    return line
 
 
 def main(argv: list[str]) -> None:
@@ -688,7 +733,14 @@ def main(argv: list[str]) -> None:
     _report(labels, cases, results)
     dump = {
         label: [
-            {"case": r.case_id, "failures": r.failures, "turns": [t.body for t in r.turns]}
+            {
+                "case": r.case_id,
+                "failures": r.failures,
+                "turns": [t.body for t in r.turns],
+                "elapsed_s": [round(t.elapsed_s, 2) for t in r.turns],
+                "model_calls": [t.model_calls for t in r.turns],
+                "turn_actions": [t.turn_action for t in r.turns],
+            }
             for r in results[label]
         ]
         for label in labels

@@ -14,6 +14,7 @@ This service does not search, rank, relax or answer. It understands.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Sequence
 from decimal import Decimal
@@ -21,7 +22,11 @@ from typing import NamedTuple
 
 from pydantic import ValidationError
 
-from app.core.exceptions import LLMResponseInvalidError, TaxonomyValidationError
+from app.core.exceptions import (
+    IntegrationUnavailableError,
+    LLMResponseInvalidError,
+    TaxonomyValidationError,
+)
 from app.core.logging import get_logger
 from app.core.numbers import parse_stated_amount, parse_stated_decimal
 from app.integrations.llm import StructuredLLMClient
@@ -31,6 +36,7 @@ from app.prompts.query_understanding.v1 import (
     VERSION,
     build_correction,
     build_instructions,
+    build_type_check,
 )
 from app.schemas.dimensions import parse_unit, to_centimetres
 from app.schemas.discovery import (
@@ -55,6 +61,7 @@ from app.schemas.query import (
     QueryInterpretation,
     ResolvedSearch,
     SemanticPreference,
+    TypeFit,
     UnresolvedAttribute,
     UnresolvedStrictRequirement,
     UnsupportedDimension,
@@ -118,6 +125,48 @@ def _problems(exc: LLMResponseInvalidError | TaxonomyValidationError) -> tuple[s
     return tuple(violations) if violations else (GENERIC_PROBLEM,)
 
 
+_KIND_WORD = re.compile(r"[a-z]+")
+MAX_ASKED_KIND_WORDS = 4
+MAX_ASKED_KIND_CHARS = 40
+
+
+def _asked_kind(
+    interpretation: CommerceInterpretation, resolved_type: str, message: str
+) -> str | None:
+    """The customer's name for a kind narrower than the type, as plain words.
+
+    Only spelling is normalised - case, punctuation, spacing (CLAUDE.md 14.2);
+    every word must be one the customer actually wrote;
+    no word is mapped onto another. Anything that is not a short run of words
+    is dropped rather than repaired: the field only ever lets the reply admit a
+    kind was not found, and an unreadable one is better left unsaid. Words that
+    merely restate the resolved type ("bed" for `bed`) say nothing narrower.
+    """
+    if interpretation.type_fit is not TypeFit.BROADER_THAN_ASKED:
+        return None
+    words = _KIND_WORD.findall((interpretation.asked_kind or "").lower())
+    if not words or len(words) > MAX_ASKED_KIND_WORDS:
+        return None
+    phrase = " ".join(words)
+    if len(phrase) > MAX_ASKED_KIND_CHARS:
+        return None
+    type_words = set(_KIND_WORD.findall(resolved_type.lower()))
+    if set(words) <= type_words:
+        return None
+    # Their own words, or nothing: a phrase the model composed could be a
+    # synonym of the type, or an instruction, and the reply will say it out
+    # loud. A plural "s" in the message still counts ("bunk beds").
+    said = set(_KIND_WORD.findall(message.lower()))
+    if not all(word in said or f"{word}s" in said or word[:-1] in said for word in words):
+        return None
+    return phrase
+
+
+def _category_only(outcome: QueryInterpretation) -> bool:
+    request = getattr(outcome, "request", None)
+    return request is not None and request.commerce_subcategory is None
+
+
 class QueryUnderstandingService:
     def __init__(
         self,
@@ -135,8 +184,14 @@ class QueryUnderstandingService:
         # values. Belt and braces: _resolve still validates whatever comes back.
         self._schema = build_constrained_interpretation(taxonomy, attributes)
 
-    async def interpret(self, message: str) -> QueryInterpretation:
-        """Interpret one customer message. Never partially guesses."""
+    async def interpret(
+        self, message: str, *, store_currency: str | None = None
+    ) -> QueryInterpretation:
+        """Interpret one customer message. Never partially guesses.
+
+        `store_currency` is the store's own currency, when its catalog names
+        exactly one: an amount stated without a currency is in it. Without it,
+        the customer is asked which currency they meant."""
         text = message.strip()
         if not text:
             return ClarificationRequired(reason=ClarificationReason.NO_COMMERCE_CATEGORY)
@@ -148,7 +203,7 @@ class QueryUnderstandingService:
 
         started = time.perf_counter()
         try:
-            interpretation, outcome = await self._interpret_once(text, ())
+            interpretation, outcome = await self._interpret_once(text, (), store_currency)
         except (LLMResponseInvalidError, TaxonomyValidationError) as exc:
             # One corrective attempt, told what was refused - our rule text,
             # never the message itself. An enumeration cannot stop a valid
@@ -156,7 +211,11 @@ class QueryUnderstandingService:
             # a model told so usually picks correctly the second time.
             problems = _problems(exc)
             logger.warning("query_understanding_retrying", problems=list(problems))
-            interpretation, outcome = await self._interpret_once(text, problems)
+            interpretation, outcome = await self._interpret_once(text, problems, store_currency)
+        if _category_only(outcome):
+            interpretation, outcome = await self._check_type(
+                text, interpretation, outcome, store_currency
+            )
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
         # Safe operational fields only: no raw customer text, no model response.
@@ -193,21 +252,62 @@ class QueryUnderstandingService:
         )
         return outcome
 
-    async def _interpret_once(
-        self, text: str, problems: tuple[str, ...]
+    async def _check_type(
+        self,
+        text: str,
+        interpretation: CommerceInterpretation,
+        outcome: QueryInterpretation,
+        store_currency: str | None,
     ) -> tuple[CommerceInterpretation, QueryInterpretation]:
-        """One provider call and its validation; corrective when `problems` is set."""
+        """One more look when an answer named a category and no type.
+
+        Kept only when it names a type in the same category; a failure, a
+        different category or a type still left null keeps the first answer -
+        a genuinely broad request stays broad. At most one extra call, and
+        only on the category-level answers (known issue 15)."""
+        try:
+            checked, checked_outcome = await self._interpret_once(
+                text, (), store_currency, check=build_type_check()
+            )
+        except (LLMResponseInvalidError, TaxonomyValidationError, IntegrationUnavailableError):
+            return interpretation, outcome
+        first = getattr(outcome, "request", None)
+        second = getattr(checked_outcome, "request", None)
+        kept = (
+            first is not None
+            and second is not None
+            and second.commerce_category == first.commerce_category
+            and second.commerce_subcategory is not None
+        )
+        logger.info("query_understanding_type_checked", typed=kept)
+        return (checked, checked_outcome) if kept else (interpretation, outcome)
+
+    async def _interpret_once(
+        self,
+        text: str,
+        problems: tuple[str, ...],
+        store_currency: str | None = None,
+        *,
+        check: str = "",
+    ) -> tuple[CommerceInterpretation, QueryInterpretation]:
+        """One provider call and its validation; corrective when `problems` is
+        set, a second look at one field when `check` is."""
         instructions = (
             self._instructions + build_correction(problems) if problems else self._instructions
-        )
+        ) + check
         interpretation = await self._client.parse(
             instructions=instructions,
             user_input=text,
             schema=self._schema,
         )
-        return interpretation, self._resolve(interpretation)
+        return interpretation, self._resolve(interpretation, text, store_currency)
 
-    def _resolve(self, interpretation: CommerceInterpretation) -> QueryInterpretation:
+    def _resolve(
+        self,
+        interpretation: CommerceInterpretation,
+        message: str = "",
+        store_currency: str | None = None,
+    ) -> QueryInterpretation:
         if interpretation.multiple_product_types:
             # One request cannot serve two product families, and picking one
             # would silently drop the other. Splitting a message into several
@@ -230,7 +330,7 @@ class QueryUnderstandingService:
         else:
             self._taxonomy.subcategories(category)  # raises if unapproved
 
-        price = self._price(interpretation)
+        price = self._price(interpretation, store_currency)
         if isinstance(price, ClarificationRequired):
             return price
 
@@ -298,6 +398,7 @@ class QueryUnderstandingService:
                 semantics=semantics,
                 unsupported_dimensions=dimensions.unsupported,
             )
+        asked_kind = _asked_kind(interpretation, subcategory or category, message)
         if unresolved:
             # They were strict about something no filter can guarantee. Settle
             # that conversationally before anything else happens to the search.
@@ -307,12 +408,16 @@ class QueryUnderstandingService:
                 unresolved=unresolved,
                 semantic_preferences=preferences,
                 semantic_text=(interpretation.semantic_text or "").strip() or None,
+                asked_kind=asked_kind,
+                kind_required=interpretation.only_this_kind,
             )
         return ResolvedSearch(
             request=request,
             semantics=semantics,
             semantic_preferences=preferences,
             semantic_text=(interpretation.semantic_text or "").strip() or None,
+            asked_kind=asked_kind,
+            kind_required=interpretation.only_this_kind,
         )
 
     def _to_centimetres(
@@ -521,16 +626,17 @@ class QueryUnderstandingService:
         )
 
     def _price(
-        self, interpretation: CommerceInterpretation
+        self, interpretation: CommerceInterpretation, store_currency: str | None = None
     ) -> PriceConstraint | ClarificationRequired | None:
         raw_min, raw_max = interpretation.price_min, interpretation.price_max
         if raw_min is None and raw_max is None:
             return None
 
-        currency = (interpretation.price_currency or "").strip()
+        # A currency they named wins; otherwise the store's own, when its
+        # catalog names exactly one - a catalog fact, not a guess. With
+        # neither, asking is the only honest option.
+        currency = (interpretation.price_currency or "").strip() or (store_currency or "")
         if not currency:
-            # No trusted retailer-currency source exists, and `price_unit` is
-            # not one. Asking is the only honest option.
             return ClarificationRequired(
                 reason=ClarificationReason.MISSING_PRICE_CURRENCY
             )

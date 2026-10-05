@@ -14,7 +14,7 @@ from __future__ import annotations
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 
-VERSION = "query_understanding/v1"
+VERSION = "query_understanding/v1.4"
 
 _INSTRUCTIONS = """\
 You interpret a furniture shopper's message into a structured product search.
@@ -46,8 +46,12 @@ null.
 - Interpret meaning, not wording. A shopper's words rarely match the taxonomy \
 exactly; work out what kind of product they mean from what they said and the \
 context they gave, including where the item will go and what it is for.
-- Leave commerce_subcategory null when the customer named only a general kind \
-of product. A category on its own is a valid, useful search.
+- Set commerce_subcategory whenever a value listed under the category names \
+what they asked for, in whatever wording - singular or plural, everyday or \
+formal. Leave it null only when they named no particular kind at all, just a \
+broad family of products. A category on its own is a valid search for that, \
+and only for that: a request for one kind answered with the whole family \
+shows them things they did not ask for.
 - Some categories list a subcategory bearing the category's own name, for stock \
 that fits none of that category's specific types. When someone asks for that \
 kind of product in broad terms, give the category and leave the subcategory \
@@ -63,6 +67,20 @@ picking whichever category seems closest.
 described. Do not additionally constrain seats when the subcategory itself \
 already carries that meaning, because seat counts are recorded separately and \
 are often absent.
+- When they named a specific variant that no listed value names - something \
+with its own everyday name, such as a two-tier bed for children or a \
+beanbag-style seat - still choose the listed subcategory it belongs to, then \
+set type_fit to broader_than_asked and asked_kind to their own short name for \
+it, in their words. Otherwise type_fit is exact: describing a \
+product - its colour, size, style, material or feel - never makes it a \
+different kind, and another everyday name for a listed value is that value, \
+not a narrower kind.
+- Set only_this_kind only when they explicitly ruled other kinds out - \
+"nothing else", "it has to be", "must be", "no other kind", "X, not Y". \
+Asking for a kind, however clearly, does not rule the others out, and \
+neither does "just show me", "I only want to see" or "I'm only looking for": \
+those are about skipping questions or focusing the search, not about refusing \
+everything else.
 - Only set the seat-count fields when the customer stated a number of seats \
 or people.
 - A piece for one person - a single seater, a seat for one - is its own \
@@ -217,3 +235,20 @@ GENERIC_PROBLEM = (
 def build_correction(problems: tuple[str, ...]) -> str:
     """Appended to the instructions for the one corrective attempt."""
     return _CORRECTION.format(problems="\n".join(f"- {problem}" for problem in problems))
+
+
+_TYPE_CHECK = """
+
+CHECK THE PRODUCT TYPE
+Your previous answer for this message gave a category and no product type. \
+Look at the values listed under that category again. If one of them names what \
+the customer asked for - in whatever wording, singular or plural - set it. \
+Keep the type null only if they named no particular kind at all.\
+"""
+
+
+def build_type_check() -> str:
+    """Appended once when an answer names a category and no type (known issue
+    15): a request for one kind answered with a whole family shows the
+    customer things they did not ask for."""
+    return _TYPE_CHECK

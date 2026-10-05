@@ -80,6 +80,7 @@ def _repository(session: RecordingSession) -> ProductRepository:
 PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "get_by_ids": lambda repo: repo.get_by_ids([1, 2], CONTEXT),
     "count_active": lambda repo: repo.count_active(CONTEXT),
+    "count_named": lambda repo: repo.count_named(("bunk",), CONTEXT),
     "search": lambda repo: repo.search(
         ProductSearchRequest(commerce_category="seating"), CONTEXT, limit=10
     ),

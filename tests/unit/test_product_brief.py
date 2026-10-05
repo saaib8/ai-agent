@@ -700,6 +700,7 @@ def _coordinator(
     *,
     pipeline: Any = None,
     closest_type: Any = None,
+    stock_fit: Any = None,
 ) -> tuple[CustomerTurnCoordinator, Any]:
     pipeline = pipeline or Pipeline()
     builder, _ = _builder()
@@ -725,6 +726,7 @@ def _coordinator(
         companion_search=CompanionSearchBuilder(ATTRIBUTES),
         briefs=builder,
         closest_type=closest_type,
+        stock_fit=stock_fit,
     )
     return coordinator, pipeline
 

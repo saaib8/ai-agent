@@ -23,6 +23,7 @@ from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
+from app.services.agent_loop import WeakSearchLoop
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.card_comparison import CardComparisonService
@@ -59,6 +60,7 @@ from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
+from app.services.stock_fit import StockFitCheck
 from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.dimensions import DimensionSemantics
@@ -280,6 +282,7 @@ def customer_turn_coordinator(
     repository = ProductRepository(session)
     resolver = ProductReferenceResolver(repository, app_resources.attributes)
     capability = catalog_capability_service(session, app_resources)
+    closest_type = ClosestTypeResolver(app_resources.llm, app_resources.taxonomy)
     return CustomerTurnCoordinator(
         decisions,
         query_understanding_service(
@@ -312,7 +315,7 @@ def customer_turn_coordinator(
         app_resources.taxonomy,
         app_resources.rooms,
         app_resources.seating,
-        closest_type=ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
+        closest_type=closest_type,
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         briefs=(
@@ -320,6 +323,23 @@ def customer_turn_coordinator(
                 repository, app_resources.briefs, app_resources.attributes, app_resources.taxonomy
             )
             if app_resources.briefs is not None
+            else None
+        ),
+        stock_fit=(
+            StockFitCheck(capability, repository, closest_type, app_resources.seating)
+            if settings.customer_agent.stock_fit_check
+            else None
+        ),
+        speculative_interpretation=settings.customer_agent.speculative_interpretation,
+        agent_loop=(
+            WeakSearchLoop(
+                app_resources.llm,
+                pipeline,
+                app_resources.seating,
+                app_resources.compare_groups,
+                max_tries=settings.customer_agent.agent_loop_max_tries,
+            )
+            if settings.customer_agent.agent_loop
             else None
         ),
     )

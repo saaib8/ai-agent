@@ -201,12 +201,13 @@ def test_the_configured_model_is_what_the_decision_client_carries() -> None:
     assert overridden.api_key is settings.llm.api_key
 
 
-@pytest.mark.parametrize(
-    "invented",
-    ["decision_temperature", "decision_max_tokens", "decision_reasoning_effort"],
-)
+@pytest.mark.parametrize("invented", ["decision_temperature", "decision_max_tokens"])
 def test_no_decision_specific_provider_settings_were_invented(invented: str) -> None:
-    """The generic provider settings already cover these (CLAUDE.md 31)."""
+    """The generic provider settings already cover these (CLAUDE.md 31).
+
+    `decision_reasoning_effort` is the one deliberate exception (plan 11, 3b C):
+    every turn waits for the decision, and its effort can only be measured
+    apart from query understanding and the writer if it can be set apart."""
     assert invented not in (APP / "core/config.py").read_text()
 
 
@@ -218,6 +219,11 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "presentation_limit",
         "decision_model",
         "response_model",
+        "stock_fit_check",
+        "agent_loop",
+        "agent_loop_max_tries",
+        "speculative_interpretation",
+        "decision_reasoning_effort",
         # Picks: how many the tray keeps.
         "max_picks",
     }

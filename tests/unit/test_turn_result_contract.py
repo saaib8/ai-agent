@@ -130,6 +130,8 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # The type they asked for, when the store carries none of it and the
         # cards are the closest type it does stock.
         "unstocked_type",
+        "kind_not_found",
+        "alternative_to",
         # A dearer swap that broke the budget, held for the customer's yes/no.
         "swap_offer",
         # The room piece a shown list of alternatives is for, so selecting one

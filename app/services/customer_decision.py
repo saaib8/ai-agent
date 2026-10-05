@@ -27,6 +27,7 @@ from functools import cache
 
 from app.core.exceptions import LLMResponseInvalidError
 from app.core.logging import get_logger
+from app.core.text import same_words
 from app.integrations.llm import StructuredLLMClient
 from app.prompts.customer_commerce.v1 import (
     VERSION,
@@ -104,18 +105,21 @@ class CustomerAgentDecisionService:
         retry, so a turn never costs more than three decisions.
         """
         payload = decision_input.model_dump_json(exclude_none=True)
+        message = decision_input.message
         if problems:
-            return await self._attempt(payload, tuple(problems))
+            return await self._attempt(payload, message, tuple(problems))
         try:
-            return await self._attempt(payload, ())
+            return await self._attempt(payload, message, ())
         except LLMResponseInvalidError as exc:
             found = describe_unusable(
                 exc.context.get("reason"), exc.context.get("violations", ())
             )
             logger.warning("customer_decision_retrying", problems=list(found))
-            return await self._attempt(payload, found)
+            return await self._attempt(payload, message, found)
 
-    async def _attempt(self, payload: str, problems: tuple[str, ...]) -> CustomerAgentDecision:
+    async def _attempt(
+        self, payload: str, message: str, problems: tuple[str, ...]
+    ) -> CustomerAgentDecision:
         """One provider call; a corrective one when `problems` is not empty."""
         instructions = (
             self._instructions + build_correction(problems) if problems else self._instructions
@@ -156,6 +160,13 @@ class CustomerAgentDecisionService:
             blocking_clarification=decision.clarification is not None,
             has_interaction=decision.interaction is not None,
             has_new_search=decision.new_search is not None,
+            # Whether the request handed to query understanding is the
+            # message itself or a restatement - the hit rate of interpreting
+            # the message while the decision is still being made (plan 11).
+            search_request_restated=(
+                decision.search_request is not None
+                and same_words(decision.search_request) != same_words(message)
+            ),
             has_refinement=decision.refinement is not None,
             taxonomy_change_requested=decision.taxonomy_change_requested,
             skip_questions=decision.skip_questions,
@@ -166,3 +177,4 @@ class CustomerAgentDecisionService:
             elapsed_ms=elapsed_ms,
         )
         return decision
+

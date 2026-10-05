@@ -298,6 +298,13 @@ class UnresolvedAttribute(BaseModel):
     raw_value: str
 
 
+class TypeFit(StrEnum):
+    """Whether the chosen product type is what the customer named."""
+
+    EXACT = "exact"
+    BROADER_THAN_ASKED = "broader_than_asked"
+
+
 class CommerceInterpretation(BaseModel):
     """The strict structured output the model must produce.
 
@@ -428,6 +435,33 @@ class CommerceInterpretation(BaseModel):
             "product in one message, so a single search cannot cover it."
         ),
     )
+    type_fit: TypeFit = Field(
+        default=TypeFit.EXACT,
+        description=(
+            "'broader_than_asked' only when the customer named a specific kind of "
+            "product that the subcategory you chose merely contains - a bunk bed "
+            "is a bed, a bean bag is a chair, a rocking chair is a chair. "
+            "'exact' when the subcategory is what they asked for, including when "
+            "they only described it: a colour, a size, a style, a material or a "
+            "feel never makes a different kind."
+        ),
+    )
+    only_this_kind: bool = Field(
+        default=False,
+        description=(
+            "True only when they ruled out every other kind of product - 'only', "
+            "'nothing else', 'it has to be' this kind. Naming or wanting a kind is "
+            "not ruling the others out."
+        ),
+    )
+    asked_kind: str | None = Field(
+        default=None,
+        description=(
+            "Only when type_fit is 'broader_than_asked': the customer's own short "
+            "name for that kind, singular, e.g. 'bunk bed', 'bean bag'. Null "
+            "otherwise."
+        ),
+    )
 
 
 def build_constrained_attribute(
@@ -543,6 +577,22 @@ class ResolvedSearch(BaseModel):
     structured fields keep it and this does not.
     """
 
+    kind_required: bool = False
+    """They ruled out every other kind - "it has to be L-shaped, nothing else".
+    No other type is ever shown in its place: not by the stock check, not by
+    the agent loop (CLAUDE.md 14.7, 14.8). Distinct from the subcategory's
+    `LOCKED` strength, which an unqualified type also has (13.1)."""
+
+    asked_kind: str | None = None
+    """The customer's own name for a kind narrower than any approved type -
+    "bunk bed" when the type is `bed` - or None when the type is what they
+    asked for.
+
+    Words for the catalog name lookup and the reply only (CLAUDE.md 14.7). It
+    never filters, never becomes a taxonomy value and never reaches SQL as
+    anything but a bound name-match parameter.
+    """
+
     unmatched_strict: tuple[UnresolvedAttribute, ...] = ()
     """Strict colours or styles no approved value expresses - "only red" when
     the vocabulary has no red.
@@ -579,6 +629,12 @@ class UnresolvedStrictRequirement(BaseModel):
     semantic_preferences: tuple[SemanticPreference, ...] = ()
     semantic_text: str | None = None
     """Kept so a caller that searches anyway loses none of what was said."""
+
+    asked_kind: str | None = None
+    """As on :class:`ResolvedSearch`, kept for a caller that searches anyway."""
+
+    kind_required: bool = False
+    """As on :class:`ResolvedSearch`, kept for a caller that searches anyway."""
 
     @model_validator(mode="after")
     def _check_dimensions(self) -> Self:

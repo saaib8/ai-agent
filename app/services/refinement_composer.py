@@ -269,6 +269,9 @@ class SearchRefinementComposer:
                 # M7's wording, for this execution only.
                 semantic_text=resolved.semantic_text,
                 unmatched_strict=resolved.unmatched_strict,
+                # "Nothing else" holds for this execution as it was said, so
+                # nothing downstream swaps the kind (CLAUDE.md 14.7, 14.8).
+                kind_required=resolved.kind_required,
             ),
             earlier_sizes_applied=restored,
         )

@@ -124,7 +124,7 @@ class FakeM7:
     def __init__(self, outcome: Any = None) -> None:
         self.outcome = outcome
 
-    async def interpret(self, message: str) -> Any:
+    async def interpret(self, message: str, **_: Any) -> Any:
         return self.outcome
 
 
@@ -206,6 +206,13 @@ class FakeCapabilities:
         self.pairs = pairs
         self.error = error
         self.calls: list[Any] = []
+
+    async def overview(self, context: Any) -> Any:
+        """A shelf with no clean currency: amounts without one are asked about,
+        as these tests expect. Not counted in `calls`."""
+        from app.schemas.catalog_overview import CatalogOverview
+
+        return CatalogOverview(store_id=context.store_id)
 
     async def capabilities(self, context: Any) -> Any:
         self.calls.append(context)

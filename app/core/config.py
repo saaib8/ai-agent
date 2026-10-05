@@ -453,6 +453,27 @@ class CustomerAgentSettings(BaseModel):
     extras silently dropped, and typed and tapped comparisons share the limit.
     """
 
+    speculative_interpretation: bool = False
+    """Read a typed message for a search at the same time as the turn is
+    decided, instead of after; used only when the decision hands that same
+    message to the search. Saves one model call's wait on most search turns
+    (plan 11, 3b). Off by default until measured on the suite."""
+
+    agent_loop: bool = False
+    """After a search they asked for finds nothing within their limits, let the
+    model look at related stocked types and present one that meets them
+    (CLAUDE.md 14.8). Off by default until measured on the conversation suite."""
+
+    agent_loop_max_tries: int = Field(default=2, ge=1, le=3)
+    """How many related types one weak search may try. Each try is one model
+    step and one search; the loop ends with one more step to choose."""
+
+    stock_fit_check: bool = False
+    """Check a new search's type against the store's catalog before its card
+    (CLAUDE.md 14.7): a type the store does not carry is replaced by the
+    closest it does, disclosed, and a kind narrower than any type is looked up
+    by name. Off by default until measured on the conversation suite."""
+
     max_picks: int = Field(default=10, ge=2, le=50)
     """How many products the picks tray keeps. A shortlist, not a second
     catalogue: past this a tick asks them to remove one first."""
@@ -468,6 +489,12 @@ class CustomerAgentSettings(BaseModel):
     with different prompts, and silently sharing one identifier would make
     changing either of them change both.
     """
+
+    decision_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    """How hard the decision model reasons, when it should differ from the
+    shared `llm.reasoning_effort`. Absent means the shared setting. Every turn
+    waits for the decision, so this is the lever on latency (plan 11, 3b C) -
+    changed only on suite parity."""
 
     response_model: str | None = Field(default=None, min_length=1)
     """The model that words the customer's reply.
@@ -507,6 +534,14 @@ class ObservabilitySettings(BaseModel):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_format: Literal["json", "console"] = "json"
     trace_header: str = "X-Request-ID"
+    model_calls_header: str | None = None
+    """When set, each response carries how many model calls it made under this
+    header name - for the conversation eval harness, never for production
+    clients. The count is logged on every request either way."""
+    turn_action_header: str | None = None
+    """When set, each chat response carries the action its turn took (search,
+    refine_search, screen, ...) under this header name - so the eval harness
+    can report latency per kind of turn. Never in prod."""
 
 
 class AwsSettings(BaseModel):
@@ -579,6 +614,41 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _agent_features_by_environment(self) -> Settings:
+        """The agent-loop plan's features are on by default in local and stage,
+        off in test and prod; an explicit setting always wins.
+
+        Prod stays off until they have been tried on the storefront: both are
+        measured on the conversation suite, but not yet in front of customers.
+        """
+        if self.environment not in (Environment.LOCAL, Environment.STAGE):
+            return self
+        given = self.customer_agent.model_fields_set
+        defaults: dict[str, object] = {
+            # Phase 1 and 2: the stock check and the agent loop.
+            "stock_fit_check": True,
+            "agent_loop": True,
+            # Phase 3b (B), measured on the full suite against the same code
+            # without it: search turns 4.4-6 s faster, pass rate at parity.
+            # A lower decision effort (C) is deliberately not defaulted: it
+            # broke "a room around my picks" in half the runs (plan 11).
+            "speculative_interpretation": True,
+        }
+        unset = {key: value for key, value in defaults.items() if key not in given}
+        if unset:
+            self.customer_agent = self.customer_agent.model_copy(update=unset)
+        return self
+
+    @model_validator(mode="after")
+    def _no_debug_headers_in_production(self) -> Settings:
+        """The model-call count is for the eval harness, never for customers."""
+        if self.environment is Environment.PROD and (
+            self.observability.model_calls_header or self.observability.turn_action_header
+        ):
+            raise ValueError("observability debug headers are not allowed in prod")
+        return self
+
     def effective_catalog(self) -> CatalogSettings:
         """Catalog settings with the selection capped at what one render can
         take a photo of. A piece beyond it would be drawn from words alone,
@@ -594,6 +664,17 @@ class Settings(BaseSettings):
         return {
             "environment": str(self.environment),
             "semantic_ranking_configured": self.pinecone is not None,
+            # The agent-loop plan's features as resolved - environment default
+            # or explicit - so a deploy shows what it is actually running.
+            "stock_fit_check": self.customer_agent.stock_fit_check,
+            "agent_loop": self.customer_agent.agent_loop,
+            "speculative_interpretation": self.customer_agent.speculative_interpretation,
+            # Applies only where a decision model is configured.
+            "decision_reasoning_effort": (
+                self.customer_agent.decision_reasoning_effort
+                if self.customer_agent.decision_model
+                else None
+            ),
             "pinecone_index": self.pinecone.index_name if self.pinecone else None,
             "embedding_model": self.llm.embedding_model,
             "service_name": self.service_name,

@@ -590,6 +590,17 @@ class ResponseGroundingView(BaseModel):
     store simply does not carry it, so the reply says "we don't have that, but
     here's the closest" rather than "this is the best fit for your number"."""
 
+    alternative_to: str | None = None
+    """The type they asked for, in words, when nothing of it met their limits
+    and the cards are another stocked type that does - every other limit kept
+    (CLAUDE.md 14.8)."""
+
+    kind_not_found: str | None = None
+    """Their own words for a narrower kind - "bunk bed" - that nothing in the
+    store's catalog is named as, beside a card or cards of the broader type.
+    The reply says it could not find that kind in the range, and never calls a
+    shown product one (CLAUDE.md 14.7)."""
+
     search_was_suggested: bool = False
     """Whether this set is something we proposed rather than something they
     asked for.
@@ -826,14 +837,23 @@ class ResponseGroundingView(BaseModel):
             self.commerce_subcategory,
             self.offered_instead_of,
             self.unstocked_type,
+            self.kind_not_found,
+            self.alternative_to,
         ):
             # The registry key is an internal identifier; a model shown one
             # writes it back verbatim.
             if words is not None and "-" in words:
                 raise ValueError("a category reaches the model as words, not a key")
-        if self.offered_instead_of is not None and self.unstocked_type is not None:
-            # Two different substitutions cannot both own one turn: the seat-count
-            # swap and the not-stocked swap are mutually exclusive recoveries.
+        reasons = (
+            self.offered_instead_of,
+            self.unstocked_type,
+            self.kind_not_found,
+            self.alternative_to,
+        )
+        if sum(reason is not None for reason in reasons) > 1:
+            # Different substitutions cannot both own one turn: the seat-count
+            # swap, the not-stocked swap and the kind not found are mutually
+            # exclusive recoveries.
             raise ValueError("a turn offers one substitution reason, not both")
         return self
 

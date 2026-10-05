@@ -204,7 +204,14 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         # The card is the turn: nothing was searched, and the questions are
         # the application's (CLAUDE.md 10.4).
         return _view(
-            ResponseOutcomeKind.PRODUCT_BRIEF, None, result=result, brief=_brief_view(result)
+            ResponseOutcomeKind.PRODUCT_BRIEF,
+            None,
+            result=result,
+            brief=_brief_view(result),
+            # The card may be for the closest type, or the broader one: the
+            # reply says so before asking (CLAUDE.md 14.7).
+            unstocked_type=_words(result.unstocked_type),
+            kind_not_found=result.kind_not_found,
         )
 
     if grounding.clarification is not None:
@@ -799,6 +806,8 @@ def _search(
         commerce_subcategory=_words(executed.request.commerce_subcategory if executed else None),
         offered_instead_of=_words(result.offered_instead_of),
         unstocked_type=_words(result.unstocked_type),
+        kind_not_found=result.kind_not_found,
+        alternative_to=_words(result.alternative_to),
         exact_match_count=search.exact_candidate_count,
         # A search reached through a design handoff is one we proposed: the
         # customer asked what would suit the piece they chose, or said nothing

@@ -14,7 +14,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.core.logging import bind_request_context, clear_request_context, new_trace_id
+from app.core.logging import (
+    bind_request_context,
+    clear_request_context,
+    get_logger,
+    new_trace_id,
+)
+from app.core.request_trace import start_request_trace
+
+logger = get_logger(__name__)
 
 # Inbound trace ids are attacker-controlled, so they are length-capped and
 # stripped before being bound to the logging context.
@@ -22,9 +30,18 @@ _MAX_TRACE_ID_CHARS = 64
 
 
 class TraceContextMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: Callable[..., Awaitable[None]], *, header: str) -> None:
+    def __init__(
+        self,
+        app: Callable[..., Awaitable[None]],
+        *,
+        header: str,
+        model_calls_header: str | None = None,
+        turn_action_header: str | None = None,
+    ) -> None:
         super().__init__(app)
         self._header = header
+        self._model_calls_header = model_calls_header
+        self._turn_action_header = turn_action_header
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -38,9 +55,20 @@ class TraceContextMiddleware(BaseHTTPMiddleware):
         # An unhandled exception unwinds past this middleware, so the error
         # handlers stamp the header themselves; they read its name from here.
         request.state.trace_header = self._header
+        trace = start_request_trace()
         try:
             response = await call_next(request)
+            if trace.model_calls or trace.turn_action:
+                logger.info(
+                    "request_traced",
+                    model_calls=trace.model_calls,
+                    turn_action=trace.turn_action,
+                )
         finally:
             clear_request_context()
         response.headers[self._header] = trace_id
+        if self._model_calls_header is not None:
+            response.headers[self._model_calls_header] = str(trace.model_calls)
+        if self._turn_action_header is not None and trace.turn_action is not None:
+            response.headers[self._turn_action_header] = trace.turn_action
         return response

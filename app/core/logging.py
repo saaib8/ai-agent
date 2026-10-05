@@ -180,6 +180,14 @@ def bind_request_context(
         structlog.contextvars.bind_contextvars(session_id=session_id)
 
 
+def bind_log_fields(**fields: object) -> None:
+    """Bind fields onto every later log event in the current context only.
+
+    Inside an asyncio task this tags that task's logs and nothing outside it:
+    a task runs in its own copy of the context."""
+    structlog.contextvars.bind_contextvars(**fields)
+
+
 def clear_request_context() -> None:
     structlog.contextvars.clear_contextvars()
 

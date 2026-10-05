@@ -15,7 +15,7 @@ never raises at the customer (CLAUDE.md 21.1).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from app.core.exceptions import (
     IntegrationUnavailableError,
@@ -70,7 +70,46 @@ class ClosestTypeResolver:
         them close, or it could not answer. The caller keeps its honest reply in
         every one of them.
         """
-        options = tuple(dict.fromkeys(offered))
+        return await self._choose(
+            asked_subcategory,
+            tuple(dict.fromkeys(offered)),
+            lambda picked: self._taxonomy.is_pair(commerce_category, picked),
+            context,
+        )
+
+    async def closest_anywhere(
+        self,
+        *,
+        asked: str,
+        offered: Sequence[tuple[str, str]],
+        context: RetailerContext,
+    ) -> tuple[str, str] | None:
+        """The closest of the store's stocked types in *any* category.
+
+        For a type whose whole family the store does not carry - a treadmill in
+        a furniture shop - when a type from another family may still serve the
+        same purpose. ``offered`` is (category, subcategory) for every stocked
+        type; subcategory names are unique across the registry, so the model
+        picks a subcategory and its category is read back from ``offered``,
+        never from the model. Returned as an alternative the reply must
+        disclose (CLAUDE.md 13.3, 14.7).
+        """
+        families = {subcategory: category for category, subcategory in offered}
+        picked = await self._choose(
+            asked,
+            tuple(families),
+            lambda value: self._taxonomy.is_pair(families[value], value),
+            context,
+        )
+        return (families[picked], picked) if picked is not None else None
+
+    async def _choose(
+        self,
+        asked: str,
+        options: tuple[str, ...],
+        valid: Callable[[str], bool],
+        context: RetailerContext,
+    ) -> str | None:
         if not options:
             return None
 
@@ -79,7 +118,7 @@ class ClosestTypeResolver:
             try:
                 choice = await self._client.parse(
                     instructions=instructions,
-                    user_input=render_request(asked_subcategory, options),
+                    user_input=render_request(asked, options),
                     schema=schema,
                 )
             except _HANDLED_LLM_FAILURES as exc:
@@ -97,18 +136,18 @@ class ClosestTypeResolver:
                 logger.info(
                     "closest_type_declined",
                     store_id=context.store_id,
-                    asked=asked_subcategory,
+                    asked=asked,
                     offered_count=len(options),
                 )
                 return None
             # Deterministic re-check even though the schema was constrained: a
             # Literal cannot express "valid under this category" (CLAUDE.md 14.4),
             # and this is the real guarantee if the schema ever loosens.
-            if picked in options and self._taxonomy.is_pair(commerce_category, picked):
+            if picked in options and valid(picked):
                 logger.info(
                     "closest_type_picked",
                     store_id=context.store_id,
-                    asked=asked_subcategory,
+                    asked=asked,
                     picked=picked,
                     prompt_version=VERSION,
                 )
@@ -116,6 +155,6 @@ class ClosestTypeResolver:
             logger.warning(
                 "closest_type_invalid_pick",
                 store_id=context.store_id,
-                asked=asked_subcategory,
+                asked=asked,
             )
         return None

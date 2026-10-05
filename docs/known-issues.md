@@ -1531,3 +1531,54 @@ In the agent redesign this becomes a `check_fit` tool.
 **CLAUDE.md change needed:** 15.1 and 17.2 say room fit belongs to the
 designer and must never be promised. The update should allow deterministic,
 clearly approximate fit checks by code, while still never guaranteeing a fit.
+
+
+## 14. A strict colour on a seating combination is not always disclosed
+
+**Status:** Open (found 2026-10-02 while measuring the agent-loop plan).
+
+**Reported:** Eval case `seat_combo_strict_colour_honest` fails in every
+configuration since the phase 3 baseline - with and without each new feature -
+so it is not caused by them: the reply does not say plainly that no
+combination met the strict colour.
+
+
+## 15. A sofa search sometimes shows office chairs and chairs
+
+**Status:** Fixed (2026-10-05). Cause: query understanding occasionally read
+"show me sofas" as the seating category with no type (about 1-3% of seating
+readings, before and after the agent-loop work). Fix: the prompt now says a
+listed type that names what was asked must be set, whatever the wording; and
+an answer with a category but no type gets one confirming look
+(`query_understanding_type_checked`), keeping a type only if it is in the same
+category. Live: 96/96 sofa phrasings typed; broad requests ("something to sit
+on") still stay broad.
+
+**Reported:** "show me sofas", and "back to sofas, any size is fine" after a
+sofa search with a size and an armchair search, returned office chairs and
+chairs ("This set is chair-led rather than sofas").
+
+## 16. A budget without a currency always asks "which currency?"
+
+**Status:** Fixed (2026-10-05). Cause: no path used the store's currency, though
+the catalog overview already derives it when unambiguous. Fix: query
+understanding, refinements and room budgets take the store's own currency for
+an amount stated without one; the decision prompt no longer asks. A store whose
+catalog is mixed is still asked. Live: 24/24 currency-less budgets proceeded.
+
+**Reported:** "under 3000", "2.5k", "under 500 please" are answered with a
+currency question although the store prices in SAR.
+
+## 17. The same need said again does not get its card
+
+**Status:** Fixed (2026-10-05). Two causes, both in the decision model: "I need
+a bed" said again was routed as a plain answer, and a "no questions" said
+turns earlier was carried as `skip_questions` onto a later need. Fix (decision
+prompt v1.2): `skip_questions` comes from the current message only, and the
+same need said again is a new search, never an answer. Live: repeated "I need
+a bed" got its card 4/4, "I need a sofa" after rugs 3/3; "just show me sofas"
+still skips it 2/2.
+
+**Reported:** "I need a bed" (or a sofa) said again after declining the card is
+answered "find a piece or design a room?" or searched without a card, against
+CLAUDE.md 10.4 ("I need a bed" said again is a new need).

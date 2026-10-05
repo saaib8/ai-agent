@@ -43,7 +43,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Added first so CORS (added last) wraps it, and so error responses still
     # carry the trace header.
-    app.add_middleware(TraceContextMiddleware, header=settings.observability.trace_header)
+    app.add_middleware(
+        TraceContextMiddleware,
+        header=settings.observability.trace_header,
+        model_calls_header=settings.observability.model_calls_header,
+        turn_action_header=settings.observability.turn_action_header,
+    )
     if settings.api.cors_origins:
         app.add_middleware(
             CORSMiddleware,

@@ -953,3 +953,132 @@ cases:
     turns: ["skip the questions and show me beds", "I'll take the first one", "skip the questions and show me nightstands", "I'll take the first one too", "design my bedroom around these", "under 12000 SAR", "Choose the pieces for me", "leave the colours to you"]
     checks: {not_fallback: true, room_locked: 2, room_type_max: {bed: 1}}
 
+
+  # ── stock and fit before the card (CLAUDE.md 14.7; needs
+  #    ZORY_CUSTOMER_AGENT__STOCK_FIT_CHECK=true) ────────────────────────────
+  - id: stock_unstocked_type_asks_the_closest_card
+    issue: "store 50 has no recliners: the card is for the closest stocked type, and the reply says so"
+    turns: ["I need a recliner"]
+    checks: {not_fallback: true, card: true, mentions: ["don't carry", "do not carry", "don't have", "don't stock", "not carry"]}
+
+  - id: stock_unstocked_type_skipped_card_shows_the_closest
+    issue: "no recliners, no questions: the closest stocked seating is shown, disclosed"
+    turns: ["just show me recliners, no questions"]
+    checks: {not_fallback: true, min_products: 1, not_subcategory: recliner, mentions: ["don't carry", "do not carry", "don't have", "don't stock", "not carry"]}
+
+  - id: stock_unstocked_family_is_honest
+    issue: "no fitness at all: no treadmill card, an honest reply that leaves a next step"
+    turns: ["show me treadmills"]
+    checks: {not_fallback: true, card: false, next_step: true, mentions: ["treadmill"]}
+
+  - id: stock_unstocked_candle_offers_candlesticks
+    issue: "no candles: the closest decor type is offered, disclosed"
+    turns: ["just show me candles"]
+    checks: {not_fallback: true, min_products: 1, not_subcategory: candle, mentions: ["don't carry", "do not carry", "don't have", "don't stock", "not carry"]}
+
+  - id: stock_kind_not_found_bunk_bed
+    issue: "nothing named a bunk bed: the bed card, with the reply saying it couldn't find bunk beds"
+    turns: ["I need a bunk bed for my kids"]
+    checks: {not_fallback: true, card: true, mentions: ["couldn't find", "could not find", "couldn't see", "don't carry", "don't have", "no bunk"]}
+
+  - id: stock_kind_not_found_bean_bag
+    issue: "nothing named a bean bag: never shown chairs as bean bags"
+    turns: ["do you have bean bags?"]
+    checks: {not_fallback: true, mentions: ["couldn't find", "could not find", "couldn't see", "don't carry", "don't have", "no bean"]}
+
+  - id: stock_stocked_type_unchanged
+    issue: "control: a stocked type gets its own card and no disclosure"
+    turns: ["I need a sofa"]
+    checks: {not_fallback: true, card: true, not_mentions: ["don't carry", "couldn't find", "do not carry"]}
+
+  - id: stock_broad_category_unchanged
+    issue: "control: 'lights' in broad terms is stocked as a family - nothing disclosed"
+    turns: ["show me lights"]
+    checks: {not_fallback: true, not_mentions: ["don't carry", "couldn't find", "do not carry"]}
+
+  - id: stock_described_sofa_is_not_a_narrower_kind
+    issue: "control: describing a sofa (colour, feel) never makes it a different kind"
+    turns: ["I need a cosy beige sofa"]
+    checks: {not_fallback: true, card: true, not_mentions: ["don't carry", "couldn't find", "do not carry"]}
+
+  - id: stock_synonym_couch_is_a_sofa
+    issue: "a couch is a sofa - another name, never a 'couldn't find couches' (no product is named couch)"
+    turns: ["I need a couch"]
+    checks: {not_fallback: true, card: true, not_mentions: ["couldn't find", "could not find", "don't carry", "do not carry"]}
+
+  - id: stock_synonym_bedside_table_is_a_nightstand
+    issue: "a bedside table is a nightstand - another name, never disclosed (no product is named bedside)"
+    turns: ["show me a bedside table"]
+    checks: {not_fallback: true, not_mentions: ["couldn't find", "could not find", "don't carry", "do not carry"]}
+
+  - id: stock_kind_found_by_name_rocking_chair
+    issue: "positive control: a product is named rocking - nothing disclosed"
+    turns: ["I'd like a rocking chair"]
+    checks: {not_fallback: true, not_mentions: ["couldn't find", "could not find", "don't carry", "do not carry"]}
+
+  - id: stock_kind_found_by_name_loveseat
+    issue: "positive control: products are named Love Seat - nothing disclosed"
+    turns: ["show me loveseats"]
+    checks: {not_fallback: true, not_mentions: ["couldn't find", "could not find", "don't carry", "do not carry"]}
+
+  - id: stock_unstocked_type_keeps_the_seat_count
+    issue: "QA bug 1: no recliners, 'a 3 seater recliner sofa' - a type that seats 3, never a one-seat lounge chair"
+    turns: ["a 3 seater recliner sofa, just show me"]
+    checks: {not_fallback: true, min_products: 1, min_seats: 3, not_subcategory: lounge-chair}
+
+  - id: stock_no_false_substitute_for_yoga_mats
+    issue: "QA bug 2: a rug is not a yoga mat - honest, never rugs"
+    turns: ["do you sell yoga mats?"]
+    checks: {not_fallback: true, not_subcategory: carpet, next_step: true}
+
+  - id: stock_no_false_substitute_for_a_dressing_table
+    issue: "QA bug 2: a wardrobe is not a dressing table - never wardrobes in its place"
+    turns: ["I want a dressing table for my bedroom, just show me"]
+    checks: {not_fallback: true, not_subcategory: wardrobe}
+
+  # ── the agent loop after a weak search (CLAUDE.md 14.8; needs
+  #    ZORY_CUSTOMER_AGENT__AGENT_LOOP=true) ─────────────────────────────────
+  - id: loop_sectional_over_budget_shows_sofas
+    issue: "no sectional under 2500 (they start at 3450): a related seating type that fits, disclosed"
+    turns: ["an L-shaped sofa under 2500 SAR, just show me"]
+    checks: {not_fallback: true, min_products: 1, max_price: 2500, subcategory_in: [sofa, sofa-set, sofa-bed], mentions: ["sectional", "l-shape", "l shape", "l-shaped"]}
+
+  - id: loop_chaise_over_budget_shows_a_related_seat
+    issue: "no chaise lounge under 2000 (they start at 3550): a related type that fits, disclosed"
+    turns: ["a chaise lounge under 2000 SAR, no questions"]
+    checks: {not_fallback: true, min_products: 1, max_price: 2000, not_subcategory: chaise-lounge, mentions: ["chaise"]}
+
+  - id: loop_no_siblings_keeps_the_honest_reply
+    issue: "dining tables start at 4950 and have no stocked siblings: the honest budget offer, nothing else"
+    turns: ["a dining table under 3000 SAR, just show me"]
+    checks: {not_fallback: true, max_products: 0, next_step: true}
+
+  - id: loop_never_offers_a_chair_as_a_sofa
+    issue: "no sofa under 500 - a 420 chair is under budget but is not a sofa: keep the honest reply"
+    turns: ["a sofa under 500 SAR, just show me"]
+    checks: {not_fallback: true, not_subcategory: chair, next_step: true}
+
+  - id: loop_found_results_never_loop
+    issue: "control: sofas under 3000 exist - the loop never runs, results as before"
+    turns: ["a sofa under 3000 SAR, just show me"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, max_price: 3000}
+
+  - id: loop_never_drops_a_size_by_switching_type
+    issue: "QA bug 1: empty only because of the width - the honest set-aside offer, never sectionals with the width dropped"
+    turns: ["Just show me modern sofas for 4 people under 6000 SAR, around 220 cm wide, no questions"]
+    checks: {not_fallback: true, not_subcategory: sectional-sofa, next_step: true}
+
+  - id: loop_respects_nothing_else
+    issue: "QA bug 2: 'it has to be L-shaped, nothing else' - never ordinary sofas"
+    turns: ["Just show me L-shaped sofas under 3000 SAR - it has to be L-shaped, nothing else"]
+    checks: {not_fallback: true, not_subcategory: sofa, next_step: true, mentions: ["l-shape", "l shape", "l-shaped"]}
+
+  - id: loop_no_side_table_for_a_coffee_table
+    issue: "QA bug 3: a side table does not do a coffee table's job"
+    turns: ["just show me a coffee table under 300 SAR"]
+    checks: {not_fallback: true, not_subcategory: service-table}
+
+  - id: loop_no_armchair_for_a_dining_chair
+    issue: "QA bug 3: an armchair is not a dining chair"
+    turns: ["just show me a dining chair under 500 SAR"]
+    checks: {not_fallback: true, not_subcategory: chair}

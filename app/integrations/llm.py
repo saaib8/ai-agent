@@ -31,6 +31,7 @@ from app.core.exceptions import (
     LLMUnavailableError,
 )
 from app.core.logging import get_logger
+from app.core.request_trace import count_model_call
 
 logger = get_logger(__name__)
 
@@ -127,6 +128,7 @@ class OpenAIStructuredClient:
         messages: list[dict[str, Any]],
         schema: type[StructuredT],
     ) -> StructuredT:
+        count_model_call()
         try:
             response = await self._client.responses.parse(
                 model=self._model,

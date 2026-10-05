@@ -179,8 +179,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         semantic_index = PineconeSemanticIndex(settings.pinecone)
     decision_model = settings.customer_agent.decision_model
     if decision_model:
+        decision_effort = settings.customer_agent.decision_reasoning_effort
         decision_llm = OpenAIStructuredClient(
-            settings.llm.model_copy(update={"model": decision_model})
+            settings.llm.model_copy(
+                update={
+                    "model": decision_model,
+                    **({"reasoning_effort": decision_effort} if decision_effort else {}),
+                }
+            )
         )
     response_model = settings.customer_agent.response_model
     if response_model:

@@ -353,6 +353,16 @@ class CustomerTurnResult(BaseModel):
     dead end (CLAUDE.md 27). Distinct from `offered_instead_of`: there the type
     exists but seats too few; here the store simply does not carry it."""
 
+    alternative_to: str | None = None
+    """The type they asked for, when nothing of it met their limits and the
+    cards are another stocked type the agent loop found that does
+    (CLAUDE.md 14.8). A registry key; the reply view turns it into words."""
+
+    kind_not_found: str | None = None
+    """Their own words for a kind narrower than the type ("bunk bed") that no
+    product in the store is named as; the turn shows the broader type
+    (CLAUDE.md 14.7). Plain lowercase words, never a registry key."""
+
     swap_offer: SwapBudgetOffer | None = None
     """A dearer swap that broke the budget, held for the customer's yes/no. The
     proposed room rides in `bundle_outcome`; nothing is committed until they say

@@ -25,6 +25,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
+from app.core.logging import get_logger
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import MAX_SEMANTIC_INTENT_CHARS, PurchaseStage
 from app.schemas.bundle_reference import (
@@ -63,6 +64,8 @@ wide", "rugs around 230 by 330" - and short enough that a conversation cannot
 be pasted in and interpreted as one.
 """
 
+
+_logger = get_logger(__name__)
 
 class AgentAction(StrEnum):
     """What this turn executes. One per turn."""
@@ -980,6 +983,40 @@ class CustomerAgentDecision(BaseModel):
             return self.reference
         return None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_a_stray_refinement(cls, data: object) -> object:
+        """A refinement payload beside an action that is not a refinement is
+        ignored, not refused (CLAUDE.md 21.1, step 1).
+
+        Strict structured output fills every field, and a model that chose a
+        new search sometimes leaves a delta or the type-change flag beside it.
+        Only `_refine` ever reads them, so on any other action they can change
+        nothing - refusing the decision for them only cost a second call, the
+        same mistake `design_scope` is already forgiven for. A refinement with
+        nothing to change is still refused: that one is genuinely unusable.
+        """
+        if not isinstance(data, dict):
+            return data
+        action = data.get("action")
+        if action in (AgentAction.REFINE_SEARCH, AgentAction.REFINE_SEARCH.value):
+            return data
+        if data.get("refinement") is None and not data.get("taxonomy_change_requested"):
+            return data
+        # The one log in a schema: once parsed, the stray payload is gone, and
+        # without this a search the model half-meant as a refinement could not
+        # be counted. Field names and the action only - never their content.
+        _logger.info(
+            "decision_payload_ignored",
+            action=str(action),
+            fields=[
+                name
+                for name in ("refinement", "taxonomy_change_requested")
+                if data.get(name)
+            ],
+        )
+        return {**data, "refinement": None, "taxonomy_change_requested": False}
+
     @model_validator(mode="after")
     def _payload_matches_the_action(self) -> Self:
         self._check_search_payloads()
@@ -1027,8 +1064,6 @@ class CustomerAgentDecision(BaseModel):
                 and not self.taxonomy_change_requested
             ):
                 raise ValueError("a refinement delta that changes nothing is not one")
-        elif self.refinement is not None or self.taxonomy_change_requested:
-            raise ValueError("only a refinement may carry a refinement payload")
 
     def _check_combination_choice(self) -> None:
         if self.combination_choice is not None and self.action is not AgentAction.SHOW_SELECTION:
