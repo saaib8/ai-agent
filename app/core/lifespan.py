@@ -218,7 +218,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         generators: dict[str, OpenAIImageGenerator | GeminiImageGenerator] = {}
         if visualization.openai_model is not None:
             generators["openai"] = OpenAIImageGenerator(
-                visualization, api_key=settings.llm.api_key.get_secret_value()
+                visualization,
+                api_key=settings.llm.api_key.get_secret_value(),
+                base_url=settings.llm.base_url,
             )
         if visualization.gemini_model is not None:
             generators["gemini"] = GeminiImageGenerator(visualization)

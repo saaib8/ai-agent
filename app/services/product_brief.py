@@ -33,6 +33,7 @@ from app.core.logging import get_logger
 from app.repositories.products import BriefFacts, ProductRepository
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.discovery import PriceConstraint, SeatingCapacityConstraint
+from app.schemas.language import ReplyLanguage
 from app.schemas.product_brief import (
     MAX_BRIEF_COLOURS,
     MAX_BRIEF_STYLES,
@@ -48,6 +49,15 @@ from app.schemas.product_brief import (
 from app.schemas.query import ConstraintStrength, ResolvedSearch, SemanticPreference
 from app.schemas.retailer import RetailerContext
 from app.schemas.search_action import BriefAnswerAction
+from app.services.chip_wording import (
+    BUDGET_BETWEEN,
+    BUDGET_OVER,
+    BUDGET_UNDER,
+    CARD_QUESTIONS,
+    CARD_SUBMIT,
+    CARD_SUBMIT_ANY,
+    currency_word,
+)
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.briefs import Brief, BriefQuestionKind, Briefs, KindChoice
 from app.taxonomy.registry import CommerceTaxonomy
@@ -60,13 +70,6 @@ MAX_STYLE_CHOICES: Final[int] = 6
 """The colours and styles most of these products carry - enough to find
 theirs, few enough to scan."""
 
-_QUESTION_LABELS: Final[dict[BriefQuestionKind, str]] = {
-    BriefQuestionKind.TYPE: "What kind?",
-    BriefQuestionKind.BUDGET: "Budget",
-    BriefQuestionKind.COLOUR: "Colours you like",
-    BriefQuestionKind.STYLE: "Style",
-}
-"""Card wording. The feel's label is reviewed data, per product family."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +102,7 @@ class ProductBriefBuilder:
         context: RetailerContext,
         *,
         mode: BriefMode,
+        language: ReplyLanguage = ReplyLanguage.EN,
     ) -> BuiltBrief | None:
         """The card for this search, or None when there is nothing to ask.
 
@@ -112,6 +116,8 @@ class ProductBriefBuilder:
         None when the type has no card, when everything it would ask is
         already known, or for a folded card already offered. Then the search
         simply runs.
+
+        Worded in `language`; the keys a tap sends back are the same in either.
         """
         request = resolved.request
         brief = self._briefs.for_search(request.commerce_category, request.commerce_subcategory)
@@ -144,32 +150,53 @@ class ProductBriefBuilder:
             match kind:
                 case BriefQuestionKind.TYPE:
                     kinds = self._kinds(brief, facts)
-                    question = _question(kind, [(k.key, _kind_label(brief, k)) for k in kinds])
+                    question = _question(
+                        kind,
+                        [(k.key, self._word(_kind_label(brief, k), language)) for k in kinds],
+                        language=language,
+                    )
                 case BriefQuestionKind.BUDGET:
                     budgets = _budgets(facts)
-                    question = _question(kind, [(b.key, _band_label(b)) for b in budgets])
+                    question = _question(
+                        kind,
+                        [(b.key, _band_label(b, language)) for b in budgets],
+                        language=language,
+                    )
                 case BriefQuestionKind.COLOUR:
                     colours = self._approved(AttributeFamily.COLOR, facts.colors)[
                         :MAX_COLOUR_CHOICES
                     ]
+                    colour_labels = [
+                        (c, self._value_label(AttributeFamily.COLOR, c, language)) for c in colours
+                    ]
                     question = _question(
-                        kind, [(c, _value_label(c)) for c in colours], MAX_BRIEF_COLOURS
+                        kind,
+                        colour_labels,
+                        MAX_BRIEF_COLOURS,
+                        language=language,
                     )
                 case BriefQuestionKind.STYLE:
                     styles = self._approved(AttributeFamily.STYLE, facts.styles)[:MAX_STYLE_CHOICES]
+                    style_labels = [
+                        (s, self._value_label(AttributeFamily.STYLE, s, language)) for s in styles
+                    ]
                     question = _question(
-                        kind, [(s, _value_label(s)) for s in styles], MAX_BRIEF_STYLES
+                        kind,
+                        style_labels,
+                        MAX_BRIEF_STYLES,
+                        language=language,
                     )
                 case BriefQuestionKind.FEEL:
                     feels = tuple(
                         BriefFeelOption(key=f"feel-{index}", words=feel.words)
                         for index, feel in enumerate(brief.feels, start=1)
                     )
-                    labels = [feel.label for feel in brief.feels]
+                    labels = [self._word(feel.label, language) for feel in brief.feels]
                     question = _question(
                         kind,
                         [(option.key, label) for option, label in zip(feels, labels, strict=True)],
-                        label=brief.feel_label,
+                        label=self._word(brief.feel_label, language) if brief.feel_label else None,
+                        language=language,
                     )
             if question is not None:
                 questions.append(question)
@@ -185,12 +212,26 @@ class ProductBriefBuilder:
             if family_word and brief.noun
             else _plural(customer_words(subcategory or request.commerce_category))
         )
+        if language is ReplyLanguage.AR:
+            # No Arabic product-type names exist yet: the family's reviewed noun
+            # when the card names its family, and no kind otherwise.
+            arabic_noun = self._briefs.arabic(noun) if family_word else None
+            submit = (
+                CARD_SUBMIT[language].format(noun=arabic_noun)
+                if arabic_noun
+                else CARD_SUBMIT_ANY[language]
+            )
+            # `noun` stays what is being looked for: the family's Arabic word,
+            # or the searched kind's English until Arabic type names exist.
+            noun = arabic_noun or noun
+        else:
+            submit = CARD_SUBMIT[language].format(noun=noun)
         card = ProductBrief(
             card=number,
             mode=mode,
             noun=noun,
             questions=tuple(questions),
-            submit_label=f"Show me {noun}",
+            submit_label=submit,
         )
         pending = PendingBrief(
             card=number,
@@ -220,6 +261,24 @@ class ProductBriefBuilder:
         store-wide - a room spans categories - and capped."""
         facts = await self._repository.facet_counts(context)
         return self._approved(AttributeFamily.COLOR, facts.colors)[:limit]
+
+    def arabic_names(self, family: AttributeFamily, values: tuple[str, ...]) -> tuple[str, ...]:
+        """Approved values as they read in Arabic, in the same order - the
+        reviewed registry's names, the value itself only where it has none."""
+        return tuple(self._attributes.arabic(family, value) or value for value in values)
+
+    def _word(self, label: str, language: ReplyLanguage) -> str:
+        """One of the cards' reviewed labels, as it reads in `language`."""
+        if language is ReplyLanguage.EN:
+            return label
+        return self._briefs.arabic(label) or label
+
+    def _value_label(self, family: AttributeFamily, value: str, language: ReplyLanguage) -> str:
+        """An approved colour or style as a chip reads it: its reviewed Arabic
+        name, or the value with underscores as spaces."""
+        if language is ReplyLanguage.AR and (name := self._attributes.arabic(family, value)):
+            return name
+        return _value_label(value)
 
     def answers_card(self, resolved: ResolvedSearch, state: AgentStateV1) -> bool:
         """Whether this search is their typed answer to the card on screen.
@@ -444,12 +503,15 @@ def _round_price(value: Decimal) -> Decimal:
     return (value / quantum).quantize(Decimal(1), rounding=ROUND_HALF_UP) * quantum
 
 
-def _band_label(band: BriefBudgetOption) -> str:
+def _band_label(band: BriefBudgetOption, language: ReplyLanguage = ReplyLanguage.EN) -> str:
+    currency = currency_word(band.currency, language)
     if band.min_amount is None:
-        return f"Under {_money(band.max_amount)} {band.currency}"
+        return BUDGET_UNDER[language].format(amount=_money(band.max_amount), currency=currency)
     if band.max_amount is None:
-        return f"Over {_money(band.min_amount)} {band.currency}"
-    return f"{_money(band.min_amount)}-{_money(band.max_amount)} {band.currency}"
+        return BUDGET_OVER[language].format(amount=_money(band.min_amount), currency=currency)
+    return BUDGET_BETWEEN[language].format(
+        low=_money(band.min_amount), high=_money(band.max_amount), currency=currency
+    )
 
 
 def _money(amount: Decimal | None) -> str:
@@ -563,13 +625,14 @@ def _question(
     max_choices: int = 1,
     *,
     label: str | None = None,
+    language: ReplyLanguage = ReplyLanguage.EN,
 ) -> BriefQuestionView | None:
     """A question worth asking: at least two answers that lead somewhere."""
     if len(choices) < 2:
         return None
     return BriefQuestionView(
         kind=kind,
-        label=label or _QUESTION_LABELS[kind],
+        label=label or CARD_QUESTIONS[kind][language],
         choices=tuple(BriefChoice(key=key, label=text) for key, text in choices),
         max_choices=max_choices,
     )

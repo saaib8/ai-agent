@@ -37,9 +37,9 @@ from app.core.exceptions import (
 from app.core.logging import get_logger
 from app.integrations.llm import StructuredLLMClient
 from app.prompts.customer_commerce.response_v1 import (
-    VERSION,
     build_correction_instructions,
     build_instructions,
+    version_for,
 )
 from app.schemas.agent_turn import (
     MAX_RESPONSE_CHARS,
@@ -48,6 +48,7 @@ from app.schemas.agent_turn import (
     CustomerTurnResult,
 )
 from app.schemas.conversation import ConversationRole
+from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import ANY_NEXT_STEP
 from app.schemas.response import (
     DeterministicResponse,
@@ -58,6 +59,7 @@ from app.schemas.response import (
     ResponseRoute,
     ResponseViolation,
 )
+from app.services.arabic_wording import in_language
 from app.services.next_step import already_asks
 from app.services.numeric_guard import (
     build_allowance,
@@ -90,7 +92,11 @@ from app.services.response_wording import (
 logger = get_logger(__name__)
 
 
-def _ends_on_a_question(response: CustomerResponse, result: CustomerTurnResult) -> CustomerResponse:
+def _ends_on_a_question(
+    response: CustomerResponse,
+    result: CustomerTurnResult,
+    language: ReplyLanguage = ReplyLanguage.EN,
+) -> CustomerResponse:
     """Never a dead end: every reply leaves the customer a question to answer.
 
     The reply model is asked to close on the turn's next step; when it did not
@@ -98,15 +104,17 @@ def _ends_on_a_question(response: CustomerResponse, result: CustomerTurnResult) 
     own question is added, and failing that a plain "what next?". Digit-free,
     so nothing added here can trip the number check (CLAUDE.md 10.2).
     """
-    if "?" in response.message or (
-        response.follow_up_question is not None and "?" in response.follow_up_question
+    if _asks(response.message) or (
+        response.follow_up_question is not None and _asks(response.follow_up_question)
     ):
         return response
     # A turn with its own question - a question card, a room question, cards of
     # what goes with a pick - already leaves them something to answer on screen.
     if already_asks(result):
         return response
-    question = result.next_step.question if result.next_step is not None else ANY_NEXT_STEP
+    question = in_language(
+        result.next_step.question if result.next_step is not None else ANY_NEXT_STEP, language
+    )
     message = f"{response.message.rstrip()} {question}"
     if len(message) > MAX_RESPONSE_CHARS:
         return response
@@ -115,6 +123,11 @@ def _ends_on_a_question(response: CustomerResponse, result: CustomerTurnResult) 
         next_step=str(result.next_step.kind) if result.next_step else None,
     )
     return response.model_copy(update={"message": message})
+
+
+def _asks(text: str) -> bool:
+    """A question mark in either script: "?" or the Arabic "؟"."""
+    return "?" in text or "؟" in text
 
 
 def _asked_once(response: CustomerResponse) -> CustomerResponse:
@@ -179,10 +192,27 @@ error still propagates - this is not a universal wrapper (CLAUDE.md 21).
 class CustomerResponseGenerator:
     """One finished turn in, one customer-safe reply out."""
 
-    def __init__(self, client: StructuredLLMClient) -> None:
+    def __init__(self, client: StructuredLLMClient, *, arabic_replies: bool = False) -> None:
         self._client = client
-        self._instructions = build_instructions()
-        self._correction_instructions = build_correction_instructions()
+        self._arabic_replies = arabic_replies
+        """Off, every reply is written with the English instructions, exactly
+        as before, whatever a session stored while it was on."""
+        # Built once: a prompt is chosen per turn, never assembled per turn.
+        self._instructions = {language: build_instructions(language) for language in ReplyLanguage}
+        self._correction_instructions = {
+            language: build_correction_instructions(language) for language in ReplyLanguage
+        }
+
+    def _language(self, result: CustomerTurnResult) -> ReplyLanguage:
+        """The language this reply is written in.
+
+        The turn settled it (`result.reply_language`). A comparison pop-up is a
+        look rather than a turn and settles nothing, so it answers in the
+        session's stored language.
+        """
+        if not self._arabic_replies:
+            return ReplyLanguage.EN
+        return result.reply_language or result.state.reply_language or ReplyLanguage.EN
 
     async def generate(
         self, turn: CustomerTurnInput, result: CustomerTurnResult
@@ -195,22 +225,31 @@ class CustomerResponseGenerator:
         """
         started = time.perf_counter()
         route = route_response(result)
+        language = self._language(result)
 
-        response, calls, used_fallback = await self._primary_response(turn, result, route)
-        final = _ends_on_a_question(self._with_side_notice(_asked_once(response), route), result)
+        response, calls, used_fallback = await self._primary_response(
+            turn, result, route, language
+        )
+        final = _ends_on_a_question(
+            self._with_side_notice(_asked_once(response), route, language), result, language
+        )
 
-        self._log(route, calls, used_fallback, started)
+        self._log(route, calls, used_fallback, started, language)
         return final
 
     # ── the branch that decides whether a model is involved ─────────────────
 
     async def _primary_response(
-        self, turn: CustomerTurnInput, result: CustomerTurnResult, route: ResponseRoute
+        self,
+        turn: CustomerTurnInput,
+        result: CustomerTurnResult,
+        route: ResponseRoute,
+        language: ReplyLanguage,
     ) -> tuple[CustomerResponse, int, bool]:
         primary = route.primary
         if isinstance(primary, DeterministicResponse):
-            return await self._deterministic(turn, result, route, primary)
-        return await self._generated(turn, result, route, primary)
+            return await self._deterministic(turn, result, route, primary, language)
+        return await self._generated(turn, result, route, primary, language)
 
     async def _deterministic(
         self,
@@ -218,6 +257,7 @@ class CustomerResponseGenerator:
         result: CustomerTurnResult,
         route: ResponseRoute,
         primary: DeterministicResponse,
+        language: ReplyLanguage,
     ) -> tuple[CustomerResponse, int, bool]:
         """A branch the application words itself.
 
@@ -230,7 +270,7 @@ class CustomerResponseGenerator:
             case DeterministicResponseKind.MODEL_CLARIFICATION:
                 clarification = result.grounding.clarification
                 if clarification is None:  # pragma: no cover - routing guarantees it
-                    return _reply(DETERMINISTIC_FALLBACK[primary.kind]), 0, True
+                    return _say(DETERMINISTIC_FALLBACK[primary.kind], language), 0, True
                 # The decision model wrote this question and it was validated
                 # in its own phase. Re-wording it could only change what was
                 # asked, so it is carried through untouched and not scanned.
@@ -238,11 +278,11 @@ class CustomerResponseGenerator:
 
             case DeterministicResponseKind.HANDLED_FAILURE:
                 assert primary.failure_code is not None
-                return _reply(FAILURE_WORDING[primary.failure_code]), 0, False
+                return _say(FAILURE_WORDING[primary.failure_code], language), 0, False
 
             case DeterministicResponseKind.DESIGN_HANDOFF:
                 if route.required_clarification is None:
-                    return _reply(DESIGN_HANDOFF_WORDING), 0, False
+                    return _say(DESIGN_HANDOFF_WORDING, language), 0, False
                 question, calls, used_fallback = await self._generated_message(
                     turn,
                     result,
@@ -253,34 +293,35 @@ class CustomerResponseGenerator:
                         relative_price_reason=(route.required_clarification.relative_price_reason),
                     ),
                     follow_up_allowed=False,
+                    language=language,
                 )
                 return (
-                    _reply(compose(DESIGN_HANDOFF_WORDING, question)),
+                    _reply(compose(in_language(DESIGN_HANDOFF_WORDING, language), question)),
                     calls,
                     used_fallback,
                 )
 
             case DeterministicResponseKind.BUNDLE_CHANGED_NOT_REFRESHED:
-                return _reply(BUNDLE_CHANGED_NOT_REFRESHED_WORDING), 0, False
+                return _say(BUNDLE_CHANGED_NOT_REFRESHED_WORDING, language), 0, False
 
             case DeterministicResponseKind.BUNDLE_KEPT:
-                return _reply(BUNDLE_KEPT_WORDING), 0, False
+                return _say(BUNDLE_KEPT_WORDING, language), 0, False
 
             case DeterministicResponseKind.BUNDLE_ACQUISITION_SET:
                 # No model: the customer stated this, and a sentence that
                 # re-described it could only get it wrong.
                 assert primary.acquisition is not None
-                return _reply(BUNDLE_ACQUISITION_WORDING[primary.acquisition]), 0, False
+                return _say(BUNDLE_ACQUISITION_WORDING[primary.acquisition], language), 0, False
 
             case DeterministicResponseKind.BUNDLE_UNLOCKED:
-                return _reply(BUNDLE_UNLOCKED_WORDING), 0, False
+                return _say(BUNDLE_UNLOCKED_WORDING, language), 0, False
 
             case DeterministicResponseKind.BUNDLE_UNAVAILABLE:
                 # The optimiser said exactly why it could not compute. A model
                 # asked to explain that would start proposing remedies nobody
                 # authorised - dropping a lock, changing a budget.
                 assert primary.bundle_reason is not None
-                return _reply(BUNDLE_UNAVAILABLE_WORDING[primary.bundle_reason]), 0, False
+                return _say(BUNDLE_UNAVAILABLE_WORDING[primary.bundle_reason], language), 0, False
 
     async def _generated(
         self,
@@ -288,6 +329,7 @@ class CustomerResponseGenerator:
         result: CustomerTurnResult,
         route: ResponseRoute,
         view: ResponseGroundingView,
+        language: ReplyLanguage,
     ) -> tuple[CustomerResponse, int, bool]:
         """A turn a model words, cited products and all."""
         request = ResponseInput(
@@ -335,6 +377,9 @@ class CustomerResponseGenerator:
                 *(swap_offer_figures(view.swap_offer) if view.swap_offer else ()),
                 # A just-confirmed stretch: the original budget and how far over.
                 *(bundle_stretch_figures(view.bundle) if view.bundle else ()),
+                # Their own budget and seat figures, as this turn read them -
+                # "three seater", "لستة أشخاص" said in words, sayable in digits.
+                *result.stated_figures,
                 # Rules of thumb the specialist supplied as structured
                 # measurements. Sayable as guidance about rooms in general,
                 # never as a fact about a product (CLAUDE.md 14, 41).
@@ -343,9 +388,11 @@ class CustomerResponseGenerator:
         )
         refs = valid_grounding_refs(result.grounding)
 
-        response, calls = await self._call_and_validate(request, allowance=allowance, refs=refs)
+        response, calls = await self._call_and_validate(
+            request, allowance=allowance, refs=refs, language=language
+        )
         if response is None:
-            return _reply(_fallback(view)), calls, True
+            return _say(_fallback(view), language), calls, True
         return response, calls, False
 
     async def _generated_message(
@@ -355,6 +402,7 @@ class CustomerResponseGenerator:
         view: ResponseGroundingView,
         *,
         follow_up_allowed: bool,
+        language: ReplyLanguage,
     ) -> tuple[str, int, bool]:
         """Just the words, for a branch that composes them with its own."""
         request = ResponseInput(
@@ -368,9 +416,10 @@ class CustomerResponseGenerator:
             allowance=build_allowance(turn.message, said_earlier=_their_own_words(turn)),
             # Nothing is grounded on this branch, so nothing may be cited.
             refs=frozenset(),
+            language=language,
         )
         if response is None:
-            return _fallback(view), calls, True
+            return in_language(_fallback(view), language), calls, True
         return response.message, calls, False
 
     # ── the call, and the one retry it may earn ─────────────────────────────
@@ -381,6 +430,7 @@ class CustomerResponseGenerator:
         *,
         allowance: frozenset[str],
         refs: frozenset[int],
+        language: ReplyLanguage,
     ) -> tuple[CustomerResponse | None, int]:
         """At most two calls, and the second only for an unsupported figure.
 
@@ -388,7 +438,7 @@ class CustomerResponseGenerator:
         it immediately: a bad citation or a question the turn did not permit is
         a misunderstanding, not a slip of phrasing.
         """
-        first = await self._parse(self._instructions, request)
+        first = await self._parse(self._instructions[language], request)
         if first is None:
             return None, 1
 
@@ -405,7 +455,7 @@ class CustomerResponseGenerator:
             return None, 1
 
         self._log_violation(violation, attempt=1)
-        second = await self._parse(self._correction_instructions, request)
+        second = await self._parse(self._correction_instructions[language], request)
         if second is None:
             return None, 2
 
@@ -441,7 +491,7 @@ class CustomerResponseGenerator:
     # ── composition ─────────────────────────────────────────────────────────
 
     def _with_side_notice(
-        self, response: CustomerResponse, route: ResponseRoute
+        self, response: CustomerResponse, route: ResponseRoute, language: ReplyLanguage
     ) -> CustomerResponse:
         """The failed side effect, appended by the application.
 
@@ -451,7 +501,7 @@ class CustomerResponseGenerator:
         """
         if route.side_notice is None:
             return response
-        notice = SIDE_NOTICE_WORDING[route.side_notice]
+        notice = in_language(SIDE_NOTICE_WORDING[route.side_notice], language)
         try:
             return CustomerResponse(
                 message=compose(response.message, notice),
@@ -476,12 +526,20 @@ class CustomerResponseGenerator:
             detail=violation.detail,
         )
 
-    def _log(self, route: ResponseRoute, calls: int, used_fallback: bool, started: float) -> None:
+    def _log(
+        self,
+        route: ResponseRoute,
+        calls: int,
+        used_fallback: bool,
+        started: float,
+        language: ReplyLanguage,
+    ) -> None:
         """Shape of the turn only: no message, no history, no prose, no facts."""
         primary = route.primary
         logger.info(
             "customer_response_completed",
-            prompt_version=VERSION,
+            prompt_version=version_for(language),
+            reply_language=str(language),
             model=self._client.model,
             outcome=str(primary.kind),
             response_calls=calls,
@@ -525,6 +583,11 @@ def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
 def _reply(message: str) -> CustomerResponse:
     """An application-written reply: no citations, no optional question."""
     return CustomerResponse(message=message)
+
+
+def _say(sentence: str, language: ReplyLanguage) -> CustomerResponse:
+    """One of the application's own sentences, in the reply's language."""
+    return _reply(in_language(sentence, language))
 
 
 def _fallback(view: ResponseGroundingView) -> str:

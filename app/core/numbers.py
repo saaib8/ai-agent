@@ -15,6 +15,7 @@ it: a composition defect, or an unusable model answer.
 from __future__ import annotations
 
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 
 MAX_STATED_MAGNITUDE = Decimal("1e12")
@@ -53,6 +54,26 @@ after the dot is exactly the case where the two readings disagree.
 
 _THOUSANDS_SUFFIX = re.compile(r"(?P<figure>.+?)\s*[kK]")
 
+_ARABIC_SEPARATORS = {"\u066c": ",", "\u066b": ".", "\u066a": "%"}
+"""Arabic's thousands (U+066C) and decimal (U+066B) separators and its percent
+sign (U+066A), as the ASCII characters they mean. The Arabic comma (U+060C) is
+a list separator, never part of a figure, and is not mapped."""
+
+
+def _ascii(raw: str) -> str:
+    """A figure in any script, in ASCII digits and separators.
+
+    Three thousand written in Arabic-Indic digits states exactly the figure
+    "3000" states, and so with Arabic's separators; mapping first means every
+    rule below - grouping, ambiguity, magnitude - judges them identically.
+    """
+    return "".join(
+        str(unicodedata.decimal(char))
+        if char.isdecimal()
+        else _ARABIC_SEPARATORS.get(char, char)
+        for char in raw
+    )
+
 
 def parse_stated_decimal(raw: str) -> Decimal:
     """A finite figure of sane magnitude, or `ValueError`.
@@ -62,7 +83,7 @@ def parse_stated_decimal(raw: str) -> Decimal:
     are not.
     """
     try:
-        value = Decimal(raw.strip())
+        value = Decimal(_ascii(raw).strip())
     except InvalidOperation as exc:
         raise ValueError("not a decimal figure") from exc
     if not value.is_finite():
@@ -81,7 +102,7 @@ def parse_stated_amount(raw: str) -> Decimal:
     Money only. Grouping and "k" mean nothing in a length, so measurements go
     through :func:`parse_stated_decimal` and refuse both.
     """
-    text = raw.strip()
+    text = _ascii(raw).strip()
     shorthand = _THOUSANDS_SUFFIX.fullmatch(text)
     if shorthand is not None:
         return parse_stated_decimal(str(_plain_amount(shorthand["figure"]) * 1000))
@@ -99,4 +120,4 @@ def _plain_amount(text: str) -> Decimal:
 
 def parse_stated_percent(raw: str) -> Decimal:
     """A percentage, with or without its sign: "20", "20%", "12.5 %"."""
-    return parse_stated_decimal(raw.strip().removesuffix("%"))
+    return parse_stated_decimal(_ascii(raw).strip().removesuffix("%"))

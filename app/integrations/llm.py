@@ -77,6 +77,9 @@ class OpenAIStructuredClient:
             self._extra["reasoning"] = {"effort": settings.reasoning_effort}
         self._client = AsyncOpenAI(
             api_key=settings.api_key.get_secret_value(),
+            # None is OpenAI itself; otherwise an OpenAI-compatible endpoint
+            # such as Azure's v1 API, where `model` names a deployment.
+            base_url=settings.base_url,
             timeout=settings.timeout_s,
             max_retries=settings.max_retries,
         )

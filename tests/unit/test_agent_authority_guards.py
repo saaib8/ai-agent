@@ -228,17 +228,23 @@ def test_semantic_text_is_never_a_contract_field() -> None:
         assert "semantic_text" not in _names(model), model.__name__
 
 
-# ── English only ────────────────────────────────────────────────────────────
+# ── English reasoning, language only for presentation ───────────────────────
+
+APPROVED_LANGUAGE_FIELDS = frozenset({"reply_language", "switch_reply_language"})
+"""The language replies are written in (docs/arabic-replies-plan.md). Nothing
+else on a model-facing contract names a language: decisions, search and
+grounding stay English, and no Arabic product data reaches a model."""
 
 
 @pytest.mark.parametrize(
     "model", (*MODEL_FACING, *GROUNDING_FACING, TurnGrounding), ids=lambda m: m.__name__
 )
-def test_no_arabic_or_language_field_exists_in_m11(model: type[BaseModel]) -> None:
+def test_only_the_reply_language_is_a_language_field(model: type[BaseModel]) -> None:
     for name in _names(model):
         assert "arabic" not in name, f"{model.__name__}.{name}"
-        assert "language" not in name, f"{model.__name__}.{name}"
         assert "locale" not in name, f"{model.__name__}.{name}"
+        if "language" in name:
+            assert name in APPROVED_LANGUAGE_FIELDS, f"{model.__name__}.{name}"
 
 
 def test_grounded_products_display_english() -> None:

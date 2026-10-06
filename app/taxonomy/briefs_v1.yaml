@@ -143,3 +143,63 @@ briefs:
         - {label: Marble, words: marble}
         - {label: Glass, words: glass}
         - {label: Linen shade, words: linen shade}
+
+# How every label above reads on the card to a customer answered in Arabic
+# (docs/arabic-replies-plan.md): kinds, feel titles, feel options and nouns.
+# Display only - the keys a tap sends back are unchanged. Every label has
+# exactly one entry. Reviewed by a native speaker before production.
+arabic:
+  sofas: الكنب
+  chairs: الكراسي
+  tables: الطاولات
+  rugs: السجاد
+  lights: الإضاءات
+  Fabric feel: ملمس القماش
+  Seat feel: ملمس المقعد
+  Headboard & extras: رأس السرير والإضافات
+  Material look: مظهر الخامة
+  Finish: التشطيب
+  Material feel: ملمس الخامة
+  2-seater: مقعدان
+  3-seater: 3 مقاعد
+  4+ seater: 4 مقاعد أو أكثر
+  L-shape: زاوية (L)
+  Sofa set: طقم كنب
+  Sofa bed: كنبة سرير
+  Accent chair: كرسي منفرد
+  Armchair: كرسي بذراعين
+  Lounge chair: كرسي استرخاء
+  Recliner: كرسي ريكلاينر
+  Chaise lounge: شيزلونج
+  Coffee table: طاولة وسط
+  Side table: طاولة جانبية
+  Dining table: طاولة طعام
+  TV unit: طاولة تلفزيون
+  Console: كونسول
+  Nightstand: كومودينة
+  Table lamp: أباجورة
+  Floor lamp: أباجورة أرضية
+  Chandelier: ثريا
+  Pendant light: إضاءة معلقة
+  Bouclé: بوكليه
+  Chenille: شنيل
+  Velvet: مخمل
+  Leather: جلد
+  Rattan: راتان
+  Wood: خشب
+  Curved headboard: رأس سرير منحني
+  Wingback: بظهر مجنح
+  Channel-tufted: تنجيد مخطّط
+  With storage: مع تخزين
+  Marble: رخام
+  Glass: زجاج
+  Metal: معدن
+  Mirrored: بمرايا
+  Glass doors: أبواب زجاجية
+  Sliding doors: أبواب منزلقة
+  Wool: صوف
+  Cotton: قطن
+  Flatweave: منسوج مسطح
+  Jute: جوت
+  Brass & gold: نحاسي وذهبي
+  Linen shade: غطاء كتان

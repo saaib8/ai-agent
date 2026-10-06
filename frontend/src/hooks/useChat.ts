@@ -28,6 +28,8 @@ import type { ConsoleConfig } from './useConfig'
 export interface RejectedRef {
   name: string
   imageUrl: string
+  /** The heading above it - "Not this one", in the conversation's language. */
+  label?: string
 }
 
 /** A photo the customer shared, as it moves from uploading to pickable. */

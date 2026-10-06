@@ -28,6 +28,7 @@ from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
+from app.schemas.language import ReplyLanguage
 from app.schemas.picks import PickView
 from app.schemas.product_action import ProductActionRequest
 from app.schemas.product_brief import ProductBrief
@@ -90,6 +91,12 @@ class ChatRequest(BaseModel):
     control, and a pick is named by its position in their picks, resolved
     server-side (CLAUDE.md 3.6, 20.2).
     """
+
+    locale: ReplyLanguage | None = None
+    """The storefront's language, when it has one. It answers only a turn
+    nothing in the conversation decided - a first message such as "3000" - and
+    is never stored: the customer's own words decide the session's language
+    (docs/arabic-replies-plan.md). Ignored where Arabic replies are off."""
 
     expected_session_revision: int | None = Field(default=None, ge=0)
     """The session revision the client's screen was rendered from.
@@ -294,3 +301,7 @@ class ChatResponse(BaseModel):
     response does not report picks at all (a photo pick, a render), which
     means *unchanged*, not *empty*.
     """
+
+    reply_language: ReplyLanguage | None = None
+    """The language this reply is in, so a client can set the page direction.
+    None where Arabic replies are off: English, as always."""

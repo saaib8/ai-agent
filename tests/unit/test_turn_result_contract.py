@@ -147,6 +147,11 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # The card of questions for a product search, drawn by the client. The
         # reply sees only what it asks about.
         "product_brief",
+        # The language this turn is answered in. None where Arabic replies are off.
+        "reply_language",
+        # The customer's own budget and seat figures, as query understanding
+        # read them this turn - sayable in digits even when they said words.
+        "stated_figures",
     }
 
 

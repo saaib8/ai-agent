@@ -245,7 +245,12 @@ def customer_agent_decision_service(
             detail=("customer_agent.decision_model must be set to use the customer agent"),
             public_message="The customer agent is not configured.",
         )
-    return CustomerAgentDecisionService(client, app_resources.attributes, app_resources.rooms)
+    return CustomerAgentDecisionService(
+        client,
+        app_resources.attributes,
+        app_resources.rooms,
+        reply_language=app_resources.settings.customer_agent.arabic_replies,
+    )
 
 
 CustomerAgentDecisionServiceDep = Annotated[
@@ -322,6 +327,7 @@ def customer_turn_coordinator(
             if app_resources.briefs is not None
             else None
         ),
+        arabic_replies=settings.customer_agent.arabic_replies,
     )
 
 
@@ -412,7 +418,9 @@ def customer_response_generator(
             detail=("customer_agent.response_model must be set to generate responses"),
             public_message="The customer agent is not configured.",
         )
-    return CustomerResponseGenerator(client)
+    return CustomerResponseGenerator(
+        client, arabic_replies=app_resources.settings.customer_agent.arabic_replies
+    )
 
 
 CustomerResponseGeneratorDep = Annotated[

@@ -32,8 +32,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from app.core.numbers import parse_stated_amount
 from app.schemas.design import DesignGuidance
+from app.schemas.discovery import ProductSearchRequest
 from app.schemas.picks import PickView
+from app.schemas.refinement import PriceRefinementOp, SearchRefinementDelta
 from app.schemas.response import (
     BundleGroundingView,
     SeatingSolutionGroundingView,
@@ -48,19 +51,24 @@ A plain immutable set rather than a schema: it carries no structure worth
 validating, and it is application-only - nothing builds it into a prompt.
 """
 
-_NUMERIC_TOKEN = re.compile(r"\d[\d,.]*")
-"""A run beginning with a digit, allowing separators inside it.
+_NUMERIC_TOKEN = re.compile(r"\d[\d,.\u066b\u066c]*")
+r"""A run beginning with a digit - in any script, `\d` is Unicode - allowing
+separators inside it: "," and ".", and Arabic's own thousands separator
+(U+066C) and decimal separator (U+066B), so twelve thousand five hundred
+written in Arabic-Indic digits is one figure rather than two.
 
 Deliberately loose at the edges: trailing punctuation is trimmed afterwards, so
-a sentence-final "3 options." yields 3 rather than being missed.
+a sentence-final "3 options." yields 3 rather than being missed. The Arabic
+comma (U+060C) is a list separator and is never part of a figure.
 """
 
 _ORDINAL_SUFFIX = re.compile(r"(?<=\d)(st|nd|rd|th)\b", re.IGNORECASE)
 
-_THOUSANDS = str.maketrans({",": ""})
-"""The group separator. Only the ASCII comma: M11 V1 is English, and
-admitting other separators would mean deciding which of them group and
-which divide. Unicode *digits* still normalise: `Decimal` reads them."""
+_SEPARATORS = str.maketrans({",": "", "\u066c": "", "\u066b": "."})
+"""The ASCII comma and the Arabic thousands separator (U+066C) group; the
+Arabic decimal separator (U+066B) divides. No other separator is read: each one admitted
+would mean deciding whether it groups or divides. Unicode *digits* normalise
+on their own - `Decimal` reads them."""
 
 
 def canonical_number(raw: str) -> str | None:
@@ -77,7 +85,7 @@ def canonical_number(raw: str) -> str | None:
     """
     text = raw.strip().lstrip("+-")
     text = _ORDINAL_SUFFIX.sub("", text)
-    text = text.translate(_THOUSANDS)
+    text = text.translate(_SEPARATORS)
     text = text.strip(".")
     if not text:
         return None
@@ -276,6 +284,62 @@ def guidance_figures(guidance: Sequence[DesignGuidance]) -> tuple[Decimal, ...]:
         for bound in (measurement.minimum, measurement.maximum)
         if bound is not None
     )
+
+
+def stated_figures(request: ProductSearchRequest) -> tuple[Decimal, ...]:
+    """The budget bounds and seat counts in a request read from the customer.
+
+    Named field by field, like every other source here, so a field added to
+    the request later cannot silently widen what prose may say. Sizes are left
+    out on purpose: they are stored in centimetres, and "2 m" said back as
+    "200 cm" would be a conversion the customer never stated.
+    """
+    figures: list[Decimal] = []
+    if request.price is not None:
+        figures += [
+            amount
+            for amount in (request.price.min_amount, request.price.max_amount)
+            if amount is not None
+        ]
+    if request.seating_capacity is not None:
+        figures += [
+            Decimal(seats)
+            for seats in (
+                request.seating_capacity.min_capacity,
+                request.seating_capacity.max_capacity,
+            )
+            if seats is not None
+        ]
+    return tuple(figures)
+
+
+def refinement_figures(delta: SearchRefinementDelta) -> tuple[Decimal, ...]:
+    """The absolute budget amounts and seat counts a refinement stated.
+
+    "Only ones for four people", "under three thousand" - the customer's own
+    figures, read by the decision model. A relative price ("cheaper than the
+    second one") is never admitted: its bound is computed from a product's
+    price, and computing was never a source (CLAUDE.md 14). An amount the
+    reader refuses is simply not admitted.
+    """
+    figures: list[Decimal] = []
+    price = delta.price
+    if price is not None and price.op is PriceRefinementOp.SET:
+        for raw in (price.min_amount, price.max_amount):
+            if raw is None:
+                continue
+            try:
+                figures.append(parse_stated_amount(raw))
+            except ValueError:
+                continue
+    capacity = delta.seating_capacity
+    if capacity is not None:
+        figures += [
+            Decimal(seats)
+            for seats in (capacity.min_capacity, capacity.max_capacity)
+            if seats is not None
+        ]
+    return tuple(figures)
 
 
 def build_allowance(

@@ -153,8 +153,10 @@ class Harness:
         store: FakeSessionStore | None = None,
         responses: FakeResponses | None = None,
         retailers: FakeRetailers | None = None,
+        arabic_replies: bool = False,
     ) -> None:
         self.script = list(decisions)
+        self.arabic_replies = arabic_replies
         self.sessions = store or FakeSessionStore()
         self.responses = responses or FakeResponses()
         self.retailers = retailers or FakeRetailers()
@@ -173,6 +175,7 @@ class Harness:
             interpretation=_resolved(),
             pipeline=FakePipeline(ids=self.product_ids),
             hydration=FakeHydration(available=self.product_ids),
+            arabic_replies=self.arabic_replies,
         )
         self.coordinators.append(coordinator)
         self.parts.append(parts)

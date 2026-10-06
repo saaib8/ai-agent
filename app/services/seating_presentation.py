@@ -22,6 +22,7 @@ from app.schemas.bundle_presentation import (
     GroundedBundlePresentation,
     GroundedBundleTotals,
 )
+from app.schemas.language import ReplyLanguage
 from app.schemas.product import CommerceClassification
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.seating_solution import (
@@ -30,17 +31,17 @@ from app.schemas.seating_solution import (
     SeatingSolution,
     SeatingSolutionOutcome,
 )
+from app.services.chip_wording import Chip, chip, currency_word
 
-_SHAPE_CHOICE: dict[SeatingShape, tuple[str, str]] = {
-    SeatingShape.SEPARATE_SOFAS: ("Separate sofas", "Separate sofas arranged together"),
-    SeatingShape.SOFA_WITH_EXTRA_SEATS: (
-        "Sofa + armchairs",
-        "A sofa with a few armchairs alongside",
-    ),
+_SHAPE_CHIP: dict[SeatingShape, Chip] = {
+    SeatingShape.SEPARATE_SOFAS: Chip.SEPARATE_SOFAS,
+    SeatingShape.SOFA_WITH_EXTRA_SEATS: Chip.SOFA_WITH_ARMCHAIRS,
 }
 
 
-def seating_choices(solution: SeatingSolution) -> tuple[ReplyChoice, ...]:
+def seating_choices(
+    solution: SeatingSolution, language: ReplyLanguage = ReplyLanguage.EN
+) -> tuple[ReplyChoice, ...]:
     """The shape question's answers as chips: each real shape with its lowest
     total, and "either". After "no more", the shapes that still have unseen
     combinations. Nothing otherwise."""
@@ -49,17 +50,13 @@ def seating_choices(solution: SeatingSolution) -> tuple[ReplyChoice, ...]:
         SeatingSolutionOutcome.NO_MORE,
     ):
         return ()
+    currency = currency_word(solution.currency, language)
     choices = [
-        ReplyChoice(
-            label=f"{_SHAPE_CHOICE[o.shape][0]} · from {o.from_price:,.0f} {solution.currency}",
-            value=_SHAPE_CHOICE[o.shape][1],
-        )
+        chip(_SHAPE_CHIP[o.shape], language, price=f"{o.from_price:,.0f}", currency=currency)
         for o in solution.options
     ]
     if len(choices) > 1:
-        choices.append(
-            ReplyChoice(label="Either - show me both", value="Either is fine, show me both")
-        )
+        choices.append(chip(Chip.EITHER_SHAPE, language))
     return tuple(choices)
 
 

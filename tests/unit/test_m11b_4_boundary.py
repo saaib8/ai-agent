@@ -220,4 +220,6 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "response_model",
         # Picks: how many the tray keeps.
         "max_picks",
+        # Whether a session may be answered in Arabic (docs/arabic-replies-plan.md).
+        "arabic_replies",
     }

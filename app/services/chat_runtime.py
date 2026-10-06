@@ -45,6 +45,7 @@ from app.schemas.conversation import (
     ConversationRole,
 )
 from app.schemas.grounding import GroundedProduct
+from app.schemas.language import ReplyLanguage
 from app.schemas.picks import PickView
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
@@ -122,6 +123,8 @@ class ChatRuntime:
             bundle_action=request.bundle_action,
             search_action=request.search_action,
             product_action=request.product_action,
+            # Read by the coordinator only where Arabic replies are on.
+            locale=request.locale,
         )
 
     async def run_turn(self, turn: CustomerTurnInput) -> CustomerTurnResult:
@@ -172,14 +175,19 @@ class ChatRuntime:
         # A room question's chips are its real answers, keyed off the kind the
         # application asked - never derived from the reply's wording, so the chip
         # and the question can never drift apart.
+        # Chips are worded in the turn's language; which chips, and what they
+        # do, never depend on it.
+        language = result.reply_language or ReplyLanguage.EN
         if result.swap_offer is not None:
-            choices = swap_offer_choices(result.swap_offer)
+            choices = swap_offer_choices(result.swap_offer, language)
         elif result.room_question is not None:
-            choices = room_answer_choices(result.room_question)
+            choices = room_answer_choices(result.room_question, language)
         elif result.seating_solution is not None:
-            choices = seating_choices(result.seating_solution)
+            choices = seating_choices(result.seating_solution, language)
         else:
-            choices = companion_choices(result.companions, offering=offers_what_goes_with(result))
+            choices = companion_choices(
+                result.companions, offering=offers_what_goes_with(result), language=language
+            )
         if not choices and result.next_step is not None:
             # A reply never ends on a dead end: the next step's chips answer the
             # question it closes on (CLAUDE.md 10.2).
@@ -201,7 +209,9 @@ class ChatRuntime:
             seating_bundles=seating_bundles,
             choices=choices,
             piece_picker=(
-                piece_picker(result.room_question) if result.room_question is not None else None
+                piece_picker(result.room_question, language)
+                if result.room_question is not None
+                else None
             ),
             swap_context=result.swap_context,
         )
@@ -281,6 +291,7 @@ class ChatRuntime:
         response: CustomerResponse,
         presentation: ChatPresentation | None,
         picks: tuple[PickView, ...] | None = None,
+        reply_language: ReplyLanguage | None = None,
     ) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
@@ -288,6 +299,7 @@ class ChatRuntime:
             response=response,
             presentation=presentation,
             picks=picks,
+            reply_language=reply_language,
         )
 
     # ── the whole exchange ──────────────────────────────────────────────────
@@ -308,7 +320,9 @@ class ChatRuntime:
 
         revision = await self.persist(request, loaded, result, response)
         self._log(request, loaded, revision, presentation, started)
-        return self.public_response(request, revision, response, presentation, result.picks)
+        return self.public_response(
+            request, revision, response, presentation, result.picks, result.reply_language
+        )
 
     @staticmethod
     def _log(

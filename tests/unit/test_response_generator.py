@@ -742,7 +742,9 @@ def test_the_generator_holds_only_a_provider_client() -> None:
         if name != "self"
     ]
 
-    assert parameters == ["client"]
+    # Plus whether Arabic replies are on: a flag that picks a prompt, not a
+    # collaborator (docs/arabic-replies-plan.md).
+    assert parameters == ["client", "arabic_replies"]
 
 
 def test_the_generator_requests_no_tools() -> None:

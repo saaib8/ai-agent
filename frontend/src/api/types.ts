@@ -261,6 +261,8 @@ export interface ChatResponse {
   presentation: ChatPresentation | null
   /** The picks after this turn; absent or null means unchanged. */
   picks?: PickView[] | null
+  /** The language this turn was answered in; null where Arabic replies are off. */
+  reply_language?: 'en' | 'ar' | null
 }
 
 export interface BundleAlternativesAction {

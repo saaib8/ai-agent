@@ -72,3 +72,64 @@ styles:
   - Coastal
   - Traditional
   - Moroccan
+
+# How each approved value reads to a customer answered in Arabic
+# (docs/arabic-replies-plan.md). Display only: products, filters and every
+# decision keep the English values above. Every colour and style has exactly
+# one entry - the loader refuses a missing or an extra one. Reviewed by a
+# native speaker before Arabic is switched on in production.
+arabic:
+  colors:
+    Ivory: عاجي
+    Beige: بيج
+    Taupe: رمادي بني
+    Sand: رملي
+    Greige: رمادي بيج
+    Light Grey: رمادي فاتح
+    Grey: رمادي
+    White: أبيض
+    Charcoal: فحمي
+    Black: أسود
+    Oak: خشب البلوط
+    Walnut: خشب الجوز
+    Espresso: بني داكن
+    Clay: طيني
+    Terracotta: تيراكوتا
+    Olive: زيتي
+    Mustard: خردلي
+    Burnt Orange: برتقالي محروق
+    Gold: ذهبي
+    Brass: نحاسي
+    Bronze: برونزي
+    Sage: أخضر ميرمية
+    Forest Green: أخضر غامق
+    Powder Blue: أزرق فاتح
+    Denim Blue: أزرق جينز
+    Navy: كحلي
+    Teal: أزرق مخضر
+    Emerald: زمردي
+    Sapphire: أزرق ملكي
+    Ruby: أحمر ياقوتي
+    Plum: برقوقي
+    Blush: وردي فاتح
+    Lavender: لافندر
+  styles:
+    Modern: عصري
+    Contemporary: معاصر
+    Minimalist: بسيط
+    Boho: بوهيمي
+    Industrial: صناعي
+    Classy: أنيق
+    Modern_Classic: كلاسيكي عصري
+    Rustic_Modern: ريفي عصري
+    Eclectic: انتقائي
+    Zen: زن
+    Shabby_Chic: شابي شيك
+    Islamic: إسلامي
+    Tropical: استوائي
+    Scandinavian: إسكندنافي
+    Mid_Century: طراز منتصف القرن
+    Japandi: جاباندي
+    Coastal: ساحلي
+    Traditional: تقليدي
+    Moroccan: مغربي

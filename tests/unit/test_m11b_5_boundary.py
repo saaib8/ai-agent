@@ -113,6 +113,8 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # budget bands, colours and styles counted from the store-scoped
         # catalog. Its answers run through the ordinary pipeline.
         "briefs",
+        # Whether a session may be answered in Arabic. A flag, not a service.
+        "arabic_replies",
     ]
 
 
@@ -244,7 +246,9 @@ def test_the_model_receives_exactly_three_projected_things() -> None:
     reaching a prompt."""
     keywords = {kw.arg for kw in _decision_input_construction().keywords}
 
-    assert keywords == {"message", "conversation", "state_view"}
+    # Plus the language its own question is written in - presentation only,
+    # never an input to what it decides (docs/arabic-replies-plan.md).
+    assert keywords == {"message", "conversation", "state_view", "reply_language"}
 
 
 def test_the_model_never_receives_the_authoritative_state() -> None:

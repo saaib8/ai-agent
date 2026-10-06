@@ -23,34 +23,55 @@ from __future__ import annotations
 
 from app.schemas.agent_turn import CustomerTurnResult
 from app.schemas.bundle import RoomBundle
+from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep, NextStepKind
 from app.schemas.picks import PickView
 from app.schemas.product_action import GoesWithPickAction
 from app.schemas.reply_choice import ReplyChoice
+from app.services.chip_wording import Chip, chip
 from app.taxonomy.complements import Complements
 from app.taxonomy.words import customer_words
 
 
 def next_step(result: CustomerTurnResult, complements: Complements | None) -> NextStep | None:
-    """The next step this turn should offer, or None when it already asks one."""
+    """The next step this turn should offer, or None when it already asks one.
+
+    Its chips are worded in the turn's language; which chips, and what they
+    do, never depend on it.
+    """
     if already_asks(result):
         return None
     grounding = result.grounding
     picks = result.picks or ()
+    language = result.reply_language or ReplyLanguage.EN
 
     if grounding.comparison is not None:
-        return NextStep(kind=NextStepKind.AFTER_COMPARISON, chips=_comparison_chips())
+        return NextStep(
+            kind=NextStepKind.AFTER_COMPARISON,
+            chips=_chips(language, Chip.TAKE_FIRST, Chip.TAKE_SECOND, Chip.SHOW_SIMILAR),
+        )
     if grounding.product_detail is not None:
-        return NextStep(kind=NextStepKind.AFTER_DETAIL, chips=_detail_chips(picks, complements))
+        return NextStep(
+            kind=NextStepKind.AFTER_DETAIL,
+            chips=_chips(language, Chip.ADD_TO_PICKS, Chip.WHAT_GOES_WITH_IT, Chip.SHOW_SIMILAR),
+        )
     if isinstance(result.bundle_outcome, RoomBundle):
-        return NextStep(kind=NextStepKind.AFTER_ROOM, chips=_room_chips())
+        return NextStep(
+            kind=NextStepKind.AFTER_ROOM,
+            chips=_chips(language, Chip.SWAP_A_PIECE, Chip.FINISHING_TOUCH),
+        )
     if picks:
         goes_with = _goes_with_pick(picks, complements)
         kind = NextStepKind.AFTER_PICKS if goes_with else NextStepKind.ROOM_AROUND_PICKS
-        return NextStep(kind=kind, chips=_picks_chips(goes_with))
+        return NextStep(kind=kind, chips=_picks_chips(goes_with, language))
     if grounding.search is not None and grounding.search.products:
-        return NextStep(kind=NextStepKind.KEEP_BROWSING, chips=_browsing_chips())
-    return NextStep(kind=NextStepKind.START, chips=_start_chips())
+        return NextStep(
+            kind=NextStepKind.KEEP_BROWSING,
+            chips=_chips(language, Chip.SHOW_MORE, Chip.NARROW_DOWN),
+        )
+    return NextStep(
+        kind=NextStepKind.START, chips=_chips(language, Chip.FIND_A_PIECE, Chip.DESIGN_A_ROOM)
+    )
 
 
 def already_asks(result: CustomerTurnResult) -> bool:
@@ -83,57 +104,21 @@ def _goes_with_pick(
     )
 
 
-def _picks_chips(pick: PickView | None) -> tuple[ReplyChoice, ...]:
+def _picks_chips(pick: PickView | None, language: ReplyLanguage) -> tuple[ReplyChoice, ...]:
     chips = []
     if pick is not None:
         chips.append(
-            ReplyChoice(
-                label=f"What goes with the {pick.kind}",
-                value=f"What goes with the {pick.kind}?",
+            chip(
+                Chip.WHAT_GOES_WITH_PICK,
+                language,
                 product_action=GoesWithPickAction(pick=pick.pick),
+                kind=pick.kind,
             )
         )
-    chips.append(
-        ReplyChoice(label="Design a room around my picks", value="Design a room around my picks")
-    )
-    chips.append(ReplyChoice(label="Keep browsing", value="Show me something else"))
+    chips.append(chip(Chip.ROOM_AROUND_PICKS, language))
+    chips.append(chip(Chip.KEEP_BROWSING, language))
     return tuple(chips)
 
 
-def _detail_chips(
-    picks: tuple[PickView, ...], complements: Complements | None
-) -> tuple[ReplyChoice, ...]:
-    return (
-        ReplyChoice(label="Add it to my picks", value="Add this one to my picks"),
-        ReplyChoice(label="What goes with it", value="What goes with this one?"),
-        ReplyChoice(label="Show similar ones", value="Show me similar ones"),
-    )
-
-
-def _comparison_chips() -> tuple[ReplyChoice, ...]:
-    return (
-        ReplyChoice(label="Take the first", value="I'll take the first one"),
-        ReplyChoice(label="Take the second", value="I'll take the second one"),
-        ReplyChoice(label="Show similar ones", value="Show me similar ones"),
-    )
-
-
-def _room_chips() -> tuple[ReplyChoice, ...]:
-    return (
-        ReplyChoice(label="Swap a piece", value="I'd like to swap one of the pieces"),
-        ReplyChoice(label="Add a finishing touch", value="What would finish the room?"),
-    )
-
-
-def _browsing_chips() -> tuple[ReplyChoice, ...]:
-    return (
-        ReplyChoice(label="Show me more", value="Show me more options"),
-        ReplyChoice(label="Narrow them down", value="Help me narrow these down"),
-    )
-
-
-def _start_chips() -> tuple[ReplyChoice, ...]:
-    return (
-        ReplyChoice(label="Find a piece", value="I'm looking for a piece of furniture"),
-        ReplyChoice(label="Design a room", value="I'd like to design a room"),
-    )
+def _chips(language: ReplyLanguage, *keys: Chip) -> tuple[ReplyChoice, ...]:
+    return tuple(chip(key, language) for key in keys)

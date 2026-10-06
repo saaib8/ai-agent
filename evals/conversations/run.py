@@ -34,12 +34,25 @@ from typing import Any
 
 import httpx
 import yaml
+from app.schemas.grounding import TurnFailureCode
+from app.services.arabic_wording import ARABIC
+from app.services.chip_wording import CHIPS, Chip
+from app.services.reply_language import writes_arabic_script
+from app.services.response_wording import FAILURE_WORDING
 
 CASES_PATH = Path(__file__).parent / "cases.yaml"
 STORE_ID = 50
 REQUEST_TIMEOUT_S = 240.0
-CONCURRENCY = 4
-FALLBACK_PREFIX = "Sorry, I didn't quite catch that"
+CONCURRENCY = 12
+"""Conversations in flight per server; `--concurrency=N` overrides it. Turns
+within a conversation always run in order. 12 kept a full run near 12 minutes
+with no provider rate limiting; lower it if 429s appear."""
+_NOT_UNDERSTOOD = FAILURE_WORDING[TurnFailureCode.REQUEST_NOT_UNDERSTOOD]
+FALLBACKS = (_NOT_UNDERSTOOD, ARABIC[_NOT_UNDERSTOOD])
+"""The "please say it another way" reply, in either language - read from the
+application's own tables, so the check cannot drift from what is sent."""
+NO_THANKS = {text.label for text in CHIPS[Chip.NO_THANKS].values()}
+"""Turning down what goes with a pick, in either language."""
 _NO_MATCH = re.compile(r"\b(no|none|not|don't|do not|couldn't|could not|isn't|aren't|nothing)\b")
 """A reply that admits the request had no exact match uses one of these."""
 
@@ -145,7 +158,7 @@ def _check(
     failures: list[str] = []
     products = turn.products
     colors = [p.get("main_color") for p in products]
-    if checks.get("not_fallback") and turn.message.startswith(FALLBACK_PREFIX):
+    if checks.get("not_fallback") and turn.message.startswith(FALLBACKS):
         failures.append("fallback reply")
     if (minimum := checks.get("min_products")) and len(products) < minimum:
         failures.append(f"{len(products)} products < {minimum}")
@@ -216,6 +229,24 @@ def _check(
         turn.message.lower().replace("\u2019", "'")
     ):
         failures.append("reply does not say that nothing matched")
+    if checks.get("arabic_reply") and not (
+        turn.body.get("reply_language") == "ar" and writes_arabic_script(turn.message)
+    ):
+        failures.append(f"not an Arabic reply ({turn.body.get('reply_language')})")
+    if checks.get("arabic_text") and not writes_arabic_script(
+        turn.message if turn.kind != "comparison" else str(turn.body.get("message") or "")
+    ):
+        failures.append("the text is not in Arabic")
+    if checks.get("arabic_chips"):
+        labels = _screen_labels(turn)
+        if not labels:
+            failures.append("no chips, card or piece picker to read")
+        elif english := [label for label in labels if not writes_arabic_script(label)]:
+            failures.append(f"chips not in Arabic: {english}")
+    if checks.get("english_reply") and (
+        turn.body.get("reply_language") == "ar" or writes_arabic_script(turn.message)
+    ):
+        failures.append(f"not an English reply ({turn.body.get('reply_language')})")
     if (words := checks.get("mentions")) and not any(w in turn.message.lower() for w in words):
         failures.append(f"reply mentions none of {words}")
     if checks.get("piece_picker") and not turn.has_piece_picker:
@@ -259,13 +290,32 @@ def _check(
         failures.append(f"reply mentions one of {words}")
     failures.extend(_discovery_checks(checks, turn))
     if checks.get("engages"):
-        asks = "?" in turn.message
+        asks = _asks(turn.message)
         shown = (
             products or turn.has_comparison or turn.has_room or turn.has_piece_picker or turn.brief
         )
         if not (shown or asks):
             failures.append("dead end: no products, comparison, room, chips, card or question")
     return failures
+
+
+def _screen_labels(turn: TurnResult) -> list[str]:
+    """Every label the customer reads beside the reply: chips, the card's
+    questions and answers, and the room piece picker."""
+    presentation = turn.presentation
+    labels = [c["label"] for c in presentation.get("choices") or []]
+    for question in (presentation.get("brief") or {}).get("questions", []):
+        labels.append(question["label"])
+        labels.extend(c["label"] for c in question["choices"])
+    if picker := presentation.get("piece_picker"):
+        labels.extend(p["label"] for p in picker["pieces"])
+        labels.extend((picker["submit_label"], picker["choose_for_me"]["label"]))
+    return labels
+
+
+def _asks(text: str) -> bool:
+    """A question, in either script: "?" or the Arabic "؟"."""
+    return "?" in text or "\u061f" in text
 
 
 def _upper_bound(label: str | None) -> Decimal | None:
@@ -349,13 +399,14 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
             failures.append(f"no pop-up comparison of {wanted} products with a take")
     if checks.get("next_step"):
         choices = turn.presentation.get("choices") or []
-        if "?" not in turn.message or not (choices or brief):
+        if not _asks(turn.message) or not (choices or brief):
             failures.append("dead end: the reply does not close on a question with chips")
     if checks.get("no_follow_up") and turn.follow_up:
         failures.append(f"an extra question: {turn.follow_up!r}")
     if (want := checks.get("offer")) is not None:
         labels = [c.get("label") for c in turn.presentation.get("choices") or []]
-        got = bool(turn.presentation.get("focus")) and not products and "No thanks" in labels
+        declinable = bool(NO_THANKS & set(labels))
+        got = bool(turn.presentation.get("focus")) and not products and declinable
         if got != want:
             failures.append(
                 "no offer of what goes with the pick" if want else "an unexpected offer"
@@ -452,7 +503,10 @@ class Conversation:
         if isinstance(turn, str):
             return await self.chat(turn)
         if "say" in turn:
-            return await self.chat(turn["say"])
+            # The storefront's language, when the case sets one: per request,
+            # exactly as the frontend sends it.
+            locale = {"locale": turn["locale"]} if "locale" in turn else {}
+            return await self.chat(turn["say"], **locale)
         if "search" in turn:
             # Asked by someone who only wants to see results: a card of
             # questions that comes first is skipped, as its "Show me ..."
@@ -578,6 +632,11 @@ class Conversation:
         choices = self.chats[-1].presentation.get("choices") or [] if self.chats else []
         chip = next((c for c in choices if c["label"].casefold() == label.casefold()), None)
         if chip is None:
+            # A chip whose label carries a live figure ("Separate sofas · from
+            # 3,700 SAR") is named by its start, when exactly one starts so.
+            starting = [c for c in choices if c["label"].casefold().startswith(label.casefold())]
+            chip = starting[0] if len(starting) == 1 else None
+        if chip is None:
             raise CaseError(f"no chip {label!r} (offers {[c['label'] for c in choices]})")
         if chip.get("product_action"):
             return await self.chat(chip["value"], product_action=chip["product_action"])
@@ -611,10 +670,23 @@ async def _run_case(
     return CaseResult(case["id"], turns, _check(case.get("checks", {}), last, previous))
 
 
-async def _run_server(base: str, cases: list[dict[str, Any]]) -> list[CaseResult]:
-    gate = asyncio.Semaphore(CONCURRENCY)
+async def _run_server(
+    base: str, cases: list[dict[str, Any]], concurrency: int
+) -> list[CaseResult]:
+    """Every case, at most `concurrency` at a time, longest first.
+
+    The run takes as long as its slowest conversation, so the many-turn cases
+    start first rather than holding up the end. Results come back in case
+    order whatever order they ran in.
+    """
+    gate = asyncio.Semaphore(concurrency)
+    longest_first = sorted(range(len(cases)), key=lambda i: -len(cases[i]["turns"]))
     async with httpx.AsyncClient() as client:
-        return list(await asyncio.gather(*(_run_case(client, base, c, gate) for c in cases)))
+        tasks = {
+            i: asyncio.create_task(_run_case(client, base, cases[i], gate)) for i in longest_first
+        }
+        await asyncio.gather(*tasks.values())
+    return [tasks[i].result() for i in range(len(cases))]
 
 
 def _cards(turn: TurnResult) -> str:
@@ -665,6 +737,7 @@ def main(argv: list[str]) -> None:
     if not servers:
         raise SystemExit(
             "usage: run.py label=http://host:port [label=...] [--only=id,id] [--repeat=N]"
+            " [--concurrency=N]"
         )
     cases = yaml.safe_load(CASES_PATH.read_text())["cases"]
     if only := options.get("only"):
@@ -679,9 +752,14 @@ def main(argv: list[str]) -> None:
         for n in range(1, repeat + 1)
     ]
     labels = list(servers)
+    concurrency = int(options.get("concurrency", str(CONCURRENCY)))
+    if concurrency < 1:
+        raise SystemExit("--concurrency must be at least 1")
 
     async def run_all() -> dict[str, list[CaseResult]]:
-        runs = await asyncio.gather(*(_run_server(servers[label], cases) for label in labels))
+        runs = await asyncio.gather(
+            *(_run_server(servers[label], cases, concurrency) for label in labels)
+        )
         return dict(zip(labels, runs, strict=True))
 
     results = asyncio.run(run_all())

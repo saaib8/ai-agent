@@ -72,6 +72,7 @@ class OpenAIQueryEmbedder:
         self._expected = dimensions or EXPECTED_DIMENSION
         self._client = AsyncOpenAI(
             api_key=settings.api_key.get_secret_value(),
+            base_url=settings.base_url,
             timeout=settings.timeout_s,
             max_retries=settings.max_retries,
         )

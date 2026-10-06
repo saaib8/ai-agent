@@ -29,6 +29,7 @@ from app.core.exceptions import LLMResponseInvalidError
 from app.core.logging import get_logger
 from app.integrations.llm import StructuredLLMClient
 from app.prompts.customer_commerce.v1 import (
+    LANGUAGE_VERSION,
     VERSION,
     build_correction,
     build_instructions,
@@ -38,6 +39,7 @@ from app.schemas.agent_decision import (
     CustomerAgentDecision,
     build_constrained_decision,
     to_plain_decision,
+    with_reply_language,
 )
 from app.schemas.agent_turn import DecisionInput
 from app.taxonomy.attributes import CatalogAttributes
@@ -58,6 +60,12 @@ def _constrained_schema(attributes: CatalogAttributes) -> type[CustomerAgentDeci
     return build_constrained_decision(attributes)
 
 
+@cache
+def _language_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """The schema with the language fields shown, built once per schema."""
+    return with_reply_language(schema)
+
+
 class CustomerAgentDecisionService:
     """Decides what one customer turn should do. Executes none of it."""
 
@@ -66,18 +74,26 @@ class CustomerAgentDecisionService:
         client: StructuredLLMClient,
         attributes: CatalogAttributes | None = None,
         rooms: RoomPieces | None = None,
+        *,
+        reply_language: bool = False,
     ) -> None:
         """`attributes` restricts every colour and style the model can write.
 
         With it, the instructions list the approved vocabulary and the response
         schema only admits those values, so "Dark Grey" cannot be written and
         then fail downstream. Without it, the decision is unconstrained.
+
+        `reply_language` is whether Arabic replies are on: only then do the
+        instructions explain, and the schema carry, the two language fields.
+        Off, the model is asked exactly what it was asked before.
         """
         self._client = client
-        self._instructions = build_instructions(attributes, rooms)
-        self._schema: type[CustomerAgentDecision] = (
+        self._instructions = build_instructions(attributes, rooms, reply_language=reply_language)
+        schema: type[CustomerAgentDecision] = (
             _constrained_schema(attributes) if attributes is not None else CustomerAgentDecision
         )
+        self._schema = _language_schema(schema) if reply_language else schema
+        self._version = LANGUAGE_VERSION if reply_language else VERSION
 
     async def decide(
         self, decision_input: DecisionInput, *, problems: Sequence[str] = ()
@@ -145,7 +161,7 @@ class CustomerAgentDecisionService:
         # no selector internals (CLAUDE.md 22).
         logger.info(
             "customer_decision_completed",
-            prompt_version=VERSION,
+            prompt_version=self._version,
             model=self._client.model,
             corrective=bool(problems),
             action=str(decision.action),

@@ -38,6 +38,10 @@ class RoomPieceOffer(BaseModel):
 
     key: str = Field(min_length=1)
     label: str = Field(min_length=1, max_length=40)
+    label_ar: str | None = Field(default=None, min_length=1, max_length=40)
+    """The piece's own name as it reads to a customer answered in Arabic - the
+    reviewed registry's, without the "your pick" mark, which the chip adds in
+    its own language. Display only."""
     tier: PieceTier
     selected: bool
     picked: bool = False
@@ -69,11 +73,17 @@ class RoomQuestion(BaseModel):
     """The store's own colours, most common first, for a colour question - so its
     chips are real catalogue values, not a guess from the reply's wording. Empty
     for every other question, and empty when the store records no colour."""
+    colours_ar: tuple[str, ...] = ()
+    """Each of `colours` as it reads to a customer answered in Arabic, in the
+    same order - from the reviewed attribute registry. Empty, or exactly as
+    long as `colours`. Display only."""
 
     @model_validator(mode="after")
     def _fits_the_question(self) -> Self:
         if (self.kind is RoomQuestionKind.PIECES) != bool(self.pieces):
             raise ValueError("pieces are offered exactly when they are asked for")
+        if self.colours_ar and len(self.colours_ar) != len(self.colours):
+            raise ValueError("an Arabic name is given for every colour, or for none")
         if self.earlier_seat_count is not None and self.kind is not RoomQuestionKind.SEATS:
             raise ValueError("an earlier head count is confirmed only when seats are asked")
         if self.picked_seat_count is not None and self.kind is not RoomQuestionKind.SEATS:

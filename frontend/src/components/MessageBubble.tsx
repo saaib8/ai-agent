@@ -41,7 +41,7 @@ export function UserBubble({ text, rejected }: { text: string; rejected?: Reject
           </div>
           <div className="min-w-0">
             <div className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Not this one
+              {rejected.label ?? 'Not this one'}
             </div>
             <div className="truncate text-sm text-ink line-through decoration-muted/50">
               {rejected.name}

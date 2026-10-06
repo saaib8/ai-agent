@@ -16,9 +16,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from app.taxonomy.attributes import CatalogAttributes
-from app.taxonomy.rooms import RoomPieces
+from app.taxonomy.rooms import RoomPiece, RoomPieces
 
 VERSION = "customer_decision/v1"
+LANGUAGE_VERSION = "customer_decision/v1+reply-language.4"
+"""The same prompt with the LANGUAGE section, used where Arabic replies are on
+(docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
 
 INSTRUCTIONS = """\
 ROLE
@@ -805,31 +808,77 @@ unless they asked for a combination.
 """
 
 
+_LANGUAGE_SECTION = """LANGUAGE
+The input may carry reply_language: the language the customer is answered in.
+It is a fact about the session, not something to act on, and it never changes
+what this turn does - every field is decided exactly as it would be in English.
+
+Only clarification.question is written for the customer to read: write it in
+reply_language ("ar" is Arabic, ending with "؟"; English when it is absent),
+with figures in Western digits, addressing the customer in the masculine form
+unless they have said otherwise. Every other field stays in English whatever
+language the customer writes, and every approved value is written exactly as
+listed.
+
+Search and the design specialist read English. So when the message is in
+Arabic or Arabizi, never leave the restatement empty: a search always sets
+search_request, and a design hand-off always sets design_question, to what they
+asked in plain English, with every detail they gave - sizes, seats, a budget
+and its currency ("ريال", "riyal" are SAR) - and nothing they did not give.
+"أبي كنبة رمادية لأربعة بأقل من 3000 ريال" -> "a grey sofa for 4 people under
+3000 SAR". An English message keeps the usual rule.
+
+switch_reply_language: set it only when they ask how to be answered - "English
+please", "can you reply in Arabic", "talk to me in English", "كلمني بالعربي",
+"ممكن انجليزي". Writing in a language is not asking for it: an English message
+in a session answered in Arabic ("show me cheaper ones", "the second one",
+"3000") is not a switch, and neither is an Arabic message in an English one. A
+style word is never a switch ("English country style", "an Arabic majlis
+look"). Otherwise leave it null.
+
+writes_arabizi: true when this message is Arabic written in Latin letters and
+numbers - "abi kanaba", "3ayez kanaba b 3000 riyal", "wain el tawilat". It is
+not a request to switch, so it never sets switch_reply_language. English with a
+number or a product word ("3 seater", "L-shape", "a 2-seater for 3000") is not
+Arabizi, and neither is one Arabic word inside an English sentence.
+
+"""
+
+
 def build_instructions(
-    attributes: CatalogAttributes | None = None, rooms: RoomPieces | None = None
+    attributes: CatalogAttributes | None = None,
+    rooms: RoomPieces | None = None,
+    *,
+    reply_language: bool = False,
 ) -> str:
     """The decision instructions, with the colour and style vocabulary and the
-    room registry when given.
+    room registry when given, and the LANGUAGE section where Arabic replies are
+    on.
 
-    Without either the instructions are exactly `INSTRUCTIONS`. The colour and
-    style section tells the model to express them only in approved values - the
-    same vocabulary its response schema is restricted to; the rooms section
-    lists the room kinds and piece keys it may name.
+    Without any of them the instructions are exactly `INSTRUCTIONS`. The colour
+    and style section tells the model to express them only in approved values -
+    the same vocabulary its response schema is restricted to; the rooms section
+    lists the room kinds and piece keys it may name; the language section
+    explains the two language fields its schema carries only then.
     """
-    sections = ""
+    sections = _LANGUAGE_SECTION if reply_language else ""
+    instructions = INSTRUCTIONS
+    if reply_language:
+        # The LANGUAGE section says which language each field is written in.
+        instructions = instructions.replace("Reply in English.\n\n", "", 1)
     if attributes is not None:
         sections += _ATTRIBUTE_SECTION.format(
             colors=", ".join(sorted(attributes.colors)),
             styles=", ".join(sorted(attributes.styles)),
         )
     if rooms is not None:
-        sections += _rooms_section(rooms)
+        sections += _rooms_section(rooms, arabic=reply_language)
     if not sections:
-        return INSTRUCTIONS
-    return INSTRUCTIONS.replace("SAFETY AND AUTHORITY\n", sections + "SAFETY AND AUTHORITY\n", 1)
+        return instructions
+    return instructions.replace("SAFETY AND AUTHORITY\n", sections + "SAFETY AND AUTHORITY\n", 1)
 
 
-def _rooms_section(rooms: RoomPieces) -> str:
+def _rooms_section(rooms: RoomPieces, *, arabic: bool = False) -> str:
     lines = [
         "ROOMS",
         "room_kind is one of these, and room_pieces holds only its piece keys",
@@ -840,10 +889,16 @@ def _rooms_section(rooms: RoomPieces) -> str:
         template = rooms.template(kind)
         assert template is not None
         lines.append(f"  {kind}:")
-        lines.append(
-            "    " + ", ".join(f"{piece.key} ({piece.label})" for piece in template.pieces)
-        )
+        lines.append("    " + ", ".join(_piece(piece, arabic) for piece in template.pieces))
     return "\n".join(lines) + "\n\n"
+
+
+def _piece(piece: RoomPiece, arabic: bool) -> str:
+    """A piece key with the chip label it is chosen by - and, where Arabic
+    replies are on, the Arabic label an Arabic customer's chip carries."""
+    if arabic and piece.label_ar:
+        return f"{piece.key} ({piece.label} / {piece.label_ar})"
+    return f"{piece.key} ({piece.label})"
 
 
 _CORRECTION = """\

@@ -24,6 +24,7 @@ from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import MAX_SEMANTIC_INTENT_CHARS, PurchaseStage
@@ -34,6 +35,7 @@ from app.schemas.bundle_reference import (
 from app.schemas.comparison import MAX_COMPARED_PRODUCTS, MIN_COMPARED_PRODUCTS
 from app.schemas.design import MAX_DESIGN_QUESTION_CHARS, MAX_REGULAR_SEATING_COUNT
 from app.schemas.geometry import RoomMeasurementRole
+from app.schemas.language import ReplyLanguage
 from app.schemas.product_reference import (
     ExtremumDirection,
     FocusedProduct,
@@ -870,6 +872,24 @@ class CustomerAgentDecision(BaseModel):
     `DESIGN_HANDOFF` only. A flag, never the products: which picks belong in the
     room is the application's to work out from the picks it recorded."""
 
+    switch_reply_language: SkipJsonSchema[ReplyLanguage | None] = None
+    """They explicitly asked to be answered in a language - "English please",
+    "can we talk in Arabic", "كلمني بالعربي". Never inferred from the language
+    they happen to write in, and never from a product or style word ("English
+    country style"). Any action: it changes only the words they read
+    (docs/arabic-replies-plan.md)."""
+
+    writes_arabizi: SkipJsonSchema[bool] = False
+    """This message is Arabic written in Latin letters and numbers - "abi
+    kanaba", "3ayez kanaba b 3000 riyal". Not English with a number ("3 seater",
+    "L-shape"), and not an Arabic word inside an English sentence. Any action;
+    it only settles the language they are answered in.
+
+    Both language fields are left out of the model's response schema, so the
+    model sees exactly today's schema; `with_reply_language` shows them where
+    Arabic replies are on. They stay on the contract, always defaulted, so
+    every reader handles one type."""
+
     design_anchor: DesignAnchorIntent | None = None
     """The piece a room is to be designed around, for `DESIGN_HANDOFF` only.
 
@@ -1244,6 +1264,21 @@ def build_constrained_decision(attributes: CatalogAttributes) -> type[CustomerAg
     )
 
 
+def with_reply_language(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """`schema` with the two language fields shown to the model.
+
+    Transport only, like the constrained decision: `to_plain_decision` turns
+    the result back into the plain contract, which carries both fields hidden.
+    """
+    return create_model(
+        f"{schema.__name__}WithReplyLanguage",
+        __base__=schema,
+        __doc__=schema.__doc__,
+        switch_reply_language=(ReplyLanguage | None, None),
+        writes_arabizi=(bool, False),
+    )
+
+
 def to_plain_decision(decision: CustomerAgentDecision) -> CustomerAgentDecision:
     """The same decision in the plain contract's own classes.
 
@@ -1286,4 +1321,5 @@ __all__ = [
     "SoleSelectedProduct",
     "build_constrained_decision",
     "to_plain_decision",
+    "with_reply_language",
 ]

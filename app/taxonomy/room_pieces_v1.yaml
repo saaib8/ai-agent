@@ -58,3 +58,28 @@ rooms:
       - {key: chandelier, label: Chandelier, category: lighting, subcategory: chandelier, tier: optional}
       - {key: vase, label: Vase, category: decor, subcategory: vase, tier: optional}
       - {key: shelf, label: Shelf, category: storage, subcategory: shelve, tier: optional}
+
+# How each piece reads on a chip to a customer answered in Arabic
+# (docs/arabic-replies-plan.md). Display only - keys stay English; every label
+# above has exactly one entry. Reviewed by a native speaker before production.
+arabic:
+  Sofa: كنبة
+  Center table: طاولة وسط
+  Rug: سجادة
+  Side table: طاولة جانبية
+  TV table: طاولة تلفزيون
+  Floor lamp: أباجورة أرضية
+  Wall art: لوحة جدارية
+  Accent chair: كرسي منفرد
+  Console: كونسول
+  Table lamp: أباجورة
+  Chandelier: ثريا
+  Vase: مزهرية
+  Decorative statue: تمثال ديكور
+  Mirror: مرآة
+  Shelf: رف
+  Bed: سرير
+  Nightstands: كومودينات
+  Wardrobe: دولاب
+  Table lamps: أباجورات
+  Mattress: مرتبة

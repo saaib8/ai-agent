@@ -953,3 +953,127 @@ cases:
     turns: ["skip the questions and show me beds", "I'll take the first one", "skip the questions and show me nightstands", "I'll take the first one too", "design my bedroom around these", "under 12000 SAR", "Choose the pieces for me", "leave the colours to you"]
     checks: {not_fallback: true, room_locked: 2, room_type_max: {bed: 1}}
 
+
+  # ── Arabic replies (docs/arabic-replies-plan.md) ────────────────────────────
+  # Each runs against a server with customer_agent.arabic_replies on (local and
+  # stage by default). Checks read the reply's language and script, never its
+  # exact wording.
+
+  - id: ar_msa_card
+    issue: "arabic: a request in Arabic gets its card, worded in Arabic"
+    turns: ["أبحث عن كنبة رمادية"]
+    checks: {not_fallback: true, max_products: 0, card_mode: ask, arabic_reply: true}
+
+  - id: ar_gulf_search
+    issue: "arabic: a Gulf request, card skipped - sofas, in Arabic"
+    turns: [{search: "ابغى كنبة رمادية"}]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, arabic_reply: true}
+
+  - id: ar_arabizi_search
+    issue: "arabic: Arabizi is answered in Arabic and searched as sofas"
+    turns: [{search: "abi kanaba"}]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, arabic_reply: true}
+
+  - id: ar_card_tapped
+    issue: "arabic: a card answered by tapping stays Arabic"
+    turns: ["أبحث عن كنبة", {answer_card: {piece: "3 مقاعد"}}]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, seats: 3, arabic_reply: true}
+
+  - id: ar_card_typed_answer
+    issue: "arabic: a card answered in words is searched, not asked again"
+    turns: ["أبحث عن كنبة", "رمادي وبحدود 3000 ريال"]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa, arabic_reply: true}
+
+  - id: ar_pick_by_ordinal
+    issue: "arabic: a typed pick is offered what goes with it, in Arabic"
+    turns: [{search: "أبي كنبة"}, "أعجبني الثاني"]
+    checks: {not_fallback: true, offer: true, picks: 1, arabic_reply: true}
+
+  - id: ar_seat_combo
+    issue: "arabic: seating for 8 asks the shape first, in Arabic"
+    turns: ["أبي كنبة لـ 8 أشخاص"]
+    checks: {not_fallback: true, max_products: 0, card: false, arabic_reply: true, engages: true}
+
+  - id: ar_room_budget_first
+    issue: "arabic: a room asks its budget first, in Arabic"
+    turns: ["أبي أصمم غرفة المعيشة"]
+    checks: {not_fallback: true, max_products: 0, arabic_reply: true, mentions: ["ميزاني", "تنفق", "تصرف"]}
+
+  - id: ar_english_follow_up_stays_arabic
+    issue: "arabic: an English follow-up in an Arabic session is still answered in Arabic"
+    turns: [{search: "أبي كنبة رمادية"}, "show me cheaper ones"]
+    checks: {not_fallback: true, min_products: 1, arabic_reply: true}
+
+  - id: ar_english_please
+    issue: "arabic: 'English please' switches the session, and it stays English"
+    turns: [{search: "أبي كنبة رمادية"}, "English please", "show me cheaper ones"]
+    checks: {not_fallback: true, min_products: 1, english_reply: true}
+
+  - id: ar_tap_stays_arabic
+    issue: "arabic: a screen tap carries no words and keeps the session's language"
+    turns: [{search: "أبي كنبة"}, {more_options: true}]
+    checks: {not_fallback: true, min_products: 1, new_products: true, arabic_reply: true}
+
+  - id: ar_compare_popup
+    issue: "arabic: the comparison pop-up's take is in the session's language"
+    turns: [{search: "أبي كنبة"}, {compare_cards: [{ordinal: 1}, {ordinal: 2}]}]
+    checks: {popup: true, arabic_text: true}
+
+  - id: ar_locale_first_turn
+    issue: "arabic: an English first message on an Arabic storefront is answered in Arabic"
+    turns: [{say: "show me sofas", locale: ar}]
+    checks: {not_fallback: true, card_mode: ask, arabic_reply: true}
+
+  - id: ar_zero_result_seats_in_words
+    issue: "arabic: seats and budget said in words are quoted back, never a fallback"
+    turns: [{search: "أبي كنبة بثلاثة مقاعد بأقل من 300 ريال"}]
+    checks: {not_fallback: true, arabic_reply: true, engages: true}
+
+  - id: ar_english_session_stays_english
+    issue: "arabic: an English session is still answered in English with the switch on"
+    turns: [{search: "show me grey sofas"}]
+    checks: {not_fallback: true, min_products: 1, english_reply: true}
+
+  # ── Arabic chips, cards and the piece picker ──────────────────────────────
+  # Labels are tapped as an Arabic customer reads them; keys and actions are the
+  # same as in English.
+
+  - id: ar_card_in_arabic
+    issue: "arabic chips: the card's questions and answers are Arabic"
+    turns: ["أبحث عن كنبة"]
+    checks: {not_fallback: true, card_mode: ask, arabic_reply: true, arabic_chips: true}
+
+  - id: ar_next_step_chips_in_arabic
+    issue: "arabic chips: the next step's chips beside results are Arabic"
+    turns: [{search: "أبي كنبة رمادية"}]
+    checks: {not_fallback: true, min_products: 1, arabic_chips: true}
+
+  - id: ar_room_budget_chips_in_arabic
+    issue: "arabic chips: a room's budget question offers Arabic chips"
+    turns: ["أبي أصمم غرفة المعيشة"]
+    checks: {not_fallback: true, max_products: 0, arabic_reply: true, arabic_chips: true}
+
+  - id: ar_room_piece_picker_in_arabic
+    issue: "arabic chips: an Arabic budget chip tapped leads to an Arabic piece picker"
+    turns: ["أبي أصمم غرفة المعيشة", {chip: "أقل من 10,000 ريال"}]
+    checks: {not_fallback: true, piece_picker: true, arabic_chips: true}
+
+  - id: ar_room_chips_round_trip
+    issue: "arabic chips: budget, pieces, seats and colour tapped in Arabic build the room"
+    turns: ["أبي أصمم غرفة المعيشة", {chip: "أقل من 10,000 ريال"}, "اختر القطع لي", {chip: "لـ 2"}, {chip: "بيج"}]
+    checks: {not_fallback: true, room_status: complete, arabic_reply: true}
+
+  - id: ar_seat_shape_chip
+    issue: "arabic chips: a seating shape tapped in Arabic shows its combinations"
+    turns: ["أبي كنبة لـ 8 أشخاص", {chip: "كنبات منفصلة"}]
+    checks: {not_fallback: true, min_combinations: 1, arabic_reply: true}
+
+  - id: ar_pick_companion_chip
+    issue: "arabic chips: an Arabic companion chip runs that search"
+    turns: [{search: "أبي سرير"}, {tick: 1}, {chip: "كومودينات"}]
+    checks: {not_fallback: true, min_products: 1, subcategory: nightstand, arabic_reply: true}
+
+  - id: ar_pick_no_thanks
+    issue: "arabic chips: 'no thanks' in Arabic keeps the pick and shows nothing more"
+    turns: [{search: "أبي كنبة"}, {tick: 1}, {chip: "لا، شكرًا"}]
+    checks: {not_fallback: true, max_products: 0, picks: 1, arabic_reply: true}
