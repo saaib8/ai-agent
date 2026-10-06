@@ -19,6 +19,7 @@ shape, and reject any subcategory the commerce taxonomy does not approve.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -27,6 +28,7 @@ from typing import Any, Final
 import yaml
 
 from app.core.exceptions import TaxonomyConfigurationError
+from app.taxonomy.arabic import parse_arabic_labels
 from app.taxonomy.registry import CommerceTaxonomy
 
 DEFAULT_BRIEFS_PATH: Final[Path] = Path(__file__).parent / "briefs_v1.yaml"
@@ -106,9 +108,12 @@ class Brief:
 class Briefs:
     """Every product family's card, keyed by the subcategories it covers."""
 
-    def __init__(self, version: str, briefs: tuple[Brief, ...]) -> None:
+    def __init__(
+        self, version: str, briefs: tuple[Brief, ...], arabic: Mapping[str, str] | None = None
+    ) -> None:
         self._version = version
         self._briefs = briefs
+        self._arabic: Mapping[str, str] = dict(arabic or {})
         self._by_type = {sub: brief for brief in briefs for sub in brief.subcategories}
         self._by_category = {cat: brief for brief in briefs for cat in brief.categories}
 
@@ -136,6 +141,12 @@ class Briefs:
         if subcategory is None:
             return None
         return self._by_type.get(subcategory)
+
+    def arabic(self, label: str) -> str | None:
+        """How one of the cards' labels - a kind, a feel, a feel's title, a noun -
+        reads to a customer answered in Arabic. None only where a test built
+        the cards by hand; the loader requires every one."""
+        return self._arabic.get(label)
 
     def __repr__(self) -> str:
         return f"Briefs(version={self._version!r}, briefs={len(self._briefs)})"
@@ -186,7 +197,19 @@ def load_briefs(path: Path | None = None, taxonomy: CommerceTaxonomy | None = No
             )
         claimed_categories.update(brief.categories)
         briefs.append(brief)
-    return Briefs(version=version, briefs=tuple(briefs))
+    labels = {
+        label
+        for brief in briefs
+        for label in (
+            brief.noun,
+            brief.feel_label,
+            *(kind.label for kind in brief.kinds),
+            *(feel.label for feel in brief.feels),
+        )
+        if label is not None
+    }
+    arabic = parse_arabic_labels(document.get("arabic"), labels, where=source.name)
+    return Briefs(version=version, briefs=tuple(briefs), arabic=arabic)
 
 
 def _brief(name: str, raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -> Brief:

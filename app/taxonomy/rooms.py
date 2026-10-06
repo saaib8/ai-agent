@@ -18,7 +18,7 @@ cannot drift from the vocabulary.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -26,6 +26,7 @@ from typing import Any, Final
 import yaml
 
 from app.core.exceptions import TaxonomyConfigurationError
+from app.taxonomy.arabic import parse_arabic_labels
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.seating import SEATING_CATEGORY, SeatingSemantics
 
@@ -59,6 +60,10 @@ class RoomPiece:
     seating_types: tuple[str, ...] = ()
     """For seating built to a head count: every type it may use. The first is
     the single piece used when the customer gives no count."""
+
+    label_ar: str | None = None
+    """`label` as it reads to a customer answered in Arabic. Always set by the
+    loader; None only where a test builds a piece by hand."""
 
     @property
     def is_seating(self) -> bool:
@@ -143,7 +148,21 @@ def load_room_pieces(
         if not isinstance(kind, str) or not kind or not isinstance(raw, dict):
             raise TaxonomyConfigurationError(detail=f"{source.name}: each room must be a mapping")
         rooms[kind] = _room(kind, raw, source, taxonomy, seating)
-    return RoomPieces(version=version, rooms=rooms)
+    arabic = parse_arabic_labels(
+        document.get("arabic"),
+        {piece.label for room in rooms.values() for piece in room.pieces},
+        where=source.name,
+    )
+    return RoomPieces(
+        version=version,
+        rooms={
+            kind: replace(
+                room,
+                pieces=tuple(replace(p, label_ar=arabic[p.label]) for p in room.pieces),
+            )
+            for kind, room in rooms.items()
+        },
+    )
 
 
 def _room(

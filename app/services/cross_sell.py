@@ -28,10 +28,12 @@ from typing import Final
 
 from app.core.logging import get_logger
 from app.schemas.discovery import ProductSearchRequest
+from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.product_action import CompanionAction, CompanionOffer
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
 from app.schemas.reply_choice import ReplyChoice
+from app.services.chip_wording import Chip, chip
 from app.services.similar_search import leanings_of
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.complements import Companion, Complements
@@ -41,10 +43,6 @@ logger = get_logger(__name__)
 MAX_COMPANION_CHIPS: Final[int] = 4
 """A row of chips, not a menu. The chips lead with the kinds the store has
 most of, so the ones left off are the least stocked."""
-
-NO_THANKS: Final[str] = "No thanks"
-"""Turning down what goes with a pick, beside the kinds offered."""
-
 
 class CompanionSearchBuilder:
     """A verified product and one of its companion types -> a search."""
@@ -82,7 +80,10 @@ class CompanionSearchBuilder:
 
 
 def companion_choices(
-    companions: Sequence[CompanionOffer], *, offering: bool = False
+    companions: Sequence[CompanionOffer],
+    *,
+    offering: bool = False,
+    language: ReplyLanguage = ReplyLanguage.EN,
 ) -> tuple[ReplyChoice, ...]:
     """The companions of the product in focus, as chips.
 
@@ -92,16 +93,26 @@ def companion_choices(
     - their pick on screen, nothing searched - they can also say no.
     """
     chips = tuple(
-        ReplyChoice(
-            label=offer.label[:1].upper() + offer.label[1:],
-            value=f"Show me {offer.label} to go with it",
+        chip(
+            Chip.COMPANION,
+            language,
             product_action=CompanionAction(category=offer.category, subcategory=offer.subcategory),
+            label=_companion_label(offer, language),
+            label_lower=offer.label,
         )
         for offer in companions[:MAX_COMPANION_CHIPS]
     )
     if offering and chips:
-        return (*chips, ReplyChoice(label="No thanks", value=NO_THANKS))
+        return (*chips, chip(Chip.NO_THANKS, language))
     return chips
+
+
+def _companion_label(offer: CompanionOffer, language: ReplyLanguage) -> str:
+    """The kind as the chip shows it: capitalised English, or its reviewed
+    Arabic name."""
+    if language is ReplyLanguage.AR and offer.label_ar is not None:
+        return offer.label_ar
+    return offer.label[:1].upper() + offer.label[1:]
 
 
 def has_pairings(subcategory: str | None, complements: Complements) -> bool:

@@ -23,6 +23,7 @@ from decimal import Decimal
 from enum import StrEnum
 from functools import lru_cache
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
@@ -32,6 +33,25 @@ from pydantic_settings import (
 )
 
 ENV_PREFIX = "ZORY_"
+
+AZURE_KEY_VARIABLE = "AZURE_OPENAI_API_KEY"
+AZURE_ENDPOINT_VARIABLE = "AZURE_OPENAI_ENDPOINT"
+
+
+def azure_v1_base(endpoint: str) -> str:
+    """The v1 API root of an Azure OpenAI resource, from any URL on it.
+
+    Azure hands out per-operation URLs (`.../openai/v1/responses`,
+    `.../openai/v1/images/generations`) or the bare resource. Every client
+    needs the one root they share; anything after `/openai/v1` is dropped.
+    """
+    parts = urlsplit(endpoint.strip())
+    if parts.scheme != "https" or not parts.netloc:
+        raise ValueError(f"{AZURE_ENDPOINT_VARIABLE} must be an https URL")
+    path = parts.path
+    marker = path.find("/openai/v1")
+    root = path[:marker] if marker >= 0 else path.rstrip("/")
+    return f"https://{parts.netloc}{root}/openai/v1/"
 
 
 class Environment(StrEnum):
@@ -167,6 +187,12 @@ class LLMSettings(BaseModel):
     # set this to 0 on a model that supports it.
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+
+    base_url: str | None = Field(default=None, min_length=1)
+    """An OpenAI-compatible endpoint to send every model call to - Azure
+    OpenAI's v1 API (`https://<resource>.services.ai.azure.com/openai/v1/`).
+    Absent means OpenAI itself. Model names are then the endpoint's deployment
+    names. Filled from `AZURE_OPENAI_ENDPOINT` by `Settings`."""
 
     # Same provider and same key as the chat model, but a different model and a
     # different job. Left unset until semantic ranking is configured; a service
@@ -453,6 +479,13 @@ class CustomerAgentSettings(BaseModel):
     extras silently dropped, and typed and tapped comparisons share the limit.
     """
 
+    arabic_replies: bool = False
+    """Answer a customer who writes Arabic in Arabic - the writer's reply, the
+    decision's own question and the fixed sentences - while everything the
+    application reasons with stays English (docs/arabic-replies-plan.md).
+    Off means English replies, exactly as before. Defaulted on in local and
+    stage by `Settings`; an explicit value always wins."""
+
     max_picks: int = Field(default=10, ge=2, le=50)
     """How many products the picks tray keeps. A shortlist, not a second
     catalogue: past this a tick asks them to remove one first."""
@@ -524,6 +557,9 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         case_sensitive=False,
         extra="forbid",
+        # A validation error never echoes its input: the input holds every
+        # credential, and a startup error is printed and logged (CLAUDE.md 20.5).
+        hide_input_in_errors=True,
     )
 
     environment: Environment = Environment.LOCAL
@@ -551,6 +587,15 @@ class Settings(BaseSettings):
     observability: ObservabilitySettings = ObservabilitySettings()
     aws: AwsSettings = AwsSettings()
 
+    azure_openai_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AZURE_KEY_VARIABLE
+    )
+    azure_openai_endpoint: str | None = Field(
+        default=None, validation_alias=AZURE_ENDPOINT_VARIABLE
+    )
+    """Azure OpenAI, under the names Azure's own tooling uses. Both set: every
+    model call goes to Azure (`_azure_openai`). Neither: OpenAI, as before."""
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -570,6 +615,60 @@ class Settings(BaseSettings):
             file_secret_settings,
         )
 
+    @field_validator("azure_openai_api_key", "azure_openai_endpoint", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: Any) -> Any:
+        """`AZURE_OPENAI_ENDPOINT=` as `.env.example` ships it means "not set",
+        not "set to nothing"."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _azure_openai(cls, data: Any) -> Any:
+        """Azure's key and endpoint become the LLM's, when both are given.
+
+        Done before validation so `llm.api_key` need not also be set. An
+        explicit `llm.base_url` wins: it is the more specific instruction.
+        Raises nothing here - an error raised before validation would echo
+        the raw input, secrets included; `_azure_openai_complete` reports a
+        half-configured pair afterwards.
+        """
+        if not isinstance(data, dict):
+            return data
+        values = {str(k).lower(): v for k, v in data.items()}
+        key = values.get(AZURE_KEY_VARIABLE.lower()) or values.get("azure_openai_api_key")
+        endpoint = values.get(AZURE_ENDPOINT_VARIABLE.lower()) or values.get(
+            "azure_openai_endpoint"
+        )
+        if not key or not endpoint:
+            return data
+        llm = data.get("llm")
+        llm = dict(llm) if isinstance(llm, dict) else {}
+        if llm.get("base_url"):
+            return data
+        try:
+            base = azure_v1_base(str(endpoint))
+        except ValueError:
+            return data  # reported by `_azure_openai_complete`, without the value
+        llm["api_key"] = key
+        llm["base_url"] = base
+        return {**data, "llm": llm}
+
+    @model_validator(mode="after")
+    def _azure_openai_complete(self) -> Settings:
+        """Half an Azure configuration is a mistake, not a choice: fail at
+        startup by variable name, never by value."""
+        given = (self.azure_openai_api_key is not None, self.azure_openai_endpoint is not None)
+        if any(given) and not all(given):
+            raise ValueError(
+                f"set both {AZURE_KEY_VARIABLE} and {AZURE_ENDPOINT_VARIABLE}, or neither"
+            )
+        if self.azure_openai_endpoint is not None:
+            azure_v1_base(self.azure_openai_endpoint)
+        return self
+
     @model_validator(mode="after")
     def _target_fits_discovery_limit(self) -> Settings:
         """A target discovery could never return would relax forever."""
@@ -577,6 +676,17 @@ class Settings(BaseSettings):
             raise ValueError(
                 "relaxation target_candidates cannot exceed discovery max_candidate_limit"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _arabic_replies_by_environment(self) -> Settings:
+        """Arabic replies are on by default in local and stage, off in test and
+        prod until reviewed there; an explicit setting always wins."""
+        if (
+            self.environment in (Environment.LOCAL, Environment.STAGE)
+            and "arabic_replies" not in self.customer_agent.model_fields_set
+        ):
+            self.customer_agent = self.customer_agent.model_copy(update={"arabic_replies": True})
         return self
 
     def effective_catalog(self) -> CatalogSettings:
@@ -607,6 +717,8 @@ class Settings(BaseSettings):
             "discovery_default_limit": self.discovery.default_candidate_limit,
             "discovery_max_limit": self.discovery.max_candidate_limit,
             "llm_model": self.llm.model,
+            # The host only: which provider every model call goes to.
+            "llm_endpoint": urlsplit(self.llm.base_url).netloc if self.llm.base_url else "openai",
             "relaxation_target_candidates": self.relaxation.target_candidates,
             "comparison_max_products": self.customer_agent.comparison_max_products,
             "presentation_configured": self.customer_agent.presentation_limit is not None,

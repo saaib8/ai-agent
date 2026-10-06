@@ -1531,3 +1531,30 @@ In the agent redesign this becomes a `check_fit` tool.
 **CLAUDE.md change needed:** 15.1 and 17.2 say room fit belongs to the
 designer and must never be promised. The update should allow deterministic,
 clearly approximate fit checks by code, while still never guaranteeing a fit.
+
+## 18. The store's catalog summary is re-read from the database every time
+
+**Status:** Open (2026-10-06). Not urgent for store 50; worth doing before a
+large store is onboarded.
+
+**What happens:** `CatalogCapabilityService` (`app/services/catalog_capability.py`)
+has no cache - its own docstring says "No model, no cache". Every
+`capabilities()` and `overview()` call runs a scoped aggregate query over the
+store's active products, and a single turn can call it several times (the
+question card, room questions, room planning, companions, the closest stocked
+type, seating combinations, the store's currency).
+
+**Why it matters:** for store 50 (1,036 active products) the query is fast.
+Store 60 has 17,139 active products, stores 100 and 21 about 13,000 each, so
+the same query will cost more per call, several times per turn, for every
+customer.
+
+**What CLAUDE.md says:** 9 - "Cache catalog capability summaries in Redis when
+useful, with configurable TTL and safe invalidation/expiration behavior."
+
+**Suggested fix:** cache the per-store summary in Redis, keyed by store (e.g.
+`zory:store:{store_id}:catalog_overview:v1`), with the TTL in settings (a few
+minutes). On a Redis failure, fall back to the database query rather than
+failing the turn. Measure the query time on store 60 first to size the TTL.
+
+**Reported:** found while reviewing multi-store readiness (2026-10-06).

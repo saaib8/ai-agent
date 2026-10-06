@@ -38,6 +38,7 @@ from app.schemas.grounding import (
     SelectionGrounding,
     TurnFailure,
 )
+from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep
 from app.schemas.picks import PickView
 from app.schemas.product_action import CompanionOffer, ProductActionRequest
@@ -83,6 +84,11 @@ class CustomerTurnInput(BaseModel):
     two, or show a companion a chip offered. Deterministic, like the others:
     no decision model runs (CLAUDE.md 3.6)."""
 
+    locale: ReplyLanguage | None = None
+    """The storefront's language, answering a turn nothing in the conversation
+    decided. Never stored (docs/arabic-replies-plan.md). Always passed through;
+    ignored where the switch for Arabic replies is off."""
+
 
 class DecisionInput(BaseModel):
     """Everything the decision model is given, and nothing else.
@@ -96,6 +102,9 @@ class DecisionInput(BaseModel):
     message: str = Field(min_length=1)
     conversation: ConversationContext = ConversationContext()
     state_view: AgentStateView = AgentStateView()
+    reply_language: ReplyLanguage | None = None
+    """The language the decision's own question to the customer is written in,
+    when one is settled; None - write it in the language they wrote in."""
 
 
 class TurnGrounding(BaseModel):
@@ -353,6 +362,13 @@ class CustomerTurnResult(BaseModel):
     dead end (CLAUDE.md 27). Distinct from `offered_instead_of`: there the type
     exists but seats too few; here the store simply does not carry it."""
 
+    stated_figures: tuple[Decimal, ...] = ()
+    """The budget bounds and seat counts query understanding read from the
+    customer's own words this turn - "three seater under 300", "لستة أشخاص".
+    Theirs, so the reply may say them in digits; never a figure the
+    application computed, and never a size (a unit conversion is a
+    computation). Application-only: no model reads it."""
+
     swap_offer: SwapBudgetOffer | None = None
     """A dearer swap that broke the budget, held for the customer's yes/no. The
     proposed room rides in `bundle_outcome`; nothing is committed until they say
@@ -399,6 +415,12 @@ class CustomerTurnResult(BaseModel):
     """The one next step this turn's reply offers, with its chips, when the turn
     asks nothing of its own - so the conversation never dead-ends. Set by the
     coordinator after the turn (CLAUDE.md 10.2)."""
+
+    reply_language: ReplyLanguage | None = None
+    """The language this turn is answered in - the writer's reply, the fixed
+    sentences, the public response. Settled once by the coordinator; None where
+    the switch for Arabic replies is off, which answers in English as always
+    (docs/arabic-replies-plan.md)."""
 
     product_brief: ProductBrief | None = None
     """A card of questions for a product search - first, before anything is

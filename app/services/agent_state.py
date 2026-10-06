@@ -81,6 +81,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
+        reply_language=state.reply_language,
     )
 
 
@@ -146,6 +147,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
+        reply_language=state.reply_language,
     )
 
 
@@ -176,6 +178,7 @@ def record_brief(
             cards=max(current.cards, pending.card) if pending is not None else current.cards,
             pending=pending,
         ),
+        reply_language=state.reply_language,
     )
 
 
@@ -236,6 +239,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
+        reply_language=state.reply_language,
     )
 
 

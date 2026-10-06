@@ -87,3 +87,29 @@ complements:
   carpet:
     - {category: tables, subcategory: center-table, label: center tables}
     - {category: seating, subcategory: sofa, label: sofas}
+
+# How each companion reads on a chip to a customer answered in Arabic
+# (docs/arabic-replies-plan.md). Display only; every label above has exactly
+# one entry. Reviewed by a native speaker before production.
+arabic:
+  nightstands: كومودينات
+  mattresses: مراتب
+  wardrobes: دواليب
+  rugs: سجاد
+  table lamps: أباجورات
+  center tables: طاولات وسط
+  side tables: طاولات جانبية
+  floor lamps: أباجورات أرضية
+  accent chairs: كراسي منفردة
+  dining chairs: كراسي طعام
+  chandeliers: ثريات
+  pendant lights: إضاءات معلقة
+  dining tables: طاولات طعام
+  office chairs: كراسي مكتب
+  shelves: رفوف
+  desks: مكاتب
+  sofas: كنب
+  beds: أسرّة
+  mirrors: مرايا
+  vases: مزهريات
+  dressers: خزائن أدراج

@@ -19,6 +19,7 @@ from typing import Any, Final
 import yaml
 
 from app.core.exceptions import TaxonomyConfigurationError
+from app.taxonomy.arabic import parse_arabic_labels
 
 DEFAULT_ATTRIBUTES_PATH: Final[Path] = Path(__file__).parent / "catalog_attributes_v1.yaml"
 
@@ -33,9 +34,15 @@ class AttributeFamily(StrEnum):
 class CatalogAttributes:
     """Immutable view of the approved colour and style vocabularies."""
 
-    def __init__(self, version: str, values: Mapping[AttributeFamily, frozenset[str]]) -> None:
+    def __init__(
+        self,
+        version: str,
+        values: Mapping[AttributeFamily, frozenset[str]],
+        arabic: Mapping[AttributeFamily, Mapping[str, str]] | None = None,
+    ) -> None:
         self._version = version
         self._values: Mapping[AttributeFamily, frozenset[str]] = dict(values)
+        self._arabic: Mapping[AttributeFamily, Mapping[str, str]] = dict(arabic or {})
         self._by_spelling: Mapping[AttributeFamily, Mapping[str, str]] = {
             family: _spelling_index(family, members) for family, members in self._values.items()
         }
@@ -75,6 +82,15 @@ class CatalogAttributes:
         colours it means is interpretation, not spelling (CLAUDE.md 14.2).
         """
         return self._by_spelling[family].get(_spelling_key(value))
+
+    def arabic(self, family: AttributeFamily, value: str) -> str | None:
+        """How an approved value reads to a customer answered in Arabic.
+
+        Display only - products, filters and decisions keep the English value.
+        None for a value with no reviewed Arabic, which the loader makes
+        impossible for the registry itself; the caller shows the English then.
+        """
+        return self._arabic.get(family, {}).get(value)
 
     def __repr__(self) -> str:
         return (
@@ -156,10 +172,25 @@ def load_catalog_attributes(path: Path | None = None) -> CatalogAttributes:
         raise TaxonomyConfigurationError(
             detail=f"{source.name}: style values must not contain spaces"
         )
+    values = {
+        AttributeFamily.COLOR: _parse_family(document, "colors", source=source.name),
+        AttributeFamily.STYLE: styles,
+    }
     return CatalogAttributes(
         version=version,
-        values={
-            AttributeFamily.COLOR: _parse_family(document, "colors", source=source.name),
-            AttributeFamily.STYLE: styles,
-        },
+        values=values,
+        arabic=_parse_arabic(document, values, source=source.name),
     )
+
+
+def _parse_arabic(
+    document: Any, values: Mapping[AttributeFamily, frozenset[str]], *, source: str
+) -> dict[AttributeFamily, dict[str, str]]:
+    """Every approved value's Arabic display name - exactly one each."""
+    raw = document.get("arabic")
+    if not isinstance(raw, dict):
+        raise TaxonomyConfigurationError(detail=f"{source}: 'arabic' must be a mapping")
+    return {
+        family: parse_arabic_labels(raw.get(key), values[family], where=f"{source}: {key}")
+        for family, key in ((AttributeFamily.COLOR, "colors"), (AttributeFamily.STYLE, "styles"))
+    }

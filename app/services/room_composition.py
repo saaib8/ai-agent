@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 from app.schemas.agent_state import RoomProjectState
 from app.schemas.design import DesignCategoryNeed, DesignPriority, InteriorDesignResult
+from app.schemas.language import ReplyLanguage
 from app.schemas.retailer import RetailerCatalogCapabilities
 from app.schemas.room_opener import (
     ROOM_QUESTION_ORDER,
@@ -18,6 +19,7 @@ from app.schemas.room_opener import (
     RoomQuestion,
     RoomQuestionKind,
 )
+from app.services.chip_wording import PIECE_PICKED
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.rooms import PieceTier, RoomPiece, RoomTemplate
 
@@ -122,7 +124,12 @@ def _offers(
     return tuple(
         RoomPieceOffer(
             key=piece.key,
-            label=f"{piece.label} · your pick" if piece.key in covered else piece.label,
+            label=(
+                PIECE_PICKED[ReplyLanguage.EN].format(label=piece.label)
+                if piece.key in covered
+                else piece.label
+            ),
+            label_ar=piece.label_ar,
             tier=piece.tier,
             selected=piece.key in covered or piece.tier.starts_selected,
             picked=piece.key in covered,

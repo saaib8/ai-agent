@@ -41,7 +41,10 @@ def test_a_bed_is_shown_nightstands_first() -> None:
     first = load_complements(taxonomy=TAXONOMY).for_type("bed")[0]
 
     assert first == Companion(
-        commerce_category="tables", commerce_subcategory="nightstand", label="nightstands"
+        commerce_category="tables",
+        commerce_subcategory="nightstand",
+        label="nightstands",
+        label_ar="كومودينات",
     )
 
 

@@ -57,7 +57,12 @@ class OpenAIImageGenerator:
     provider = "openai"
 
     def __init__(
-        self, settings: VisualizationSettings, *, api_key: str, client: Any = None
+        self,
+        settings: VisualizationSettings,
+        *,
+        api_key: str,
+        base_url: str | None = None,
+        client: Any = None,
     ) -> None:
         """`client` exists for tests; production builds its own."""
         if settings.openai_model is None:
@@ -68,7 +73,7 @@ class OpenAIImageGenerator:
         # No SDK retries: a failed render falls back to the other provider,
         # which is a better second attempt than the same one again.
         self._client = client or AsyncOpenAI(
-            api_key=api_key, timeout=settings.timeout_s, max_retries=0
+            api_key=api_key, base_url=base_url, timeout=settings.timeout_s, max_retries=0
         )
 
     async def generate(self, prompt: str, references: Sequence[ImageReference]) -> GeneratedImage:

@@ -41,6 +41,7 @@ from app.schemas.discovery import (
     SeatingCapacityConstraint,
 )
 from app.schemas.geometry import RoomGeometry
+from app.schemas.language import ReplyLanguage
 from app.schemas.product_brief import ProductBriefState
 from app.schemas.query import (
     ConstraintSemantics,
@@ -795,6 +796,14 @@ class AgentStateV1(BaseModel):
     product_brief: ProductBriefState = ProductBriefState()
     """The cards of questions asked before a search (CLAUDE.md 10.4).
     Defaulted, so every saved session still reads."""
+
+    reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The language this customer is answered in, once settled - Arabic from
+    anything Arabic they said, English only when they asked for it; None is
+    English by default (docs/arabic-replies-plan.md). Presentation only.
+    Defaulted, so every saved session still reads; and left out of the saved
+    session while unset, so a session that never settled a language is exactly
+    what code without this field writes and reads."""
 
     @model_validator(mode="after")
     def _presented_matches_the_executed_search(self) -> Self:

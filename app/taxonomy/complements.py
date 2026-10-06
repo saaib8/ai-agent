@@ -18,13 +18,14 @@ cannot drift from the vocabulary.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
 import yaml
 
 from app.core.exceptions import TaxonomyConfigurationError
+from app.taxonomy.arabic import parse_arabic_labels
 from app.taxonomy.registry import CommerceTaxonomy
 
 DEFAULT_COMPLEMENTS_PATH: Final[Path] = Path(__file__).parent / "complements_v1.yaml"
@@ -44,6 +45,9 @@ class Companion:
     commerce_subcategory: str
     label: str
     """Plural, lower case, as it reads on a chip: "Matching <label>"."""
+    label_ar: str | None = None
+    """The same, as it reads to a customer answered in Arabic. Always set by the
+    loader; None only where a test builds a pairing by hand."""
 
 
 class Complements:
@@ -125,7 +129,18 @@ def load_complements(
         if taxonomy is not None and not taxonomy.is_subcategory(anchor):
             raise TaxonomyConfigurationError(detail=f"{where}: not an approved subcategory")
         companions[anchor] = _companions(anchor, entries, where, taxonomy)
-    return Complements(version=version, companions=companions)
+    arabic = parse_arabic_labels(
+        document.get("arabic"),
+        {c.label for entries in companions.values() for c in entries},
+        where=source.name,
+    )
+    return Complements(
+        version=version,
+        companions={
+            anchor: tuple(replace(c, label_ar=arabic[c.label]) for c in entries)
+            for anchor, entries in companions.items()
+        },
+    )
 
 
 def _companions(

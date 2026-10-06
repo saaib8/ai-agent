@@ -12,7 +12,12 @@ question is owed, how long to be - rather than about what is true.
 
 from __future__ import annotations
 
+from app.schemas.language import ReplyLanguage
+
 VERSION = "customer_response/v1"
+ARABIC_VERSION = "customer_response/v1+ar.2"
+"""The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
+Everything but the language paragraph is shared, so the two cannot drift."""
 
 INSTRUCTIONS = """\
 ROLE
@@ -803,15 +808,44 @@ be.
 """
 
 
-def build_instructions() -> str:
-    return INSTRUCTIONS
+_ENGLISH = "Reply in English.\n"
+
+_ARABIC = """\
+Reply in Arabic: warm, natural Modern Standard Arabic that a Gulf customer reads
+easily - written as Arabic, never translated from English, and without heavy
+dialect. follow_up_question is in Arabic too, and a question ends with "؟".
+Address the customer in the masculine form unless they have said otherwise,
+and never switch forms within the conversation.
+
+Figures are Western digits, as the summary or the customer gave them: "220
+سم", "3 مقاعد". A price is written the way the chips show it, with a thousands
+separator and no decimals when it is whole: "1,250 ريال", never "1250.00". Never
+write a figure in words or in Arabic-Indic digits. Say ريال for SAR.
+
+The summary describes the cards in English. Describe them in Arabic - "كنبة
+رمادية بثلاثة مقاعد" - rather than pasting its English words; a brand or a
+product's own name stays as written. The chips beside your reply may be in
+English; never translate or repeat them.
+"""
 
 
-def build_correction_instructions() -> str:
+def build_instructions(language: ReplyLanguage = ReplyLanguage.EN) -> str:
+    """The instructions for a reply in `language`. English is exactly
+    `INSTRUCTIONS`."""
+    if language is ReplyLanguage.EN:
+        return INSTRUCTIONS
+    return INSTRUCTIONS.replace(_ENGLISH, _ARABIC, 1)
+
+
+def build_correction_instructions(language: ReplyLanguage = ReplyLanguage.EN) -> str:
     """The one retry a numeric violation earns.
 
     The offending prose and the offending number are deliberately absent:
     sending either back puts the invented figure into the prompt, which is how
     it gets used a second time.
     """
-    return INSTRUCTIONS + CORRECTION
+    return build_instructions(language) + CORRECTION
+
+
+def version_for(language: ReplyLanguage) -> str:
+    return VERSION if language is ReplyLanguage.EN else ARABIC_VERSION

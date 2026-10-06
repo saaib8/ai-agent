@@ -19,6 +19,7 @@ import type { ComparisonPopup } from './components/ComparisonDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
+import { conversationLanguage, turnWords } from './lib/turnWords'
 import { useChat } from './hooks/useChat'
 import { useConfig } from './hooks/useConfig'
 import { useHealth } from './hooks/useHealth'
@@ -100,6 +101,8 @@ export default function App() {
   // cross-sell a piece the room already holds). The backend marks the list with
   // the piece it is for; re-enter swap mode so an alternative's "Select" swaps.
   const lastTurn = chat.turns[chat.turns.length - 1]
+  // What a tapped button says on the customer's side, in the conversation's language.
+  const words = turnWords(conversationLanguage(chat.turns))
   const swapCtx =
     lastTurn?.kind === 'assistant' ? (lastTurn.data.presentation?.swap_context ?? null) : null
   useEffect(() => {
@@ -141,17 +144,17 @@ export default function App() {
       setSwap({ bundleOrdinal, role })
       // Deterministic: the backend runs this role's own search — never a
       // language model deciding whether "other beds" means a search or a room.
-      void chat.send(`Show me other ${role} options`, config.config, {
+      void chat.send(words.otherRoomOptions(role), config.config, {
         bundle: { kind: 'list_alternatives', bundle_ordinal: bundleOrdinal },
       })
     },
-    [chat, config.config],
+    [chat, config.config, words],
   )
 
   const handlePickAlternative = useCallback(
     (alternativeOrdinal: number) => {
       if (chat.sending || swap === null) return
-      void chat.send(`Use option ${alternativeOrdinal} for the ${swap.role}`, config.config, {
+      void chat.send(words.useRoomOption(alternativeOrdinal, swap.role), config.config, {
         bundle: {
           kind: 'swap',
           bundle_ordinal: swap.bundleOrdinal,
@@ -160,7 +163,7 @@ export default function App() {
       })
       setSwap(null)
     },
-    [chat, config.config, swap],
+    [chat, config.config, swap, words],
   )
 
   const handleShowMoreOptions = useCallback(() => {
@@ -168,10 +171,10 @@ export default function App() {
     setSwap(null)
     // Deterministic: re-run the search in progress, excluding everything just
     // shown. No model decides whether "show me more" means a new search.
-    void chat.send('Show me different options', config.config, {
+    void chat.send(words.differentOptions, config.config, {
       search: { kind: 'more_options' },
     })
-  }, [chat, config.config])
+  }, [chat, config.config, words])
 
   const handleExcludeProduct = useCallback(
     (product: GroundedProduct) => {
@@ -180,12 +183,16 @@ export default function App() {
       // The message names the piece so the conversation record reads clearly;
       // `rejected` shows it on the user's turn so the thread makes visible which
       // one was passed on, not just that something was.
-      void chat.send(`Not this one — the ${product.name_english}`, config.config, {
+      void chat.send(words.notThisOne(product.name_english), config.config, {
         search: { kind: 'exclude', ordinal: product.presented_ordinal },
-        rejected: { name: product.name_english, imageUrl: product.image_url },
+        rejected: {
+          name: product.name_english,
+          imageUrl: product.image_url,
+          label: words.notThisOneLabel,
+        },
       })
     },
-    [chat, config.config],
+    [chat, config.config, words],
   )
 
   // ── picks: ticking, what goes with one, comparing two ───────────────────────
@@ -212,12 +219,12 @@ export default function App() {
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
-        void chat.send(`I like the ${chosen.name_english}`, config.config, {
+        void chat.send(words.likeProduct(chosen.name_english), config.config, {
           product: { kind: 'goes_with', pick: chosen.pick },
         })
       }
     },
-    [chat, config.config],
+    [chat, config.config, words],
   )
 
   const handleRemovePick = useCallback(
@@ -232,11 +239,11 @@ export default function App() {
     (pick: PickView) => {
       if (chat.sending || chat.picking) return
       setSwap(null)
-      void chat.send(`What goes with the ${pick.name_english}?`, config.config, {
+      void chat.send(words.whatGoesWith(pick.name_english), config.config, {
         product: { kind: 'goes_with', pick: pick.pick },
       })
     },
-    [chat, config.config],
+    [chat, config.config, words],
   )
 
   // ── comparing the checked cards, in a pop-up ─────────────────────────────

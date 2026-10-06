@@ -164,6 +164,7 @@ from app.schemas.grounding import (
     TurnFailure,
     TurnFailureCode,
 )
+from app.schemas.language import ReplyLanguage
 from app.schemas.picks import PickView
 from app.schemas.product import ProductCandidate
 from app.schemas.product_action import (
@@ -256,6 +257,7 @@ from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
 from app.services.next_step import next_step
+from app.services.numeric_guard import refinement_figures, stated_figures
 from app.services.product_brief import ProductBriefBuilder
 from app.services.product_interaction import build_picks, interaction_update
 from app.services.proposal_mapping import MappedProposals, map_proposals
@@ -263,6 +265,7 @@ from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.relative_price import RelativePriceResolver
+from app.services.reply_language import TurnLanguage, after_the_decision, before_the_turn
 from app.services.room_composition import (
     PRIORITY_FOR_TIER,
     chosen_keys,
@@ -450,6 +453,10 @@ class _Primary:
 
     focus: GroundedProduct | None = None
     """The pick the customer asked about, drawn above what goes with it."""
+
+    stated_figures: tuple[Decimal, ...] = ()
+    """The customer's own budget and seat figures, as this turn's query
+    understanding read them (`CustomerTurnResult.stated_figures`)."""
 
     companions: tuple[CompanionOffer, ...] = ()
     """Other types that go with the product in focus, offered as chips."""
@@ -902,6 +909,7 @@ def _offers(companions: Sequence[Companion]) -> tuple[CompanionOffer, ...]:
             category=companion.commerce_category,
             subcategory=companion.commerce_subcategory,
             label=companion.label,
+            label_ar=companion.label_ar,
         )
         for companion in companions
     )
@@ -978,7 +986,11 @@ class CustomerTurnCoordinator:
         complements: Complements | None = None,
         companion_search: CompanionSearchBuilder | None = None,
         briefs: ProductBriefBuilder | None = None,
+        arabic_replies: bool = False,
     ) -> None:
+        self._arabic_replies = arabic_replies
+        """Whether a session may be answered in Arabic. Off, the language is
+        never read or stored, and every turn runs exactly as before."""
         self._taxonomy = taxonomy
         self._closest_type = closest_type
         """The closest stocked type when the asked one is absent. None where the
@@ -1026,9 +1038,68 @@ class CustomerTurnCoordinator:
         customer has picked - so the reply, its chips and the final check that
         every reply ends on a question all read one answer (CLAUDE.md 10.2).
         """
+        stored = turn.state.reply_language
+        started = self._language_before(turn)
+        if started is not None and started.stored != stored:
+            turn = turn.model_copy(
+                update={"state": turn.state.model_copy(update={"reply_language": started.stored})}
+            )
         result = await self._run_turn(turn)
+        if started is not None:
+            result = self._with_language(result, started, stored, turn.context.store_id)
         step = next_step(result, self._complements)
         return result.model_copy(update={"next_step": step}) if step is not None else result
+
+    def _turn_language(
+        self, turn: CustomerTurnInput, decision: CustomerAgentDecision
+    ) -> ReplyLanguage:
+        """The language this turn is answered in, once its decision has read the
+        message - the rule `run()` applies to the result, so what is built
+        mid-turn (a card) is in the language of the reply beside it."""
+        if not self._arabic_replies:
+            return ReplyLanguage.EN
+        started = before_the_turn(turn.state.reply_language, turn.message, turn.locale)
+        return after_the_decision(
+            started,
+            switch_to=decision.switch_reply_language,
+            writes_arabizi=decision.writes_arabizi,
+        ).reply
+
+    def _language_before(self, turn: CustomerTurnInput) -> TurnLanguage | None:
+        """The language this turn starts in - from what code can read alone,
+        settled before anything runs so every path answers in it. None where
+        Arabic replies are off: nothing is read, stored or changed."""
+        if not self._arabic_replies:
+            return None
+        return before_the_turn(turn.state.reply_language, turn.message, turn.locale)
+
+    @staticmethod
+    def _with_language(
+        result: CustomerTurnResult,
+        started: TurnLanguage,
+        stored_before: ReplyLanguage | None,
+        store_id: int,
+    ) -> CustomerTurnResult:
+        """The language once the decision has read the message: an explicit
+        request, or Arabic written in Latin letters (docs/arabic-replies-plan.md).
+        A screen action's stand-in decision carries neither, so it keeps the
+        language the turn started in."""
+        settled = after_the_decision(
+            started,
+            switch_to=result.decision.switch_reply_language,
+            writes_arabizi=result.decision.writes_arabizi,
+        )
+        logger.info(
+            "reply_language_settled",
+            store_id=store_id,
+            reply_language=str(settled.reply),
+            source=str(settled.source),
+            changed=settled.stored != stored_before,
+        )
+        state = result.state
+        if settled.stored != state.reply_language:
+            state = state.model_copy(update={"reply_language": settled.stored})
+        return result.model_copy(update={"state": state, "reply_language": settled.reply})
 
     async def _run_turn(self, turn: CustomerTurnInput) -> CustomerTurnResult:
         """One turn in, the next state and what happened out.
@@ -1154,6 +1225,11 @@ class CustomerTurnCoordinator:
                 message=turn.message,
                 conversation=turn.conversation,
                 state_view=project_state(pre_turn, await self._visible_cards(turn)),
+                # The language its own question to the customer is written in;
+                # None where Arabic replies are off or nothing settled it yet.
+                reply_language=(
+                    pre_turn.reply_language or turn.locale if self._arabic_replies else None
+                ),
             ),
             problems=problems,
         )
@@ -1206,6 +1282,7 @@ class CustomerTurnCoordinator:
             product_brief=primary.product_brief,
             focus=primary.focus,
             companions=primary.companions,
+            stated_figures=primary.stated_figures,
         )
 
     # ── a screen-driven room edit ───────────────────────────────────────────
@@ -3359,7 +3436,12 @@ class CustomerTurnCoordinator:
                 logger.warning("room_colour_chips_unavailable", store_id=turn.context.store_id)
                 colours = ()
             if colours:
-                question = question.model_copy(update={"colours": colours})
+                question = question.model_copy(
+                    update={
+                        "colours": colours,
+                        "colours_ar": self._briefs.arabic_names(AttributeFamily.COLOR, colours),
+                    }
+                )
         logger.info(
             "room_question_asked",
             store_id=turn.context.store_id,
@@ -4413,7 +4495,8 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=working, clarification=_interpretation_clarification(interpretation)
             )
-        return await self._ask_or_search(interpretation, decision, working, turn)
+        primary = await self._ask_or_search(interpretation, decision, working, turn)
+        return replace(primary, stated_figures=stated_figures(interpretation.request))
 
     async def _ask_or_search(
         self,
@@ -4435,6 +4518,7 @@ class CustomerTurnCoordinator:
         if answering and pending is not None and pending.drop_saved_sizes:
             decision = decision.model_copy(update={"drop_saved_sizes": True})
         asking = self._briefs is not None and not (decision.skip_questions or answering)
+        language = self._turn_language(turn, decision)
         combining = asking and await self._needs_combining(interpretation, turn)
         if asking and not combining:
             # "I need a sofa", "find me a sofa", "show me sofas": the card
@@ -4446,6 +4530,7 @@ class CustomerTurnCoordinator:
                 turn,
                 BriefMode.ASK,
                 drop_saved_sizes=decision.drop_saved_sizes,
+                language=language,
             )
             if asked is not None:
                 return asked
@@ -4456,7 +4541,7 @@ class CustomerTurnCoordinator:
         primary = await self._seed_and_execute(interpretation, decision, working, turn)
         if answering or combining:
             return primary
-        return await self._offer_narrowing(interpretation, primary, turn)
+        return await self._offer_narrowing(interpretation, primary, turn, language)
 
     async def _needs_combining(self, resolved: ResolvedSearch, turn: CustomerTurnInput) -> bool:
         """Whether no single piece in the store seats as many as they need.
@@ -4490,6 +4575,7 @@ class CustomerTurnCoordinator:
         mode: BriefMode,
         *,
         drop_saved_sizes: bool = False,
+        language: ReplyLanguage = ReplyLanguage.EN,
     ) -> _Primary | None:
         """The card for this search, recorded as shown - or None to search.
 
@@ -4500,7 +4586,9 @@ class CustomerTurnCoordinator:
         if self._briefs is None:
             return None
         try:
-            built = await self._briefs.build(resolved, working, turn.context, mode=mode)
+            built = await self._briefs.build(
+                resolved, working, turn.context, mode=mode, language=language
+            )
         except _HANDLED_SEARCH_FAILURES:
             logger.warning("product_brief_unavailable", store_id=turn.context.store_id)
             return None
@@ -4517,7 +4605,11 @@ class CustomerTurnCoordinator:
         )
 
     async def _offer_narrowing(
-        self, resolved: ResolvedSearch, primary: _Primary, turn: CustomerTurnInput
+        self,
+        resolved: ResolvedSearch,
+        primary: _Primary,
+        turn: CustomerTurnInput,
+        language: ReplyLanguage,
     ) -> _Primary:
         """Beside results they asked for without questions, the card folded.
 
@@ -4545,7 +4637,9 @@ class CustomerTurnCoordinator:
             semantic_text=resolved.semantic_text,
             unmatched_strict=resolved.unmatched_strict,
         )
-        narrowed = await self._product_brief(executed, primary.state, turn, BriefMode.NARROW)
+        narrowed = await self._product_brief(
+            executed, primary.state, turn, BriefMode.NARROW, language=language
+        )
         if narrowed is None:
             return primary
         return replace(primary, state=narrowed.state, product_brief=narrowed.product_brief)
@@ -5025,6 +5119,9 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
     ) -> _Primary:
         delta = decision.refinement or SearchRefinementDelta()
+        # Read before a relative price is resolved into an absolute bound: that
+        # bound is computed, and only what they stated may be said back.
+        figures = refinement_figures(delta)
         if delta.price is not None and delta.price.op is PriceRefinementOp.SET_RELATIVE:
             rewritten = await self._resolve_relative_price(delta, pre_turn, turn.context)
             if isinstance(rewritten, _Primary):
@@ -5032,17 +5129,19 @@ class CustomerTurnCoordinator:
             delta = rewritten
 
         if decision.taxonomy_change_requested:
-            return await self._refine_taxonomy(decision, delta, working, turn)
-
-        # Only a refinement that touched a size says anything about sizes. A
-        # plain "cheaper ones" after a similar-product search, which stated no
-        # size, must not save that silence over the size they gave earlier.
-        return await self._compose_and_run(
-            self._composer.refine(working.active_search, delta),
-            working,
-            turn,
-            save_sizes=bool(delta.dimensions) or delta.planar_dimensions is not None,
-        )
+            primary = await self._refine_taxonomy(decision, delta, working, turn)
+        else:
+            # Only a refinement that touched a size says anything about sizes.
+            # A plain "cheaper ones" after a similar-product search, which
+            # stated no size, must not save that silence over the size they
+            # gave earlier.
+            primary = await self._compose_and_run(
+                self._composer.refine(working.active_search, delta),
+                working,
+                turn,
+                save_sizes=bool(delta.dimensions) or delta.planar_dimensions is not None,
+            )
+        return replace(primary, stated_figures=figures)
 
     async def _refine_taxonomy(
         self,
@@ -5410,6 +5509,7 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         seating_offer=offer,
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
+        reply_language=state.reply_language,
     )
 
 
@@ -5465,6 +5565,7 @@ def _with_chosen_combination(
         seating_offer=offer.model_copy(update={"chosen": chosen}),
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
+        reply_language=state.reply_language,
     )
     logger.info("seating_combination_chosen", choice=choice, pieces=len(chosen.lines))
     return with_picks

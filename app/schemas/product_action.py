@@ -84,6 +84,9 @@ class CompanionOffer(BaseModel):
     category: str = Field(min_length=1)
     subcategory: str = Field(min_length=1)
     label: str = Field(min_length=1)
+    label_ar: str | None = None
+    """`label` as it reads to a customer answered in Arabic, from the reviewed
+    pairings. Display only."""
 
 
 ProductActionRequest = Annotated[

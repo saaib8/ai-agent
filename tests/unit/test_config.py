@@ -11,6 +11,7 @@ from app.core.config import (
     Environment,
     PineconeSettings,
     Settings,
+    azure_v1_base,
     get_settings,
 )
 from pydantic import SecretStr, ValidationError
@@ -213,3 +214,138 @@ def test_a_namespace_template_without_the_store_id_is_rejected() -> None:
 def test_the_embedding_model_is_never_defaulted() -> None:
     """No model identifier belongs in the codebase (CLAUDE.md 31)."""
     assert build_settings().llm.embedding_model is None
+
+
+# ── Azure OpenAI ────────────────────────────────────────────────────────────
+
+AZURE_KEY = "azure-key-not-real"
+AZURE_ROOT = "https://zory-test.services.ai.azure.com/openai/v1/"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://zory-test.services.ai.azure.com",
+        "https://zory-test.services.ai.azure.com/",
+        "https://zory-test.services.ai.azure.com/openai/v1",
+        "https://zory-test.services.ai.azure.com/openai/v1/responses",
+        "https://zory-test.services.ai.azure.com/openai/v1/images/generations",
+    ],
+)
+def test_any_url_on_the_resource_gives_its_v1_root(endpoint: str) -> None:
+    """Azure hands out per-operation URLs; every client needs the shared root."""
+    assert azure_v1_base(endpoint) == AZURE_ROOT
+
+
+@pytest.mark.parametrize("endpoint", ["http://zory-test.services.ai.azure.com", "zory-test", ""])
+def test_a_non_https_endpoint_is_refused(endpoint: str) -> None:
+    with pytest.raises(ValueError):
+        azure_v1_base(endpoint)
+
+
+def test_without_azure_every_call_goes_to_openai() -> None:
+    settings = build_settings()
+
+    assert settings.llm.base_url is None
+    assert settings.redacted()["llm_endpoint"] == "openai"
+
+
+def test_azure_supplies_the_key_and_the_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", AZURE_KEY)
+    monkeypatch.setenv(
+        "AZURE_OPENAI_ENDPOINT", "https://zory-test.services.ai.azure.com/openai/v1/responses"
+    )
+
+    settings = build_settings()
+
+    assert settings.llm.api_key.get_secret_value() == AZURE_KEY
+    assert settings.llm.base_url == AZURE_ROOT
+    assert settings.redacted()["llm_endpoint"] == "zory-test.services.ai.azure.com"
+
+
+def test_azure_needs_no_separate_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", AZURE_KEY)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", AZURE_ROOT)
+
+    settings = build_settings(llm={"model": "deployment-name"})
+
+    assert settings.llm.api_key.get_secret_value() == AZURE_KEY
+    assert settings.llm.model == "deployment-name"
+
+
+def test_an_explicit_base_url_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", AZURE_KEY)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", AZURE_ROOT)
+
+    settings = build_settings(
+        llm={"api_key": "other-key", "model": "m", "base_url": "https://other.example/v1/"}
+    )
+
+    assert settings.llm.base_url == "https://other.example/v1/"
+    assert settings.llm.api_key.get_secret_value() == "other-key"
+
+
+@pytest.mark.parametrize("only", ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"])
+def test_half_an_azure_configuration_fails_by_name_never_by_value(
+    monkeypatch: pytest.MonkeyPatch, only: str
+) -> None:
+    monkeypatch.setenv(only, AZURE_KEY if only.endswith("KEY") else AZURE_ROOT)
+
+    with pytest.raises(ValidationError) as raised:
+        build_settings()
+
+    message = str(raised.value)
+    assert "AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT" in message
+    assert AZURE_KEY not in message
+
+
+def test_a_bad_azure_endpoint_fails_without_echoing_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", AZURE_KEY)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "http://insecure.example")
+
+    with pytest.raises(ValidationError) as raised:
+        build_settings()
+
+    assert "must be an https URL" in str(raised.value)
+    assert AZURE_KEY not in str(raised.value)
+
+
+def test_the_azure_key_never_renders(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", AZURE_KEY)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", AZURE_ROOT)
+
+    settings = build_settings()
+
+    assert AZURE_KEY not in repr(settings)
+    assert AZURE_KEY not in json.dumps(settings.redacted())
+
+
+def test_no_settings_error_ever_echoes_a_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set through the environment only, as in production: the key reaches the
+    validator as raw input, which an error would otherwise print."""
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", AZURE_KEY)
+    monkeypatch.setenv("ZORY_LLM__API_KEY", "openai-key-not-real")
+    monkeypatch.setenv("ZORY_ENVIRONMENT", "test")
+    monkeypatch.setenv("ZORY_DB__DSN", UNIT_TEST_DSN)
+    monkeypatch.setenv("ZORY_REDIS__URL", UNIT_TEST_REDIS_URL)
+
+    with pytest.raises(ValidationError) as raised:
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+    message = str(raised.value)
+    assert AZURE_KEY not in message
+    assert "openai-key-not-real" not in message
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_blank_azure_values_mean_not_set(monkeypatch: pytest.MonkeyPatch, blank: str) -> None:
+    """`.env.example` ships both lines empty; copying it must still start."""
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", blank)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", blank)
+
+    settings = build_settings()
+
+    assert settings.azure_openai_api_key is None
+    assert settings.llm.base_url is None
