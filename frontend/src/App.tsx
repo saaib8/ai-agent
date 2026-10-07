@@ -12,10 +12,8 @@ import type {
   RenderRoomSpec,
   RenderView,
 } from './api/types'
-import { getCompareGroups, postComparison } from './api/client'
+import { getCompareGroups } from './api/client'
 import { CatalogDialog } from './components/catalog/CatalogDialog'
-import { ComparisonDialog } from './components/ComparisonDialog'
-import type { ComparisonPopup } from './components/ComparisonDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
@@ -44,12 +42,10 @@ export default function App() {
   const [swap, setSwap] = useState<SwapContext | null>(null)
 
   // Comparing: the cards checked (any number up to the server's limit, all of
-  // one family) and the pop-up.
+  // one family). Comparing sends an ordinary conversation turn.
   const [compareGroups, setCompareGroups] = useState<Record<string, string>>({})
   const [compareMax, setCompareMax] = useState(DEFAULT_COMPARE_MAX)
   const [comparing, setComparing] = useState<CheckedCard[]>([])
-  const [comparePopup, setComparePopup] = useState<ComparisonPopup | null>(null)
-  const compareRequest = useRef(0)
   const groupsLoaded = useRef(false)
 
   // Which types compare with which is the server's reviewed data. Read once -
@@ -246,7 +242,7 @@ export default function App() {
     [chat, config.config, words],
   )
 
-  // ── comparing the checked cards, in a pop-up ─────────────────────────────
+  // ── comparing the checked cards in the conversation ─────────────────────
 
   const familyOf = useCallback(
     (product: GroundedProduct) => compareFamily(product, compareGroups),
@@ -285,29 +281,15 @@ export default function App() {
   )
 
   const handleCompare = useCallback(async () => {
-    if (comparing.length < 2) return
-    const names = comparing.map((card) => card.name)
-    const request = ++compareRequest.current
-    setComparePopup({ status: 'loading', names })
-    const result = await postComparison(config.config.apiBase, {
-      session_id: config.config.sessionId,
-      store_id: config.config.storeId,
-      cards: comparing.map((card) => ({ list_revision: card.listRevision, ordinal: card.ordinal })),
+    if (comparing.length < 2 || chat.sending || chat.picking) return
+    setSwap(null)
+    await chat.send(words.compareProducts(comparing.map((card) => card.name)), config.config, {
+      product: {
+        kind: 'compare_cards',
+        cards: comparing.map((card) => ({ list_revision: card.listRevision, ordinal: card.ordinal })),
+      },
     })
-    if (request !== compareRequest.current) return // closed while loading
-    setComparePopup(
-      result.ok
-        ? { status: 'ready', names, data: result.data }
-        : { status: 'error', names, message: result.error.message },
-    )
-  }, [comparing, config.config])
-
-  // Closing the pop-up keeps the cards checked: one can be swapped for another
-  // and compared again. Clearing is its own action.
-  const handleCloseCompare = useCallback(() => {
-    compareRequest.current += 1
-    setComparePopup(null)
-  }, [])
+  }, [chat, comparing, config.config, words])
 
   const handleUncheckCompare = useCallback((card: CheckedCard) => {
     setComparing((checked) => checked.filter((c) => c !== card))
@@ -408,9 +390,8 @@ export default function App() {
     chat.reset()
     setSwap(null)
     setSelection([])
-    handleCloseCompare()
     handleClearCompare()
-  }, [config, chat, handleCloseCompare, handleClearCompare])
+  }, [config, chat, handleClearCompare])
 
   return (
     <div className="flex h-screen flex-col overflow-hidden text-ink">
@@ -458,7 +439,6 @@ export default function App() {
           onBriefSubmit={handleBriefSubmit}
         />
       </main>
-      {comparePopup && <ComparisonDialog popup={comparePopup} onClose={handleCloseCompare} />}
       {catalogStep && (
         <CatalogDialog
           apiBase={config.config.apiBase}

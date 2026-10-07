@@ -183,6 +183,8 @@ ARABIC: Mapping[str, str] = MappingProxyType(
             "ما الألوان التي تميل إليها للغرفة - أم تفضّل أن أختار لك؟"
         ),
         # ── the next step a reply ends on ──────────────────────────────────
+        "What type of furniture are you looking for?": "ما نوع الأثاث الذي تبحث عنه؟",
+        "Which room would you like to design?": "أي غرفة تودّ تصميمها؟",
         "Are you looking for a particular piece, or would you like help designing a whole "
         "room?": "هل تبحث عن قطعة معيّنة، أم تودّ المساعدة في تصميم غرفة كاملة؟",
         "Shall I find what goes with your picks, or design a room around them?": (

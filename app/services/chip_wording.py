@@ -53,6 +53,8 @@ class Chip(StrEnum):
     NARROW_DOWN = "narrow_down"
     FIND_A_PIECE = "find_a_piece"
     DESIGN_A_ROOM = "design_a_room"
+    PRODUCT_TYPE = "product_type"
+    ROOM_TYPE = "room_type"
     # A room's questions and its over-budget swap (app/services/room_presentation.py).
     CHOOSE_FOR_ME = "choose_for_me"
     STRETCH_YES = "stretch_yes"
@@ -78,6 +80,14 @@ class Chip(StrEnum):
 
 CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
     {
+        Chip.PRODUCT_TYPE: {
+            EN: ChipText("{label}", "Show me {kind}"),
+            AR: ChipText("{label}", "أرني {kind}"),
+        },
+        Chip.ROOM_TYPE: {
+            EN: ChipText("{room}", "I'd like to design a {room}"),
+            AR: ChipText("{room}", "أودّ تصميم {room}"),
+        },
         Chip.WHAT_GOES_WITH_PICK: {
             EN: ChipText("What goes with the {kind}", "What goes with the {kind}?"),
             # No Arabic product-type names exist yet, so the pick is not named.

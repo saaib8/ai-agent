@@ -145,9 +145,10 @@ async def _render_customer_response(
 ) -> dict[str, object]:
     engine = runtime.context.chat
     result = state["result"]
+    response = await engine.render(state["turn"], result)
     return {
-        "response": await engine.render(state["turn"], result),
-        "presentation": engine.presentation(result),
+        "response": response,
+        "presentation": engine.presentation(result, response),
     }
 
 

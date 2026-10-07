@@ -118,3 +118,92 @@ categories:
     - barbell
     - boxing-gloves
     - weight-plates
+
+# Display names only. Canonical keys above remain the search vocabulary.
+arabic:
+  seating: مقاعد
+  bedroom: أثاث غرفة النوم
+  bedding: مفروشات السرير
+  tables: طاولات
+  dining: أثاث غرفة الطعام
+  office: أثاث المكتب
+  storage: وحدات تخزين
+  decor: ديكور
+  lighting: إضاءة
+  kitchen-appliances: أجهزة المطبخ
+  kitchenware: أدوات المطبخ
+  fitness: معدات رياضية
+  chair: كرسي
+  dining-chair: كرسي طعام
+  lounge-chair: كرسي استرخاء
+  office-chair: كرسي مكتب
+  recliner: كرسي قابل للإمالة
+  stool: كرسي مرتفع
+  outdoor-chair: كرسي خارجي
+  single-seater-sofa: كنبة فردية
+  sofa: كنبة
+  sectional-sofa: كنبة زاوية
+  sofa-bed: كنبة سرير
+  sofa-set: طقم كنب
+  chaise-lounge: شيزلونج
+  bed: سرير
+  dressing-table: تسريحة
+  wardrobe: دولاب
+  dresser: خزانة أدراج
+  bedspread: غطاء سرير
+  pillow: وسادة
+  mattresses: مراتب
+  mattress-pad: لبادة مرتبة
+  comforter: لحاف
+  service-table: طاولة جانبية
+  center-table: طاولة وسط
+  nightstand: كومودينة
+  console: كونسول
+  tv-table: طاولة تلفزيون
+  dining-table: طاولة طعام
+  dining-set: طقم طعام
+  office-table: طاولة مكتب
+  storage-box: صندوق تخزين
+  laundry-basket: سلة غسيل
+  shelve: رف
+  carpet: سجادة
+  flower-pot-and-plant: أصيص ونبات
+  statue-and-antique: تمثال وتحفة
+  candle: شمعة
+  candlestick: حامل شموع
+  vase: مزهرية
+  flower: زهرة
+  wall-clock: ساعة حائط
+  decorative-hanger: علاقة ديكور
+  art-canvas: لوحة فنية
+  mirror: مرآة
+  table-lamp: أباجورة
+  floor-lamp: أباجورة أرضية
+  wall-lighting: إضاءة جدارية
+  outdoor-lighting: إضاءة خارجية
+  chandelier: ثريا
+  pendant-lighting: إضاءة معلقة
+  coffee-maker: آلة قهوة
+  cooking-appliance: جهاز طبخ
+  food-processor: محضرة طعام
+  cooking-pot: قدر طبخ
+  serving-utensil-and-tray: أدوات وصواني تقديم
+  cup: كوب
+  plate: طبق
+  weight-bench-flat: مقعد أوزان مسطح
+  weight-bench-adjustable: مقعد أوزان قابل للتعديل
+  stationary-bike: دراجة ثابتة
+  treadmill: جهاز مشي
+  dumbbell: دمبل
+  elliptical-machine: جهاز تمرين بيضاوي
+  kettlebells: أوزان كيتل بيل
+  medicine-ball: كرة طبية
+  power-rack: قفص تمارين الأوزان
+  yoga-mat: بساط يوغا
+  leg-press-machine: جهاز ضغط الأرجل
+  chest-press-machine: جهاز ضغط الصدر
+  jump-rope: حبل قفز
+  air-bike: دراجة مقاومة هوائية
+  barbell: قضيب أوزان
+  boxing-gloves: قفازات ملاكمة
+  weight-plates: أقراص أوزان

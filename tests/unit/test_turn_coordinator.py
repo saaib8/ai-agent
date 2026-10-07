@@ -453,6 +453,7 @@ def _coordinator(
     rooms: Any = None,
     closest_type: Any = None,
     arabic_replies: bool = False,
+    compare_groups: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -495,6 +496,7 @@ def _coordinator(
         seating,
         closest_type,
         arabic_replies=arabic_replies,
+        compare_groups=compare_groups,
     )
     return coordinator, parts
 
@@ -792,6 +794,54 @@ async def test_a_model_clarification_is_carried_through_verbatim() -> None:
     assert result.grounding.clarification is question
     assert result.grounding.follow_up_policy is FollowUpPolicy.NONE
     assert parts["pipeline"].calls == []
+
+
+@pytest.mark.parametrize("message", ["I'm looking for a piece of furniture", "a single piece"])
+async def test_piece_type_question_has_stocked_choices(message: str) -> None:
+    from app.services.chat_runtime import ChatRuntime
+
+    question = BlockingClarification(
+        reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
+        question="What type of furniture are you looking for?",
+    )
+    capabilities = FakeCapabilities(pairs=(("seating", "sofa"), ("bedroom", "bed")))
+    coordinator, parts = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.CLARIFY, clarification=question, follow_up_policy=FollowUpPolicy.NONE
+        ),
+        capabilities=capabilities,
+    )
+    state = AgentStateV1()
+
+    result = await coordinator.run(_turn(state, message))
+    presentation = ChatRuntime.presentation(result)
+
+    assert result.grounding.clarification is question
+    assert presentation is not None
+    assert {choice.label for choice in presentation.choices} == {"Bed", "Sofa"}
+    assert {choice.value for choice in presentation.choices} == {"Show me bed", "Show me sofa"}
+    assert capabilities.calls == [CONTEXT]
+    assert result.state == state
+    assert len(parts["decisions"].inputs) == 1
+    assert parts["pipeline"].calls == []
+
+
+async def test_piece_choices_catalog_outage_keeps_the_question() -> None:
+    question = BlockingClarification(
+        reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
+        question="What type of furniture are you looking for?",
+    )
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.CLARIFY, clarification=question, follow_up_policy=FollowUpPolicy.NONE
+        ),
+        capabilities=FakeCapabilities(error=CatalogUnavailableError()),
+    )
+
+    result = await coordinator.run(_turn(AgentStateV1(), "a single piece"))
+
+    assert result.grounding.clarification is question
+    assert result.next_step is None
 
 
 async def test_a_design_handoff_is_a_marker_only() -> None:

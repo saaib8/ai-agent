@@ -115,6 +115,9 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "briefs",
         # Whether a session may be answered in Arabic. A flag, not a service.
         "arabic_replies",
+        # Checked cards compare only within reviewed families. Registry data,
+        # with no catalog access or model calls.
+        "compare_groups",
     ]
 
 

@@ -84,6 +84,7 @@ class RoomTemplate:
     kind: str
     pieces: tuple[RoomPiece, ...]
     asks_seats: bool
+    label_ar: str | None = None
 
     def piece(self, key: str) -> RoomPiece | None:
         return next((p for p in self.pieces if p.key == key), None)
@@ -153,11 +154,17 @@ def load_room_pieces(
         {piece.label for room in rooms.values() for piece in room.pieces},
         where=source.name,
     )
+    room_names = (
+        parse_arabic_labels(document["arabic_rooms"], rooms, where=source.name)
+        if "arabic_rooms" in document
+        else {}
+    )
     return RoomPieces(
         version=version,
         rooms={
             kind: replace(
                 room,
+                label_ar=room_names.get(kind),
                 pieces=tuple(replace(p, label_ar=arabic[p.label]) for p in room.pieces),
             )
             for kind, room in rooms.items()

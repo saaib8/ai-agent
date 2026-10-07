@@ -328,6 +328,7 @@ def customer_turn_coordinator(
             else None
         ),
         arabic_replies=settings.customer_agent.arabic_replies,
+        compare_groups=app_resources.compare_groups,
     )
 
 
@@ -564,6 +565,7 @@ def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> Fin
         SearchRefinementComposer(
             app_resources.attributes, app_resources.dimensions, app_resources.seating
         ),
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
 
 
@@ -594,6 +596,7 @@ def visualization_turn_runtime(
         _room_visualizer(session, app_resources),
         session_store(app_resources),
         app_resources.settings.session,
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
 
 
@@ -607,6 +610,7 @@ def catalog_visualization_runtime(
         app_resources.settings.session,
         app_resources.settings.effective_catalog(),
         app_resources.attributes,
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
 
 

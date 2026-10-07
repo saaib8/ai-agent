@@ -17,6 +17,10 @@
 # people the customer gives (CLAUDE.md 27.1): the chip reads "Sofa".
 version: v1
 
+arabic_rooms:
+  living_room: غرفة المعيشة
+  bedroom: غرفة النوم
+
 rooms:
   living_room:
     asks_seats: true

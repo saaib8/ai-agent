@@ -18,6 +18,7 @@ interface TurnWords {
   notThisOne: (name: string) => string
   notThisOneLabel: string
   whatGoesWith: (name: string) => string
+  compareProducts: (names: string[]) => string
   differentOptions: string
   otherRoomOptions: (role: string) => string
   useRoomOption: (ordinal: number, role: string) => string
@@ -29,6 +30,7 @@ const WORDS: Record<ReplyLanguage, TurnWords> = {
     notThisOne: (name) => `Not this one — the ${name}`,
     notThisOneLabel: 'Not this one',
     whatGoesWith: (name) => `What goes with the ${name}?`,
+    compareProducts: (names) => `Compare these products: ${names.join(' and ')}`,
     differentOptions: 'Show me different options',
     otherRoomOptions: (role) => `Show me other ${role} options`,
     useRoomOption: (ordinal, role) => `Use option ${ordinal} for the ${role}`,
@@ -38,17 +40,21 @@ const WORDS: Record<ReplyLanguage, TurnWords> = {
     notThisOne: () => 'لا أريد هذا',
     notThisOneLabel: 'لا أريد هذا',
     whatGoesWith: () => 'ما الذي يناسب هذا؟',
+    compareProducts: () => 'قارن هذه المنتجات',
     differentOptions: 'أرني خيارات مختلفة',
     otherRoomOptions: () => 'أرني خيارات أخرى لهذه القطعة',
     useRoomOption: (ordinal) => `استخدم الخيار ${ordinal} لهذه القطعة`,
   },
 }
 
-/** The language the latest reply was written in; English until one says otherwise. */
+/** The latest declared reply language. Photo and render replies without
+ *  language metadata do not reset an Arabic conversation to English. */
 export function conversationLanguage(turns: Turn[]): ReplyLanguage {
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     const turn = turns[i]
-    if (turn.kind === 'assistant') return turn.data.reply_language === 'ar' ? 'ar' : 'en'
+    if (turn.kind === 'assistant' && turn.data.reply_language != null) {
+      return turn.data.reply_language
+    }
   }
   return 'en'
 }

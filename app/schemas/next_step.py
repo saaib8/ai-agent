@@ -19,6 +19,12 @@ class NextStepKind(StrEnum):
     START = "start"
     """Nothing on screen and nothing picked: a piece, or a whole room?"""
 
+    CHOOSE_PIECE = "choose_piece"
+    """They want a piece: answer the product-type question with stocked types."""
+
+    CHOOSE_ROOM = "choose_room"
+    """They want a room designed: choose from the supported room templates."""
+
     AFTER_PICKS = "after_picks"
     """They have picks: what goes with them, or a room around them."""
 
@@ -39,6 +45,8 @@ class NextStepKind(StrEnum):
 
 
 QUESTIONS: dict[NextStepKind, str] = {
+    NextStepKind.CHOOSE_PIECE: "What type of furniture are you looking for?",
+    NextStepKind.CHOOSE_ROOM: "Which room would you like to design?",
     NextStepKind.START: (
         "Are you looking for a particular piece, or would you like help designing a whole room?"
     ),

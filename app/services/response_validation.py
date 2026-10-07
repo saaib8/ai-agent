@@ -70,4 +70,14 @@ def validate_response(
             detail=numeric.value,
             field=numeric.field,
         )
+    for choice in response.choices:
+        numeric = check_numeric_policy(
+            message=choice.label, follow_up_question=choice.value, allowance=allowance
+        )
+        if numeric is not None:
+            return ResponseViolation(
+                kind=ResponseViolationKind.UNSUPPORTED_NUMBER,
+                detail=numeric.value,
+                field="choices",
+            )
     return None

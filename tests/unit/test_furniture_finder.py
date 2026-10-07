@@ -822,7 +822,10 @@ class TestFind:
 
 
 def a_runtime(
-    service: FurnitureFinderService, sessions: FakeSessionStore | None = None
+    service: FurnitureFinderService,
+    sessions: FakeSessionStore | None = None,
+    *,
+    arabic_replies: bool = False,
 ) -> tuple[FinderTurnRuntime, FakeSessionStore]:
     store = sessions or FakeSessionStore()
     runtime = FinderTurnRuntime(
@@ -831,6 +834,7 @@ def a_runtime(
         SessionSettings(max_history_messages=6),
         SimilarSearchBuilder(TAXONOMY, ATTRIBUTES),
         SearchRefinementComposer(ATTRIBUTES, DIMENSIONS),
+        arabic_replies=arabic_replies,
     )
     return runtime, store
 
@@ -932,7 +936,9 @@ class TestPick:
 
         reply = await runtime.pick(a_pick(), CONTEXT)
 
-        assert reply.presentation is None
+        assert reply.presentation is not None
+        assert reply.presentation.products == ()
+        assert [choice.label for choice in reply.presentation.choices] == ["Yes", "No"]
         assert "couldn't find anything" in reply.response.message
         assert sessions.saved[(STORE, SESSION)].state.active_search is None
 

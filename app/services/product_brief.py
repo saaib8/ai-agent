@@ -213,16 +213,19 @@ class ProductBriefBuilder:
             else _plural(customer_words(subcategory or request.commerce_category))
         )
         if language is ReplyLanguage.AR:
-            # No Arabic product-type names exist yet: the family's reviewed noun
-            # when the card names its family, and no kind otherwise.
-            arabic_noun = self._briefs.arabic(noun) if family_word else None
+            # Both family nouns and narrower product types have registry-owned
+            # display names; the search itself keeps its canonical key.
+            arabic_noun = (
+                self._briefs.arabic(noun)
+                if family_word
+                else self._taxonomy.arabic(subcategory or request.commerce_category)
+            )
             submit = (
                 CARD_SUBMIT[language].format(noun=arabic_noun)
                 if arabic_noun
                 else CARD_SUBMIT_ANY[language]
             )
-            # `noun` stays what is being looked for: the family's Arabic word,
-            # or the searched kind's English until Arabic type names exist.
+            # A custom registry without a display name keeps its original noun.
             noun = arabic_noun or noun
         else:
             submit = CARD_SUBMIT[language].format(noun=noun)

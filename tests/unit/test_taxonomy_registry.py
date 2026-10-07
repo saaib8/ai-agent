@@ -128,6 +128,7 @@ def test_the_registry_knows_nothing_about_inventory(taxonomy: CommerceTaxonomy) 
     """Vocabulary only: no counts, no store, no availability (CLAUDE.md 9.1)."""
     surface = {name for name in dir(taxonomy) if not name.startswith("_")}
     assert surface == {
+        "arabic",
         "categories", "is_category", "is_pair", "is_subcategory",
         "subcategories", "validate_pair", "version",
     }

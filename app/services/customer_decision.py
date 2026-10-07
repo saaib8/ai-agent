@@ -169,6 +169,7 @@ class CustomerAgentDecisionService:
                 str(decision.commercial_reason) if decision.commercial_reason else None
             ),
             follow_up_policy=str(decision.follow_up_policy),
+            follow_up_goal=str(decision.follow_up_goal) if decision.follow_up_goal else None,
             blocking_clarification=decision.clarification is not None,
             has_interaction=decision.interaction is not None,
             has_new_search=decision.new_search is not None,

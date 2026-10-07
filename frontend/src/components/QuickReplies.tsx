@@ -1,8 +1,7 @@
-import type { BundleAction, ProductAction } from '../api/types'
-import type { QuickReply } from '../lib/quickReplies'
+import type { BundleAction, ProductAction, ReplyChoice } from '../api/types'
 
 interface QuickRepliesProps {
-  replies: QuickReply[]
+  replies: ReplyChoice[]
   /** The reply's words, and the action it runs when it carries one - a product
    *  action, or a room edit for the yes/no on an over-budget swap. */
   onPick: (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => void

@@ -6,7 +6,7 @@ import type {
   RenderView,
 } from '../api/types'
 import type { RejectedRef } from '../hooks/useChat'
-import type { QuickReply } from '../lib/quickReplies'
+import type { ReplyChoice } from '../api/types'
 import { BriefCard } from './BriefCard'
 import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
@@ -82,7 +82,7 @@ interface AssistantBubbleProps {
   /** Present on the search results on screen: check cards to compare. */
   compare?: GridCompare
   /** Tappable answers for the follow-up question, on the latest turn only. */
-  quickReplies?: QuickReply[]
+  quickReplies?: ReplyChoice[]
   onQuickReply?: (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => void
   /** Present on the current room package only: render it from a view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void

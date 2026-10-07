@@ -24,6 +24,7 @@ from app.core.exceptions import (
     UnknownCommerceCategoryError,
     UnknownCommerceSubcategoryError,
 )
+from app.taxonomy.arabic import parse_arabic_labels
 
 DEFAULT_TAXONOMY_PATH: Final[Path] = Path(__file__).parent / "commerce_v1.yaml"
 
@@ -35,9 +36,19 @@ _SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 class CommerceTaxonomy:
     """Immutable, queryable view of the approved commerce vocabulary."""
 
-    def __init__(self, version: str, categories: Mapping[str, frozenset[str]]) -> None:
+    def __init__(
+        self,
+        version: str,
+        categories: Mapping[str, frozenset[str]],
+        arabic: Mapping[str, str] | None = None,
+    ) -> None:
         self._version = version
         self._categories: Mapping[str, frozenset[str]] = dict(categories)
+        self._arabic = dict(arabic or {})
+
+    def arabic(self, key: str) -> str | None:
+        """Display name only; searches and classification keep the canonical key."""
+        return self._arabic.get(key)
 
     @property
     def version(self) -> str:
@@ -141,7 +152,16 @@ def _parse(document: Any, *, source: str) -> CommerceTaxonomy:
             seen.add(subcategory)
         categories[category] = frozenset(seen)
 
-    return CommerceTaxonomy(version=version, categories=categories)
+    arabic = (
+        parse_arabic_labels(
+            document["arabic"],
+            set(categories).union(*categories.values()),
+            where=source,
+        )
+        if "arabic" in document
+        else None
+    )
+    return CommerceTaxonomy(version=version, categories=categories, arabic=arabic)
 
 
 def load_taxonomy(path: Path | None = None) -> CommerceTaxonomy:

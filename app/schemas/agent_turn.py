@@ -48,6 +48,7 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.room_opener import RoomQuestion
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingSolution
+from app.schemas.text_choice import TextReplyChoice, validate_text_choices
 
 MAX_RESPONSE_CHARS = 4000
 
@@ -444,6 +445,18 @@ class CustomerResponse(BaseModel):
     follow_up_question: str | None = Field(default=None, max_length=300)
     """At most one, and only when the policy allowed it. Validating it against
     the policy needs the grounding, so that check lives with the caller."""
+    choices: tuple[TextReplyChoice, ...] = Field(default=(), max_length=6)
+    """Answers authored with the question, never inferred by the client."""
+
+    _distinct_choices = field_validator("choices")(validate_text_choices)
+
+    @model_validator(mode="after")
+    def _choices_answer_a_question(self) -> Self:
+        if self.choices and not any(
+            mark in f"{self.message} {self.follow_up_question or ''}" for mark in ("?", "؟")
+        ):
+            raise ValueError("reply choices require a question")
+        return self
 
     @field_validator("referenced_grounding_refs")
     @classmethod

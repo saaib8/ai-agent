@@ -5,6 +5,7 @@ import { CloseIcon, CompareIcon } from './icons'
 interface CompareBarProps {
   /** The cards checked for comparison: any number, all of one family. */
   checked: CheckedCard[]
+  busy: boolean
   onCompare: () => void
   onUncheck: (card: CheckedCard) => void
   onClear: () => void
@@ -17,7 +18,7 @@ interface CompareBarProps {
  * once at least two similar products are checked - as many as they like, up to
  * the server's limit. Any can be unchecked here as well as on its card.
  */
-export function CompareBar({ checked, onCompare, onUncheck, onClear }: CompareBarProps) {
+export function CompareBar({ checked, busy, onCompare, onUncheck, onClear }: CompareBarProps) {
   if (checked.length === 0) return null
   const ready = checked.length >= 2
 
@@ -52,7 +53,7 @@ export function CompareBar({ checked, onCompare, onUncheck, onClear }: CompareBa
           <button
             type="button"
             onClick={onCompare}
-            disabled={!ready}
+            disabled={!ready || busy}
             title={ready ? undefined : 'Check at least two products of the same kind'}
             className="inline-flex items-center gap-1.5 rounded-full bg-clay px-4 py-2 text-sm font-semibold text-white shadow-card transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 disabled:cursor-not-allowed disabled:bg-line-strong disabled:text-muted disabled:shadow-none"
           >

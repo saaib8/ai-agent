@@ -702,6 +702,7 @@ def test_the_existing_response_output_contract_is_reused() -> None:
         "message",
         "referenced_grounding_refs",
         "follow_up_question",
+        "choices",
     }
 
 

@@ -421,6 +421,8 @@ class TestSelectionRender:
 def a_runtime(
     sessions: FakeSessionStore | None = None,
     rows: Sequence[ProductRow] | None = None,
+    *,
+    arabic_replies: bool = False,
     **catalog: Any,
 ) -> tuple[CatalogVisualizationRuntime, dict[str, Any], FakeSessionStore]:
     store = sessions or FakeSessionStore()
@@ -431,6 +433,7 @@ def a_runtime(
         SessionSettings(max_history_messages=6),
         CatalogSettings(**catalog),
         ATTRIBUTES,
+        arabic_replies=arabic_replies,
     )
     return runtime, parts, store
 

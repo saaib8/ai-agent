@@ -23,7 +23,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from app.schemas.acquisition import BundleAcquisition
@@ -53,6 +53,7 @@ from app.schemas.refinement import (
     SemanticIntentRefinement,
 )
 from app.schemas.seating_solution import SeatingAnswer
+from app.schemas.text_choice import TextReplyChoice, validate_text_choices
 from app.taxonomy.attributes import CatalogAttributes
 
 MAX_CLARIFICATION_CHARS = 300
@@ -739,6 +740,10 @@ class BlockingClarification(BaseModel):
 
     reason: BlockingClarificationReason
     question: str = Field(min_length=1, max_length=MAX_CLARIFICATION_CHARS)
+    choices: tuple[TextReplyChoice, ...] = Field(default=(), max_length=6)
+    """Plain-text answers to this question; catalog suggestions are application-owned."""
+
+    _distinct_choices = field_validator("choices")(validate_text_choices)
 
 
 # ── the decision ────────────────────────────────────────────────────────────

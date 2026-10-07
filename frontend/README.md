@@ -86,5 +86,6 @@ Notes for maintainers:
 - The exact/​widened badge is derived from `relaxation_depth` (0 = exact),
   because the backend's `matched_exactly` is a computed property and not on the
   wire.
-- Quick-reply chips are derived client-side from the agent's free-text question
-  (`lib/quickReplies.ts`), since the backend returns no structured options.
+- Quick-reply chips come exclusively from `presentation.choices`. The backend
+  supplies questions with their answers; the frontend never interprets prose
+  to invent options. Without choices, the customer can answer by typing.

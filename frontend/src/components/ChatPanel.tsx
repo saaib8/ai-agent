@@ -11,7 +11,6 @@ import type {
   RoomRenderPresentation,
 } from '../api/types'
 import type { Activity, Turn } from '../hooks/useChat'
-import { deriveQuickReplies } from '../lib/quickReplies'
 import { CompareBar } from './CompareBar'
 import { Composer } from './Composer'
 import { EmptyState } from './EmptyState'
@@ -115,19 +114,10 @@ export function ChatPanel({
   }, [turns, sending])
 
   const last = turns[turns.length - 1]
-  // The backend's own choices win: they are built from real options, where the
-  // derived chips are only a guess from the question's wording.
+  // The backend owns the question and its answers. Prose never creates controls.
   const backendChoices = last?.kind === 'assistant' ? last.data.presentation?.choices ?? [] : []
-  // A card of questions or a piece picker is the turn's question: nothing is
-  // guessed from the reply's words beside it.
   const quickReplies =
-    !sending && last?.kind === 'assistant'
-      ? backendChoices.length > 0 ||
-        last.data.presentation?.piece_picker ||
-        last.data.presentation?.brief
-        ? backendChoices
-        : deriveQuickReplies(last.data.response.message, last.data.response.follow_up_question)
-      : []
+    !sending && last?.kind === 'assistant' ? backendChoices : []
 
   // The picker only lives on the most recent assistant turn: older product
   // grids are history and must not sprout "Use this" buttons.
@@ -305,6 +295,7 @@ export function ChatPanel({
 
       <CompareBar
         checked={comparing}
+        busy={busy}
         onCompare={onCompare}
         onUncheck={onUncheckCompare}
         onClear={onClearCompare}

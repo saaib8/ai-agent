@@ -1,5 +1,5 @@
 import type { ProductComparisonResult } from '../../api/types'
-import { humanise, money } from '../../lib/format'
+import { dimensionsLine, humanise, money } from '../../lib/format'
 
 const STATUS_STYLES: Record<string, string> = {
   different: 'bg-clay-soft text-clay',
@@ -12,6 +12,7 @@ export function ComparisonTable({ comparison }: { comparison: ProductComparisonR
   // left out. A row only some fill stays: the known value is still worth
   // comparing, with a dash where the other listing is silent.
   const rows = comparison.rows.filter((row) => row.cells.some((cell) => cell.known))
+  const dimensions = products.map((product) => dimensionsLine(product.dimensions))
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
       <div className="border-b border-line bg-canvas/60 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">
@@ -60,6 +61,22 @@ export function ComparisonTable({ comparison }: { comparison: ProductComparisonR
             </tr>
           </thead>
           <tbody>
+            <tr className="border-t border-line">
+              <td className="sticky left-0 z-10 bg-surface px-4 py-3 align-top">
+                <span className="font-medium text-ink">Listed dimensions</span>
+                <p className="mt-1 max-w-48 text-xs text-muted">
+                  Shown as listed; length and width may be recorded in either order.
+                </p>
+              </td>
+              {dimensions.map((value, i) => (
+                <td
+                  key={products[i].grounding_ref}
+                  className={`px-4 py-3 align-top ${value ? 'text-ink' : 'text-muted/60'}`}
+                >
+                  {value ?? 'Not listed'}
+                </td>
+              ))}
+            </tr>
             {rows.map((row) => (
               <tr key={row.field} className="border-t border-line">
                 <td className="sticky left-0 z-10 bg-surface px-4 py-3 align-top">

@@ -62,7 +62,9 @@ from app.schemas.furniture_finder import (
     ObjectDescription,
     view_of,
 )
+from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.resolution import SimilarSearchSeed
 from app.schemas.retailer import RetailerContext
 from app.services.agent_state import (
@@ -79,6 +81,7 @@ from app.services.finder_imaging import (
 )
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
+from app.services.media_wording import photo_reply
 from app.services.object_description import ObjectDescriber
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.similar_search import SimilarSearchBuilder
@@ -230,7 +233,10 @@ class FinderTurnRuntime:
         settings: SessionSettings,
         similar: SimilarSearchBuilder,
         composer: SearchRefinementComposer,
+        *,
+        arabic_replies: bool = False,
     ) -> None:
+        self._arabic_replies = arabic_replies
         self._finder = finder
         self._sessions = sessions
         self._settings = settings
@@ -263,8 +269,14 @@ class FinderTurnRuntime:
         products, description = await self._finder.find(photo, detected, context)
         state = self._committed_state(loaded.envelope.state, products)
         on_screen = state is not None
-        response = _response(detected, len(products))
+        language = (
+            loaded.envelope.state.reply_language or ReplyLanguage.EN
+            if self._arabic_replies
+            else ReplyLanguage.EN
+        )
+        response = photo_reply(detected.display_label, len(products), language)
         presentation = ChatPresentation(
+            choices=tuple(ReplyChoice(label=c.label, value=c.value) for c in response.choices),
             products=tuple(
                 to_grounded_product(
                     product,
@@ -300,6 +312,7 @@ class FinderTurnRuntime:
             session_revision=revision,
             response=response,
             presentation=None if presentation.is_empty() else presentation,
+            reply_language=language if self._arabic_replies else None,
         )
 
     def _committed_state(
@@ -439,26 +452,4 @@ def _pick_utterance(detected: DetectedObject, description: ObjectDescription) ->
     return (
         f"[Shared a photo and picked the {label} in it: {description.summary.rstrip('. ')}] "
         f"Show me products like this {label}."
-    )
-
-
-def _response(detected: DetectedObject, count: int) -> CustomerResponse:
-    """Fixed wording. Nothing here is a fact a model could get wrong."""
-    label = detected.display_label
-    if count == 0:
-        return CustomerResponse(
-            message=(
-                f"I couldn't find anything in this catalog that looks like the {label} "
-                "in your photo."
-            ),
-            follow_up_question="Would you like me to search for one by description instead?",
-        )
-    lead = (
-        f"Here is the closest match to the {label} in your photo."
-        if count == 1
-        else f"Here are the {count} closest matches to the {label} in your photo."
-    )
-    return CustomerResponse(
-        message=lead,
-        follow_up_question="Would you like to compare any of these, or hear more about one?",
     )

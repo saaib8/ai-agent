@@ -588,10 +588,17 @@ async def a_stored_session(store: FakeSessionStore, state: AgentStateV1) -> None
     assert await store.save_if_revision(STORE, SESSION, expected_revision=0, envelope=envelope)
 
 
-def a_turn_runtime(store: FakeSessionStore) -> tuple[VisualizationTurnRuntime, dict[str, Any]]:
+def a_turn_runtime(
+    store: FakeSessionStore, *, arabic_replies: bool = False
+) -> tuple[VisualizationTurnRuntime, dict[str, Any]]:
     visualizer, parts = a_visualizer()
     return (
-        VisualizationTurnRuntime(visualizer, store, SessionSettings(max_history_messages=6)),  # type: ignore[arg-type]
+        VisualizationTurnRuntime(
+            visualizer,
+            store,  # type: ignore[arg-type]
+            SessionSettings(max_history_messages=6),
+            arabic_replies=arabic_replies,
+        ),
         parts,
     )
 

@@ -49,7 +49,7 @@ from app.schemas.agent_turn import (
 )
 from app.schemas.conversation import ConversationRole
 from app.schemas.language import ReplyLanguage
-from app.schemas.next_step import ANY_NEXT_STEP
+from app.schemas.next_step import ANY_NEXT_STEP, NextStepKind
 from app.schemas.response import (
     DeterministicResponse,
     DeterministicResponseKind,
@@ -246,6 +246,12 @@ class CustomerResponseGenerator:
         route: ResponseRoute,
         language: ReplyLanguage,
     ) -> tuple[CustomerResponse, int, bool]:
+        if result.next_step is not None and result.next_step.kind in (
+            NextStepKind.CHOOSE_PIECE,
+            NextStepKind.CHOOSE_ROOM,
+        ):
+            # The application supplies both this question and its stocked choices.
+            return _say(result.next_step.question, language), 0, False
         primary = route.primary
         if isinstance(primary, DeterministicResponse):
             return await self._deterministic(turn, result, route, primary, language)
@@ -274,7 +280,9 @@ class CustomerResponseGenerator:
                 # The decision model wrote this question and it was validated
                 # in its own phase. Re-wording it could only change what was
                 # asked, so it is carried through untouched and not scanned.
-                return _reply(clarification.question), 0, False
+                return CustomerResponse(
+                    message=clarification.question, choices=clarification.choices
+                ), 0, False
 
             case DeterministicResponseKind.HANDLED_FAILURE:
                 assert primary.failure_code is not None
@@ -296,7 +304,13 @@ class CustomerResponseGenerator:
                     language=language,
                 )
                 return (
-                    _reply(compose(in_language(DESIGN_HANDOFF_WORDING, language), question)),
+                    CustomerResponse(
+                        message=compose(
+                            in_language(DESIGN_HANDOFF_WORDING, language), question.message
+                        ),
+                        follow_up_question=question.follow_up_question,
+                        choices=question.choices,
+                    ),
                     calls,
                     used_fallback,
                 )
@@ -393,6 +407,13 @@ class CustomerResponseGenerator:
         )
         if response is None:
             return _say(_fallback(view), language), calls, True
+        if result.next_step is not None and (
+            response.choices or response.follow_up_question is not None or _asks(response.message)
+        ):
+            # The application owns this question and its controls. A model's
+            # replacement question must not be placed above different answers.
+            logger.warning("response_replaced_application_question")
+            return _say(_fallback(view), language), calls, True
         return response, calls, False
 
     async def _generated_message(
@@ -403,8 +424,8 @@ class CustomerResponseGenerator:
         *,
         follow_up_allowed: bool,
         language: ReplyLanguage,
-    ) -> tuple[str, int, bool]:
-        """Just the words, for a branch that composes them with its own."""
+    ) -> tuple[CustomerResponse, int, bool]:
+        """A question with its answers, for a branch adding an acknowledgement."""
         request = ResponseInput(
             message=turn.message,
             conversation=turn.conversation,
@@ -419,8 +440,8 @@ class CustomerResponseGenerator:
             language=language,
         )
         if response is None:
-            return in_language(_fallback(view), language), calls, True
-        return response.message, calls, False
+            return _say(_fallback(view), language), calls, True
+        return response, calls, False
 
     # ── the call, and the one retry it may earn ─────────────────────────────
 
@@ -507,6 +528,7 @@ class CustomerResponseGenerator:
                 message=compose(response.message, notice),
                 referenced_grounding_refs=response.referenced_grounding_refs,
                 follow_up_question=response.follow_up_question,
+                choices=response.choices,
             )
         except ValidationError:
             # Only reachable if the composed message exceeds the contract's

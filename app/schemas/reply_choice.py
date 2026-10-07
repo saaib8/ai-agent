@@ -17,8 +17,8 @@ from app.schemas.product_action import ProductActionRequest
 class ReplyChoice(BaseModel):
     """A ready answer the customer can tap instead of typing.
 
-    Built by the application from real options - a shape the store can build,
-    with its real lowest total - never by a model.
+    Catalog options and executable actions are built by the application.
+    A model's validated conversational answers are projected here as text only.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

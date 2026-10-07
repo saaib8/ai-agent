@@ -252,6 +252,7 @@ export interface CustomerResponse {
   message: string
   referenced_grounding_refs: number[]
   follow_up_question: string | null
+  choices?: { label: string; value: string }[]
 }
 
 export interface ChatResponse {
@@ -332,6 +333,7 @@ export type SearchAction = MoreOptionsAction | ExcludeProductAction | BriefAnswe
 export type ProductAction =
   | { kind: 'goes_with'; pick: number }
   | { kind: 'compare'; picks: [number, number] }
+  | { kind: 'compare_cards'; cards: { list_revision: number; ordinal: number }[] }
   | { kind: 'companion'; category: string; subcategory: string }
 
 /** A ready answer to tap; when it carries an action, tapping runs it. */

@@ -37,6 +37,7 @@ from decimal import Decimal
 
 from app.core.exceptions import (
     CatalogUnavailableError,
+    ComparisonRefusedError,
     IntegrationUnavailableError,
     LLMResponseInvalidError,
     TaxonomyValidationError,
@@ -170,12 +171,14 @@ from app.schemas.product import ProductCandidate
 from app.schemas.product_action import (
     CompanionAction,
     CompanionOffer,
+    CompareCardsAction,
     ComparePicksAction,
     GoesWithPickAction,
     ProductActionRequest,
 )
 from app.schemas.product_brief import BriefMode, ProductBrief
 from app.schemas.product_reference import (
+    ComparedOrdinal,
     FocusedProduct,
     PickedOrdinal,
     PresentedOrdinal,
@@ -256,7 +259,7 @@ from app.services.design_revision import (
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
-from app.services.next_step import next_step
+from app.services.next_step import asks_for_product_type, next_step
 from app.services.numeric_guard import refinement_figures, stated_figures
 from app.services.product_brief import ProductBriefBuilder
 from app.services.product_interaction import build_picks, interaction_update
@@ -280,6 +283,7 @@ from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.compare_groups import CompareGroups
 from app.taxonomy.complements import Companion, Complements
 from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
@@ -987,7 +991,9 @@ class CustomerTurnCoordinator:
         companion_search: CompanionSearchBuilder | None = None,
         briefs: ProductBriefBuilder | None = None,
         arabic_replies: bool = False,
+        compare_groups: CompareGroups | None = None,
     ) -> None:
+        self._compare_groups = compare_groups
         self._arabic_replies = arabic_replies
         """Whether a session may be answered in Arabic. Off, the language is
         never read or stored, and every turn runs exactly as before."""
@@ -1047,7 +1053,20 @@ class CustomerTurnCoordinator:
         result = await self._run_turn(turn)
         if started is not None:
             result = self._with_language(result, started, stored, turn.context.store_id)
-        step = next_step(result, self._complements)
+        capabilities = None
+        if asks_for_product_type(result):
+            try:
+                capabilities = await self._capabilities.capabilities(turn.context)
+            except CatalogUnavailableError:
+                # Suggestions are optional: preserve the question during an outage.
+                logger.warning("piece_choices_unavailable", store_id=turn.context.store_id)
+        step = next_step(
+            result,
+            self._complements,
+            capabilities=capabilities,
+            taxonomy=self._taxonomy,
+            rooms=self._rooms,
+        )
         return result.model_copy(update={"next_step": step}) if step is not None else result
 
     def _turn_language(
@@ -1392,10 +1411,10 @@ class CustomerTurnCoordinator:
     async def _run_product_action(
         self, turn: CustomerTurnInput, action: ProductActionRequest
     ) -> CustomerTurnResult:
-        """Ask about a pick, compare two, or show a companion a chip offered.
+        """Ask about a pick, compare picks or cards, or show an offered companion.
 
         No decision model and no query understanding: a pick is named by its
-        position in the picks and resolves against verified state, and a
+        position in the picks, a card by its list and position, and a
         companion type is checked against the reviewed pairings. Each grounds
         exactly as its ordinary counterpart would - a product, a comparison, a
         search - and is worded the same way (CLAUDE.md 3.6).
@@ -1409,6 +1428,17 @@ class CustomerTurnCoordinator:
             case ComparePicksAction():
                 decision = _compare_picks_decision(action)
                 primary = await self._compare(decision, pre_turn, pre_turn, turn)
+            case CompareCardsAction():
+                decision = CustomerAgentDecision(
+                    action=AgentAction.COMPARE,
+                    commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+                    follow_up_policy=FollowUpPolicy.NONE,
+                    comparison_references=tuple(
+                        ComparedOrdinal(position=column)
+                        for column in range(1, len(action.cards) + 1)
+                    ),
+                )
+                primary = await self._compare_cards(action, pre_turn, turn)
             case CompanionAction():
                 decision = _search_action_decision()
                 primary = await self._show_companion(action, pre_turn, turn)
@@ -5327,10 +5357,48 @@ class CustomerTurnCoordinator:
                 return _Primary(state=working, clarification=clarification, failure=failure)
             product_ids.append(outcome.product_id)
 
+        return await self._compare_products(product_ids, working, turn)
+
+    async def _compare_cards(
+        self, action: CompareCardsAction, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        product_ids: list[int] = []
+        for card in action.cards:
+            outcome = await self._references.resolve_on_list(
+                card.ordinal, card.list_revision, state, turn.context
+            )
+            if isinstance(outcome, ReferenceUnresolved):
+                clarification, failure = _reference_outcome(
+                    outcome.reason,
+                    BlockingClarificationReason.AMBIGUOUS_COMPARATIVE_REFERENCE,
+                    unavailable_code=TurnFailureCode.COMPARISON_TARGET_UNAVAILABLE,
+                )
+                return _Primary(state=state, clarification=clarification, failure=failure)
+            product_ids.append(outcome.product_id)
+        return await self._compare_products(product_ids, state, turn, similar_only=True)
+
+    async def _compare_products(
+        self,
+        product_ids: list[int],
+        working: AgentStateV1,
+        turn: CustomerTurnInput,
+        *,
+        similar_only: bool = False,
+    ) -> _Primary:
         comparison = await self._comparison.compare(product_ids, turn.context)
         if isinstance(comparison, ComparisonUnavailable):
             clarification, failure = _comparison_outcome(comparison)
             return _Primary(state=working, clarification=clarification, failure=failure)
+        if similar_only:
+            first, *others = (product.commerce.subcategory for product in comparison.products)
+            comparable = all(
+                self._compare_groups.comparable(first, other)
+                if self._compare_groups is not None
+                else first is not None and first == other
+                for other in others
+            )
+            if not comparable:
+                raise ComparisonRefusedError(reason="dissimilar")
         # Recorded in column order, so "the second one" can mean the second
         # column rather than only the second search result. Taken from the
         # comparison the service actually built, never from the references

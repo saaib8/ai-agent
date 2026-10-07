@@ -47,6 +47,7 @@ from app.schemas.conversation import (
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import PickView
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
@@ -149,13 +150,14 @@ class ChatRuntime:
         return await self._responses.generate(turn, result)
 
     @staticmethod
-    def presentation(result: CustomerTurnResult) -> ChatPresentation | None:
+    def presentation(
+        result: CustomerTurnResult, response: CustomerResponse | None = None
+    ) -> ChatPresentation | None:
         """What the client draws, built from verified facts only.
 
         Assembled from the turn's own grounding and the room the optimiser
-        chose. The response model contributes nothing here: it cites handles,
-        and the application renders the cards those handles name, so a price in
-        the text and a price on a card cannot disagree (CLAUDE.md 20.4).
+        chose. The response model may contribute validated text answers to its
+        own question; it never creates product facts or executable actions.
         """
         grounding = result.grounding
         products: tuple[GroundedProduct, ...] = ()
@@ -192,6 +194,16 @@ class ChatRuntime:
             # A reply never ends on a dead end: the next step's chips answer the
             # question it closes on (CLAUDE.md 10.2).
             choices = result.next_step.chips
+        application_asks = bool(
+            result.next_step
+            or result.room_question
+            or result.product_brief
+            or result.swap_offer
+            or result.seating_solution
+            or result.companions
+        )
+        if not choices and not application_asks and response is not None and response.choices:
+            choices = tuple(ReplyChoice(label=c.label, value=c.value) for c in response.choices)
         results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,
@@ -316,7 +328,7 @@ class ChatRuntime:
         turn = self.turn_input(request, context, loaded)
         result = await self.run_turn(turn)
         response = await self.render(turn, result)
-        presentation = self.presentation(result)
+        presentation = self.presentation(result, response)
 
         revision = await self.persist(request, loaded, result, response)
         self._log(request, loaded, revision, presentation, started)
