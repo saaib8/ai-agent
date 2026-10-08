@@ -134,6 +134,20 @@ class BriefBudgetOption(BaseModel):
         return self
 
 
+class BriefSpaceOption(BaseModel):
+    """What a space key means: the along-wall width a piece may be, in cm.
+
+    A ceiling the customer taps ("my spot is up to 220 cm wide"), so a chosen
+    band becomes a max-width filter. `max_cm` is None for the "any width"
+    escape, which filters nothing.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64)
+    max_cm: Decimal | None = Field(default=None, gt=0)
+
+
 class BriefFeelOption(BaseModel):
     """What a feel key means: the words it ranks by."""
 
@@ -159,6 +173,7 @@ class PendingBrief(BaseModel):
     base: ResolvedSearch
     kinds: tuple[BriefKindOption, ...] = ()
     budgets: tuple[BriefBudgetOption, ...] = ()
+    spaces: tuple[BriefSpaceOption, ...] = ()
     colours: tuple[str, ...] = ()
     styles: tuple[str, ...] = ()
     feels: tuple[BriefFeelOption, ...] = ()

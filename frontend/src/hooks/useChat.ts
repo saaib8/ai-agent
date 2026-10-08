@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   postCatalogVisualize,
   postChat,
@@ -58,6 +58,14 @@ export interface SendOptions {
 export interface UseChat {
   turns: Turn[]
   sending: boolean
+  /** Abort the in-flight reply. A no-op when nothing is generating. */
+  stop: () => void
+  /** A reply is typing out progressively; Stop freezes it. */
+  revealing: boolean
+  /** How many characters of `revealTurnId`'s reply are shown. */
+  revealedLen: number
+  /** The turn whose reply is typing out, or null. */
+  revealTurnId: string | null
   activity: Activity
   /** Revision the last committed turn produced; drives expected_session_revision. */
   revision: number | null
@@ -96,6 +104,12 @@ export interface UseChat {
 let counter = 0
 const nextId = (): string => `t${++counter}`
 
+// Typewriter pace for the reply reveal: deliberately readable, not instant, so
+// the reply can be watched as it is written and Stopped mid-way. Tune here -
+// smaller chars-per-tick or larger tick-ms is slower.
+const REVEAL_CHARS_PER_TICK = 1
+const REVEAL_TICK_MS = 28
+
 export function useChat(): UseChat {
   const [turns, setTurns] = useState<Turn[]>([])
   const [sending, setSending] = useState(false)
@@ -109,6 +123,47 @@ export function useChat(): UseChat {
   const revisionRef = useRef<number | null>(null)
   // Object URLs for shared photos, released on reset so they do not leak.
   const photoUrls = useRef<string[]>([])
+  // The in-flight request, so a Stop button can abort it. The server cancels a
+  // disconnected turn before it persists, so stopping leaves the conversation
+  // exactly as it was - there is nothing to undo.
+  const abortRef = useRef<AbortController | null>(null)
+  // Progressive reveal: the reply is fully generated and validated server-side,
+  // then typed onto the screen word by word. `revealedLen` is how many
+  // characters of `revealTurnId`'s reply are shown; Stop freezes it there. The
+  // customer therefore never sees an un-checked word - it is checked first, then
+  // revealed.
+  const [revealing, setRevealing] = useState(false)
+  const [revealedLen, setRevealedLen] = useState(0)
+  const [revealTurnId, setRevealTurnId] = useState<string | null>(null)
+  const revealTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const revealTarget = useRef(0)
+
+  const startReveal = (id: string, text: string) => {
+    if (revealTimer.current) clearInterval(revealTimer.current)
+    revealTimer.current = null
+    if (!text) {
+      setRevealTurnId(null)
+      setRevealing(false)
+      return
+    }
+    revealTarget.current = text.length
+    setRevealTurnId(id)
+    setRevealedLen(0)
+    setRevealing(true)
+    // The validated reply types out at a readable pace (tune REVEAL_* above).
+    revealTimer.current = setInterval(() => {
+      setRevealedLen((n) => Math.min(n + REVEAL_CHARS_PER_TICK, revealTarget.current))
+    }, REVEAL_TICK_MS)
+  }
+
+  // Stop the typewriter once the whole validated reply is on screen.
+  useEffect(() => {
+    if (revealing && revealedLen >= revealTarget.current) {
+      if (revealTimer.current) clearInterval(revealTimer.current)
+      revealTimer.current = null
+      setRevealing(false)
+    }
+  }, [revealing, revealedLen])
 
   const expected = (config: ConsoleConfig) =>
     config.sendExpectedRevision && revisionRef.current != null
@@ -121,7 +176,10 @@ export function useChat(): UseChat {
     // The server is the source of truth for what is picked; absent means the
     // turn did not report picks, so the tray stays as it is.
     if (data.picks) setPicks(data.picks)
-    setTurns((prev) => [...prev, { kind: 'assistant', id: nextId(), data, selection }])
+    const id = nextId()
+    setTurns((prev) => [...prev, { kind: 'assistant', id, data, selection }])
+    // Type the (already-validated) reply out; the products follow once it lands.
+    startReveal(id, data.response.message ?? '')
   }
 
   const fail = (status: number | 'network', error: ErrorBody) =>
@@ -137,19 +195,28 @@ export function useChat(): UseChat {
         { kind: 'user', id: nextId(), text, rejected: opts?.rejected },
       ])
       setSending(true)
+      const controller = new AbortController()
+      abortRef.current = controller
 
-      const result = await postChat(config.apiBase, {
-        session_id: config.sessionId,
-        store_id: config.storeId,
-        message: text,
-        ...expected(config),
-        ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
-        ...(opts?.search ? { search_action: opts.search } : {}),
-        ...(opts?.product ? { product_action: opts.product } : {}),
-      })
+      const result = await postChat(
+        config.apiBase,
+        {
+          session_id: config.sessionId,
+          store_id: config.storeId,
+          message: text,
+          ...expected(config),
+          ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
+          ...(opts?.search ? { search_action: opts.search } : {}),
+          ...(opts?.product ? { product_action: opts.product } : {}),
+        },
+        controller.signal,
+      )
 
+      abortRef.current = null
       if (result.ok) commit(result.data)
-      else fail(result.status, result.error)
+      // Stopped: no reply came and nothing persisted. The message stays on
+      // screen, the thread returns to idle, and no error is shown.
+      else if (result.status !== 'aborted') fail(result.status, result.error)
       setSending(false)
     },
     [],
@@ -248,16 +315,23 @@ export function useChat(): UseChat {
       ])
       setSending(true)
       setActivity('rendering')
+      const controller = new AbortController()
+      abortRef.current = controller
 
-      const result = await postVisualize(config.apiBase, {
-        session_id: config.sessionId,
-        store_id: config.storeId,
-        view,
-        ...expected(config),
-      })
+      const result = await postVisualize(
+        config.apiBase,
+        {
+          session_id: config.sessionId,
+          store_id: config.storeId,
+          view,
+          ...expected(config),
+        },
+        controller.signal,
+      )
 
+      abortRef.current = null
       if (result.ok) commit(result.data)
-      else fail(result.status, result.error)
+      else if (result.status !== 'aborted') fail(result.status, result.error)
       setActivity(null)
       setSending(false)
     },
@@ -269,26 +343,52 @@ export function useChat(): UseChat {
       setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text: summary }])
       setSending(true)
       setActivity('rendering')
+      const controller = new AbortController()
+      abortRef.current = controller
 
-      const result = await postCatalogVisualize(config.apiBase, {
-        session_id: config.sessionId,
-        store_id: config.storeId,
-        ...selection,
-        view,
-        ...expected(config),
-      })
+      const result = await postCatalogVisualize(
+        config.apiBase,
+        {
+          session_id: config.sessionId,
+          store_id: config.storeId,
+          ...selection,
+          view,
+          ...expected(config),
+        },
+        controller.signal,
+      )
 
+      abortRef.current = null
       if (result.ok) commit(result.data, selection)
-      else fail(result.status, result.error)
+      else if (result.status !== 'aborted') fail(result.status, result.error)
       setActivity(null)
       setSending(false)
     },
     [],
   )
 
+  const stop = useCallback(() => {
+    // Mid-generation: abort the request; the server discards the disconnected
+    // turn, so the conversation does not advance. Mid-reveal: the reply is
+    // already validated and saved, so just freeze the text where it is.
+    if (abortRef.current) {
+      abortRef.current.abort()
+      abortRef.current = null
+    } else if (revealTimer.current) {
+      clearInterval(revealTimer.current)
+      revealTimer.current = null
+      setRevealing(false)
+    }
+  }, [])
+
   const reset = useCallback(() => {
     photoUrls.current.forEach((url) => URL.revokeObjectURL(url))
     photoUrls.current = []
+    if (revealTimer.current) clearInterval(revealTimer.current)
+    revealTimer.current = null
+    setRevealing(false)
+    setRevealedLen(0)
+    setRevealTurnId(null)
     setTurns([])
     setRevision(null)
     setPicks([])
@@ -299,6 +399,10 @@ export function useChat(): UseChat {
   return {
     turns,
     sending,
+    stop,
+    revealing,
+    revealedLen,
+    revealTurnId,
     activity,
     revision,
     picks,

@@ -57,6 +57,7 @@ export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
         card: brief.card,
         piece: first('type'),
         budget: first('budget'),
+        space: first('space'),
         colours: picked.colour ?? [],
         styles: picked.style ?? [],
         feel: first('feel'),

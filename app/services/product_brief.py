@@ -32,7 +32,12 @@ from typing import Final
 from app.core.logging import get_logger
 from app.repositories.products import BriefFacts, ProductRepository
 from app.schemas.agent_state import AgentStateV1
-from app.schemas.discovery import PriceConstraint, SeatingCapacityConstraint
+from app.schemas.discovery import (
+    DimensionConstraint,
+    DimensionConstraintKind,
+    PriceConstraint,
+    SeatingCapacityConstraint,
+)
 from app.schemas.language import ReplyLanguage
 from app.schemas.product_brief import (
     MAX_BRIEF_COLOURS,
@@ -43,10 +48,16 @@ from app.schemas.product_brief import (
     BriefKindOption,
     BriefMode,
     BriefQuestionView,
+    BriefSpaceOption,
     PendingBrief,
     ProductBrief,
 )
-from app.schemas.query import ConstraintStrength, ResolvedSearch, SemanticPreference
+from app.schemas.query import (
+    ConstraintStrength,
+    DimensionConstraintSemantics,
+    ResolvedSearch,
+    SemanticPreference,
+)
 from app.schemas.retailer import RetailerContext
 from app.schemas.search_action import BriefAnswerAction
 from app.services.chip_wording import (
@@ -56,10 +67,13 @@ from app.services.chip_wording import (
     CARD_QUESTIONS,
     CARD_SUBMIT,
     CARD_SUBMIT_ANY,
+    SPACE_ANY,
+    SPACE_UPTO,
     currency_word,
 )
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.briefs import Brief, BriefQuestionKind, Briefs, KindChoice
+from app.taxonomy.dimensions import DimensionRole
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.words import customer_words, plural_words
 
@@ -69,6 +83,30 @@ MAX_COLOUR_CHOICES: Final[int] = 8
 MAX_STYLE_CHOICES: Final[int] = 6
 """The colours and styles most of these products carry - enough to find
 theirs, few enough to scan."""
+
+# Reviewed along-wall width ceilings (cm) per subcategory, offered as tappable
+# "up to X" bands for "how wide a space does the piece have to fit?". The key is
+# also the gate: a subcategory appears here ONLY where the dimension registry
+# (dimension_semantics_v1) maps OVERALL_WIDTH to the stored `length` axis - the
+# along-wall span the customer means - so a chosen ceiling always resolves to a
+# real filter on the right axis, never a refused one and never the wrong side.
+# A dining table is excluded on purpose: the registry maps its OVERALL_WIDTH to
+# the `width` (depth) axis, so a "how wide" ceiling would filter the wrong side;
+# its along-wall measure is LENGTH, which this single-role question cannot carry.
+# The three ceilings per family are grounded in the reviewed store-50 width
+# (`length`) distribution: the smallest always returns products, and the
+# largest covers nearly the whole family. They are a reviewed heuristic, not a
+# runtime computation - fixed so the card stays a plain lookup with no live
+# width SQL - and will want revisiting per retailer, exactly as the dimension
+# relaxation policy is scoped to store 50 (CLAUDE.md 15.2).
+WIDTH_CEILINGS: Final[dict[str, tuple[int, ...]]] = {
+    "sofa": (200, 240, 280),
+    "center-table": (90, 120, 150),
+    "service-table": (40, 55, 70),
+    "tv-table": (160, 190, 220),
+    "console": (110, 140, 165),
+    "wardrobe": (180, 250, 300),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +180,7 @@ class ProductBriefBuilder:
         questions: list[BriefQuestionView] = []
         kinds: tuple[BriefKindOption, ...] = ()
         budgets: tuple[BriefBudgetOption, ...] = ()
+        spaces: tuple[BriefSpaceOption, ...] = ()
         colours: tuple[str, ...] = ()
         styles: tuple[str, ...] = ()
         feels: tuple[BriefFeelOption, ...] = ()
@@ -159,6 +198,19 @@ class ProductBriefBuilder:
                     question = _question(
                         kind,
                         [(b.key, _band_label(b, language)) for b in budgets],
+                        language=language,
+                    )
+                case BriefQuestionKind.SPACE:
+                    # Built from the pinned subcategory, not the kinds being
+                    # asked: a sofa card knows it is a sofa, so sofa's ceilings
+                    # are offered even while the seat count is still open. A
+                    # card that has not pinned one ("I need a table") offers no
+                    # space question - which ceiling would it use? - and the
+                    # helper returns nothing, so the question is dropped below.
+                    spaces = _spaces(subcategory)
+                    question = _question(
+                        kind,
+                        [(s.key, _space_label(s, language)) for s in spaces],
                         language=language,
                     )
                 case BriefQuestionKind.COLOUR:
@@ -241,6 +293,7 @@ class ProductBriefBuilder:
             base=resolved,
             kinds=kinds,
             budgets=budgets,
+            spaces=spaces,
             colours=colours,
             styles=styles,
             feels=feels,
@@ -319,6 +372,14 @@ class ProductBriefBuilder:
             if band is None:
                 return None
             search = _with_budget(search, band)
+        if action.space is not None:
+            # After the kind, so the ceiling is gated on the subcategory they
+            # actually chose: a width that is trusted for a sofa is dropped if
+            # they picked an L-shape instead (_with_space).
+            option = next((s for s in pending.spaces if s.key == action.space), None)
+            if option is None:
+                return None
+            search = _with_space(search, option)
         if not set(action.colours) <= set(pending.colours) or not set(action.styles) <= set(
             pending.styles
         ):
@@ -416,6 +477,13 @@ def _answered(
             )
         case BriefQuestionKind.BUDGET:
             return request.price is not None
+        case BriefQuestionKind.SPACE:
+            # Already given a width - "a sofa under 200 cm wide" - or the type
+            # does not carry a trusted width at all: nothing to ask either way.
+            return any(
+                constraint.role is DimensionRole.OVERALL_WIDTH
+                for constraint in request.dimensions
+            ) or request.commerce_subcategory not in WIDTH_CEILINGS
         case BriefQuestionKind.COLOUR:
             return bool(request.colors_any_of) or _leans(
                 AttributeFamily.COLOR, resolved.semantic_preferences, remembered
@@ -519,6 +587,60 @@ def _band_label(band: BriefBudgetOption, language: ReplyLanguage = ReplyLanguage
 def _money(amount: Decimal | None) -> str:
     assert amount is not None
     return f"{int(amount):,}"
+
+
+# ── the space ─────────────────────────────────────────────────────────────────
+
+
+def _spaces(subcategory: str | None) -> tuple[BriefSpaceOption, ...]:
+    """Width ceilings for a subcategory the registry trusts, plus "any width".
+
+    Empty for a subcategory whose width is not asked - no space question is
+    drawn then - so a chosen ceiling always resolves to a filter the search can
+    actually run.
+    """
+    ceilings = WIDTH_CEILINGS.get(subcategory or "")
+    if not ceilings:
+        return ()
+    bands = tuple(
+        BriefSpaceOption(key=f"space-{index}", max_cm=Decimal(ceiling))
+        for index, ceiling in enumerate(ceilings, start=1)
+    )
+    return (*bands, BriefSpaceOption(key="space-any", max_cm=None))
+
+
+def _space_label(option: BriefSpaceOption, language: ReplyLanguage = ReplyLanguage.EN) -> str:
+    if option.max_cm is None:
+        return SPACE_ANY[language]
+    return SPACE_UPTO[language].format(width=int(option.max_cm))
+
+
+def _with_space(search: ResolvedSearch, option: BriefSpaceOption) -> ResolvedSearch:
+    """A chosen width ceiling, as a max OVERALL_WIDTH filter - they tapped it,
+    so it is locked. "Any width" adds nothing. The ceiling belongs to the piece
+    it was given for: if the kind they then chose has no trusted width, it is
+    dropped rather than applied to an axis the catalog cannot be read on
+    (CLAUDE.md 13.5, 15.1)."""
+    if option.max_cm is None or search.request.commerce_subcategory not in WIDTH_CEILINGS:
+        return search
+    constraint = DimensionConstraint(
+        role=DimensionRole.OVERALL_WIDTH,
+        kind=DimensionConstraintKind.MAX,
+        max_cm=option.max_cm,
+    )
+    strength = DimensionConstraintSemantics(
+        role=DimensionRole.OVERALL_WIDTH, strength=ConstraintStrength.LOCKED
+    )
+    return search.model_copy(
+        update={
+            "request": search.request.model_copy(
+                update={"dimensions": (*search.request.dimensions, constraint)}
+            ),
+            "semantics": search.semantics.model_copy(
+                update={"dimensions": (*search.semantics.dimensions, strength)}
+            ),
+        }
+    )
 
 
 # ── the answers ─────────────────────────────────────────────────────────────

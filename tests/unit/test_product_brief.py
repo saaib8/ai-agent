@@ -29,7 +29,13 @@ from app.schemas.agent_state import (
 from app.schemas.agent_turn import CustomerTurnInput
 from app.schemas.catalog_overview import CatalogOverview, SeatingSpread, SubcategoryShelf
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
-from app.schemas.discovery import ProductSearchRequest, ProductSort, SeatingCapacityConstraint
+from app.schemas.discovery import (
+    DimensionConstraint,
+    DimensionConstraintKind,
+    ProductSearchRequest,
+    ProductSort,
+    SeatingCapacityConstraint,
+)
 from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome, TurnFailureCode
 from app.schemas.picks import PicksRequest, SelectPickAction
 from app.schemas.product import CommerceClassification, ProductCandidate
@@ -37,6 +43,7 @@ from app.schemas.product_brief import BriefMode
 from app.schemas.query import (
     ConstraintSemantics,
     ConstraintStrength,
+    DimensionConstraintSemantics,
     ResolvedSearch,
     SemanticPreference,
 )
@@ -60,7 +67,7 @@ from app.services.turn_coordinator import CustomerTurnCoordinator, _earlier_seat
 from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
 from app.taxonomy.briefs import BriefQuestionKind, load_briefs
 from app.taxonomy.complements import load_complements
-from app.taxonomy.dimensions import load_dimension_semantics
+from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
@@ -225,6 +232,7 @@ async def test_a_bare_need_is_asked_everything_in_card_order() -> None:
     assert _asked(built) == [
         BriefQuestionKind.TYPE,
         BriefQuestionKind.BUDGET,
+        BriefQuestionKind.SPACE,
         BriefQuestionKind.COLOUR,
         BriefQuestionKind.FEEL,
         BriefQuestionKind.STYLE,
@@ -304,6 +312,117 @@ async def test_budget_bands_follow_the_quartiles_rounded_as_a_person_says_them()
     ]
 
 
+# ── the space question ═══════════════════════════════════════════════════════
+
+
+async def test_the_space_question_offers_width_ceilings_and_an_any_escape() -> None:
+    """A sofa's along-wall width is trusted (it is stored in `length`), so the
+    card asks how wide a space it must fit, as tappable ceilings plus "any"."""
+    builder, _ = _builder()
+
+    built = await builder.build(_need(), AgentStateV1(), CONTEXT, mode=BriefMode.ASK)
+
+    assert built is not None
+    assert BriefQuestionKind.SPACE in _asked(built)
+    assert _labels(built, BriefQuestionKind.SPACE) == [
+        "Up to 200 cm",
+        "Up to 240 cm",
+        "Up to 280 cm",
+        "Any width",
+    ]
+
+
+async def test_a_width_already_given_is_not_asked_for_space() -> None:
+    """ "A sofa no wider than 200 cm" already answered the space question."""
+    builder, _ = _builder()
+    with_width = ResolvedSearch(
+        request=ProductSearchRequest(
+            commerce_category="seating",
+            commerce_subcategory="sofa",
+            dimensions=(
+                DimensionConstraint(
+                    role=DimensionRole.OVERALL_WIDTH,
+                    kind=DimensionConstraintKind.MAX,
+                    max_cm=Decimal("200"),
+                ),
+            ),
+        ),
+        semantics=ConstraintSemantics(
+            subcategory=ConstraintStrength.LOCKED,
+            dimensions=(
+                DimensionConstraintSemantics(
+                    role=DimensionRole.OVERALL_WIDTH, strength=ConstraintStrength.LOCKED
+                ),
+            ),
+        ),
+    )
+
+    built = await builder.build(with_width, AgentStateV1(), CONTEXT, mode=BriefMode.ASK)
+
+    assert built is not None
+    assert BriefQuestionKind.SPACE not in _asked(built)
+
+
+NIGHTSTAND_FACTS = BriefFacts(
+    kinds=(("nightstand", None, 20),),
+    currency="SAR",
+    price_quartiles=(Decimal("200"), Decimal("350"), Decimal("600")),
+    colors=(("Walnut", 15), ("White", 10)),
+    styles=(("Modern", 18), ("Minimalist", 12)),
+)
+
+
+async def test_a_type_without_a_trusted_width_is_not_asked_for_space() -> None:
+    """The tables card asks space, but a nightstand's width is not trusted by
+    the dimension registry, so a chosen ceiling would have nothing to filter -
+    the question is dropped rather than offered as a dead end."""
+    builder, _ = _builder(NIGHTSTAND_FACTS)
+
+    built = await builder.build(
+        _need("nightstand", "tables"), AgentStateV1(), CONTEXT, mode=BriefMode.ASK
+    )
+
+    assert built is not None
+    assert BriefQuestionKind.SPACE not in _asked(built)
+
+
+async def test_a_pinned_width_trusted_kind_on_the_tables_card_is_asked_for_space() -> None:
+    """The tables card asks space, and a coffee table's width is trusted, so a
+    pinned "I need a coffee table" is offered its own ceilings - a different
+    code path from the sofa card, where the kind is still being asked."""
+    builder, _ = _builder(TABLE_FACTS)
+
+    built = await builder.build(
+        _need("center-table", "tables"), AgentStateV1(), CONTEXT, mode=BriefMode.ASK
+    )
+
+    assert built is not None
+    assert BriefQuestionKind.TYPE not in _asked(built)  # the kind is pinned
+    assert BriefQuestionKind.SPACE in _asked(built)
+    assert _labels(built, BriefQuestionKind.SPACE) == [
+        "Up to 90 cm",
+        "Up to 120 cm",
+        "Up to 150 cm",
+        "Any width",
+    ]
+
+
+async def test_a_whole_category_card_with_no_pinned_kind_offers_no_space() -> None:
+    """ "I need a table" has not pinned a kind, so there is no width ceiling to
+    offer yet; the space question waits until a kind is chosen."""
+    builder, _ = _builder(TABLE_FACTS)
+
+    built = await builder.build(
+        ResolvedSearch(request=ProductSearchRequest(commerce_category="tables")),
+        AgentStateV1(),
+        CONTEXT,
+        mode=BriefMode.ASK,
+    )
+
+    assert built is not None
+    assert BriefQuestionKind.SPACE not in _asked(built)
+
+
 async def test_colours_and_styles_are_approved_values_most_common_first() -> None:
     builder, _ = _builder()
 
@@ -333,7 +452,13 @@ async def test_what_they_already_said_is_not_asked_again() -> None:
     built = await builder.build(need, AgentStateV1(), CONTEXT, mode=BriefMode.ASK)
 
     assert built is not None
-    assert _asked(built) == [BriefQuestionKind.BUDGET, BriefQuestionKind.STYLE]
+    # The space is still open: they named a kind, a colour and a feel, but no
+    # width.
+    assert _asked(built) == [
+        BriefQuestionKind.BUDGET,
+        BriefQuestionKind.SPACE,
+        BriefQuestionKind.STYLE,
+    ]
 
 
 async def test_a_colour_on_record_from_earlier_counts_as_said() -> None:
@@ -537,6 +662,56 @@ async def test_a_different_kind_changes_the_type_and_a_minimum_seats() -> None:
     assert corner.request.seating_capacity is None
 
 
+async def test_a_chosen_width_becomes_a_locked_max_overall_width_filter() -> None:
+    builder, pending = await _pending()
+
+    search = builder.answer(
+        BriefAnswerAction(card=1, piece="sofa:3", space=_key(pending, "spaces", 0)), pending
+    )
+
+    assert search is not None
+    (constraint,) = search.request.dimensions
+    assert constraint.role is DimensionRole.OVERALL_WIDTH
+    assert constraint.kind is DimensionConstraintKind.MAX
+    assert constraint.max_cm == Decimal("200")
+    # They tapped the ceiling, so it is a requirement, recorded role-for-role.
+    (strength,) = search.semantics.dimensions
+    assert strength.role is DimensionRole.OVERALL_WIDTH
+    assert strength.strength is ConstraintStrength.LOCKED
+
+
+async def test_any_width_adds_no_filter() -> None:
+    builder, pending = await _pending()
+    any_width = pending.spaces[-1].key
+
+    search = builder.answer(
+        BriefAnswerAction(card=1, piece="sofa:3", space=any_width), pending
+    )
+
+    assert search is not None
+    assert search.request.dimensions == ()
+    assert search.semantics.dimensions == ()
+
+
+async def test_a_width_is_dropped_when_the_chosen_kind_has_no_trusted_width() -> None:
+    """They set a width for the spot, then picked an L-shape, whose stored axes
+    the registry does not trust: the width is dropped rather than filtered on
+    the wrong side (CLAUDE.md 15.1), not silently applied."""
+    builder, pending = await _pending()
+
+    search = builder.answer(
+        BriefAnswerAction(
+            card=1, piece="sectional-sofa", space=_key(pending, "spaces", 0)
+        ),
+        pending,
+    )
+
+    assert search is not None
+    assert search.request.commerce_subcategory == "sectional-sofa"
+    assert search.request.dimensions == ()
+    assert search.semantics.dimensions == ()
+
+
 async def test_colours_styles_and_a_feel_rank_and_never_filter() -> None:
     builder, pending = await _pending()
 
@@ -563,6 +738,7 @@ async def test_colours_styles_and_a_feel_rank_and_never_filter() -> None:
         BriefAnswerAction(card=2),
         BriefAnswerAction(card=1, piece="sofa:9"),
         BriefAnswerAction(card=1, budget="budget-99"),
+        BriefAnswerAction(card=1, space="space-99"),
         BriefAnswerAction(card=1, colours=("Purple",)),
         BriefAnswerAction(card=1, feel="feel-99"),
     ],
@@ -825,6 +1001,34 @@ async def test_tapped_answers_run_one_search_and_close_the_card() -> None:
     assert answered.state.active_search is not None
     assert answered.state.active_search.semantic_intent == "soft chenille fabric"
     assert answered.grounding.search is not None
+
+
+async def test_a_tapped_width_reaches_the_pipeline_as_a_max_overall_width() -> None:
+    """The whole chain: tapping a width ceiling on the sofa card runs one search
+    whose request carries a MAX OVERALL_WIDTH filter - the same constraint a
+    typed "under 200 cm wide" would, so M8 and its recovery apply unchanged."""
+    coordinator, pipeline = _coordinator(_search())
+    asked = await coordinator.run(_typed(AgentStateV1()))
+    pending = asked.state.product_brief.pending
+    assert pending is not None
+
+    answered = await coordinator.run(
+        CustomerTurnInput(
+            message="2-seater · up to 200 cm",
+            state=asked.state,
+            context=CONTEXT,
+            search_action=BriefAnswerAction(
+                card=pending.card, piece="sofa:2", space=pending.spaces[0].key
+            ),
+        )
+    )
+
+    (ran,) = pipeline.requests
+    (constraint,) = ran.request.dimensions
+    assert constraint.role is DimensionRole.OVERALL_WIDTH
+    assert constraint.kind is DimensionConstraintKind.MAX
+    assert constraint.max_cm == Decimal("200")
+    assert answered.state.product_brief.pending is None
 
 
 async def test_answering_the_card_in_words_is_not_asked_another_question() -> None:

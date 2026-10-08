@@ -70,6 +70,8 @@ class BriefAnswerAction(BaseModel):
     """The kind of piece: a sofa's seat count, an L-shape, a set."""
 
     budget: str | None = Field(default=None, min_length=1, max_length=64)
+    space: str | None = Field(default=None, min_length=1, max_length=64)
+    """A chosen width ceiling: how wide a space the piece must fit."""
     colours: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_COLOURS)
     styles: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_STYLES)
     feel: str | None = Field(default=None, min_length=1, max_length=64)

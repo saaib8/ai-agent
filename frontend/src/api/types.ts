@@ -147,7 +147,7 @@ export interface RoomSwapContext {
 
 // ── The card of questions for a product search ───────────────────────────────
 
-export type BriefQuestionKind = 'type' | 'budget' | 'colour' | 'feel' | 'style'
+export type BriefQuestionKind = 'type' | 'budget' | 'space' | 'colour' | 'feel' | 'style'
 
 export interface BriefQuestion {
   kind: BriefQuestionKind
@@ -306,6 +306,8 @@ export interface BriefAnswerAction {
   card: number
   piece?: string | null
   budget?: string | null
+  /** A chosen along-wall width ceiling: how wide a space the piece must fit. */
+  space?: string | null
   colours?: string[]
   styles?: string[]
   feel?: string | null

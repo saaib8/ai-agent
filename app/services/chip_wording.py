@@ -263,12 +263,22 @@ CARD_QUESTIONS: Mapping[BriefQuestionKind, Mapping[ReplyLanguage, str]] = Mappin
     {
         BriefQuestionKind.TYPE: {EN: "What kind?", AR: "أي نوع؟"},
         BriefQuestionKind.BUDGET: {EN: "Budget", AR: "الميزانية"},
+        BriefQuestionKind.SPACE: {EN: "How wide a space?", AR: "ما عرض المساحة؟"},
         BriefQuestionKind.COLOUR: {EN: "Colours you like", AR: "الألوان التي تعجبك"},
         BriefQuestionKind.STYLE: {EN: "Style", AR: "الطراز"},
     }
 )
 """The card's own question titles. The feel's title is reviewed data, per
 product family."""
+
+SPACE_UPTO: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Up to {width} cm", AR: "حتى {width} سم"}
+)
+SPACE_ANY: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Any width", AR: "أي عرض"}
+)
+"""The space question's bands: along-wall width ceilings a customer taps, plus
+the "any width" escape that filters nothing."""
 
 CARD_SUBMIT: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Show me {noun}", AR: "أرني {noun}"}
