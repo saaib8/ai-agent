@@ -15,10 +15,16 @@
 #         is settled by a tap rather than guessed (CLAUDE.md 14.5).
 #   noun  what the card's button shows ("Show me sofas"), when the kind is
 #         being asked; otherwise the searched kind is named instead.
-#   ask   the questions, in card order: type, budget, colour, feel, style.
+#   ask   the questions, in card order: type, budget, space, colour, feel,
+#         style.
 #   type  the kinds of piece, each a subcategory from `for`, optionally with a
 #         seat count - 2/3-seaters are capacity on `sofa`, not types
 #         (CLAUDE.md 7). A kind the store does not stock is not offered.
+#   space how wide a space the piece must fit, as reviewed along-wall width
+#         ceilings (app/services/product_brief.py WIDTH_CEILINGS). Offered only
+#         where OVERALL_WIDTH maps to the stored `length` axis, so a tapped
+#         ceiling filters the right side (CLAUDE.md 15.1). A chosen ceiling is a
+#         max-width filter; "any width" filters nothing.
 #   feel  words that rank and never filter: a fabric, a finish, a detail. The
 #         catalog has no material field (CLAUDE.md 5), so a feel only orders
 #         the cards by how well their descriptions match it; nothing is hidden
@@ -39,7 +45,7 @@ briefs:
   sofas:
     for: [sofa, sectional-sofa, sofa-set, sofa-bed]
     noun: sofas
-    ask: [type, budget, colour, feel, style]
+    ask: [type, budget, space, colour, feel, style]
     type:
       - {label: 2-seater, subcategory: sofa, seats: 2}
       - {label: 3-seater, subcategory: sofa, seats: 3}
@@ -87,7 +93,7 @@ briefs:
     for: [center-table, service-table, tv-table, console, nightstand, dining-table]
     for_category: [tables]
     noun: tables
-    ask: [type, budget, colour, feel, style]
+    ask: [type, budget, space, colour, feel, style]
     type:
       - {label: Coffee table, subcategory: center-table}
       - {label: Side table, subcategory: service-table}
@@ -105,7 +111,7 @@ briefs:
 
   wardrobes:
     for: [wardrobe, dresser, dressing-table]
-    ask: [budget, colour, feel, style]
+    ask: [budget, space, colour, feel, style]
     feel:
       label: Finish
       options:

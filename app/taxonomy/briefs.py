@@ -53,6 +53,11 @@ class BriefQuestionKind(StrEnum):
     BUDGET = "budget"
     """A price band, counted from the store's live prices."""
 
+    SPACE = "space"
+    """How wide a space the piece has to fit, as reviewed cm ceilings. A chosen
+    ceiling filters on the piece's along-wall width (CLAUDE.md 15.1). Offered
+    only for types whose width the dimension registry trusts."""
+
     COLOUR = "colour"
     """Colours they like - a preference that ranks, never a filter (12.4)."""
 
