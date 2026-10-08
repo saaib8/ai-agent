@@ -186,7 +186,12 @@ export function AssistantBubble({
             label={offering ? 'Goes well with it' : 'Also goes well with it'}
           />
         )}
-        {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}
+        {hasComparison && (
+          <ComparisonTable
+            comparison={presentation!.comparison!}
+            language={data.reply_language === 'ar' ? 'ar' : 'en'}
+          />
+        )}
         {hasRoom && (
           <RoomBundle
             room={presentation!.room!}

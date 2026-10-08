@@ -25,6 +25,7 @@ remedy - that falls back instead.
 
 from __future__ import annotations
 
+import re
 import time
 
 from pydantic import ValidationError
@@ -59,12 +60,14 @@ from app.schemas.response import (
     ResponseRoute,
     ResponseViolation,
 )
+from app.schemas.text_choice import TextReplyChoice, closes_on_a_question
 from app.services.arabic_wording import in_language
 from app.services.next_step import already_asks
 from app.services.numeric_guard import (
     build_allowance,
     bundle_counts,
     bundle_stretch_figures,
+    check_numeric_policy,
     guidance_figures,
     picks_counts,
     picks_figures,
@@ -104,30 +107,51 @@ def _ends_on_a_question(
     own question is added, and failing that a plain "what next?". Digit-free,
     so nothing added here can trip the number check (CLAUDE.md 10.2).
     """
-    if _asks(response.message) or (
-        response.follow_up_question is not None and _asks(response.follow_up_question)
-    ):
-        return response
     # A turn with its own question - a question card, a room question, cards of
     # what goes with a pick - already leaves them something to answer on screen.
     if already_asks(result):
         return response
+    as_written = response
+    if closes_on_a_question(response.message, response.follow_up_question):
+        if response.choices or result.next_step is None:
+            return response
+        # Its own question with no answers to tap, beside a next step: the
+        # chips shown are the step's, so the question must be too - the
+        # reply's is swapped for it rather than left under answers to
+        # something else ("How many will sit?" over "Show me more").
+        as_written, response = response, response.model_copy(
+            update={
+                "message": _without_closing_question(response.message),
+                "follow_up_question": None,
+            }
+        )
+        if as_written.message.rstrip().endswith(
+            in_language(result.next_step.question, language)
+        ):
+            return as_written
     question = in_language(
         result.next_step.question if result.next_step is not None else ANY_NEXT_STEP, language
     )
-    message = f"{response.message.rstrip()} {question}"
+    message = f"{response.message.rstrip()} {question}".lstrip()
     if len(message) > MAX_RESPONSE_CHARS:
-        return response
+        return as_written
     logger.info(
         "reply_question_added",
         next_step=str(result.next_step.kind) if result.next_step else None,
+        replaced_own_question=response is not as_written,
     )
     return response.model_copy(update={"message": message})
 
 
-def _asks(text: str) -> bool:
-    """A question mark in either script: "?" or the Arabic "؟"."""
-    return "?" in text or "؟" in text
+_CLOSING_QUESTION = re.compile(r"(?<=[.!?\u061f])\s+[^.!?\u061f]*[?\u061f][\"'\u201d\u00bb)]*\s*$")
+
+
+def _without_closing_question(message: str) -> str:
+    """The message without its last sentence, when that sentence asks."""
+    if (match := _CLOSING_QUESTION.search(message)) is not None:
+        return message[: match.start()]
+    # The whole message is one question: nothing of it is left.
+    return "" if closes_on_a_question(message) else message
 
 
 def _asked_once(response: CustomerResponse) -> CustomerResponse:
@@ -279,9 +303,13 @@ class CustomerResponseGenerator:
                     return _say(DETERMINISTIC_FALLBACK[primary.kind], language), 0, True
                 # The decision model wrote this question and it was validated
                 # in its own phase. Re-wording it could only change what was
-                # asked, so it is carried through untouched and not scanned.
+                # asked, so it is carried through untouched. Its answers are
+                # tappable and become the customer's own words, so each must
+                # carry only figures the customer has stated; one that does not
+                # is left off rather than shown (CLAUDE.md 14).
                 return CustomerResponse(
-                    message=clarification.question, choices=clarification.choices
+                    message=clarification.question,
+                    choices=_sourced_choices(clarification.choices, turn),
                 ), 0, False
 
             case DeterministicResponseKind.HANDLED_FAILURE:
@@ -407,13 +435,10 @@ class CustomerResponseGenerator:
         )
         if response is None:
             return _say(_fallback(view), language), calls, True
-        if result.next_step is not None and (
-            response.choices or response.follow_up_question is not None or _asks(response.message)
-        ):
-            # The application owns this question and its controls. A model's
-            # replacement question must not be placed above different answers.
-            logger.warning("response_replaced_application_question")
-            return _say(_fallback(view), language), calls, True
+        # A reply that asks its own question - "shall I show you the cheapest?"
+        # - keeps it: the summary called for it, and its own choices answer it
+        # (`asks_its_own_question`). Only a reply that asks nothing gets the next
+        # step's question and chips appended.
         return response, calls, False
 
     async def _generated_message(
@@ -600,6 +625,31 @@ def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
             if n
         )
     return ()
+
+
+def _sourced_choices(
+    choices: tuple[TextReplyChoice, ...], turn: CustomerTurnInput
+) -> tuple[TextReplyChoice, ...]:
+    """The question's answers, when every figure in them has a source - their
+    own words, or a position among the cards on screen ("the second one").
+    One unsourced answer drops them all: the rest of an either/or would no
+    longer offer the choice the question asks."""
+    if not choices:
+        return choices
+    shown = turn.state.product_interaction
+    allowance = build_allowance(
+        turn.message,
+        said_earlier=_their_own_words(turn),
+        presented_count=len(shown.presented_product_ids),
+        compared_count=len(shown.compared_product_ids),
+    )
+    for choice in choices:
+        if check_numeric_policy(
+            message=choice.label, follow_up_question=choice.value, allowance=allowance
+        ):
+            logger.warning("clarification_choices_unsourced", offered=len(choices))
+            return ()
+    return choices
 
 
 def _reply(message: str) -> CustomerResponse:

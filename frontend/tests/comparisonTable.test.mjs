@@ -17,8 +17,10 @@ function compile(path) {
 
 const dataUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const formatUrl = dataUrl(compile('../src/lib/format.ts'))
+const wordsUrl = dataUrl(compile('../src/lib/comparisonWords.ts'))
 const component = compile('../src/components/presentation/ComparisonTable.tsx')
   .replace("'../../lib/format'", JSON.stringify(formatUrl))
+  .replace("'../../lib/comparisonWords'", JSON.stringify(wordsUrl))
 const { ComparisonTable } = await import(dataUrl(
   `import React from ${JSON.stringify(import.meta.resolve('react'))};\n${component}`,
 ))
@@ -49,14 +51,17 @@ test('Catalog sizes remain visible when semantic measurement rows are unknown', 
   assert.doesNotMatch(html, /overall width/)
 })
 
-test('Known semantic dimensions are preserved alongside listed sizes', () => {
+test('Known measurement rows replace the listed sizes rather than sit beside them', () => {
+  // A sofa's stored length is its width: "L 220" beside "overall width 220"
+  // would contradict the row the backend read correctly (CLAUDE.md 15.1).
   const html = render([
     product(1, size('220', '95', '85')),
     product(2, size('200', '90', '80')),
   ], [{ field: 'overall_width', status: 'different', cells: [
     { known: true, value: '220 cm' }, { known: true, value: '200 cm' },
   ] }])
-  assert.match(html, /L 220 · W 95 · H 85 cm/)
+  assert.doesNotMatch(html, /Listed dimensions/)
+  assert.doesNotMatch(html, /L 220 · W 95 · H 85 cm/)
   assert.match(html, /overall width/)
   assert.match(html, /different/)
 })

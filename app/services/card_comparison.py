@@ -89,9 +89,9 @@ class CardComparisonService:
             raise ComparisonRefusedError(
                 public_message=_refusal(comparison), reason=str(comparison.reason)
             )
-        # Families are an equivalence, so each against the first is all of them.
-        first, *others = (product.commerce.subcategory for product in comparison.products)
-        if not all(self._groups.comparable(first, other) for other in others):
+        subcategories = [product.commerce.subcategory for product in comparison.products]
+        first = subcategories[0]
+        if not self._groups.all_comparable(subcategories):
             logger.info("card_comparison_refused", store_id=context.store_id, reason="dissimilar")
             raise ComparisonRefusedError(reason="dissimilar")
 

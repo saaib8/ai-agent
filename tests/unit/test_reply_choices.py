@@ -106,7 +106,10 @@ async def test_writer_question_and_answers_are_kept_together() -> None:
     assert [c.value for c in presentation.choices] == [c.value for c in choices]
 
 
-async def test_writer_cannot_replace_a_question_with_application_owned_answers() -> None:
+async def test_a_reply_asking_its_own_question_keeps_it() -> None:
+    """The summary can call for the reply's own question - what setting a
+    requirement aside would find - and the reply keeps it, with its answers;
+    the next step's question is not appended beside it."""
     question = CustomerResponse(
         message="Which colour?",
         choices=[
@@ -118,9 +121,9 @@ async def test_writer_cannot_replace_a_question_with_application_owned_answers()
     )
     result = _result(TurnGrounding()).model_copy(update={"next_step": step})
     response = await CustomerResponseGenerator(FakeClient(question)).generate(_turn(), result)
-    assert response.message.endswith(step.question)
-    assert "Which colour" not in response.message
-    assert response.choices == ()
+    assert response.message == "Which colour?"
+    assert not response.message.endswith(step.question)
+    assert [c.label for c in response.choices] == ["Blue"]
 
 
 async def test_composed_design_acknowledgement_preserves_question_answers() -> None:
@@ -138,7 +141,7 @@ async def test_composed_design_acknowledgement_preserves_question_answers() -> N
     assert response.choices == choices
 
 
-def test_application_choices_cannot_be_replaced_by_model_choices() -> None:
+def test_a_reply_asking_its_own_question_shows_its_own_answers() -> None:
     owned = (ReplyChoice(label="Find a piece", value="Find a piece"),)
     result = _result(TurnGrounding()).model_copy(
         update={
@@ -150,7 +153,7 @@ def test_application_choices_cannot_be_replaced_by_model_choices() -> None:
     )
     presentation = ChatRuntime.presentation(result, response)
     assert presentation is not None
-    assert presentation.choices == owned
+    assert [c.label for c in presentation.choices] == ["Blue"]
 
 
 def test_plain_question_without_choices_does_not_invent_answers() -> None:
@@ -169,7 +172,10 @@ async def test_specific_preference_question_is_not_replaced_by_generic_next_step
             )
         }
     )
-    assert next_step(result, None) is None
+    # The step is kept, so a reply that asked nothing still ends on chips;
+    # a reply that asks its own question with answers shows those instead.
+    result = result.model_copy(update={"next_step": next_step(result, None)})
+    assert result.next_step is not None
     response = CustomerResponse(
         message="Would you prioritize colour or shape?",
         choices=[
@@ -180,6 +186,7 @@ async def test_specific_preference_question_is_not_replaced_by_generic_next_step
     generated = await CustomerResponseGenerator(FakeClient(response)).generate(_turn(), result)
     presentation = ChatRuntime.presentation(result, generated)
     assert presentation is not None
+    assert generated.message == "Would you prioritize colour or shape?"
     assert [choice.label for choice in presentation.choices] == ["Colour", "Shape"]
 
 

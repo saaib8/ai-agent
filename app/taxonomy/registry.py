@@ -152,14 +152,12 @@ def _parse(document: Any, *, source: str) -> CommerceTaxonomy:
             seen.add(subcategory)
         categories[category] = frozenset(seen)
 
-    arabic = (
-        parse_arabic_labels(
-            document["arabic"],
-            set(categories).union(*categories.values()),
-            where=source,
-        )
-        if "arabic" in document
-        else None
+    # Required, like every registry's Arabic: a missing name would silently
+    # drop a type's chip from an Arabic customer's screen.
+    arabic = parse_arabic_labels(
+        document.get("arabic"),
+        set(categories).union(*categories.values()),
+        where=source,
     )
     return CommerceTaxonomy(version=version, categories=categories, arabic=arabic)
 

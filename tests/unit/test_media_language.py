@@ -76,11 +76,12 @@ async def test_catalog_render_localizes_style_and_unavailable_pieces(dropped: in
     assert "غرفة المعيشة بطراز" in reply.response.message
     assert "modern" not in reply.response.message.lower()
     assert "من منظور علوي مائل" in reply.response.message
-    assert ("لم تعد متوفرة" in reply.response.message) is bool(dropped)
+    assert ("متوفر" in reply.response.message) is bool(dropped)
     if dropped == 1:
         assert "إحدى القطع" in reply.response.message
     elif dropped == 2:
-        assert "2 من القطع" in reply.response.message
+        assert "قطعتين" in reply.response.message
+        assert "لم تعودا متوفرتين" in reply.response.message
     assert sessions.saved[(catalog.STORE, catalog.SESSION)].conversation.messages[-1].content == (
         reply.response.message
     )

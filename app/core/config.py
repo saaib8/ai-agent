@@ -486,6 +486,13 @@ class CustomerAgentSettings(BaseModel):
     Off means English replies, exactly as before. Defaulted on in local and
     stage by `Settings`; an explicit value always wins."""
 
+    cross_sell_shows_products: bool = True
+    """After a pick, show products that go with it at once - one kind, chosen
+    by the design specialist from what the store stocks and ranked by the
+    colours and styles the customer has expressed. Off, a pick is offered the
+    kinds that go with it as chips and nothing is searched until they tap
+    one, exactly as before (CLAUDE.md 10.4)."""
+
     max_picks: int = Field(default=10, ge=2, le=50)
     """How many products the picks tray keeps. A shortlist, not a second
     catalogue: past this a tick asks them to remove one first."""

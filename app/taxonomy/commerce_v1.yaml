@@ -137,8 +137,8 @@ arabic:
   dining-chair: كرسي طعام
   lounge-chair: كرسي استرخاء
   office-chair: كرسي مكتب
-  recliner: كرسي قابل للإمالة
-  stool: كرسي مرتفع
+  recliner: كرسي ريكلاينر
+  stool: ستول
   outdoor-chair: كرسي خارجي
   single-seater-sofa: كنبة فردية
   sofa: كنبة
@@ -150,10 +150,10 @@ arabic:
   dressing-table: تسريحة
   wardrobe: دولاب
   dresser: خزانة أدراج
-  bedspread: غطاء سرير
+  bedspread: مفرش سرير
   pillow: وسادة
-  mattresses: مراتب
-  mattress-pad: لبادة مرتبة
+  mattresses: مرتبة
+  mattress-pad: واقي مرتبة
   comforter: لحاف
   service-table: طاولة جانبية
   center-table: طاولة وسط
@@ -162,20 +162,20 @@ arabic:
   tv-table: طاولة تلفزيون
   dining-table: طاولة طعام
   dining-set: طقم طعام
-  office-table: طاولة مكتب
+  office-table: مكتب
   storage-box: صندوق تخزين
   laundry-basket: سلة غسيل
   shelve: رف
   carpet: سجادة
-  flower-pot-and-plant: أصيص ونبات
-  statue-and-antique: تمثال وتحفة
+  flower-pot-and-plant: أصص ونباتات
+  statue-and-antique: تماثيل وتحف
   candle: شمعة
   candlestick: حامل شموع
   vase: مزهرية
-  flower: زهرة
+  flower: زهور
   wall-clock: ساعة حائط
-  decorative-hanger: علاقة ديكور
-  art-canvas: لوحة فنية
+  decorative-hanger: علّاقة ديكور
+  art-canvas: لوحة جدارية
   mirror: مرآة
   table-lamp: أباجورة
   floor-lamp: أباجورة أرضية

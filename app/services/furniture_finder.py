@@ -62,7 +62,6 @@ from app.schemas.furniture_finder import (
     ObjectDescription,
     view_of,
 )
-from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.resolution import SimilarSearchSeed
@@ -84,7 +83,9 @@ from app.services.hydration import ProductHydrationService
 from app.services.media_wording import photo_reply
 from app.services.object_description import ObjectDescriber
 from app.services.refinement_composer import SearchRefinementComposer
+from app.services.reply_language import session_language
 from app.services.similar_search import SimilarSearchBuilder
+from app.taxonomy.compare_groups import CompareGroups
 
 logger = get_logger(__name__)
 
@@ -235,13 +236,25 @@ class FinderTurnRuntime:
         composer: SearchRefinementComposer,
         *,
         arabic_replies: bool = False,
+        compare_groups: CompareGroups | None = None,
     ) -> None:
         self._arabic_replies = arabic_replies
+        self._compare_groups = compare_groups
+        """Which matches compare with which, so "compare the first two" is only
+        offered when they can be. None: never offered across different types."""
         self._finder = finder
         self._sessions = sessions
         self._settings = settings
         self._similar = similar
         self._composer = composer
+
+    def _first_two_compare(self, products: Sequence[ProductCandidate]) -> bool:
+        kinds = [product.commerce.subcategory for product in products[:2]]
+        if len(kinds) < 2:
+            return False
+        if self._compare_groups is not None:
+            return self._compare_groups.all_comparable(kinds)
+        return kinds[0] is not None and kinds[0] == kinds[1]
 
     async def pick(self, request: FinderPickRequest, context: RetailerContext) -> ChatResponse:
         """Load, find, commit, answer - in the order the chat runtime uses.
@@ -269,12 +282,15 @@ class FinderTurnRuntime:
         products, description = await self._finder.find(photo, detected, context)
         state = self._committed_state(loaded.envelope.state, products)
         on_screen = state is not None
-        language = (
-            loaded.envelope.state.reply_language or ReplyLanguage.EN
-            if self._arabic_replies
-            else ReplyLanguage.EN
+        language = session_language(
+            loaded.envelope.state.reply_language, enabled=self._arabic_replies
         )
-        response = photo_reply(detected.display_label, len(products), language)
+        response = photo_reply(
+            detected.display_label,
+            len(products),
+            language,
+            comparable=self._first_two_compare(products),
+        )
         presentation = ChatPresentation(
             choices=tuple(ReplyChoice(label=c.label, value=c.value) for c in response.choices),
             products=tuple(

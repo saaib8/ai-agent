@@ -520,9 +520,13 @@ with reviewed pairings) or a room around them - a pick is a moment to
 cross-sell, never to offer a comparison, which stays theirs to ask for; a detail, a comparison or a room each offer
 their own next move; nothing else offers a piece or a room. A turn that already
 asks - a question card, a room question, a seating shape, companions, a
-clarification - keeps its question and gets no second one. If the reply still
-ends without a question, the next step's fixed, digit-free question is added
-after the number check. The counts the picks tray shows ("your 2 sofa sets")
+clarification - keeps its question and gets no second one. A reply that
+closes on a question of its own - the one preference question, an offer of what
+setting a requirement aside would find - keeps it in place of the next step's,
+with its own answers as the chips; one with no answers to tap is replaced by the
+next step's question, so the chips always answer the question shown. If the reply
+still ends without a question, the next step's fixed, digit-free question is
+added after the number check. The counts the picks tray shows ("your 2 sofa sets")
 may be said.
 
 ### 10.3 A room is built from the pieces they chose
@@ -652,15 +656,26 @@ does not stock is not offered - every chip leads to real products.
 
 **Picking a product.** Cards can be ticked into the customer's picks, which last
 across searches. Every pick - ticked or typed ("I like the third one"), a
-second sofa as much as the first - is **offered, not shown**, what goes well
-with it: their pick's card, and beneath it the kinds from the reviewed pairings
-(`app/taxonomy/complements_v1.yaml`) that the store stocks, as chips under
-"Goes well with it", with "No thanks" beside them. Nothing is searched until
-they tap a kind, which then shows a normal page of it leaning towards the
-pick's style, with the other kinds still offered. A pick's "Goes with" button
-makes the same offer. Never a kind they already picked, and never described as
-"usually bought together": the pairings are a design judgement, not sales
-data. Earlier result lists stay tickable for a while
+second sofa as much as the first, and a kind nothing is paired with - is
+**shown**, not asked about, what goes well with it: their pick's card, and
+beneath it a page of one kind of product that goes with it. The design
+specialist chooses the kind (`complementary_recommendation`), from everything
+the store stocks and with all their picks in view, and the first kind it
+proposes that returns products is shown. The cards lean towards the colours
+and styles the customer has expressed - a room's first, then the chat's, and
+the pick's own style where they named none - by the same ladder a new search
+seeds from; taste ranks, it never filters (12.4). If the specialist cannot
+answer or nothing it proposed is in stock, the first reviewed pairing
+(`app/taxonomy/complements_v1.yaml`) the store stocks is shown instead. The
+other reviewed kinds stay as chips under "Also goes well with it", and tapping
+one shows a normal page of it leaning towards the pick's style. A pick's "Goes
+with" button does the same. With nothing to show, the pick stands alone and is
+offered a room around their picks or more browsing. The reply introduces the
+cards as a suggestion beside their pick - never as their search, and never as
+"usually bought together": it is a design judgement, not sales data. This is
+`customer_agent.cross_sell_shows_products` (on by default); off, a pick is
+offered the kinds as chips with "No thanks", and nothing is searched until
+they tap one. Earlier result lists stay tickable for a while
 (`product_interaction.earlier_lists`), so a second sofa can still be picked to
 compare after the screen has moved on.
 
@@ -672,14 +687,18 @@ carries its own Compare checkbox, apart from Select; once one is checked,
 cards of other kinds are greyed out, and so is every card once the limit is
 reached. Checking only marks a card: the checked ones sit in a compare bar
 above the message box, and its Compare button - active once two are checked -
-opens the comparison in a pop-up: the side-by-side table, one column per
-product, and a short take on what differs. Closing the pop-up keeps the cards
-checked, so one can be swapped and compared again; Clear unchecks them all.
-Typed comparisons ("compare the first three") share the same limit; more is
-answered with a question rather than silently dropped. It is a look, not a turn
-(`POST /v1/comparisons`): the cards are resolved like ticks, the table comes
-from the ordinary comparison service and the words from the ordinary reply
-generator, and nothing is added to the conversation or the session. Which types
+sends a turn of the conversation (`product_action` `compare_cards`), exactly as
+a typed "compare these" would: the side-by-side table, one column per product,
+and a short take on what differs appear in the chat, the comparison is
+recorded in the session, and the reply ends on its next step ("Take the
+first", "Take the second"). The cards stay checked, so one can be swapped and
+compared again; Clear unchecks them all. Typed comparisons ("compare the first
+three") share the same limit; more is answered with a question rather than
+silently dropped. Checked cards are resolved like ticks, against the lists the
+session remembers, and the table comes from the ordinary comparison service.
+`POST /v1/comparisons` - the same comparison as a look that adds nothing to the
+conversation - remains for clients that want it; the console no longer calls
+it. Which types
 compare with which is reviewed data (`app/taxonomy/compare_groups_v1.yaml`):
 every type with itself, and a few groups across types (sofas with L-shapes,
 sets and sofa beds; armchairs with accent and lounge chairs). The server

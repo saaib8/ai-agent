@@ -112,7 +112,7 @@ class PicksResponse(BaseModel):
     session_revision: int = Field(ge=1)
     picks: tuple[PickView, ...] = ()
     goes_with: int | None = Field(default=None, ge=1)
-    """The pick to show companions for now: set when this tick picked the
-    first product of its kind and the store sells something that goes with
-    it. The client then asks for them - a second sofa picked to compare stays
-    silent."""
+    """The pick this tick added, for the client to open as a turn of the
+    conversation ("I like the ..."): its card, and what goes with it when
+    anything does. Set on every new pick; None on an untick, a tick that
+    changed nothing, or a pick that could not be read back."""

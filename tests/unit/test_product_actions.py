@@ -452,30 +452,26 @@ async def test_a_typed_pick_of_something_with_nothing_to_go_with_it_just_answers
     assert route.primary.kind is ResponseOutcomeKind.ANSWER
 
 
-async def test_with_nothing_to_offer_the_turn_is_simply_the_product() -> None:
+async def test_with_nothing_to_offer_the_turn_is_simply_their_pick() -> None:
     coordinator, parts = _coordinator(stock=(("seating", "sofa"),))
 
     result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
 
     assert parts["pipeline"].requests == []
-    assert result.grounding.product_detail is not None
-    assert result.grounding.product_detail.name_english == f"Piece {BED}"
-    assert result.focus is None and result.companions == ()
+    # Drawn as their pick, not as a detail offering "add to picks".
+    assert result.grounding.product_detail is None
+    assert result.focus is not None and result.focus.name_english == f"Piece {BED}"
+    assert result.companions == ()
     assert result.state.product_interaction.focused_product_id == BED
-    route = route_response(result)
-    assert isinstance(route.primary, ResponseGroundingView)
-    assert route.primary.kind is ResponseOutcomeKind.PRODUCT_DETAIL
-    # Shown as the turn's one product, not above anything: no focus card.
-    assert route.primary.picked_kind is None
 
 
-async def test_a_type_with_no_pairings_shows_just_the_product() -> None:
+async def test_a_type_with_no_pairings_shows_just_the_pick() -> None:
     coordinator, parts = _coordinator(complements=None)
 
     result = await _run(coordinator, _turn(_state(), GoesWithPickAction(pick=1)))
 
     assert parts["pipeline"].requests == []
-    assert result.grounding.product_detail is not None
+    assert result.focus is not None and result.companions == ()
 
 
 async def test_a_pick_that_is_not_there_is_a_question_and_changes_nothing() -> None:

@@ -31,7 +31,12 @@ from app.schemas.discovery import ProductSearchRequest
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.product_action import CompanionAction, CompanionOffer
-from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
+from app.schemas.query import (
+    ConstraintSemantics,
+    ConstraintStrength,
+    ResolvedSearch,
+    SemanticPreference,
+)
 from app.schemas.reply_choice import ReplyChoice
 from app.services.chip_wording import Chip, chip
 from app.services.similar_search import leanings_of
@@ -50,6 +55,16 @@ class CompanionSearchBuilder:
     def __init__(self, attributes: CatalogAttributes) -> None:
         self._attributes = attributes
 
+    def style_of(self, anchor: ProductCandidate) -> tuple[SemanticPreference, ...]:
+        """The anchor's own styles, as preferences: what a piece beside it
+        leans towards. Its colour is left out - a rug need not match the
+        sofa's colour to go with it."""
+        return tuple(
+            lean
+            for lean in leanings_of(anchor, self._attributes)
+            if lean.family is AttributeFamily.STYLE
+        )
+
     def build(self, anchor: ProductCandidate, companion: Companion) -> ResolvedSearch:
         """Products of the companion type, the anchor's styles first.
 
@@ -57,11 +72,7 @@ class CompanionSearchBuilder:
         whatever else a relaxation could reach. Nothing fuzzy was said, so no
         semantic text is invented.
         """
-        preferences = tuple(
-            lean
-            for lean in leanings_of(anchor, self._attributes)
-            if lean.family is AttributeFamily.STYLE
-        )
+        preferences = self.style_of(anchor)
         logger.info(
             "companion_search_seeded",
             commerce_category=companion.commerce_category,

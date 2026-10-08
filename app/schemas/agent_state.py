@@ -189,6 +189,13 @@ class ActiveSearchState(BaseModel):
     its contents to make a decision.
     """
 
+    ordered_by_pick: bool = False
+    """The cards were chosen to go with a pick - the designer's kind, or a
+    kind tapped beneath the pick - and lean on its look, not on anything the
+    customer described, so none is labelled their best match (CLAUDE.md
+    10.4). Kept through "show me more" and "not this one", which only page the
+    same set; any change of criteria is theirs, and starts unmarked."""
+
     revision: int = Field(ge=0)
     """Identifier of the most recently committed search result set.
 

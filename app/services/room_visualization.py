@@ -66,6 +66,7 @@ from app.schemas.visualization import (
 from app.services.chat_runtime import commit_exchange, load_for_turn
 from app.services.discovery import to_candidate
 from app.services.media_wording import ARABIC_ROOMS, VIEW_PHRASES, render_reply
+from app.services.reply_language import session_language
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 
 logger = get_logger(__name__)
@@ -252,11 +253,7 @@ class VisualizationTurnRuntime:
             expected_revision=request.expected_session_revision,
         )
         state = loaded.envelope.state
-        language = (
-            (state.reply_language or ReplyLanguage.EN)
-            if self._arabic_replies
-            else ReplyLanguage.EN
-        )
+        language = session_language(state.reply_language, enabled=self._arabic_replies)
         render = await self._visualizer.render(state, request.view, context)
         room_label = _room_label(state.room_project)
         if language is ReplyLanguage.AR:
@@ -329,10 +326,8 @@ class CatalogVisualizationRuntime:
         render = await self._visualizer.render_selection(request.items, spec, request.view, context)
 
         room_words = f"{_style_words(spec.style)} {room_type_label(spec.room_type).lower()}"
-        language = (
-            loaded.envelope.state.reply_language or ReplyLanguage.EN
-            if self._arabic_replies
-            else ReplyLanguage.EN
+        language = session_language(
+            loaded.envelope.state.reply_language, enabled=self._arabic_replies
         )
         reply_room = room_words
         if language is ReplyLanguage.AR:

@@ -118,6 +118,9 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # Checked cards compare only within reviewed families. Registry data,
         # with no catalog access or model calls.
         "compare_groups",
+        # Whether a pick is answered with products that go with it. A flag,
+        # not a service: the design specialist and the pipeline are above.
+        "cross_sell_shows_products",
     ]
 
 

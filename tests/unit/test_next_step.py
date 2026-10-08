@@ -27,6 +27,7 @@ from app.schemas.picks import PickView
 from app.schemas.product_action import CompanionOffer, ComparePicksAction, GoesWithPickAction
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
+from app.schemas.text_choice import TextReplyChoice
 from app.services.chat_runtime import ChatRuntime
 from app.services.next_step import next_step
 from app.services.numeric_guard import picks_counts, picks_figures
@@ -171,7 +172,7 @@ def test_only_the_product_type_question_gets_piece_choices(
     if reason is BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE:
         assert step is not None and step.kind is NextStepKind.CHOOSE_PIECE
         assert step.chips[0].label == "Center table"
-        assert step.chips[0].value == "Show me center table"
+        assert step.chips[0].value == "Show me center tables"
         reply = CustomerResponse(message="Which?")
         assert _ends_on_a_question(reply, result.model_copy(update={"next_step": step})) == reply
     else:
@@ -231,7 +232,10 @@ def test_a_reply_without_a_question_gets_the_next_steps_question() -> None:
 
 
 def test_a_reply_that_already_asks_is_left_as_it_is() -> None:
-    reply = CustomerResponse(message="Shall I compare them side by side?")
+    reply = CustomerResponse(
+        message="Shall I compare them side by side?",
+        choices=(TextReplyChoice(label="Yes", value="Yes, compare them"),),
+    )
 
     assert _ends_on_a_question(reply, _result(next_step=NextStep(kind=NextStepKind.START))) == reply
 

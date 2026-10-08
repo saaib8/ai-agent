@@ -53,7 +53,7 @@ from app.schemas.refinement import (
     SemanticIntentRefinement,
 )
 from app.schemas.seating_solution import SeatingAnswer
-from app.schemas.text_choice import TextReplyChoice, validate_text_choices
+from app.schemas.text_choice import TextReplyChoice, require_a_question, validate_text_choices
 from app.taxonomy.attributes import CatalogAttributes
 
 MAX_CLARIFICATION_CHARS = 300
@@ -744,6 +744,11 @@ class BlockingClarification(BaseModel):
     """Plain-text answers to this question; catalog suggestions are application-owned."""
 
     _distinct_choices = field_validator("choices")(validate_text_choices)
+
+    @model_validator(mode="after")
+    def _choices_answer_the_question(self) -> Self:
+        require_a_question(self.choices, self.question)
+        return self
 
 
 # ── the decision ────────────────────────────────────────────────────────────

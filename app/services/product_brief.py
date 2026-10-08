@@ -61,7 +61,7 @@ from app.services.chip_wording import (
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.briefs import Brief, BriefQuestionKind, Briefs, KindChoice
 from app.taxonomy.registry import CommerceTaxonomy
-from app.taxonomy.words import customer_words
+from app.taxonomy.words import customer_words, plural_words
 
 logger = get_logger(__name__)
 
@@ -69,7 +69,6 @@ MAX_COLOUR_CHOICES: Final[int] = 8
 MAX_STYLE_CHOICES: Final[int] = 6
 """The colours and styles most of these products carry - enough to find
 theirs, few enough to scan."""
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +209,7 @@ class ProductBriefBuilder:
         noun = (
             brief.noun
             if family_word and brief.noun
-            else _plural(customer_words(subcategory or request.commerce_category))
+            else plural_words(customer_words(subcategory or request.commerce_category))
         )
         if language is ReplyLanguage.AR:
             # Both family nouns and narrower product types have registry-owned
@@ -650,7 +649,4 @@ def _value_label(value: str) -> str:
     return value.replace("_", " ")
 
 
-def _plural(words: str) -> str:
-    if words.endswith(("s", "x", "ch", "sh")):
-        return f"{words}es"
-    return f"{words}s"
+

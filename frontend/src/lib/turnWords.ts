@@ -30,7 +30,10 @@ const WORDS: Record<ReplyLanguage, TurnWords> = {
     notThisOne: (name) => `Not this one — the ${name}`,
     notThisOneLabel: 'Not this one',
     whatGoesWith: (name) => `What goes with the ${name}?`,
-    compareProducts: (names) => `Compare these products: ${names.join(' and ')}`,
+    compareProducts: (names) =>
+      `Compare these products: ${
+        names.length > 2 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names.join(' and ')
+      }`,
     differentOptions: 'Show me different options',
     otherRoomOptions: (role) => `Show me other ${role} options`,
     useRoomOption: (ordinal, role) => `Use option ${ordinal} for the ${role}`,
@@ -53,7 +56,8 @@ export function conversationLanguage(turns: Turn[]): ReplyLanguage {
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     const turn = turns[i]
     if (turn.kind === 'assistant' && turn.data.reply_language != null) {
-      return turn.data.reply_language
+      // Only the two languages there are words for; anything else reads as English.
+      return turn.data.reply_language === 'ar' ? 'ar' : 'en'
     }
   }
   return 'en'

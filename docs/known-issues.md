@@ -1558,3 +1558,66 @@ minutes). On a Redis failure, fall back to the database query rather than
 failing the turn. Measure the query time on store 60 first to size the TTL.
 
 **Reported:** found while reviewing multi-store readiness (2026-10-06).
+
+## 19. "Show me sofas again" after another kind shows the whole seating category
+
+**Status:** Fixed (2026-10-08). Cause: query understanding sometimes read a
+named type ("sofas") as a general kind, under its rule "leave the subcategory
+null when the customer named only a general kind". In direct calls it dropped
+the type about 1 time in 18. The prompt (`query_understanding/v1.1`) now says
+that naming a listed type, however phrased, sets it. After the change, 72 of 72
+direct calls were correct, and general words ("seating", "tables") still stay
+general. Eval case `sofas_again_keeps_the_type`.
+
+The original report follows.
+
+It was there before the cross-sell change, but that change made it easier to
+hit.
+
+**What happens:** "just show me sofas" → "just show me coffee tables" →
+"show me sofas again, just show me" returns office chairs and chairs as "a
+broad seating selection". The sofa subcategory is dropped, and only the
+category is searched. "back to the sofas" works.
+
+**Why it matters more now:** every pick replaces the search in progress with
+the suggested kind (centre tables beside a sofa, CLAUDE.md 10.4). So "show me
+sofas again" right after a pick is now a common path.
+
+**What CLAUDE.md says:**
+- 14.5 says a kind must not be guessed;
+- 13.5 says a return to a type brings that type back;
+- 10.4 says results for a whole category are never described as narrowed to
+  one kind.
+
+**Suggested fix:** find where the decision or query-understanding step loses
+`commerce_subcategory` on "X again". It could be the decision's restatement or
+the refinement composer treating it as a change within the category. Add an
+eval case for it.
+
+**Reported:** found by the QA review of the cross-sell feature (2026-10-08).
+
+## 20. "I need a table" sometimes gets a typed question instead of the card
+
+**Status:** Fixed (2026-10-08).
+
+**What happened:** about 1 run in 8, "I need a table" got a plain typed
+question ("What type of table are you looking for?") with no options to tap,
+instead of the question card whose first question offers the kinds (coffee,
+side, dining, TV...). CLAUDE.md 10.4 says a need naming only a category gets
+its category's card, with the kind asked first.
+
+**Cause:** the decision model sometimes chose to ask the question itself rather
+than hand off the search. It fell back on its general rule "ask rather than
+guess", because nothing said that a broad family ("a table", "a light") is a
+search too. Query understanding never ran on those turns.
+
+**Fix:** the decision prompt (`customer_decision/v1.3`) now says so under "A
+NEW SEARCH FOR A KIND OF PRODUCT". A need naming only a broad family is a
+search. The kind is the card's first question, so it is never a reason to ask,
+and searching the family alone is not guessing a kind.
+
+**Checked:** before the fix, 2 of 16 runs failed. After it, 32 of 32 passed
+across `card_table_asks_kind_first`, `answer_card_table_dining`,
+`card_light_asks_kind_first` and `show_me_tables_whole_category`.
+
+**Reported:** found in the eval run for known issue 19 (2026-10-08).

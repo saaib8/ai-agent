@@ -1173,9 +1173,7 @@ class KindHydration:
         return tuple(_sofa(pid, kinds[pid // 100][1], kinds[pid // 100][0]) for pid in product_ids)
 
 
-def _picks_runtime(
-    sessions: FakeSessionStore, *, stock: tuple[tuple[str, str | None], ...]
-) -> PicksRuntime:
+def _picks_runtime(sessions: FakeSessionStore) -> PicksRuntime:
     ids = (101, 102, 201, 301, 302)
     repository = FakeRepository([_row(pid) for pid in ids])
     return PicksRuntime(
@@ -1183,8 +1181,6 @@ def _picks_runtime(
         KindHydration(),  # type: ignore[arg-type]
         sessions,  # type: ignore[arg-type]
         CustomerAgentSettings(),
-        complements=COMPLEMENTS,
-        capabilities=FakeCapabilities(pairs=stock),  # type: ignore[arg-type]
     )
 
 
@@ -1215,7 +1211,7 @@ async def test_a_card_on_an_earlier_list_can_still_be_picked() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _two_lists())
 
-    reply = await _picks_runtime(sessions, stock=()).apply(_tick(2, list_revision=1), CONTEXT)
+    reply = await _picks_runtime(sessions).apply(_tick(2, list_revision=1), CONTEXT)
 
     assert sessions.saved[(STORE, SESSION)].state.product_interaction.selected_product_ids == (102,)
     (pick,) = reply.picks
@@ -1228,14 +1224,14 @@ async def test_a_list_no_longer_remembered_cannot_be_ticked() -> None:
     await _stored(sessions, _two_lists())
 
     with pytest.raises(PickUnavailableError):
-        await _picks_runtime(sessions, stock=()).apply(_tick(1, list_revision=9), CONTEXT)
+        await _picks_runtime(sessions).apply(_tick(1, list_revision=9), CONTEXT)
 
 
 async def test_the_first_pick_of_its_kind_asks_for_what_goes_with_it() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _two_lists())
 
-    reply = await _picks_runtime(sessions, stock=(("tables", "center-table"),)).apply(
+    reply = await _picks_runtime(sessions).apply(
         _tick(1, list_revision=1), CONTEXT
     )
 
@@ -1248,7 +1244,7 @@ async def test_a_second_option_of_the_same_kind_is_offered_what_goes_with_it() -
     sessions = FakeSessionStore()
     await _stored(sessions, _two_lists(picks=(101,)))
 
-    reply = await _picks_runtime(sessions, stock=(("tables", "center-table"),)).apply(
+    reply = await _picks_runtime(sessions).apply(
         _tick(3, list_revision=1), CONTEXT
     )
 
@@ -1256,26 +1252,24 @@ async def test_a_second_option_of_the_same_kind_is_offered_what_goes_with_it() -
     assert len(reply.picks) == 2
 
 
-async def test_nothing_the_store_sells_goes_with_it_so_the_tick_is_silent() -> None:
+async def test_a_pick_nothing_goes_with_still_comes_into_the_conversation() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _two_lists())
 
-    reply = await _picks_runtime(sessions, stock=(("lighting", "chandelier"),)).apply(
-        _tick(1, list_revision=1), CONTEXT
-    )
+    reply = await _picks_runtime(sessions).apply(_tick(1, list_revision=1), CONTEXT)
 
-    assert reply.goes_with is None
+    assert reply.goes_with == 1
 
 
-async def test_a_companion_type_already_picked_is_not_a_reason_to_cross_sell() -> None:
-    """A centre table picked after the sofa: its companions are rugs, side
-    tables and sofas - the store only sells the sofa they already have."""
+async def test_a_pick_after_another_comes_into_the_conversation_too() -> None:
+    """A centre table picked after the sofa: which companions, if any, it is
+    offered is the turn's business, not the tick's."""
     sessions = FakeSessionStore()
     await _stored(sessions, _two_lists(picks=(101,)))
 
-    reply = await _picks_runtime(sessions, stock=(("seating", "sofa"),)).apply(_tick(1), CONTEXT)
+    reply = await _picks_runtime(sessions).apply(_tick(1), CONTEXT)
 
-    assert reply.goes_with is None
+    assert reply.goes_with == 2
 
 
 def test_positions_cover_every_list_still_tickable() -> None:

@@ -52,6 +52,7 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import companion_choices
+from app.services.next_step import asks_its_own_question
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first, offers_what_goes_with
 from app.services.room_presentation import (
@@ -190,20 +191,28 @@ class ChatRuntime:
             choices = companion_choices(
                 result.companions, offering=offers_what_goes_with(result), language=language
             )
+        authored = response.choices if response is not None else ()
+        model_choices = tuple(ReplyChoice(label=c.label, value=c.value) for c in authored)
         if not choices and result.next_step is not None:
-            # A reply never ends on a dead end: the next step's chips answer the
-            # question it closes on (CLAUDE.md 10.2).
-            choices = result.next_step.chips
-        application_asks = bool(
-            result.next_step
-            or result.room_question
+            # The chips answer the question the reply closes on (CLAUDE.md
+            # 10.2): the reply's own, when it asked one and supplied its
+            # answers. A question of its own without answers is almost always
+            # the step's question reworded ("Which do you prefer?"), so the
+            # step's chips answer it - never a dead end.
+            own = response is not None and asks_its_own_question(
+                response, result.next_step, language
+            )
+            choices = model_choices if own and model_choices else result.next_step.chips
+        elif not choices and not (
+            result.room_question
             or result.product_brief
             or result.swap_offer
             or result.seating_solution
             or result.companions
-        )
-        if not choices and not application_asks and response is not None and response.choices:
-            choices = tuple(ReplyChoice(label=c.label, value=c.value) for c in response.choices)
+        ):
+            # No application control is on screen: the reply's question - its
+            # own, or the clarification it carries - with the answers supplied.
+            choices = model_choices
         results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,

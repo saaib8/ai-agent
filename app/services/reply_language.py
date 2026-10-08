@@ -96,3 +96,11 @@ def after_the_decision(
             stored=ReplyLanguage.AR, reply=ReplyLanguage.AR, source=LanguageSource.ARABIZI
         )
     return started
+
+
+def session_language(stored: ReplyLanguage | None, *, enabled: bool) -> ReplyLanguage:
+    """The language a reply outside a chat turn is written in - a photo search,
+    a room picture: the session's own, English where Arabic replies are off."""
+    if not enabled:
+        return ReplyLanguage.EN
+    return stored or ReplyLanguage.EN

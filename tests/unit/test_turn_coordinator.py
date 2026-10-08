@@ -819,7 +819,7 @@ async def test_piece_type_question_has_stocked_choices(message: str) -> None:
     assert result.grounding.clarification is question
     assert presentation is not None
     assert {choice.label for choice in presentation.choices} == {"Bed", "Sofa"}
-    assert {choice.value for choice in presentation.choices} == {"Show me bed", "Show me sofa"}
+    assert {choice.value for choice in presentation.choices} == {"Show me beds", "Show me sofas"}
     assert capabilities.calls == [CONTEXT]
     assert result.state == state
     assert len(parts["decisions"].inputs) == 1

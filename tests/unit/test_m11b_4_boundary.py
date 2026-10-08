@@ -222,4 +222,6 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "max_picks",
         # Whether a session may be answered in Arabic (docs/arabic-replies-plan.md).
         "arabic_replies",
+        # Whether a pick is answered with products that go with it (CLAUDE.md 10.4).
+        "cross_sell_shows_products",
     }

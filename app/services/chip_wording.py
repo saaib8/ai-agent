@@ -85,12 +85,12 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
             AR: ChipText("{label}", "أرني {kind}"),
         },
         Chip.ROOM_TYPE: {
-            EN: ChipText("{room}", "I'd like to design a {room}"),
+            EN: ChipText("{room}", "I'd like to design a {room_lower}"),
             AR: ChipText("{room}", "أودّ تصميم {room}"),
         },
         Chip.WHAT_GOES_WITH_PICK: {
             EN: ChipText("What goes with the {kind}", "What goes with the {kind}?"),
-            # No Arabic product-type names exist yet, so the pick is not named.
+            # The pick is not named: picks carry their type in English words.
             AR: ChipText("ما يناسب اختيارك", "ما الذي يناسب اختياري؟"),
         },
         Chip.ROOM_AROUND_PICKS: {
@@ -276,8 +276,8 @@ CARD_SUBMIT: Mapping[ReplyLanguage, str] = MappingProxyType(
 CARD_SUBMIT_ANY: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Show me {noun}", AR: "أرني النتائج"}
 )
-"""When the card names the searched kind rather than its family's noun: no
-Arabic product-type names exist yet, so the Arabic button names none."""
+"""When the card names the searched kind but the registry has no Arabic name
+for it: the Arabic button then names none rather than an English word."""
 
 BUDGET_UNDER: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Under {amount} {currency}", AR: "أقل من {amount} {currency}"}

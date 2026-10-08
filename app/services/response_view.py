@@ -331,6 +331,12 @@ def _was_suggested(result: CustomerTurnResult) -> bool:
     the motive apart from the capability, which is exactly the question here -
     so nothing new has to be invented to answer it.
     """
+    if result.focus is not None and result.grounding.search is not None:
+        # Cards beneath the pick they just chose are what goes with it - our
+        # suggestion, whatever motive the turn's decision recorded
+        # (CLAUDE.md 10.4). A kind they tapped is searched without a pick
+        # card above it, and stays their request.
+        return True
     return (
         result.grounding.design_handoff_requested
         and result.decision.commercial_reason in _OUR_IDEA
@@ -698,9 +704,10 @@ def best_match_first(result: CustomerTurnResult) -> bool:
     active = result.state.active_search
     if search is None or not search.products or active is None:
         return False
-    if result.focus is not None or result.companions:
+    if result.focus is not None or result.companions or active.ordered_by_pick:
         # What goes with a pick is ordered by the pick's look, not by
-        # anything they described: nothing there is *their* best match.
+        # anything they described: nothing there is *their* best match - nor
+        # on the next page of it.
         return False
     first = search.products[0]
     return (

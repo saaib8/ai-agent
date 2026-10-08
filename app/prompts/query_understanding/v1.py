@@ -14,7 +14,7 @@ from __future__ import annotations
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 
-VERSION = "query_understanding/v1"
+VERSION = "query_understanding/v1.1"
 
 _INSTRUCTIONS = """\
 You interpret a furniture shopper's message into a structured product search.
@@ -48,6 +48,12 @@ exactly; work out what kind of product they mean from what they said and the \
 context they gave, including where the item will go and what it is for.
 - Leave commerce_subcategory null when the customer named only a general kind \
 of product. A category on its own is a valid, useful search.
+- Naming a listed type is not naming a general kind. When the customer's word \
+is one of the listed types - singular or plural, and however the request is \
+phrased ("again", "back to", "just show me") - set that type. A general kind is \
+a word that covers several listed types at once, as a category's own name \
+does. That other listed types are related to the one they named does not make \
+the named type general.
 - Some categories list a subcategory bearing the category's own name, for stock \
 that fits none of that category's specific types. When someone asks for that \
 kind of product in broad terms, give the category and leave the subcategory \

@@ -48,7 +48,11 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.room_opener import RoomQuestion
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingSolution
-from app.schemas.text_choice import TextReplyChoice, validate_text_choices
+from app.schemas.text_choice import (
+    TextReplyChoice,
+    require_a_question,
+    validate_text_choices,
+)
 
 MAX_RESPONSE_CHARS = 4000
 
@@ -452,10 +456,7 @@ class CustomerResponse(BaseModel):
 
     @model_validator(mode="after")
     def _choices_answer_a_question(self) -> Self:
-        if self.choices and not any(
-            mark in f"{self.message} {self.follow_up_question or ''}" for mark in ("?", "؟")
-        ):
-            raise ValueError("reply choices require a question")
+        require_a_question(self.choices, self.message, self.follow_up_question)
         return self
 
     @field_validator("referenced_grounding_refs")

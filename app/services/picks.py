@@ -23,7 +23,6 @@ from collections.abc import Sequence
 
 from app.core.config import CustomerAgentSettings
 from app.core.exceptions import (
-    IntegrationUnavailableError,
     PickLimitError,
     PickUnavailableError,
 )
@@ -42,13 +41,10 @@ from app.schemas.product import ProductCandidate
 from app.schemas.resolution import ReferenceFailureReason, ReferenceUnresolved
 from app.schemas.retailer import RetailerContext
 from app.services.agent_state import apply_update
-from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import commit_state, load_for_turn
-from app.services.cross_sell import has_pairings
 from app.services.hydration import ProductHydrationService
 from app.services.product_interaction import build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
-from app.taxonomy.complements import Complements
 
 logger = get_logger(__name__)
 
@@ -64,18 +60,11 @@ class PicksRuntime:
         hydration: ProductHydrationService,
         sessions: SessionStore,
         settings: CustomerAgentSettings,
-        *,
-        complements: Complements | None = None,
-        capabilities: CatalogCapabilityService | None = None,
     ) -> None:
         self._references = references
         self._hydration = hydration
         self._sessions = sessions
         self._max_picks = settings.max_picks
-        self._complements = complements
-        """The reviewed pairings, to know whether a new pick has companions.
-        None where ticks never lead to a cross-sell."""
-        self._capabilities = capabilities
 
     async def apply(self, request: PicksRequest, context: RetailerContext) -> PicksResponse:
         """Load, change, commit, report.
@@ -107,7 +96,7 @@ class PicksRuntime:
         picked = final.product_interaction.selected_product_ids
         products = await self._hydration.hydrate_ids(picked, context) if picked else []
         goes_with = (
-            await self._goes_with(picked, products, context)
+            self._goes_with(picked, products)
             if updated is not None and isinstance(request.action, SelectPickAction)
             else None
         )
@@ -126,43 +115,18 @@ class PicksRuntime:
             goes_with=goes_with,
         )
 
-    async def _goes_with(
-        self,
-        picked: tuple[int, ...],
-        products: Sequence[ProductCandidate],
-        context: RetailerContext,
-    ) -> int | None:
-        """The new pick's number, when the store sells something that goes
-        with it - a second sofa as much as the first - the client then asks what
-        goes with it, and is offered those kinds.
+    @staticmethod
+    def _goes_with(picked: tuple[int, ...], products: Sequence[ProductCandidate]) -> int | None:
+        """The new pick's number, for the client to open it as a turn: every
+        pick - a second sofa as much as the first, and a kind nothing is paired
+        with - comes into the conversation (CLAUDE.md 10.4). Which companions,
+        if any, are offered is that turn's business.
 
-        Companion types already picked do not count - they chose one already.
+        None when the new pick cannot be read back - it left the catalog
+        between the tick and now - so the client is never sent to a pick that
+        cannot be shown.
         """
-        if self._complements is None or self._capabilities is None or not picked:
-            return None
-        newest = picked[-1]
-        by_id = {product.product_id: product for product in products}
-        product = by_id.get(newest)
-        if product is None:
-            return None
-        others = [p.commerce.subcategory for p in products if p.product_id != newest]
-        if not has_pairings(product.commerce.subcategory, self._complements):
-            return None
-        wanted = [
-            c
-            for c in self._complements.for_type(product.commerce.subcategory)
-            if c.commerce_subcategory not in others
-        ]
-        if not wanted:
-            return None
-        try:
-            capabilities = await self._capabilities.capabilities(context)
-        except IntegrationUnavailableError:
-            logger.warning("picks_capabilities_unavailable", store_id=context.store_id)
-            return None
-        if not any(
-            capabilities.supports(c.commerce_category, c.commerce_subcategory) for c in wanted
-        ):
+        if not picked or picked[-1] not in {product.product_id for product in products}:
             return None
         return len(picked)
 

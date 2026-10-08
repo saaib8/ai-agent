@@ -63,19 +63,6 @@ export interface CardRef {
   ordinal: number
 }
 
-export interface CardComparisonRequest {
-  session_id: string
-  store_id: number
-  /** Two or more, as many as they checked. */
-  cards: CardRef[]
-}
-
-export interface CardComparisonResponse {
-  comparison: ProductComparisonResult
-  /** The assistant's short take on what differs. */
-  message: string
-}
-
 /** Grouped types and the family they compare within. A type absent here
  *  compares only with itself. */
 export interface CompareGroupsResponse {

@@ -597,6 +597,16 @@ def _budget_stretched(pre_turn: AgentStateV1, outcome: RoomBundle) -> BudgetStre
     )
 
 
+def _ordered_by_pick(state: AgentStateV1) -> AgentStateV1:
+    """The committed search, marked as chosen to go with a pick."""
+    search = state.active_search
+    if search is None:
+        return state
+    return state.model_copy(
+        update={"active_search": search.model_copy(update={"ordered_by_pick": True})}
+    )
+
+
 def _in_room(state: AgentStateV1, product_id: int) -> bool:
     """Whether a product is already a piece of the room being designed."""
     room = state.room_project
@@ -992,8 +1002,12 @@ class CustomerTurnCoordinator:
         briefs: ProductBriefBuilder | None = None,
         arabic_replies: bool = False,
         compare_groups: CompareGroups | None = None,
+        cross_sell_shows_products: bool = False,
     ) -> None:
         self._compare_groups = compare_groups
+        self._cross_sell_shows_products = cross_sell_shows_products
+        """Whether a pick is answered with products that go with it, chosen by
+        the design specialist, rather than with the kinds as chips."""
         self._arabic_replies = arabic_replies
         """Whether a session may be answered in Arabic. Off, the language is
         never read or stored, and every turn runs exactly as before."""
@@ -1459,7 +1473,8 @@ class CustomerTurnCoordinator:
             "product_action_completed",
             store_id=turn.context.store_id,
             action=action.kind,
-            companions_shown=primary.search is not None and primary.design_handoff,
+            companions_shown=primary.search is not None
+            and (primary.design_handoff or primary.focus is not None),
             companions_offered=len(primary.companions),
             failed=primary.failure is not None,
             clarified=primary.clarification is not None,
@@ -1528,10 +1543,120 @@ class CustomerTurnCoordinator:
         stocked = await self._stocked_companions(
             anchor, turn, picked=await self._picked_types(state, turn)
         )
+        if self._cross_sell_shows_products:
+            shown = await self._show_what_goes_with(anchor, card, focused, turn, stocked)
+            if shown is not None:
+                return shown
         if not stocked:
+            # Still their pick, drawn as one: shown as a product detail it
+            # would be offered "add to picks" and "what goes with it" - one
+            # it already is, the other nothing is (CLAUDE.md 10.2).
             logger.info("cross_sell_nothing_to_offer", store_id=turn.context.store_id)
-            return _Primary(state=focused, product_detail=card)
+            return _Primary(state=focused, focus=card)
         return _Primary(state=focused, focus=card, companions=await self._chips(stocked, turn))
+
+    async def _show_what_goes_with(
+        self,
+        anchor: ProductCandidate,
+        card: GroundedProduct,
+        state: AgentStateV1,
+        turn: CustomerTurnInput,
+        stocked: Sequence[Companion],
+    ) -> _Primary | None:
+        """Their pick, and beneath it products of one kind that go with it.
+
+        Shown, not offered (CLAUDE.md 10.4): the design specialist chooses the
+        kind from everything the store stocks, and the cards lean towards the
+        colours and styles the customer has expressed. When the specialist
+        cannot answer, or nothing it proposed is in stock, the first reviewed
+        pairing the store stocks is shown instead. The other reviewed kinds
+        stay as chips beneath, so they can look at something else.
+
+        None when nothing could be shown - the caller then offers the kinds as
+        chips, exactly as before.
+        """
+        attempt = await self._designed_complement(anchor, state, turn)
+        if attempt is None and stocked:
+            fallback = await self._companion_search(anchor, stocked[0], state, turn)
+            if fallback.search is not None and fallback.search.products:
+                logger.info("cross_sell_reviewed_fallback", store_id=turn.context.store_id)
+                attempt = fallback
+        if attempt is None or attempt.state.active_search is None:
+            return None
+        shown = attempt.state.active_search.request.commerce_subcategory
+        others = [companion for companion in stocked if companion.commerce_subcategory != shown]
+        logger.info(
+            "cross_sell_products_shown",
+            store_id=turn.context.store_id,
+            shown_count=len(attempt.search.products) if attempt.search else 0,
+            other_kinds=len(others),
+        )
+        return replace(
+            attempt,
+            state=_ordered_by_pick(attempt.state),
+            focus=card,
+            companions=await self._chips(others, turn),
+            # A suggestion beside their pick, not a design request: the
+            # specialist was consulted, and the cards are the whole answer.
+            design_handoff=False,
+            proposals_applied=False,
+        )
+
+    async def _designed_complement(
+        self, anchor: ProductCandidate, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary | None:
+        """The specialist's first complementary kind this store can fill, as a
+        search - or None when it could not say, or nothing it said is stocked.
+
+        The same request and search the typed "what would go with this?" path
+        makes, told the customer's own taste: what they have said about colour
+        and style, a room's first, and the pick's own style where they have
+        said nothing of style. Taste ranks the cards; it filters nothing
+        (CLAUDE.md 12.4).
+        """
+        if self._design is None:
+            return None
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+            request = await self._complement_request(
+                state, turn, capabilities, anchor, taste=self._taste(anchor, state)
+            )
+            plan = await self._design.plan(request)
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("cross_sell_design_unavailable", store_id=turn.context.store_id)
+            return None
+        # One kind, and only what they asked for: a need naming a whole
+        # category would show any kind in it - their pick's own among them -
+        # and a seat count would be a requirement nobody stated, kept on the
+        # search for every "cheaper" or "more" after it.
+        needs = tuple(
+            need.model_copy(update={"seating_capacity": None})
+            for need in plan.needs
+            if need.commerce_subcategory is not None
+        )
+        if not needs:
+            logger.info(
+                "cross_sell_design_no_need",
+                store_id=turn.context.store_id,
+                proposed=len(plan.needs),
+            )
+            return None
+        attempt = await self._first_viable_complement(needs, request, state, turn)
+        if attempt.search is None or not attempt.search.products:
+            return None
+        return attempt
+
+    def _taste(
+        self, anchor: ProductCandidate, state: AgentStateV1
+    ) -> tuple[SemanticPreference, ...]:
+        """The colours and styles a suggestion beside this pick leans towards."""
+        room = state.room_project.design_preferences if state.room_project else ()
+        taste = self._composer.taste(room, state.customer_preferences.semantic_preferences)
+        if self._companion_builder is not None and not any(
+            preference.family is AttributeFamily.STYLE for preference in taste
+        ):
+            taste = (*taste, *self._companion_builder.style_of(anchor))
+        return taste
 
     async def _offer_after_pick(
         self,
@@ -1541,11 +1666,13 @@ class CustomerTurnCoordinator:
         primary: _Primary,
         turn: CustomerTurnInput,
     ) -> _Primary | None:
-        """A pick they typed - "I like the third one" - offered what goes with it.
+        """A pick they typed - "I like the third one" - and what goes with it.
 
-        The same offer a tick brings: only when the turn did nothing else, the
-        one new pick has pairings, and the store stocks something
-        that goes with it. Otherwise the turn stands as it was.
+        The same answer a tick brings: only when the turn did nothing else and
+        picked exactly one product. Products that go with it are shown when
+        the setting is on (CLAUDE.md 10.4); otherwise the kinds are offered
+        when the pick has pairings the store stocks. Failing both, the turn
+        stands as it was.
         """
         if (
             decision.action is not AgentAction.ANSWER
@@ -1564,9 +1691,26 @@ class CustomerTurnCoordinator:
         except _HANDLED_SEARCH_FAILURES:
             return None
         anchor = next((p for p in products if p.product_id == added[0]), None)
-        if anchor is None or not has_pairings(anchor.commerce.subcategory, self._complements):
+        if anchor is None or not (
+            self._cross_sell_shows_products
+            or has_pairings(anchor.commerce.subcategory, self._complements)
+        ):
             return None
         offer = await self._offer_companions(anchor, after, turn)
+        if offer.search is not None:
+            logger.info("cross_sell_shown_after_typed_pick", store_id=turn.context.store_id)
+            return replace(
+                primary,
+                state=offer.state,
+                focus=offer.focus,
+                companions=offer.companions,
+                search=offer.search,
+                # The pick is drawn as their pick above the cards; reported as
+                # a selection or a detail, the reply would describe it instead
+                # of what goes with it.
+                selection=None,
+                product_detail=None,
+            )
         if not offer.companions:
             return None
         logger.info("cross_sell_offered_after_typed_pick", store_id=turn.context.store_id)
@@ -1613,7 +1757,9 @@ class CustomerTurnCoordinator:
             anchor, turn, picked=await self._picked_types(pre_turn, turn)
         )
         return replace(
-            attempt, companions=await self._chips([c for c in stocked if c != companion], turn)
+            attempt,
+            state=_ordered_by_pick(attempt.state),
+            companions=await self._chips([c for c in stocked if c != companion], turn),
         )
 
     async def _chips(
@@ -4116,6 +4262,8 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
         capabilities: RetailerCatalogCapabilities,
         product: ProductCandidate,
+        *,
+        taste: tuple[SemanticPreference, ...] | None = None,
     ) -> InteriorDesignRequest:
         """What the specialist is told about what they already have.
 
@@ -4138,7 +4286,9 @@ class CustomerTurnCoordinator:
             task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
             design_brief=_design_brief(turn.message),
             room_type=room.room_type if room else None,
-            design_preferences=room.design_preferences if room else (),
+            design_preferences=(
+                taste if taste is not None else (room.design_preferences if room else ())
+            ),
             regular_seating_count=room.regular_seating_count if room else None,
             catalog_capabilities=capabilities,
             anchors=project_anchors(
@@ -4993,6 +5143,10 @@ class CustomerTurnCoordinator:
             ),
         )
         committed = commit_search_results(promoted, execution.presented_product_ids)
+        if composed.candidate.ordered_by_pick:
+            # The next page of what goes with a pick ("show me more", "not
+            # this one") is still ordered by the pick, not by their words.
+            committed = _ordered_by_pick(committed)
         primary = _Primary(
             state=remember_measurements(committed) if save_sizes else committed,
             search=execution.grounding,
@@ -5390,14 +5544,18 @@ class CustomerTurnCoordinator:
             clarification, failure = _comparison_outcome(comparison)
             return _Primary(state=working, clarification=clarification, failure=failure)
         if similar_only:
-            first, *others = (product.commerce.subcategory for product in comparison.products)
-            comparable = all(
-                self._compare_groups.comparable(first, other)
+            # The same rule the pop-up endpoint applies, from the reviewed groups.
+            # Without them configured, only one type compares with itself.
+            subcategories = [product.commerce.subcategory for product in comparison.products]
+            comparable = (
+                self._compare_groups.all_comparable(subcategories)
                 if self._compare_groups is not None
-                else first is not None and first == other
-                for other in others
+                else subcategories[0] is not None and len(set(subcategories)) == 1
             )
             if not comparable:
+                logger.info(
+                    "card_comparison_refused", store_id=turn.context.store_id, reason="dissimilar"
+                )
                 raise ComparisonRefusedError(reason="dissimilar")
         # Recorded in column order, so "the second one" can mean the second
         # column rather than only the second search result. Taken from the

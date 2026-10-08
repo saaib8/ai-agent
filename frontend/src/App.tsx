@@ -210,8 +210,8 @@ export default function App() {
         { kind: 'select', ordinal, list_revision: listRevision },
         config.config,
       )
-      // The first pick of its kind: show what goes with it, as a turn of its
-      // own. A second of the same kind - picked to compare - stays silent.
+      // Every new pick comes into the conversation as a turn of its own: its
+      // card, and what goes with it when anything does.
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)

@@ -112,6 +112,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
             semantics=search.semantics,
             semantic_preferences=search.semantic_preferences,
             semantic_intent=search.semantic_intent,
+            ordered_by_pick=search.ordered_by_pick,
             revision=revision,
         ),
         product_interaction=ProductInteractionState(

@@ -207,6 +207,16 @@ class SearchRefinementComposer:
         except _Refused as refused:
             return refused.outcome
 
+    @staticmethod
+    def taste(
+        room: tuple[SemanticPreference, ...], customer: tuple[SemanticPreference, ...]
+    ) -> tuple[SemanticPreference, ...]:
+        """The customer's colour and style leanings beside no request of their
+        own - a room's first, then what they have said in the chat - by the
+        same ladder a new search seeds from, so a suggestion leans exactly as
+        their next search would."""
+        return SearchRefinementComposer._seed_preferences((), None, room, customer)
+
     def seed_new_task(
         self,
         resolved: ResolvedSearch,

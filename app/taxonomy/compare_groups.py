@@ -10,7 +10,7 @@ the other registries.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
@@ -49,6 +49,12 @@ class CompareGroups:
     def comparable(self, first: str | None, second: str | None) -> bool:
         family = self.family(first)
         return family is not None and family == self.family(second)
+
+    def all_comparable(self, subcategories: Sequence[str | None]) -> bool:
+        """Whether every product compares with the first - so with each other,
+        since families are an equivalence."""
+        first, *others = subcategories
+        return all(self.comparable(first, other) for other in others)
 
     def __repr__(self) -> str:
         return f"CompareGroups(version={self._version!r}, grouped={len(self._groups)})"

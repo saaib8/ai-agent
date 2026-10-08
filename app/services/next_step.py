@@ -22,8 +22,9 @@ decision model reads like any typed message.
 
 from __future__ import annotations
 
-from app.schemas.agent_decision import BlockingClarificationReason, FollowUpPolicy
-from app.schemas.agent_turn import CustomerTurnResult
+from app.prompts.visualization.v1 import ROOM_TYPES
+from app.schemas.agent_decision import BlockingClarificationReason
+from app.schemas.agent_turn import CustomerResponse, CustomerTurnResult
 from app.schemas.bundle import RoomBundle
 from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep, NextStepKind
@@ -31,22 +32,44 @@ from app.schemas.picks import PickView
 from app.schemas.product_action import GoesWithPickAction
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerCatalogCapabilities
+from app.schemas.text_choice import closes_on_a_question
+from app.schemas.visualization import RoomType
+from app.services.arabic_wording import in_language
 from app.services.chip_wording import Chip, chip
+from app.services.media_wording import ARABIC_ROOMS
 from app.taxonomy.complements import Complements
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.rooms import RoomPieces
-from app.taxonomy.words import customer_words
+from app.taxonomy.words import customer_words, label_words, plural_words
 
 MAX_PIECE_CHOICES = 6
 """A compact row of suggestions; customers can still type any other type."""
 
 
 def asks_for_product_type(result: CustomerTurnResult) -> bool:
-    clarification = result.grounding.clarification or result.grounding.deterministic_clarification
-    return (
-        clarification is not None
-        and clarification.reason is BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE
-    )
+    """Whether this turn is only "what are you looking for?" - so the store's
+    own types answer it.
+
+    Not when the turn did something else as well (a pick, a search, a room):
+    the question would replace that turn's reply. And not when the decision
+    model asked a narrower question with its own answers - "coffee, dining or
+    side table?" - which is the better question (CLAUDE.md 14.5).
+    """
+    grounding = result.grounding
+    if (
+        grounding.search is not None
+        or grounding.selection is not None
+        or grounding.product_detail is not None
+        or grounding.comparison is not None
+        or result.bundle_outcome is not None
+    ):
+        return False
+    vague = BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE
+    model = grounding.clarification
+    if model is not None and model.reason is vague:
+        return not model.choices
+    found = grounding.deterministic_clarification
+    return found is not None and found.reason is vague
 
 
 def next_step(
@@ -65,11 +88,16 @@ def next_step(
             return NextStep(kind=NextStepKind.CHOOSE_PIECE, chips=chips)
     clarification = result.grounding.clarification or result.grounding.deterministic_clarification
     room = result.state.room_project
+    # Only when no room was named at all. A room they did name but the registry
+    # has no template for - a dining room, a home office - is asked about by
+    # the decision model, budget first (CLAUDE.md 10.1); asking "which room?"
+    # there would loop on the room they just named.
+    room_named = room is not None and bool(room.room_kind or room.room_type)
     if (
         clarification is not None
         and clarification.reason is BlockingClarificationReason.MISSING_ROOM_REQUIREMENTS
         and rooms is not None
-        and (room is None or rooms.template(room.room_kind) is None)
+        and not room_named
     ):
         choices = _room_type_chips(rooms, language)
         if choices:
@@ -77,13 +105,9 @@ def next_step(
     if already_asks(result):
         return None
     grounding = result.grounding
-    if (
-        grounding.follow_up_policy is FollowUpPolicy.OPTIONAL
-        and result.decision.follow_up_goal is not None
-    ):
-        # A specific preference question owns its answers; the generic next
-        # step is only for turns that have no question of their own.
-        return None
+    # Kept even beside an optional preference question: a reply that asks it
+    # with its own answers shows those, and one that asks nothing - or asks
+    # without answers - still ends on this step's chips (CLAUDE.md 10.2).
     picks = result.picks or ()
 
     if grounding.comparison is not None:
@@ -102,7 +126,13 @@ def next_step(
             chips=_chips(language, Chip.SWAP_A_PIECE, Chip.FINISHING_TOUCH),
         )
     if picks:
-        goes_with = _goes_with_pick(picks, complements)
+        # Beside cards of what goes with their pick, "what goes with it?"
+        # would offer the very thing on screen (CLAUDE.md 10.4).
+        active = result.state.active_search
+        showing_what_goes_with = bool(
+            grounding.search is not None and grounding.search.products
+        ) and (result.focus is not None or (active is not None and active.ordered_by_pick))
+        goes_with = None if showing_what_goes_with else _goes_with_pick(picks, complements)
         kind = NextStepKind.AFTER_PICKS if goes_with else NextStepKind.ROOM_AROUND_PICKS
         return NextStep(kind=kind, chips=_picks_chips(goes_with, language))
     if (
@@ -142,27 +172,48 @@ def _piece_chips(
     choices = []
     for item in first + remaining:
         key = item.commerce_subcategory or item.commerce_category
-        name = taxonomy.arabic(key) if language is ReplyLanguage.AR and taxonomy else None
-        if language is ReplyLanguage.EN:
-            name = customer_words(key)
-        if name:
-            choices.append(chip(Chip.PRODUCT_TYPE, language, label=name.capitalize(), kind=name))
+        if language is ReplyLanguage.AR:
+            name = taxonomy.arabic(key) if taxonomy else None
+            label, kind = name, name
+        else:
+            words = customer_words(key)
+            label, kind = label_words(words), plural_words(words)
+        if label and kind:
+            choices.append(chip(Chip.PRODUCT_TYPE, language, label=label, kind=kind))
         if len(choices) == MAX_PIECE_CHOICES:
             break
     return tuple(choices)
 
 
 def _room_type_chips(rooms: RoomPieces, language: ReplyLanguage) -> tuple[ReplyChoice, ...]:
+    """The rooms the registry can guide, named as the room pictures name them -
+    one list of room names per language, beside `RoomType`."""
     choices = []
     for kind in rooms.kinds:
-        template = rooms.template(kind)
-        if language is ReplyLanguage.AR:
-            name = template.label_ar if template is not None else None
-        else:
-            name = kind.replace("_", " ").capitalize()
-        if name:
-            choices.append(chip(Chip.ROOM_TYPE, language, room=name))
+        try:
+            room = RoomType(kind)
+        except ValueError:
+            continue  # a registry room no picture names; the customer can type it
+        label, words = ROOM_TYPES[room]
+        name = ARABIC_ROOMS[room] if language is ReplyLanguage.AR else label
+        choices.append(chip(Chip.ROOM_TYPE, language, room=name, room_lower=words))
     return tuple(choices)
+
+
+def asks_its_own_question(
+    response: CustomerResponse, step: NextStep, language: ReplyLanguage
+) -> bool:
+    """Whether the reply asks a question of its own rather than the step's.
+
+    The reply model asks when the summary calls for it - an offer of what
+    setting a requirement aside would find, a missing room piece - and its own
+    choices answer that question. A reply that asked nothing has had the
+    step's question appended, and the step's chips answer it.
+    """
+    if not closes_on_a_question(response.message, response.follow_up_question):
+        return False
+    appended = in_language(step.question, language)
+    return not response.message.rstrip().endswith(appended)
 
 
 def already_asks(result: CustomerTurnResult) -> bool:

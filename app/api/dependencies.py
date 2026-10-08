@@ -329,6 +329,7 @@ def customer_turn_coordinator(
         ),
         arabic_replies=settings.customer_agent.arabic_replies,
         compare_groups=app_resources.compare_groups,
+        cross_sell_shows_products=settings.customer_agent.cross_sell_shows_products,
     )
 
 
@@ -453,8 +454,6 @@ def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRunt
         product_hydration_service(session),
         session_store(app_resources),
         app_resources.settings.customer_agent,
-        complements=app_resources.complements,
-        capabilities=catalog_capability_service(session, app_resources),
     )
 
 
@@ -566,6 +565,7 @@ def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> Fin
             app_resources.attributes, app_resources.dimensions, app_resources.seating
         ),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
+        compare_groups=app_resources.compare_groups,
     )
 
 

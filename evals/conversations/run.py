@@ -380,6 +380,17 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
         got = bool(turn.presentation.get("focus"))
         if got != want:
             failures.append("no cross-sell after the pick" if want else "an unexpected cross-sell")
+    if (want := checks.get("shows_with_pick")) is not None:
+        focus = turn.presentation.get("focus") or {}
+        kind = (focus.get("commerce") or {}).get("subcategory")
+        kinds = [(p.get("commerce") or {}).get("subcategory") for p in products]
+        got = bool(focus) and bool(products) and kind not in kinds
+        if got != want:
+            failures.append(
+                f"no products shown with the pick (pick {kind}, cards {kinds})"
+                if want
+                else "products were shown with the pick"
+            )
     if checks.get("silent_tick") and (turn.kind != "picks" or turn.body.get("goes_with")):
         failures.append("the tick was not silent - it started a turn")
     if (seats := checks.get("seats")) is not None:
@@ -536,7 +547,8 @@ class Conversation:
                 product_action={"kind": "compare", "picks": [first, second]},
             )
         if "chip" in turn:
-            return await self._chip(str(turn["chip"]))
+            chip = turn["chip"]
+            return await self._chip(chip if isinstance(chip, int) else str(chip))
         if "compare_cards" in turn:
             cards = []
             for spec in turn["compare_cards"]:
@@ -621,15 +633,21 @@ class Conversation:
         )
         goes_with = ticked.body.get("goes_with") if ticked.status == 200 else None
         if goes_with:
-            # The console asks what goes with the first pick of its kind.
+            # The console opens every new pick as a turn of its own.
             return await self.chat(
                 f"I like the {self.pick_name(int(goes_with))}",
                 product_action={"kind": "goes_with", "pick": int(goes_with)},
             )
         return ticked
 
-    async def _chip(self, label: str) -> TurnResult:
+    async def _chip(self, label: str | int) -> TurnResult:
         choices = self.chats[-1].presentation.get("choices") or [] if self.chats else []
+        if isinstance(label, int):
+            # A chip by its position: for kinds that depend on what the
+            # designer chose to show, which the case cannot know in advance.
+            if not 1 <= label <= len(choices):
+                raise CaseError(f"no chip {label} (offers {[c['label'] for c in choices]})")
+            return await self._tap(choices[label - 1])
         chip = next((c for c in choices if c["label"].casefold() == label.casefold()), None)
         if chip is None:
             # A chip whose label carries a live figure ("Separate sofas · from
@@ -638,6 +656,9 @@ class Conversation:
             chip = starting[0] if len(starting) == 1 else None
         if chip is None:
             raise CaseError(f"no chip {label!r} (offers {[c['label'] for c in choices]})")
+        return await self._tap(chip)
+
+    async def _tap(self, chip: dict[str, Any]) -> TurnResult:
         if chip.get("product_action"):
             return await self.chat(chip["value"], product_action=chip["product_action"])
         if chip.get("bundle_action"):

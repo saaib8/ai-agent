@@ -364,3 +364,11 @@ performs never depend on the language.
   by the frontend in English; better still, send piece keys rather than words.
 - Fixed UI text ("Quick reply", "· up to 3", buttons, the start screen) and
   right-to-left layout remain the frontend's.
+
+## 15. Compare moved into the chat (2026-10-08)
+
+The console's Compare button now sends a conversation turn (`product_action`
+`compare_cards`) instead of opening the `POST /v1/comparisons` pop-up (decided
+with the user; CLAUDE.md 10.4 updated). The endpoint remains for clients that
+want a look without a turn, and the `ar_compare_popup` eval case still covers
+it; the console no longer calls it.
