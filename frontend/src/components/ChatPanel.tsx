@@ -24,11 +24,17 @@ import { TypingIndicator } from './TypingIndicator'
 interface ChatPanelProps {
   turns: Turn[]
   sending: boolean
+  /** A reply is typing out progressively (after validation); Stop freezes it. */
+  revealing: boolean
+  revealedLen: number
+  revealTurnId: string | null
   activity: Activity
   storeId: number
   draft: string
   onDraftChange: (value: string) => void
   onSend: (text: string) => void
+  /** Abort the in-flight reply; the send button is a Stop button while sending. */
+  onStop: () => void
   onPhoto: (file: File) => void
   onPickObject: (photoTurnId: string, imageId: string, object: FinderObject) => void
   /** The role being swapped, when a swap is in progress; drives the picker. */
@@ -75,11 +81,15 @@ const TICKABLE_LISTS = 7
 export function ChatPanel({
   turns,
   sending,
+  revealing,
+  revealedLen,
+  revealTurnId,
   activity,
   storeId,
   draft,
   onDraftChange,
   onSend,
+  onStop,
   onPhoto,
   onPickObject,
   swapRole,
@@ -125,7 +135,7 @@ export function ChatPanel({
 
   // A tick and a reply both write the session, so neither starts while the
   // other is in flight.
-  const busy = sending || picking
+  const busy = sending || picking || revealing
 
   // A tick names the result list its card is on. The server remembers the
   // latest list and a few before it, so a sofa can still be picked after the
@@ -237,6 +247,8 @@ export function ChatPanel({
                     key={turn.id}
                     data={turn.data}
                     busy={busy}
+                    revealedLen={turn.id === revealTurnId ? revealedLen : undefined}
+                    revealing={turn.id === revealTurnId && revealing}
                     onSwapStart={onSwapStart}
                     pick={
                       turn.id === lastAssistantId && swapRole
@@ -311,9 +323,11 @@ export function ChatPanel({
         value={draft}
         onChange={onDraftChange}
         onSend={() => onSend(draft)}
+        onStop={onStop}
         onPhoto={onPhoto}
         onOpenCatalog={onOpenCatalog}
         disabled={busy}
+        sending={sending || revealing}
       />
     </div>
   )

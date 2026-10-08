@@ -96,6 +96,10 @@ interface AssistantBubbleProps {
   latest?: boolean
   /** Answers tapped on a card of questions, sent as a search. */
   onBriefSubmit?: (answer: BriefAnswerAction, summary: string) => void
+  /** While this turn's reply types out: how many characters to show so far. */
+  revealedLen?: number
+  /** This turn's reply is still typing out; its products and chips wait for it. */
+  revealing?: boolean
 }
 
 export function AssistantBubble({
@@ -114,8 +118,13 @@ export function AssistantBubble({
   renderOutdated = false,
   latest,
   onBriefSubmit,
+  revealedLen,
+  revealing,
 }: AssistantBubbleProps) {
   const { response, presentation } = data
+  // While this turn is typing out, show only the revealed prefix of the reply.
+  const shownMessage =
+    revealedLen != null ? response.message.slice(0, revealedLen) : response.message
   const hasProducts = !!presentation?.products?.length
   // Only search results are the list a tick or "Not this one" counts into.
   // Picks shown back, or a single product, would act on the list behind them.
@@ -145,9 +154,12 @@ export function AssistantBubble({
       <ZoryAvatar />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-2.5 text-[15px] leading-relaxed text-ink shadow-card">
-          {response.message}
+          {shownMessage}
+          {revealing && <span className="ml-0.5 animate-pulse text-clay">▍</span>}
         </div>
 
+        {!revealing && (
+          <>
         {response.follow_up_question && (
           <div className="flex max-w-[85%] items-start gap-2.5 rounded-xl border border-clay/15 bg-clay-soft/40 px-3.5 py-2.5">
             <HelpIcon size={16} className="mt-0.5 shrink-0 text-clay" />
@@ -221,6 +233,8 @@ export function AssistantBubble({
         )}
 
         <RawJson value={data} />
+          </>
+        )}
       </div>
     </div>
   )

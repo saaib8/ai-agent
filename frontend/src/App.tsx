@@ -406,11 +406,15 @@ export default function App() {
         <ChatPanel
           turns={chat.turns}
           sending={chat.sending}
+          revealing={chat.revealing}
+          revealedLen={chat.revealedLen}
+          revealTurnId={chat.revealTurnId}
           activity={chat.activity}
           storeId={config.config.storeId}
           draft={draft}
           onDraftChange={setDraft}
           onSend={handleSend}
+          onStop={chat.stop}
           onPhoto={handlePhoto}
           onPickObject={handlePickObject}
           swapRole={swap?.role ?? null}

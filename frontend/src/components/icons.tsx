@@ -53,6 +53,12 @@ export const SendIcon = (p: IconProps) => (
   </Base>
 )
 
+export const StopIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+  </Base>
+)
+
 export const SofaIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3" />
