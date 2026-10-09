@@ -31,6 +31,7 @@ from app.schemas.agent_turn import (
     TurnGrounding,
 )
 from app.schemas.language import ReplyLanguage
+from app.schemas.next_step import NextStepKind
 from app.schemas.product_action import CompanionAction, CompanionOffer
 from app.schemas.product_brief import BriefMode
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
@@ -98,24 +99,14 @@ def _result(reply_language: ReplyLanguage | None) -> CustomerTurnResult:
     )
 
 
-def test_the_next_step_chips_are_english_exactly_as_before() -> None:
-    step = next_step(_result(None), None)
+@pytest.mark.parametrize("language", [None, AR])
+def test_a_greeting_ends_on_an_open_question_with_no_chips(language: ReplyLanguage | None) -> None:
+    """ "A piece, or a whole room?" is theirs to answer in their own words."""
+    step = next_step(_result(language), None)
 
     assert step is not None
-    assert [(c.label, c.value) for c in step.chips] == [
-        ("Find a piece", "I'm looking for a piece of furniture"),
-        ("Design a room", "I'd like to design a room"),
-    ]
-
-
-def test_the_next_step_chips_are_arabic_in_an_arabic_turn() -> None:
-    step = next_step(_result(AR), None)
-
-    assert step is not None
-    assert [(c.label, c.value) for c in step.chips] == [
-        ("ابحث عن قطعة", "أبحث عن قطعة أثاث"),
-        ("صمّم غرفة", "أودّ تصميم غرفة"),
-    ]
+    assert step.kind is NextStepKind.START
+    assert step.chips == ()
 
 
 def test_arabic_piece_choices_cover_every_approved_catalog_type() -> None:

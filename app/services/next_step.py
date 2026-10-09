@@ -144,9 +144,8 @@ def next_step(
             kind=NextStepKind.KEEP_BROWSING,
             chips=_chips(language, Chip.SHOW_MORE, Chip.NARROW_DOWN),
         )
-    return NextStep(
-        kind=NextStepKind.START, chips=_chips(language, Chip.FIND_A_PIECE, Chip.DESIGN_A_ROOM)
-    )
+    # An open question, with no chips: what they want is theirs to say.
+    return NextStep(kind=NextStepKind.START)
 
 
 def _piece_chips(

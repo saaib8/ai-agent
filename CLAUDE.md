@@ -525,7 +525,10 @@ with chips that answer it (`app/services/next_step.py`), decided in code from
 what the turn did: picks offer what goes with the newest pick (only a type
 with reviewed pairings) or a room around them - a pick is a moment to
 cross-sell, never to offer a comparison, which stays theirs to ask for; a detail, a comparison or a room each offer
-their own next move; nothing else offers a piece or a room. A turn that already
+their own next move; nothing else offers a piece or a room. A greeting or small
+talk - nothing on screen, nothing picked - closes on its open question ("a
+particular piece, or a whole room?") with **no chips**: what they want is
+theirs to say, in their own words. A turn that already
 asks - a question card, a room question, a seating shape, companions, a
 clarification - keeps its question and gets no second one. A reply that
 closes on a question of its own - the one preference question, an offer of what

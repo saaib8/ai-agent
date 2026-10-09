@@ -58,8 +58,6 @@ class Chip(StrEnum):
     FINISHING_TOUCH = "finishing_touch"
     SHOW_MORE = "show_more"
     NARROW_DOWN = "narrow_down"
-    FIND_A_PIECE = "find_a_piece"
-    DESIGN_A_ROOM = "design_a_room"
     PRODUCT_TYPE = "product_type"
     ROOM_TYPE = "room_type"
     # A room's questions and its over-budget swap (app/services/room_presentation.py).
@@ -159,14 +157,6 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
         Chip.NARROW_DOWN: {
             EN: ChipText("Narrow them down", "Help me narrow these down"),
             AR: ChipText("ضيّق الخيارات", "ساعدني في تضييق هذه الخيارات"),
-        },
-        Chip.FIND_A_PIECE: {
-            EN: ChipText("Find a piece", "I'm looking for a piece of furniture"),
-            AR: ChipText("ابحث عن قطعة", "أبحث عن قطعة أثاث"),
-        },
-        Chip.DESIGN_A_ROOM: {
-            EN: ChipText("Design a room", "I'd like to design a room"),
-            AR: ChipText("صمّم غرفة", "أودّ تصميم غرفة"),
         },
         Chip.CHOOSE_FOR_ME: {
             EN: ChipText("Choose for me", "Choose the pieces for me"),
