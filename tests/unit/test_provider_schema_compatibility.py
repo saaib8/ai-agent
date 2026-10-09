@@ -32,6 +32,7 @@ from app.schemas.agent_decision import (
 from app.schemas.product_reference import (
     ExtremumDirection,
     FocusedProduct,
+    LikedProduct,
     PresentedAttributeMatch,
     PresentedExtremum,
     PresentedOrdinal,
@@ -57,6 +58,7 @@ SELECTOR_MEMBERS = (
     "PickedOrdinal",
     "FocusedProduct",
     "SoleSelectedProduct",
+    "LikedProduct",
     "PresentedAttributeMatch",
     "PresentedExtremum",
 )
@@ -200,6 +202,8 @@ VALID_SELECTORS = (
     PresentedOrdinal(position=1),
     FocusedProduct(),
     SoleSelectedProduct(),
+    LikedProduct(),
+    LikedProduct(position=2),
     PresentedAttributeMatch(family=AttributeFamily.COLOR, value="Beige"),
     PresentedExtremum(direction=ExtremumDirection.LOWEST),
 )

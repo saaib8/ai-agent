@@ -454,6 +454,12 @@ def _coordinator(
     closest_type: Any = None,
     arabic_replies: bool = False,
     compare_groups: Any = None,
+    designer_led_buttons: bool = False,
+    designer_taste: bool = False,
+    designer_space_fit: bool = False,
+    room_handoff: bool = False,
+    designer_fit: bool = False,
+    mixed_types: bool = False,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -497,6 +503,12 @@ def _coordinator(
         closest_type,
         arabic_replies=arabic_replies,
         compare_groups=compare_groups,
+        designer_led_buttons=designer_led_buttons,
+        designer_taste=designer_taste,
+        designer_space_fit=designer_space_fit,
+        room_handoff=room_handoff,
+        designer_fit=designer_fit,
+        mixed_types=mixed_types,
     )
     return coordinator, parts
 
@@ -2369,6 +2381,8 @@ def test_every_composition_defect_is_accounted_for() -> None:
         "MALFORMED_AMOUNT",
         # Corrected like an unapproved value: a one-seat piece is its own type.
         "ONE_SEAT_ON_MULTI_SEAT_TYPE",
+        # Corrected too: "length" of a sofa is its overall width.
+        "UNSUPPORTED_DIMENSION_ROLE",
     }
 
 

@@ -6,12 +6,14 @@ bed always seats two or more. This is where those reviewed facts live -
 versioned, cross-validated against the commerce taxonomy, never guessed in code
 or by a model (CLAUDE.md 6.2, 31).
 
-It answers three questions:
+It answers four questions:
 
 * when a product of a type has no recorded seat count, how many does a reviewer
   say it seats? (a combination fills a seat with it)
 * does the type seat exactly one? (it never carries a seat filter)
 * does it always seat several? ("one seat" of it is a misreading)
+* which types does a search for it also show? (sofa sets and sectionals beside
+  sofas)
 
 A type the review has not settled - ``recliner``, where some seat 2-3 - is in
 neither list, and absence means unknown, never one. The loader mirrors the
@@ -47,12 +49,14 @@ class SeatingSemantics:
         multi_seat: frozenset[str] = frozenset(),
         combination_extras: frozenset[str] = frozenset(),
         combination_main: frozenset[str] | None = None,
+        shown_with: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         self._version = version
         self._implied = dict(implied)
         self._multi_seat = multi_seat
         self._combination_extras = combination_extras
         self._combination_main = multi_seat if combination_main is None else combination_main
+        self._shown_with = dict(shown_with or {})
 
     @property
     def version(self) -> str:
@@ -86,6 +90,14 @@ class SeatingSemantics:
     def is_combination_extra(self, subcategory: str | None) -> bool:
         """A one-seat type that may add seats to a seating combination."""
         return subcategory is not None and subcategory in self._combination_extras
+
+    def shown_with(self, subcategory: str | None) -> tuple[str, ...]:
+        """The types a customer's search for this one also shows - sofa sets
+        and sectional sofas beside sofas - in their reviewed order; empty for
+        a type nothing is shown beside."""
+        if subcategory is None:
+            return ()
+        return self._shown_with.get(subcategory, ())
 
     def __repr__(self) -> str:
         return (
@@ -150,13 +162,51 @@ def load_seating_semantics(
         raise TaxonomyConfigurationError(
             detail=f"{source.name}: combination_main {sorted(main - multi_seat)} must seat several"
         )
+    shown_with = _shown_with(document.get("shown_with", {}), multi_seat, source, taxonomy)
     return SeatingSemantics(
         version=version,
         implied=implied,
         multi_seat=multi_seat,
         combination_extras=extras,
         combination_main=main,
+        shown_with=shown_with,
     )
+
+
+def _shown_with(
+    raw: Any, multi_seat: frozenset[str], source: Path, taxonomy: CommerceTaxonomy | None
+) -> dict[str, tuple[str, ...]]:
+    """Which types a search for one type also shows. Each side seats several,
+    so a head count means the same thing on every card, and a type is never
+    shown beside itself."""
+    if not isinstance(raw, dict):
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: 'shown_with' must map a type to a list of types"
+        )
+    shown: dict[str, tuple[str, ...]] = {}
+    for key, values in raw.items():
+        if not isinstance(key, str) or not key:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: each 'shown_with' type must be a non-empty string"
+            )
+        beside = _type_list(values, f"shown_with.{key}", source, taxonomy)
+        if not beside:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: 'shown_with.{key}' must name at least one type"
+            )
+        _require_seating(key, source, taxonomy)
+        if key in beside:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: {key!r} cannot be shown beside itself"
+            )
+        not_several = sorted(t for t in (key, *beside) if t not in multi_seat)
+        if not_several:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: 'shown_with' types {not_several} must seat several"
+            )
+        # The file's order, not the set's: it is the order cards take turns in.
+        shown[key] = tuple(values)
+    return shown
 
 
 def _implied_capacity(

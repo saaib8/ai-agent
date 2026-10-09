@@ -55,6 +55,13 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "left your current choice as it is.": (
             "وجدت بدائل، لكن لا يصلح أيٌّ منها مع بقية الغرفة، لذلك أبقيت اختيارك الحالي كما هو."
         ),
+        "That card isn't on screen any more - try it from the latest results.": (
+            "لم تعد هذه البطاقة معروضة - جرّبها من أحدث النتائج."
+        ),
+        "You haven't liked anything yet - tap the heart on a card to keep the "
+        "pieces whose look you like.": (
+            "لم يعجبك أي شيء بعد - اضغط على القلب في أي بطاقة لتحتفظ بالقطع التي يعجبك شكلها."
+        ),
         "You haven't picked anything out yet, so there's nothing to show you here.": (
             "لم تختر أي شيء بعد، لذلك لا يوجد ما أعرضه عليك هنا."
         ),
@@ -197,6 +204,9 @@ ARABIC: Mapping[str, str] = MappingProxyType(
             "هل تودّ إضافته إلى اختياراتك، أم رؤية ما يتناسب معه؟"
         ),
         "Which one are you leaning towards?": "إلى أيّها تميل أكثر؟",
+        "Which of these two feels more like you?": "أيّ هاتين القطعتين أقرب إلى ذوقك؟",
+        "Which style feels right to you?": "أيّ طراز تشعر أنه الأنسب لك؟",
+        "Is there anything you'd rather avoid?": "هل هناك ما تفضّل تجنّبه؟",
         "Would you like to swap any piece, or add a finishing touch?": (
             "هل تودّ تبديل أي قطعة، أم إضافة لمسة أخيرة؟"
         ),

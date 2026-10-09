@@ -27,10 +27,10 @@ export function PicksTray({ picks, busy, error, onRemove, onGoesWith }: PicksTra
   return (
     <div className="border-t border-line bg-canvas/70 px-4 pt-2.5">
       <div className="mx-auto max-w-3xl">
+        {error && <TrayError message={error} />}
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
           Your picks ({picks.length})
         </div>
-        {error && <TrayError message={error} />}
         <div className="flex gap-2 overflow-x-auto pb-2.5 [scrollbar-width:thin]">
           {picks.map((pick) => (
             <PickTile

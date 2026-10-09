@@ -189,7 +189,9 @@ def semantic_ranking_service(app_resources: ResourcesDep) -> SemanticRankingServ
     Built with None providers when it is not, so callers need no branch: the
     service returns eligible products in deterministic order instead.
     """
-    return SemanticRankingService(app_resources.embedder, app_resources.semantic_index)
+    return SemanticRankingService(
+        app_resources.embedder, app_resources.semantic_index, app_resources.settings.size
+    )
 
 
 def product_hydration_service(session: SessionDep) -> ProductHydrationService:
@@ -250,6 +252,7 @@ def customer_agent_decision_service(
         app_resources.attributes,
         app_resources.rooms,
         reply_language=app_resources.settings.customer_agent.arabic_replies,
+        mixed_types=app_resources.settings.customer_agent.mixed_types,
     )
 
 
@@ -330,6 +333,16 @@ def customer_turn_coordinator(
         arabic_replies=settings.customer_agent.arabic_replies,
         compare_groups=app_resources.compare_groups,
         cross_sell_shows_products=settings.customer_agent.cross_sell_shows_products,
+        designer_led_opening=settings.customer_agent.designer_led_opening,
+        designer_led_brief=settings.customer_agent.designer_led_brief,
+        designer_led_buttons=settings.customer_agent.designer_led_buttons,
+        designer_direction=settings.customer_agent.designer_direction,
+        designer_taste=settings.customer_agent.designer_taste,
+        designer_space_fit=settings.customer_agent.designer_space_fit,
+        room_handoff=settings.customer_agent.designer_room_handoff,
+        designer_fit=settings.customer_agent.designer_fit,
+        size=settings.size,
+        mixed_types=settings.customer_agent.mixed_types,
     )
 
 
@@ -372,9 +385,12 @@ InteriorDesignAgentDep = Annotated[InteriorDesignAgent, Depends(interior_design_
 def catalog_capability_service(
     session: SessionDep, app_resources: ResourcesDep
 ) -> CatalogCapabilityService:
-    """What the active retailer stocks. Deterministic, no configuration."""
+    """What the active retailer stocks, and how its sizes read (`size`)."""
     return CatalogCapabilityService(
-        ProductRepository(session), app_resources.taxonomy, app_resources.seating
+        ProductRepository(session),
+        app_resources.taxonomy,
+        app_resources.seating,
+        app_resources.settings.size,
     )
 
 

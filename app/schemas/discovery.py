@@ -28,7 +28,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.product import ProductCandidate
-from app.taxonomy.dimensions import DimensionRole, SourceAxis
+from app.taxonomy.dimensions import DimensionRole, FloorSide, SourceAxis
 
 MAX_EXCLUDED_PRODUCT_IDS = 100
 """Upper bound on one request's exclusion list.
@@ -184,6 +184,10 @@ class DimensionConstraint(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     role: DimensionRole
+    side: FloorSide | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Which floor side the customer meant - a sofa's width is its longer side,
+    a bed's width its shorter. Read through `side_of`, so depth is always the
+    shorter side and an unstated width the longer."""
     kind: DimensionConstraintKind
     min_cm: Decimal | None = Field(default=None, gt=0)
     max_cm: Decimal | None = Field(default=None, gt=0)
@@ -240,6 +244,19 @@ class PlanarDimensionConstraint(BaseModel):
         )
 
 
+class PairMatch(BaseModel):
+    """A pair of sides resolved for search: two stored columns matched exactly
+    in either order (a rug), or the piece's shorter and longer floor side, each
+    within `tolerance` of the figure (anything else, read by side)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    constraint: PlanarDimensionConstraint
+    axes: tuple[SourceAxis, SourceAxis] | tuple[FloorSide, FloorSide]
+    tolerance: Decimal = Field(default=Decimal("0"), ge=0, lt=1)
+    """A share of each figure either way: "160 x 200" finds a 158 x 203 bed."""
+
+
 class AxisConstraint(BaseModel):
     """A dimension constraint with its role already resolved to a stored axis.
 
@@ -249,7 +266,8 @@ class AxisConstraint(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    axis: SourceAxis
+    axis: SourceAxis | FloorSide
+    """A stored column, or the piece's longer or shorter floor side."""
     kind: DimensionConstraintKind
     min_cm: Decimal | None = None
     max_cm: Decimal | None = None
@@ -270,6 +288,22 @@ class ProductSearchRequest(BaseModel):
 
     commerce_category: str = Field(min_length=1)
     commerce_subcategory: str | None = Field(default=None, min_length=1)
+    alongside_subcategories: tuple[str, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """Other approved types searched together with `commerce_subcategory`: a
+    sofa search also covers sofa sets and sectional sofas (`seating_v1.yaml`,
+    `shown_with`). Every other constraint applies to them alike.
+
+    Set only by application code, and only for a search the customer asked
+    for, with no size: these types' sizes are not searchable (CLAUDE.md
+    15.1), so a measurement keeps the search to the type itself. Worked out
+    each time the search runs, never stored with it."""
+
+    single_type: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The customer asked for this type alone - "just sofas", "a simple sofa,
+    not a set" - so nothing is searched beside it. Set only by application
+    code, from the turn's decision; kept with the search, so paging and
+    refinements keep to the one type."""
+
     price: PriceConstraint | None = None
     seating_capacity: SeatingCapacityConstraint | None = None
     # Exact, strictly-required catalog attributes only. Ordinary colour and
@@ -328,11 +362,38 @@ class ProductSearchRequest(BaseModel):
             raise ValueError("a request carries at most one constraint per dimension role")
         return self
 
+    @model_validator(mode="after")
+    def _check_alongside(self) -> Self:
+        """Types beside the one asked for: distinct, never the type itself,
+        never without one, and never with a size - their sizes cannot be
+        searched, so a measurement would hold them to a limit nobody checked."""
+        beside = self.alongside_subcategories
+        if not beside:
+            return self
+        if self.commerce_subcategory is None:
+            raise ValueError("types beside a search need the type they are beside")
+        if len(beside) != len(set(beside)) or self.commerce_subcategory in beside:
+            raise ValueError("types beside a search are distinct, and never the type itself")
+        if self.single_type:
+            raise ValueError("a search for one type alone shows nothing beside it")
+        if self.dimensions or self.planar_dimensions is not None:
+            raise ValueError("a search with a size shows nothing beside its type")
+        return self
+
+    @property
+    def subcategories(self) -> tuple[str, ...]:
+        """Every type this request searches: its own, then those beside it."""
+        if self.commerce_subcategory is None:
+            return ()
+        return (self.commerce_subcategory, *self.alongside_subcategories)
+
     def applied_filters(self) -> tuple[str, ...]:
         """Which structured filter types this request carries. For logging."""
         filters = ["commerce_category"]
         if self.commerce_subcategory is not None:
             filters.append("commerce_subcategory")
+        if self.alongside_subcategories:
+            filters.append("alongside_subcategories")
         if self.price is not None:
             filters.append("price")
         if self.seating_capacity is not None:

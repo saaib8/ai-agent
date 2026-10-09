@@ -1,6 +1,6 @@
 import type { GroundedProduct } from '../../api/types'
 import { ProductCard } from './ProductCard'
-import type { AlternativePick, CardCompare, CardSelect } from './ProductCard'
+import type { AlternativePick, CardCompare, CardLike, CardSelect } from './ProductCard'
 
 export interface SearchRefineControls {
   /** Re-run the search, excluding everything on screen — a different page. */
@@ -22,7 +22,17 @@ interface ProductGridProps {
   bestMatch?: boolean
   /** Present on search results: each card can be checked for comparison. */
   compare?: GridCompare
+  /** Present when cards can be liked: which are, by card number. */
+  likes?: GridLikes
+  /** Present when a similarity search can start from any card. */
+  onMoreLikeThis?: (product: GroundedProduct) => void
   busy?: boolean
+}
+
+/** Which cards are liked, by card number, and how to toggle one. */
+export interface GridLikes {
+  likedOrdinals: ReadonlySet<number>
+  onToggle: (product: GroundedProduct) => void
 }
 
 /** Which cards are checked for comparison, and which may still be. */
@@ -43,6 +53,8 @@ export function ProductGrid({
   selection,
   bestMatch = false,
   compare,
+  likes,
+  onMoreLikeThis,
   busy,
 }: ProductGridProps) {
   if (products.length === 0) return null
@@ -65,6 +77,9 @@ export function ProductGrid({
             select={cardSelect(p, selection, !!busy)}
             compare={compare?.compareFor(p)}
             bestMatch={bestMatch && index === 0}
+            like={cardLike(p, likes)}
+            onMoreLikeThis={onMoreLikeThis}
+            busy={busy}
           />
         ))}
       </div>
@@ -79,6 +94,11 @@ export function ProductGrid({
       )}
     </div>
   )
+}
+
+function cardLike(product: GroundedProduct, likes: GridLikes | undefined): CardLike | undefined {
+  if (!likes || product.presented_ordinal == null) return undefined
+  return { liked: likes.likedOrdinals.has(product.presented_ordinal), onToggle: likes.onToggle }
 }
 
 function cardSelect(

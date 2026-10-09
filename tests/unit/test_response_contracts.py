@@ -703,6 +703,8 @@ def test_the_existing_response_output_contract_is_reused() -> None:
         "referenced_grounding_refs",
         "follow_up_question",
         "choices",
+        # The opening's questions it chose to ask, when it had to choose.
+        "asked",
     }
 
 
@@ -1315,10 +1317,14 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "was_relaxed",
         "relaxed_fields",
         "dropped_roles",
+        "unanswerable_sizes",
         # A bool: sizes the customer gave earlier for this type apply again.
         "earlier_sizes_applied",
         # Counts per set-aside requirement when nothing matched - no values.
         "would_find_without",
+        # Kinds a search showed beside the one asked for, in registry words,
+        # and counts of each - no product, no price.
+        "type_mix",
         "compared_count",
         "comparison_differs_on",
         "bundle",
@@ -1326,6 +1332,16 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # customer named, and a count of combinations. No price, no total, no
         # product - the same rule as `bundle`.
         "seating",
+        "chosen_seating",
+        "narrowed",
+        "selection_liked",
+        "liked_also_picked",
+        "design_direction",
+        "taste_question",
+        "taste_answered",
+        "space_fit",
+        "room_carried",
+        "still_on_screen",
         # The room question to word: its kind, and counts of pieces offered.
         "room_question",
         # The held over-budget swap to word: which question it is on. No figure
@@ -1334,6 +1350,10 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # The card of questions: what it is about and which questions it asks
         # - kinds only, never its choices.
         "brief",
+        # What they answered on the opening: their room, and the head count
+        # that ordered the cards - their own words and tap, no catalog fact.
+        "shopping_room",
+        "seats_for",
         "guidance",
         "screen",
         "clarification_reason",

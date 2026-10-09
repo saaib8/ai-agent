@@ -36,6 +36,10 @@ MAX_BRIEFS_SHOWN: Final[int] = 20
 """A bound on the session's record of cards shown - one per product family,
 and the families are few."""
 
+MAX_OPENING_ASKED: Final[int] = 80
+"""A bound on the session's record of opening questions asked - a few per
+product family."""
+
 
 class BriefMode(StrEnum):
     """Why the card is on screen."""
@@ -70,6 +74,9 @@ class BriefQuestionView(BaseModel):
     choices: tuple[BriefChoice, ...] = Field(min_length=2)
     max_choices: int = Field(default=1, ge=1)
     """One for a single answer; more where several may be ticked together."""
+    selected: tuple[str, ...] = ()
+    """The keys already true of the search on screen, so Narrow down opens
+    showing what it is using rather than blank."""
 
     @model_validator(mode="after")
     def _keys_unique(self) -> Self:
@@ -94,6 +101,18 @@ class ProductBrief(BaseModel):
 
     questions: tuple[BriefQuestionView, ...] = Field(min_length=1)
     submit_label: str = Field(min_length=1, max_length=40)
+    skip_label: str = Field(min_length=1, max_length=48)
+    """The same button with nothing tapped, in the reply's language."""
+
+
+class BriefChip(BaseModel):
+    """One thing the search on screen is using, which they can take away."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    facet: str = Field(min_length=1, max_length=80)
+    """What tapping ✕ removes - sent back as a `drop` action."""
+    label: str = Field(min_length=1, max_length=60)
 
 
 # ── what the session remembers ──────────────────────────────────────────────
@@ -148,6 +167,28 @@ class BriefSpaceOption(BaseModel):
     max_cm: Decimal | None = Field(default=None, gt=0)
 
 
+class BriefRoomOption(BaseModel):
+    """What a room key means: the room it remembers, or nothing for "Other"."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64)
+    room: str | None = Field(default=None, min_length=1, max_length=40)
+
+
+class BriefPeopleOption(BaseModel):
+    """What a head-count key means: how many usually sit there."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64)
+    people: int = Field(ge=1)
+    or_more: bool = False
+    combine: bool = False
+    """No single piece in the store seats this many, so the answer is a seat
+    requirement that leads to a combination (CLAUDE.md 27.1), not an order."""
+
+
 class BriefFeelOption(BaseModel):
     """What a feel key means: the words it ranks by."""
 
@@ -177,6 +218,16 @@ class PendingBrief(BaseModel):
     colours: tuple[str, ...] = ()
     styles: tuple[str, ...] = ()
     feels: tuple[BriefFeelOption, ...] = ()
+    rooms: tuple[BriefRoomOption, ...] = Field(default=(), exclude_if=lambda v: not v)
+    people: tuple[BriefPeopleOption, ...] = Field(default=(), exclude_if=lambda v: not v)
+    opening: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The card opens a new search: the reply writer chose which of its
+    questions to show, and only those were asked."""
+    replaces: tuple[BriefQuestionKind, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """The questions Narrow down opened with a value ticked: the answers it
+    sends replace those values, so a chip they untick is taken away."""
+    narrowing: bool = Field(default=False, exclude_if=lambda v: not v)
+    """Narrow down beside results: answered by tapping, never by typing."""
     drop_saved_sizes: bool = False
     """They let go of the sizes saved for this kind in the message the card
     answers - "back to sofas, any size is fine". Kept with the card, so the
@@ -202,6 +253,12 @@ class ProductBriefState(BaseModel):
 
     pending: PendingBrief | None = None
     """The card on screen, until it is answered or another replaces it."""
+
+    asked: tuple[str, ...] = Field(
+        default=(), max_length=MAX_OPENING_ASKED, exclude_if=lambda v: not v
+    )
+    """Opening questions already asked, as "family:kind" - never asked twice,
+    whether or not they were answered."""
 
     @model_validator(mode="after")
     def _pending_was_counted(self) -> Self:

@@ -46,13 +46,16 @@ from app.schemas.conversation import (
 )
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
-from app.schemas.picks import PickView
+from app.schemas.next_step import NextStepKind
+from app.schemas.picks import LikedView, PickView
+from app.schemas.product_brief import ProductBrief
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import companion_choices
 from app.services.next_step import asks_its_own_question
+from app.services.product_brief import opening_asked, record_asked
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first, offers_what_goes_with
 from app.services.room_presentation import (
@@ -60,8 +63,13 @@ from app.services.room_presentation import (
     room_answer_choices,
     swap_offer_choices,
 )
-from app.services.seating_presentation import present_seating_solution, seating_choices
+from app.services.seating_presentation import (
+    present_chosen_seating,
+    present_seating_solution,
+    seating_choices,
+)
 from app.services.turn_coordinator import CustomerTurnCoordinator
+from app.taxonomy.briefs import BriefQuestionKind
 
 logger = get_logger(__name__)
 
@@ -162,11 +170,12 @@ class ChatRuntime:
         """
         grounding = result.grounding
         products: tuple[GroundedProduct, ...] = ()
-        source: Literal["search", "selection", "detail"] | None = None
+        source: Literal["search", "selection", "liked", "detail"] | None = None
         if grounding.search is not None:
             products, source = grounding.search.products, "search"
         elif grounding.selection is not None:
-            products, source = grounding.selection.products, "selection"
+            products = grounding.selection.products
+            source = "liked" if grounding.selection.liked else "selection"
         elif grounding.product_detail is not None:
             products, source = (grounding.product_detail,), "detail"
 
@@ -202,7 +211,11 @@ class ChatRuntime:
             own = response is not None and asks_its_own_question(
                 response, result.next_step, language
             )
-            choices = model_choices if own and model_choices else result.next_step.chips
+            choices = (
+                model_choices
+                if own and model_choices and result.next_step.kind not in _TASTE_STEPS
+                else result.next_step.chips
+            )
         elif not choices and not (
             result.room_question
             or result.product_brief
@@ -223,11 +236,20 @@ class ChatRuntime:
                 result.state.product_interaction.presented_search_revision if results else None
             ),
             best_match=results and best_match_first(result),
-            brief=result.product_brief,
-            focus=result.focus,
+            brief=_as_asked(result, response),
+            narrow_down=result.narrow_down,
+            brief_chips=result.brief_chips,
+            # A chosen combination is drawn whole; its main piece alone above
+            # it would read as the only thing they chose.
+            focus=result.focus if result.chosen_seating is None else None,
             comparison=grounding.comparison,
             room=build_bundle_presentation(result),
             seating_bundles=seating_bundles,
+            chosen_seating=(
+                present_chosen_seating(result.chosen_seating)
+                if result.chosen_seating is not None
+                else None
+            ),
             choices=choices,
             piece_picker=(
                 piece_picker(result.room_question, language)
@@ -287,7 +309,7 @@ class ChatRuntime:
         words against a room that has since changed (M13 18, 33).
         """
         envelope = loaded.envelope.advanced(
-            state=result.state,
+            state=record_asked(result.state, _opening(result, response)),
             conversation=self.next_conversation(loaded, request, response),
         )
         committed = await self._sessions.save_if_revision(
@@ -313,6 +335,7 @@ class ChatRuntime:
         presentation: ChatPresentation | None,
         picks: tuple[PickView, ...] | None = None,
         reply_language: ReplyLanguage | None = None,
+        liked: tuple[LikedView, ...] | None = None,
     ) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
@@ -320,6 +343,7 @@ class ChatRuntime:
             response=response,
             presentation=presentation,
             picks=picks,
+            liked=liked,
             reply_language=reply_language,
         )
 
@@ -342,7 +366,13 @@ class ChatRuntime:
         revision = await self.persist(request, loaded, result, response)
         self._log(request, loaded, revision, presentation, started)
         return self.public_response(
-            request, revision, response, presentation, result.picks, result.reply_language
+            request,
+            revision,
+            response,
+            presentation,
+            result.picks,
+            result.reply_language,
+            result.liked,
         )
 
     @staticmethod
@@ -504,3 +534,34 @@ def trim_history(
     if kept and kept[0].role is ConversationRole.ASSISTANT:
         kept = kept[1:]
     return kept
+
+
+def _opening(
+    result: CustomerTurnResult, response: CustomerResponse | None
+) -> tuple[BriefQuestionKind, ...]:
+    """The questions the opening on screen asks, if one is."""
+    if result.product_brief is None:
+        return ()
+    return opening_asked(
+        result.product_brief,
+        result.state.product_brief.pending,
+        response.asked if response is not None else (),
+    )
+
+
+def _as_asked(result: CustomerTurnResult, response: CustomerResponse | None) -> ProductBrief | None:
+    """The card to draw: an opening shows only the questions its reply asks."""
+    card = result.product_brief
+    asked = _opening(result, response)
+    if card is None or not asked:
+        return card
+    return card.model_copy(
+        update={"questions": tuple(q for q in card.questions if q.kind in asked)}
+    )
+
+
+_TASTE_STEPS = frozenset(
+    {NextStepKind.TASTE_WHICH, NextStepKind.TASTE_STYLE, NextStepKind.TASTE_AVOID}
+)
+"""A taste question's chips carry the answer's key: never replaced by chips
+the reply wrote, which a tap would send back as words."""

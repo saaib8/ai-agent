@@ -253,6 +253,11 @@ class DesignTask(StrEnum):
     ROOM_PLAN = "room_plan"
     """Which product types this room calls for, and how badly."""
 
+    SPACE_FIT = "space_fit"
+    """How wide a piece should be for the space it goes in - a sofa on a
+    400 cm wall. A proportion of the space, never a product: code turns it
+    into a width and orders the cards by closeness to it."""
+
     COMPLEMENTARY_RECOMMENDATION = "complementary_recommendation"
     """The single furnishing role that would most complete the space around a
     piece the customer has settled on.
@@ -335,7 +340,19 @@ class InteriorDesignRequest(BaseModel):
     """
 
     catalog_capabilities: RetailerCatalogCapabilities | None = None
+    stocked_looks: tuple[StockedLook, ...] = ()
+    """For a complement: the colours and styles each stocked kind comes in, so
+    a direction names only what the shop can show."""
     anchors: tuple[AnchorProduct, ...] = ()
+
+    space_fit: SpaceFitRequest | None = None
+    """For space fit: the kind of piece and the width of the space it must
+    fit, as the customer gave it."""
+
+    fit_checks: tuple[PieceFitCheck, ...] = ()
+    """For "will it fit?" advice: each piece asked about against each wall and
+    doorway they gave, measured in code. Whether it works in their room is the
+    designer's judgement, with the room's size."""
 
     revision: DesignRevisionContext | None = None
     """The existing plan this request revises, when there is one.
@@ -353,6 +370,16 @@ class InteriorDesignRequest(BaseModel):
 
     @model_validator(mode="after")
     def _the_task_carries_what_it_needs(self) -> Self:
+        if (self.task is DesignTask.SPACE_FIT) != (self.space_fit is not None):
+            raise ValueError("a space fit, and only a space fit, carries the space")
+        if self.task is DesignTask.SPACE_FIT:
+            if self.question is not None or self.catalog_capabilities is not None:
+                # A proportion of a wall is design knowledge: it needs no
+                # catalog and answers no free question.
+                raise ValueError("a space fit consults no catalog and answers no question")
+            if self.anchors or self.revision is not None:
+                raise ValueError("a space fit has no anchor and revises no plan")
+            return self
         if self.task is DesignTask.GENERAL_ADVICE:
             if self.question is None or not self.question.strip():
                 raise ValueError("general advice needs a question")
@@ -383,6 +410,56 @@ class InteriorDesignRequest(BaseModel):
             # composition, so a plan to revise would have no bearing on it.
             raise ValueError("general advice revises no plan")
         return self
+
+
+MAX_DIRECTION_COLOURS = 3
+MAX_DIRECTION_STYLES = 2
+MAX_DIRECTION_AVOID = 2
+
+
+class DesignDirection(BaseModel):
+    """Which way a suggested piece should lean - what the designer would
+    reach for on the shop floor, beside what was picked.
+
+    For ranking only: every value orders products and none filters them, and
+    the customer's own colours and styles always come first
+    (docs/designer-led-shopping-plan.md, 4.2). Colours and styles are approved
+    values the store stocks for that kind; anything else is dropped after the
+    call, never matched to something near it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    colours: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_COLOURS)
+    styles: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_STYLES)
+    avoid_colours: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_AVOID)
+    avoid_styles: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_AVOID)
+    size_ratio: float | None = Field(default=None, ge=0.2, le=3)
+    """How long the piece's longer floor side should be, as a share of the
+    first anchor's - "about two-thirds of the sofa" is 0.66. A proportion, so
+    the designer never states a size; code turns it into a figure from the
+    anchor's real measurements, and only where they exist."""
+
+    @property
+    def is_empty(self) -> bool:
+        return not (
+            self.colours
+            or self.styles
+            or self.avoid_colours
+            or self.avoid_styles
+            or self.size_ratio is not None
+        )
+
+
+class StockedLook(BaseModel):
+    """The colours and styles one kind comes in at this store - the values a
+    direction for it can actually find."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_subcategory: str = Field(min_length=1)
+    colours: tuple[str, ...] = ()
+    styles: tuple[str, ...] = ()
 
 
 class DesignCategoryNeed(BaseModel):
@@ -446,6 +523,10 @@ class DesignCategoryNeed(BaseModel):
     Two pieces seating three each is `quantity=2` with a capacity of three, and
     conflating the two would order the wrong room.
     """
+
+    direction: DesignDirection | None = None
+    """For a complement only: which way this piece should lean beside what was
+    picked. Absent on a room plan's needs."""
 
     seating_capacity: SeatingCapacityConstraint | None = None
     """How many this particular piece should seat, when the design calls for it.
@@ -562,6 +643,59 @@ class DesignGuidance(BaseModel):
         return self
 
 
+class PieceFitCheck(BaseModel):
+    """One piece the question is about against one wall or doorway they gave,
+    measured in code - a fact the designer judges with, never the judgement.
+
+    `piece` is the piece's place among the anchors (1 for the first)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    piece: int = Field(ge=1)
+    card: int | None = Field(default=None, ge=1)
+    """Its place on the customer's screen, when it is a card there - what the
+    reply calls it by ("the second one")."""
+    space: Literal["wall", "doorway"]
+    label: str | None = None
+    space_cm: Decimal = Field(gt=0)
+    piece_cm: Decimal | None = None
+    """Against a wall, its longer floor side; through a doorway, the smaller
+    of its shorter side and its height. None when that is not listed."""
+    verdict: FitVerdict
+    margin_cm: Decimal | None = None
+
+
+MAX_SPACE_FIT_REASON_CHARS = 240
+MIN_SPACE_FIT_RATIO = 0.3
+MAX_SPACE_FIT_RATIO = 1.0
+
+
+class SpaceFitRequest(BaseModel):
+    """The piece and the space it goes in, for a space fit."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_subcategory: str = Field(min_length=1)
+    space_width_cm: Decimal = Field(gt=0)
+    """How wide the wall or spot is, as the customer gave it, in cm."""
+
+
+class SpaceFitAdvice(BaseModel):
+    """What the designer would aim for: a share of the space, and why.
+
+    A proportion and never a width, so the arithmetic stays in code
+    (CLAUDE.md 3.3). Floats, because the provider refuses the pattern a
+    decimal schema carries."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ratio: float = Field(ge=MIN_SPACE_FIT_RATIO, le=MAX_SPACE_FIT_RATIO)
+    """The piece's width as a share of the space - 0.66 for two-thirds."""
+    reason: str = Field(min_length=1, max_length=MAX_SPACE_FIT_REASON_CHARS)
+    """In a sentence, why that proportion - room to walk, side tables, the
+    wall not looking crammed. No figures: the reply states those."""
+
+
 class InteriorDesignResult(BaseModel):
     """What the design specialist concluded.
 
@@ -583,6 +717,8 @@ class InteriorDesignResult(BaseModel):
 
     guidance: tuple[DesignGuidance, ...] = ()
     needs: tuple[DesignCategoryNeed, ...] = ()
+    space_fit: SpaceFitAdvice | None = None
+    """For a space fit only: the proportion the piece should take."""
 
     def validate_against(self, taxonomy: CommerceTaxonomy) -> None:
         """Reject any need the approved vocabulary does not contain.

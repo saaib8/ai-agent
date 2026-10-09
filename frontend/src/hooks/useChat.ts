@@ -14,6 +14,7 @@ import type {
   ErrorBody,
   FinderObject,
   FinderPhotoResponse,
+  LikedView,
   PickAction,
   PickView,
   PicksResponse,
@@ -75,6 +76,15 @@ export interface UseChat {
   picking: boolean
   /** Why the last tick was refused, in the server's words; cleared by the next. */
   picksError: string | null
+  /** Their liked list as the server last reported it; null while unknown or
+   *  when the buttons are switched off. */
+  liked: LikedView[] | null
+  /** ♡ taps not yet saved, by card (`list_revision:ordinal`): a like or its undo. */
+  pendingLikes: Map<string, 'like' | 'unlike'>
+  /** ♡ or its undo on a card. Queued while a reply or a tick is in flight,
+   *  then saved - a like never races the session. A second tap on a card
+   *  whose tap is still queued takes that tap back instead. */
+  queueLike: (action: CardLikeAction, config: ConsoleConfig) => void
   send: (message: string, config: ConsoleConfig, opts?: SendOptions) => Promise<void>
   /** Tick a card or untick a pick. Silent: no chat turn. */
   /** Tick or untick. Resolves to the server's answer, or null on failure. */
@@ -101,14 +111,22 @@ export interface UseChat {
   reset: () => void
 }
 
+/** ♡ on a card, or its undo - always named by the card, which a queued tap
+ *  still means after the liked list renumbers. */
+export type CardLikeAction =
+  | { kind: 'like'; ordinal: number; list_revision: number }
+  | { kind: 'unlike'; ordinal: number; list_revision: number }
+
+const cardKey = (action: CardLikeAction) => `${action.list_revision}:${action.ordinal}`
+
 let counter = 0
 const nextId = (): string => `t${++counter}`
 
-// Typewriter pace for the reply reveal: deliberately readable, not instant, so
-// the reply can be watched as it is written and Stopped mid-way. Tune here -
-// smaller chars-per-tick or larger tick-ms is slower.
-const REVEAL_CHARS_PER_TICK = 1
+// Typewriter pace for the reply reveal: readable, so it can be Stopped mid-way,
+// yet the whole reply is on screen within REVEAL_MAX_MS however long it is -
+// the reply is already validated, so the reveal is pacing, never a wait.
 const REVEAL_TICK_MS = 28
+const REVEAL_MAX_MS = 1500
 
 export function useChat(): UseChat {
   const [turns, setTurns] = useState<Turn[]>([])
@@ -118,6 +136,10 @@ export function useChat(): UseChat {
   const [picks, setPicks] = useState<PickView[]>([])
   const [picking, setPicking] = useState(false)
   const [picksError, setPicksError] = useState<string | null>(null)
+  const [liked, setLiked] = useState<LikedView[] | null>(null)
+  const [likeQueue, setLikeQueue] = useState<{ action: CardLikeAction; config: ConsoleConfig }[]>(
+    [],
+  )
   // A ref as well as state: send() reads the latest revision without being
   // re-created on every commit.
   const revisionRef = useRef<number | null>(null)
@@ -147,12 +169,13 @@ export function useChat(): UseChat {
       return
     }
     revealTarget.current = text.length
+    const charsPerTick = Math.max(1, Math.ceil(text.length / (REVEAL_MAX_MS / REVEAL_TICK_MS)))
     setRevealTurnId(id)
     setRevealedLen(0)
     setRevealing(true)
-    // The validated reply types out at a readable pace (tune REVEAL_* above).
+    // The validated reply types out within REVEAL_MAX_MS (see above).
     revealTimer.current = setInterval(() => {
-      setRevealedLen((n) => Math.min(n + REVEAL_CHARS_PER_TICK, revealTarget.current))
+      setRevealedLen((n) => Math.min(n + charsPerTick, revealTarget.current))
     }, REVEAL_TICK_MS)
   }
 
@@ -176,6 +199,7 @@ export function useChat(): UseChat {
     // The server is the source of truth for what is picked; absent means the
     // turn did not report picks, so the tray stays as it is.
     if (data.picks) setPicks(data.picks)
+    if (data.liked) setLiked(data.liked)
     const id = nextId()
     setTurns((prev) => [...prev, { kind: 'assistant', id, data, selection }])
     // Type the (already-validated) reply out; the products follow once it lands.
@@ -236,11 +260,31 @@ export function useChat(): UseChat {
       revisionRef.current = result.data.session_revision
       setRevision(result.data.session_revision)
       setPicks(result.data.picks)
+      if (result.data.liked) setLiked(result.data.liked)
       return result.data
     }
     setPicksError(result.error.message)
     return null
   }, [])
+
+  const queueLike = useCallback((action: CardLikeAction, config: ConsoleConfig) => {
+    setLikeQueue((queue) => {
+      const same = (queued: CardLikeAction) => cardKey(queued) === cardKey(action)
+      return queue.some((q) => same(q.action))
+        ? queue.filter((q) => !same(q.action))
+        : [...queue, { action, config }]
+    })
+  }, [])
+
+  // One queued like at a time, and only when nothing else is writing the session.
+  useEffect(() => {
+    if (sending || picking || likeQueue.length === 0) return
+    const [next, ...rest] = likeQueue
+    setLikeQueue(rest)
+    void changePicks(next.action, next.config)
+  }, [sending, picking, likeQueue, changePicks])
+
+  const pendingLikes = new Map(likeQueue.map(({ action }) => [cardKey(action), action.kind]))
 
   const setPhoto = (id: string, photo: PhotoState) =>
     setTurns((prev) => prev.map((t) => (t.id === id && t.kind === 'photo' ? { ...t, photo } : t)))
@@ -258,12 +302,11 @@ export function useChat(): UseChat {
       file,
     })
 
-    setPhoto(
-      id,
-      result.ok
-        ? { status: 'ready', data: result.data, picked: [] }
-        : { status: 'error', httpStatus: result.status, error: result.error },
-    )
+    // A stopped request is nothing to show, as for a message.
+    if (result.ok) setPhoto(id, { status: 'ready', data: result.data, picked: [] })
+    else if (result.status !== 'aborted') {
+      setPhoto(id, { status: 'error', httpStatus: result.status, error: result.error })
+    }
     setSending(false)
   }, [])
 
@@ -301,7 +344,7 @@ export function useChat(): UseChat {
       })
 
       if (result.ok) commit(result.data)
-      else fail(result.status, result.error)
+      else if (result.status !== 'aborted') fail(result.status, result.error)
       setSending(false)
     },
     [],
@@ -393,6 +436,8 @@ export function useChat(): UseChat {
     setRevision(null)
     setPicks([])
     setPicksError(null)
+    setLiked(null)
+    setLikeQueue([])
     revisionRef.current = null
   }, [])
 
@@ -408,6 +453,9 @@ export function useChat(): UseChat {
     picks,
     picking,
     picksError,
+    liked,
+    pendingLikes,
+    queueLike,
     send,
     changePicks,
     uploadPhoto,

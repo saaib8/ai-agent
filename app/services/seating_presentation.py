@@ -15,6 +15,8 @@ card, so a chair never shows a confirmed "1 seat" it does not have
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.bundle import BundleStatus
 from app.schemas.bundle_presentation import (
@@ -63,10 +65,21 @@ def seating_choices(
 def present_seating_solution(solution: SeatingSolution) -> tuple[GroundedBundlePresentation, ...]:
     """Each proposed bundle as a rendered package, cheapest first (the planner's
     order). Empty for any outcome other than one that carries bundles."""
-    return tuple(_present_bundle(bundle, solution) for bundle in solution.bundles)
+    return tuple(
+        _present_bundle(bundle, solution.budget_amount, solution.currency)
+        for bundle in solution.bundles
+    )
 
 
-def _present_bundle(bundle: SeatingBundle, solution: SeatingSolution) -> GroundedBundlePresentation:
+def present_chosen_seating(bundle: SeatingBundle) -> GroundedBundlePresentation:
+    """The combination they chose, as one package: no budget is drawn beside
+    it, since it was within theirs when it was offered."""
+    return _present_bundle(bundle, None, bundle.currency)
+
+
+def _present_bundle(
+    bundle: SeatingBundle, budget_amount: Decimal | None, budget_currency: str
+) -> GroundedBundlePresentation:
     items = tuple(
         GroundedBundleItem(
             grounding_ref=position,
@@ -89,12 +102,12 @@ def _present_bundle(bundle: SeatingBundle, solution: SeatingSolution) -> Grounde
         )
         for position, line in enumerate(bundle.lines, start=1)
     )
-    has_budget = solution.budget_amount is not None
+    has_budget = budget_amount is not None
     totals = GroundedBundleTotals(
         new_spend_total=bundle.total_price,
         currency=bundle.currency,
-        budget_max_amount=solution.budget_amount,
-        budget_currency=solution.currency if has_budget else None,
+        budget_max_amount=budget_amount,
+        budget_currency=budget_currency if has_budget else None,
         budget_max_exclusive=False,
         # The planner never returns a bundle over budget, so a rendered one is
         # within it by construction; with no budget there is nothing to be within.

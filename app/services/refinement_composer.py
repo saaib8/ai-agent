@@ -52,7 +52,7 @@ from app.schemas.composition import (
     CompositionOutcome,
     NewTaskRequired,
 )
-from app.schemas.dimensions import parse_unit, to_centimetres
+from app.schemas.dimensions import PAIR_UNIT_WHEN_UNSAID, parse_unit, to_centimetres
 from app.schemas.discovery import (
     DimensionConstraint,
     PlanarDimensionConstraint,
@@ -67,6 +67,7 @@ from app.schemas.query import (
     ConstraintStrength,
     DimensionConstraintSemantics,
     PlanarDimensionSemantics,
+    RankingLean,
     ResolvedSearch,
     SemanticPreference,
     UnresolvedAttribute,
@@ -86,7 +87,12 @@ from app.schemas.refinement import (
     SortRefinement,
 )
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, UnsupportedDimensionReason
+from app.taxonomy.dimensions import (
+    DimensionRole,
+    DimensionSemantics,
+    UnsupportedDimensionReason,
+    side_of,
+)
 from app.taxonomy.seating import SeatingSemantics
 
 # An unqualified requirement is a requirement (CLAUDE.md 13.1). A bound the
@@ -268,6 +274,9 @@ class SearchRefinementComposer:
             semantics=resolved.semantics,
             semantic_preferences=preferences,
             semantic_intent=intent,
+            seat_preference=resolved.seat_preference,
+            # Only ever the space they said it must fit, at the start of a task.
+            lean=resolved.lean,
             revision=revision,
         )
         return ComposedSearch(
@@ -276,6 +285,8 @@ class SearchRefinementComposer:
                 request=resolved.request,
                 semantics=resolved.semantics,
                 semantic_preferences=preferences,
+                seat_preference=resolved.seat_preference,
+                lean=resolved.lean,
                 # M7's wording, for this execution only.
                 semantic_text=resolved.semantic_text,
                 unmatched_strict=resolved.unmatched_strict,
@@ -302,6 +313,9 @@ class SearchRefinementComposer:
                 request, semantics, subcategory, saved_measurements
             )
 
+        width_given = any(d.role is DimensionRole.OVERALL_WIDTH for d in delta.dimensions)
+        space_cm = _space_cm(delta)
+        delta, unanswerable = self._unanswerable(delta, request.commerce_subcategory)
         price, price_min_s, price_max_s = self._price(request, semantics, delta.price)
         capacity, seat_min_s, seat_max_s = self._capacity(
             request, semantics, delta.seating_capacity
@@ -333,6 +347,13 @@ class SearchRefinementComposer:
         composed = ProductSearchRequest(
             commerce_category=request.commerce_category,
             commerce_subcategory=request.commerce_subcategory,
+            # "Just sofas" holds while they refine the sofas, and is gone with
+            # a change of type: it was said of the type it named. "More like
+            # this" chose its type from the card, and "cheaper ones" keeps it.
+            single_type=(
+                (request.single_type or state.from_product)
+                and request.commerce_subcategory == state.request.commerce_subcategory
+            ),
             price=price,
             seating_capacity=capacity,
             dimensions=dimensions,
@@ -356,11 +377,21 @@ class SearchRefinementComposer:
             dimensions=dimension_semantics,
             planar_dimension=planar_semantics,
         )
+        lean = _space_lean(
+            state.lean
+            if state.lean is None
+            or request.commerce_subcategory == state.request.commerce_subcategory
+            else state.lean.for_another_kind(),
+            space_cm,
+            width_given=width_given,
+        )
         candidate = ActiveSearchState(
             request=composed,
             semantics=composed_semantics,
             semantic_preferences=preferences,
             semantic_intent=intent,
+            seat_preference=state.seat_preference,
+            lean=lean,
             # Criteria changing is not a search executing (CLAUDE.md 13.2).
             revision=state.revision,
         )
@@ -370,12 +401,14 @@ class SearchRefinementComposer:
                 request=composed,
                 semantics=composed_semantics,
                 semantic_preferences=preferences,
+                seat_preference=state.seat_preference,
+                lean=lean,
                 # A refinement executes on the durable intent, never on a
                 # contextless M7 reading of this turn's words.
                 semantic_text=intent,
                 unmatched_strict=unmatched,
             ),
-            dropped_constraints=_not_restated(dropped, composed),
+            dropped_constraints=(*_not_restated(dropped, composed), *unanswerable),
             earlier_sizes_applied=_still_applied(restored, composed),
         )
 
@@ -434,7 +467,7 @@ class SearchRefinementComposer:
                     role=None,
                     reason=(
                         None
-                        if self._dimension_semantics.supports_planar(subcategory)
+                        if self._dimension_semantics.reads_pair(subcategory)
                         else UnsupportedDimensionReason.UNSUPPORTED_PRODUCT_GEOMETRY
                     ),
                 )
@@ -469,9 +502,7 @@ class SearchRefinementComposer:
     def _unsupported(
         self, subcategory: str | None, role: DimensionRole
     ) -> UnsupportedDimensionReason | None:
-        if self._dimension_semantics.source_axis(subcategory, role) is not None:
-            return None
-        return self._dimension_semantics.unsupported_reason(subcategory, role)
+        return self._dimension_semantics.refusal(subcategory, role)
 
     def _restore(
         self,
@@ -491,12 +522,12 @@ class SearchRefinementComposer:
         dimensions = tuple(
             c
             for c in saved.dimensions
-            if self._dimension_semantics.source_axis(subcategory, c.role) is not None
+            if self._dimension_semantics.refusal(subcategory, c.role) is None
         )
         roles = {c.role for c in dimensions}
         planar_ok = (
             saved.planar_dimensions is not None
-            and self._dimension_semantics.supports_planar(subcategory)
+            and self._dimension_semantics.reads_pair(subcategory)
         )
         if not dimensions and not planar_ok:
             return request, semantics
@@ -587,6 +618,31 @@ class SearchRefinementComposer:
 
     # ── measurements ────────────────────────────────────────────────────────
 
+    def _unanswerable(
+        self, delta: SearchRefinementDelta, subcategory: str | None
+    ) -> tuple[SearchRefinementDelta, tuple[DroppedConstraint, ...]]:
+        """Sizes this kind's data deliberately cannot answer - a bed's length,
+        where the stored sides are unreliable - taken out and reported, never
+        applied. A role simply misread (a sofa's "length") is left in, to be
+        corrected (CLAUDE.md 15.1, 21.1)."""
+        kept: list[DimensionRefinement] = []
+        unanswerable: list[DroppedConstraint] = []
+        for refinement in delta.dimensions:
+            reason = self._unsupported(subcategory, refinement.role)
+            if (
+                refinement.op is RefinementOp.SET
+                and reason is not None
+                and reason is not UnsupportedDimensionReason.ROLE_NOT_DEFINED
+            ):
+                unanswerable.append(
+                    DroppedConstraint(role=refinement.role, reason=reason, asked_now=True)
+                )
+            else:
+                kept.append(refinement)
+        if not unanswerable:
+            return delta, ()
+        return delta.model_copy(update={"dimensions": tuple(kept)}), tuple(unanswerable)
+
     def _dimensions(
         self,
         request: ProductSearchRequest,
@@ -603,6 +659,8 @@ class SearchRefinementComposer:
                 current.pop(role, None)
                 strengths.pop(role, None)
                 continue
+            if self._unsupported(request.commerce_subcategory, role) is not None:
+                raise _defect(CompositionDefect.UNSUPPORTED_DIMENSION_ROLE)
             constraint = self._dimension(refinement, current.get(role))
             current[role] = constraint
             strengths[role] = DimensionConstraintSemantics(
@@ -642,6 +700,10 @@ class SearchRefinementComposer:
         try:
             return DimensionConstraint(
                 role=refinement.role,
+                side=side_of(
+                    refinement.role,
+                    refinement.side or (existing.side if existing is not None else None),
+                ),
                 kind=refinement.kind,
                 source_value=stated,
                 source_unit=source_unit,
@@ -665,9 +727,15 @@ class SearchRefinementComposer:
             return request.planar_dimensions, semantics.planar_dimension
         if refinement.op is RefinementOp.CLEAR:
             return None, None
+        if not self._dimension_semantics.reads_pair(request.commerce_subcategory):
+            raise _defect(CompositionDefect.UNSUPPORTED_DIMENSION_ROLE)
 
         existing = request.planar_dimensions
-        source_unit = refinement.unit or (existing.source_unit if existing else None)
+        source_unit = (
+            refinement.unit
+            or (existing.source_unit if existing else None)
+            or PAIR_UNIT_WHEN_UNSAID
+        )
         unit = parse_unit(source_unit)
         if unit is None:
             raise _clarify(BlockingClarificationReason.MISSING_DIMENSION_UNIT)
@@ -908,3 +976,34 @@ def _not_restated(
             or (d.role is None and composed.planar_dimensions is not None)
         )
     )
+
+
+
+def _space_cm(delta: SearchRefinementDelta) -> Decimal | None:
+    """How wide the space is, in centimetres, when this turn gave one. A bare
+    number is never read as centimetres - and, since the space only orders,
+    never worth a question about its unit either: it is simply not used."""
+    space = delta.space_width
+    if space is None:
+        return None
+    unit = parse_unit(space.unit)
+    return to_centimetres(_decimal(space.value), unit) if unit is not None else None
+
+
+def _space_lean(
+    lean: RankingLean | None, space_cm: Decimal | None, *, width_given: bool
+) -> RankingLean | None:
+    """The space on the search. It only orders - nothing is hidden for being
+    wider, since a room being designed may use a piece differently. A new space
+    is worked out again; a width of their own for the piece ends it."""
+    if space_cm is not None:
+        base = lean or RankingLean()
+        return base.model_copy(
+            update={"space_cm": space_cm, "space_fitted": False, "size_target_cm": None}
+        )
+    if lean is None or lean.space_cm is None or not width_given:
+        return lean
+    cleared = lean.model_copy(
+        update={"space_cm": None, "space_fitted": False, "size_target_cm": None}
+    )
+    return None if cleared == RankingLean() else cleared

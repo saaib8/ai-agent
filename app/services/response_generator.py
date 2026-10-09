@@ -59,7 +59,9 @@ from app.schemas.response import (
     ResponseOutcomeKind,
     ResponseRoute,
     ResponseViolation,
+    TypeMixView,
 )
+from app.schemas.screen import CustomerVisibleScreenView
 from app.schemas.text_choice import TextReplyChoice, closes_on_a_question
 from app.services.arabic_wording import in_language
 from app.services.next_step import already_asks
@@ -68,6 +70,7 @@ from app.services.numeric_guard import (
     bundle_counts,
     bundle_stretch_figures,
     check_numeric_policy,
+    chosen_seating_counts,
     guidance_figures,
     picks_counts,
     picks_figures,
@@ -383,13 +386,18 @@ class CustomerResponseGenerator:
         allowance = build_allowance(
             turn.message,
             said_earlier=_their_own_words(turn),
-            presented_count=view.presented_count,
+            presented_count=max(view.presented_count, len(view.still_on_screen)),
             compared_count=view.compared_count,
             counts=(
                 *_view_counts(view),
                 # What each requirement set aside would find, when nothing met
                 # them all - counted by the application, so sayable.
                 *(option.eligible_count for option in view.would_find_without),
+                # How many of the kind they asked for meet their request, and
+                # how many cards of each kind are on screen.
+                *(_type_mix_counts(view.type_mix, view.presented_count) if view.type_mix else ()),
+                *(chosen_seating_counts(view.chosen_seating) if view.chosen_seating else ()),
+                *((view.liked_also_picked,) if view.liked_also_picked else ()),
                 # How many picks they have, and how many of the newest pick's
                 # kind - the tray shows them, so "your 2 sofa sets" is a count
                 # they can read, not one we invented (CLAUDE.md 10.2).
@@ -400,6 +408,20 @@ class CustomerResponseGenerator:
             # refuses anything that had to be computed (CLAUDE.md 14).
             figures=(
                 *screen_figures(view.screen),
+                *screen_figures(CustomerVisibleScreenView(products=view.still_on_screen)),
+                # The space they gave and the width the designer aims for in
+                # it - worked out by code from the designer's proportion.
+                *((view.space_fit.space_cm, view.space_fit.ideal_cm) if view.space_fit else ()),
+                # What a room kept from shopping: their own head count and wall.
+                *(
+                    v
+                    for v in (
+                        (view.room_carried.seats, view.room_carried.wall)
+                        if view.room_carried
+                        else ()
+                    )
+                    if v is not None
+                ),
                 # The picks tray is on screen too: their prices and the numbers
                 # in their names ("6 Seater") are theirs to read and ours to say.
                 *picks_figures(result.picks),
@@ -493,6 +515,7 @@ class CustomerResponseGenerator:
             valid_grounding_refs=refs,
             follow_up_allowed=request.follow_up_allowed,
             allowance=allowance,
+            brief=request.grounding.brief,
         )
         if violation is None:
             return first, 1
@@ -510,6 +533,7 @@ class CustomerResponseGenerator:
             valid_grounding_refs=refs,
             follow_up_allowed=request.follow_up_allowed,
             allowance=allowance,
+            brief=request.grounding.brief,
         )
         if repeated is None:
             return second, 2
@@ -597,6 +621,17 @@ class CustomerResponseGenerator:
             follow_up_allowed=route.follow_up_allowed,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
+
+
+def _type_mix_counts(mix: TypeMixView, presented: int) -> tuple[int, ...]:
+    """The one count a search covering several kinds licenses: how many of
+    the asked kind meet the request, when that is fewer than the cards on
+    screen - "I have only one sofa that seats 5". Any other figure about a
+    kind would describe the page, and read as the shop's stock."""
+    matches = mix.asked_kind_matches
+    if matches is None or matches >= presented:
+        return ()
+    return (matches,)
 
 
 def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:

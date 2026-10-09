@@ -28,7 +28,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
-from app.schemas.agent_state import BundleItemStatus, PurchaseStage
+from app.schemas.agent_state import MAX_ROOM_WORDS, BundleItemStatus, PurchaseStage
 from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority
 from app.schemas.discovery import PriceConstraint, ProductSearchRequest, SeatingCapacityConstraint
 from app.schemas.geometry import RoomGeometry
@@ -113,6 +113,9 @@ SemanticIntentUpdate = Annotated[SetSemanticIntent | ClearSemanticIntent, Field(
 class CustomerPreferenceUpdate(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     semantic_preferences: PreferenceListUpdate | None = None
+    room: str | None = Field(default=None, min_length=1, max_length=MAX_ROOM_WORDS)
+    """The room they named for what they are shopping for. Recorded, never
+    cleared: a later room they name replaces it."""
 
 
 class ActiveSearchUpdate(BaseModel):
@@ -144,6 +147,8 @@ class ProductInteractionUpdate(BaseModel):
     focused_product_id: int | None = None
     clear_focus: bool = False
     selected_product_ids: ProductIdListUpdate | None = None
+    liked_product_ids: ProductIdListUpdate | None = None
+    explored_product_ids: ProductIdListUpdate | None = None
 
     compared_product_ids: tuple[int, ...] | None = None
     """The comparison now on screen, in column order, replacing any before it.
@@ -433,6 +438,9 @@ class RoomProjectUpdate(BaseModel):
     palette_left_to_us: bool = False
     """They answered the colour question by leaving it to us ("any colour")."""
 
+    seats_carried: bool | None = None
+    """Application-only: the head count set this turn was carried from
+    shopping (True), or given for the room (False)."""
     anchor_product_ids: tuple[int, ...] | None = None
     """Application-only: the picks to build the room around, replacing any saved
     before. `()` clears them once they are locked into the room."""

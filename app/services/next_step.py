@@ -135,9 +135,11 @@ def next_step(
         goes_with = None if showing_what_goes_with else _goes_with_pick(picks, complements)
         kind = NextStepKind.AFTER_PICKS if goes_with else NextStepKind.ROOM_AROUND_PICKS
         return NextStep(kind=kind, chips=_picks_chips(goes_with, language))
-    if (
-        grounding.search is not None and grounding.search.products
-    ) or result.state.product_interaction.presented_product_ids:
+    liked_on_screen = grounding.selection is not None and grounding.selection.liked
+    if not liked_on_screen and (
+        (grounding.search is not None and grounding.search.products)
+        or result.state.product_interaction.presented_product_ids
+    ):
         return NextStep(
             kind=NextStepKind.KEEP_BROWSING,
             chips=_chips(language, Chip.SHOW_MORE, Chip.NARROW_DOWN),

@@ -32,7 +32,7 @@ from app.prompts.query_understanding.v1 import (
     build_correction,
     build_instructions,
 )
-from app.schemas.dimensions import parse_unit, to_centimetres
+from app.schemas.dimensions import PAIR_UNIT_WHEN_UNSAID, parse_unit, to_centimetres
 from app.schemas.discovery import (
     DimensionConstraint,
     PlanarDimensionConstraint,
@@ -53,6 +53,7 @@ from app.schemas.query import (
     PlanarDimensionInterpretation,
     PlanarDimensionSemantics,
     QueryInterpretation,
+    RankingLean,
     ResolvedSearch,
     SemanticPreference,
     UnresolvedAttribute,
@@ -63,7 +64,7 @@ from app.schemas.query import (
     build_constrained_interpretation,
 )
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.dimensions import DimensionSemantics
+from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, side_of
 from app.taxonomy.registry import CommerceTaxonomy
 
 logger = get_logger(__name__)
@@ -237,6 +238,8 @@ class QueryUnderstandingService:
         capacity = self._capacity(interpretation)
         strict, preferences, unresolved = self._sort_attributes(interpretation.attributes)
 
+        # Their own width for the piece decides; the space then adds nothing.
+        space = None if _states_own_width(interpretation) else interpretation.space_width
         dimensions = self._dimensions(interpretation, subcategory)
         if isinstance(dimensions, ClarificationRequired):
             return dimensions
@@ -308,11 +311,17 @@ class QueryUnderstandingService:
                 semantic_preferences=preferences,
                 semantic_text=(interpretation.semantic_text or "").strip() or None,
             )
+        space_cm = (
+            self._to_centimetres(space.value, space.unit, field="space_width")
+            if space is not None
+            else None
+        )
         return ResolvedSearch(
             request=request,
             semantics=semantics,
             semantic_preferences=preferences,
             semantic_text=(interpretation.semantic_text or "").strip() or None,
+            lean=RankingLean(space_cm=space_cm) if space_cm else None,
         )
 
     def _to_centimetres(
@@ -358,7 +367,8 @@ class QueryUnderstandingService:
                 )
             min_cm, max_cm, target_cm = values
 
-            if self._dimension_semantics.source_axis(subcategory, stated.role) is None:
+            refusal = self._dimension_semantics.refusal(subcategory, stated.role)
+            if refusal is not None:
                 # Strength travels on the refusal itself, because the request
                 # will not carry this measurement at all.
                 unsupported.append(
@@ -369,9 +379,7 @@ class QueryUnderstandingService:
                         max_cm=max_cm,
                         target_cm=target_cm,
                         strength=stated.strength,
-                        reason=self._dimension_semantics.unsupported_reason(
-                            subcategory, stated.role
-                        ),
+                        reason=refusal,
                     )
                 )
                 continue
@@ -379,6 +387,7 @@ class QueryUnderstandingService:
                 supported.append(
                     DimensionConstraint(
                         role=stated.role,
+                        side=side_of(stated.role, stated.side),
                         kind=stated.kind,
                         min_cm=min_cm,
                         max_cm=max_cm,
@@ -437,21 +446,22 @@ class QueryUnderstandingService:
         """The pair and its strength, together or not at all."""
         if stated is None:
             return None, None
-        if not self._dimension_semantics.supports_planar(subcategory):
+        if not self._dimension_semantics.reads_pair(subcategory):
             # A pair means nothing where sides have no agreed order; fall back
             # to asking rather than guessing which side is which.
             return ClarificationRequired(
                 reason=ClarificationReason.MISSING_DIMENSION_ROLE
             )
-        first = self._to_centimetres(stated.first_value, stated.unit, field="first_value")
-        second = self._to_centimetres(stated.second_value, stated.unit, field="second_value")
+        unit = stated.unit or PAIR_UNIT_WHEN_UNSAID
+        first = self._to_centimetres(stated.first_value, unit, field="first_value")
+        second = self._to_centimetres(stated.second_value, unit, field="second_value")
         if first is None or second is None:
             return ClarificationRequired(
                 reason=ClarificationReason.MISSING_DIMENSION_UNIT
             )
         try:
             constraint = PlanarDimensionConstraint(
-                first_cm=first, second_cm=second, source_unit=stated.unit
+                first_cm=first, second_cm=second, source_unit=unit
             )
         except ValidationError as exc:
             raise LLMResponseInvalidError(reason="planar dimensions invalid") from exc
@@ -560,3 +570,7 @@ class QueryUnderstandingService:
             return SeatingCapacityConstraint(min_capacity=low, max_capacity=high)
         except ValidationError as exc:
             raise LLMResponseInvalidError(reason="capacity constraint invalid") from exc
+
+
+def _states_own_width(interpretation: CommerceInterpretation) -> bool:
+    return any(d.role is DimensionRole.OVERALL_WIDTH for d in interpretation.dimensions)

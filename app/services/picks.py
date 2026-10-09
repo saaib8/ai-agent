@@ -30,25 +30,54 @@ from app.core.logging import get_logger
 from app.repositories.sessions import SessionStore
 from app.schemas.agent_decision import ProductInteractionOp
 from app.schemas.agent_state import AgentStateV1
-from app.schemas.agent_updates import AgentStateUpdate
+from app.schemas.agent_updates import (
+    AddItems,
+    AgentStateUpdate,
+    ProductInteractionUpdate,
+    RemoveItems,
+    ReplaceItems,
+)
 from app.schemas.picks import (
     DeselectPickAction,
+    LikeCardAction,
     PicksRequest,
     PicksResponse,
+    SelectLikedAction,
     SelectPickAction,
+    UnlikeAction,
 )
 from app.schemas.product import ProductCandidate
-from app.schemas.resolution import ReferenceFailureReason, ReferenceUnresolved
+from app.schemas.resolution import (
+    ReferenceFailureReason,
+    ReferenceUnresolved,
+    ResolvedProductReference,
+)
 from app.schemas.retailer import RetailerContext
 from app.services.agent_state import apply_update
 from app.services.chat_runtime import commit_state, load_for_turn
 from app.services.hydration import ProductHydrationService
-from app.services.product_interaction import build_picks, interaction_update
+from app.services.product_interaction import build_liked, build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
 
 logger = get_logger(__name__)
 
 _GONE = "That product is no longer available, so it can't be picked."
+_GONE_LIKE = "That product is no longer available, so it can't be liked."
+_OFF_SCREEN_LIKE = "That card isn't on screen any more, so it can't be liked from here."
+
+
+def _liked_card(outcome: ResolvedProductReference | ReferenceUnresolved) -> int:
+    """The product a ♡ names, or the reason it names none, in our words."""
+    if isinstance(outcome, ReferenceUnresolved):
+        raise PickUnavailableError(
+            public_message=(
+                _GONE_LIKE
+                if outcome.reason is ReferenceFailureReason.PRODUCT_UNAVAILABLE
+                else _OFF_SCREEN_LIKE
+            ),
+            reason=str(outcome.reason),
+        )
+    return outcome.product_id
 
 
 class PicksRuntime:
@@ -65,6 +94,8 @@ class PicksRuntime:
         self._hydration = hydration
         self._sessions = sessions
         self._max_picks = settings.max_picks
+        self._max_likes = settings.max_likes
+        self._buttons = settings.designer_led_buttons
 
     async def apply(self, request: PicksRequest, context: RetailerContext) -> PicksResponse:
         """Load, change, commit, report.
@@ -94,10 +125,13 @@ class PicksRuntime:
             )
         final = updated or state
         picked = final.product_interaction.selected_product_ids
-        products = await self._hydration.hydrate_ids(picked, context) if picked else []
+        liked = final.product_interaction.liked_product_ids if self._buttons else ()
+        wanted = tuple(dict.fromkeys((*picked, *liked)))
+        products = await self._hydration.hydrate_ids(wanted, context) if wanted else []
         goes_with = (
             self._goes_with(picked, products)
-            if updated is not None and isinstance(request.action, SelectPickAction)
+            if updated is not None
+            and isinstance(request.action, SelectPickAction | SelectLikedAction)
             else None
         )
         logger.info(
@@ -112,6 +146,7 @@ class PicksRuntime:
             session_id=request.session_id,
             session_revision=revision,
             picks=build_picks(final, products),
+            liked=build_liked(final, products) if self._buttons else None,
             goes_with=goes_with,
         )
 
@@ -135,6 +170,12 @@ class PicksRuntime:
     ) -> AgentStateV1 | None:
         """The state after the action, or None when it changes nothing."""
         picked = state.product_interaction.selected_product_ids
+        if isinstance(request.action, LikeCardAction | UnlikeAction | SelectLikedAction):
+            if not self._buttons:
+                raise PickUnavailableError(
+                    public_message="Likes aren't available here.", reason="likes_switched_off"
+                )
+            return await self._liked_changed(request.action, state, context)
         match request.action:
             case SelectPickAction(ordinal=ordinal, list_revision=list_revision):
                 outcome = await self._references.resolve_on_list(
@@ -173,4 +214,80 @@ class PicksRuntime:
         return apply_update(
             state,
             AgentStateUpdate(product_interaction=interaction_update(op, product_id, state)),
+        )
+
+    async def _liked_changed(
+        self,
+        action: LikeCardAction | UnlikeAction | SelectLikedAction,
+        state: AgentStateV1,
+        context: RetailerContext,
+    ) -> AgentStateV1 | None:
+        """A like, an unlike, or a pick from the liked list.
+
+        A like is silent and never refused for being one too many: past the
+        limit the oldest like is let go, since a like is a taste signal, not a
+        shortlist. Selecting from the liked list is a pick like any other.
+        """
+        liked = state.product_interaction.liked_product_ids
+        match action:
+            case LikeCardAction(ordinal=ordinal, list_revision=list_revision):
+                outcome = await self._references.resolve_on_list(
+                    ordinal, list_revision, state, context
+                )
+                product_id = _liked_card(outcome)
+                if product_id in liked:
+                    return None
+                change: AddItems[int] | RemoveItems[int] | ReplaceItems[int] = (
+                    AddItems(items=(product_id,))
+                    if len(liked) < self._max_likes
+                    else ReplaceItems(
+                        items=(*liked[len(liked) - self._max_likes + 1 :], product_id)
+                    )
+                )
+            case UnlikeAction(liked=int(position)):
+                if position > len(liked):
+                    raise PickUnavailableError(
+                        public_message="That is no longer in your liked list.",
+                        reason="liked_out_of_range",
+                    )
+                change = RemoveItems(items=(liked[position - 1],))
+            case UnlikeAction(ordinal=int(ordinal), list_revision=list_revision):
+                product_id = _liked_card(
+                    await self._references.resolve_on_list(ordinal, list_revision, state, context)
+                )
+                if product_id not in liked:
+                    return None
+                change = RemoveItems(items=(product_id,))
+            case SelectLikedAction(liked=position):
+                picked = state.product_interaction.selected_product_ids
+                if position > len(liked):
+                    raise PickUnavailableError(
+                        public_message="That is no longer in your liked list.",
+                        reason="liked_out_of_range",
+                    )
+                product_id = liked[position - 1]
+                if product_id in picked:
+                    return None
+                if len(picked) >= self._max_picks:
+                    raise PickLimitError(
+                        public_message=(
+                            f"You can keep up to {self._max_picks} picks. "
+                            "Remove one to add another."
+                        ),
+                    )
+                if not await self._hydration.hydrate_ids((product_id,), context):
+                    raise PickUnavailableError(public_message=_GONE, reason="product_unavailable")
+                return apply_update(
+                    state,
+                    AgentStateUpdate(
+                        product_interaction=interaction_update(
+                            ProductInteractionOp.SELECT, product_id, state
+                        )
+                    ),
+                )
+        return apply_update(
+            state,
+            AgentStateUpdate(
+                product_interaction=ProductInteractionUpdate(liked_product_ids=change)
+            ),
         )

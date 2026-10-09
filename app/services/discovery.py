@@ -37,7 +37,7 @@ from app.core.logging import get_logger
 from app.repositories.products import ProductRepository
 from app.schemas.discovery import (
     AxisConstraint,
-    PlanarDimensionConstraint,
+    PairMatch,
     ProductSearchRequest,
     ProductSearchResult,
 )
@@ -45,7 +45,7 @@ from app.schemas.product import EligibleProduct, ProductCandidate, ProductRow
 from app.schemas.retailer import RetailerContext
 from app.services.dimensions import normalise_dimensions
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.dimensions import DimensionSemantics, SourceAxis
+from app.taxonomy.dimensions import DimensionSemantics, FloorSide
 from app.taxonomy.registry import CommerceTaxonomy
 
 logger = get_logger(__name__)
@@ -156,6 +156,7 @@ class ProductDiscoveryService:
             store_id=context.store_id,
             commerce_category=request.commerce_category,
             commerce_subcategory=request.commerce_subcategory,
+            alongside_subcategories=list(request.alongside_subcategories),
             applied_filters=list(request.applied_filters()),
             eligible_count=len(pool),
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
@@ -165,9 +166,8 @@ class ProductDiscoveryService:
     def _validate_taxonomy(self, request: ProductSearchRequest) -> None:
         """Reject unapproved values before any SQL runs (CLAUDE.md 14.3)."""
         if request.commerce_subcategory is not None:
-            self._taxonomy.validate_pair(
-                request.commerce_category, request.commerce_subcategory
-            )
+            for subcategory in request.subcategories:
+                self._taxonomy.validate_pair(request.commerce_category, subcategory)
         elif not self._taxonomy.is_category(request.commerce_category):
             raise UnknownCommerceCategoryError(category=request.commerce_category)
 
@@ -196,17 +196,15 @@ class ProductDiscoveryService:
         """
         resolved: list[AxisConstraint] = []
         for constraint in request.dimensions:
-            axis = self._dimensions.source_axis(
-                request.commerce_subcategory, constraint.role
+            axis = self._dimensions.measured_by(
+                request.commerce_subcategory, constraint.role, constraint.side
             )
             if axis is None:
                 raise UnsupportedDimensionRoleError(
                     subcategory=request.commerce_subcategory,
                     role=str(constraint.role),
                     reason=str(
-                        self._dimensions.unsupported_reason(
-                            request.commerce_subcategory, constraint.role
-                        )
+                        self._dimensions.refusal(request.commerce_subcategory, constraint.role)
                     ),
                 )
             resolved.append(
@@ -220,21 +218,28 @@ class ProductDiscoveryService:
             )
         return tuple(resolved)
 
-    def _resolve_planar(
-        self, request: ProductSearchRequest
-    ) -> tuple[PlanarDimensionConstraint, tuple[SourceAxis, SourceAxis]] | None:
-        """Only subcategories the registry marks planar may match a pair."""
+    def _resolve_planar(self, request: ProductSearchRequest) -> PairMatch | None:
+        """A rug's reviewed pair, matched exactly; any other kind that can be
+        read by side, matched on its shorter and longer floor side within a
+        small tolerance; anything else refused."""
         constraint = request.planar_dimensions
         if constraint is None:
             return None
-        pair = self._dimensions.planar_pair(request.commerce_subcategory)
-        if pair is None:
+        subcategory = request.commerce_subcategory
+        pair = self._dimensions.planar_pair(subcategory)
+        if pair is not None:
+            return PairMatch(constraint=constraint, axes=pair.axes)
+        if not self._dimensions.reads_pair(subcategory):
             raise UnsupportedDimensionRoleError(
-                subcategory=request.commerce_subcategory,
+                subcategory=subcategory,
                 role="planar_pair",
                 reason="role_not_defined",
             )
-        return constraint, pair.axes
+        return PairMatch(
+            constraint=constraint,
+            axes=(FloorSide.SHORTER, FloorSide.LONGER),
+            tolerance=self._settings.pair_tolerance_share,
+        )
 
     def _resolve_limit(self, requested: int | None) -> int:
         if requested is None:

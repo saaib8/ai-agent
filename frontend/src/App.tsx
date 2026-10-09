@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RENDER_VIEWS } from './api/types'
 import type {
   BriefAnswerAction,
+  BriefChip,
   BundleAction,
+  SearchAction,
   CatalogItem,
   CatalogSelection,
   FinderObject,
   GroundedProduct,
+  LikedView,
   PickView,
   ProductAction,
   RenderRoomSpec,
@@ -223,6 +226,73 @@ export default function App() {
     [chat, config.config, words],
   )
 
+  // ♡ is silent and never waits: it is queued and saved once nothing else is
+  // writing the session, so a heart tapped mid-reply is kept, not lost.
+  const handleToggleLike = useCallback(
+    (product: GroundedProduct, listRevision: number) => {
+      const ordinal = product.presented_ordinal
+      if (ordinal == null) return
+      const already = (chat.liked ?? []).find((l) =>
+        (l.positions ?? []).some(
+          (position) => position.list_revision === listRevision && position.ordinal === ordinal,
+        ),
+      )
+      // A tap still queued for this card is taken back by queueing the same tap.
+      const queued = chat.pendingLikes.get(`${listRevision}:${ordinal}`)
+      const kind = queued ?? (already ? 'unlike' : 'like')
+      chat.queueLike({ kind, ordinal, list_revision: listRevision }, config.config)
+    },
+    [chat, config.config],
+  )
+
+  // ✕ in the tray names the like by its place in the list the tray shows, so
+  // it waits for nothing else in flight and is never queued behind a change.
+  const handleUnlike = useCallback(
+    (item: LikedView) => {
+      if (chat.sending || chat.picking || chat.pendingLikes.size > 0) return
+      void chat.changePicks({ kind: 'unlike', liked: item.liked }, config.config)
+    },
+    [chat, config.config],
+  )
+
+  const handleSelectLiked = useCallback(
+    async (item: LikedView) => {
+      if (chat.sending || chat.picking) return
+      const saved = await chat.changePicks({ kind: 'select_liked', liked: item.liked }, config.config)
+      const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
+      if (chosen) {
+        setSwap(null)
+        void chat.send(words.likeProduct(chosen.name_english), config.config, {
+          product: { kind: 'goes_with', pick: chosen.pick },
+        })
+      }
+    },
+    [chat, config.config, words],
+  )
+
+  const handleMoreLikeThis = useCallback(
+    (product: GroundedProduct, listRevision: number) => {
+      const ordinal = product.presented_ordinal
+      if (chat.sending || chat.picking || ordinal == null) return
+      setSwap(null)
+      void chat.send(words.moreLikeThis(product.name_english), config.config, {
+        product: { kind: 'more_like_this', card: { list_revision: listRevision, ordinal } },
+      })
+    },
+    [chat, config.config, words],
+  )
+
+  const handleMoreLikeThisLiked = useCallback(
+    (item: LikedView) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(words.moreLikeThis(item.name_english), config.config, {
+        product: { kind: 'more_like_this', liked: item.liked },
+      })
+    },
+    [chat, config.config, words],
+  )
+
   const handleRemovePick = useCallback(
     (pick: PickView) => {
       if (chat.sending || chat.picking) return
@@ -298,16 +368,57 @@ export default function App() {
   const handleClearCompare = useCallback(() => setComparing([]), [])
 
   const handleBriefSubmit = useCallback(
-    (answer: BriefAnswerAction, summary: string) => {
+    (answer: BriefAnswerAction | null, summary: string) => {
       if (chat.sending || chat.picking) return
       setSwap(null)
-      void chat.send(summary, config.config, { search: answer })
+      // With words typed in, the whole answer is words for the agent to read.
+      void chat.send(summary, config.config, answer ? { search: answer } : undefined)
     },
     [chat, config.config],
   )
 
+  const handleDropChip = useCallback(
+    (chip: BriefChip) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(words.dropChip(chip.label), config.config, {
+        search: { kind: 'drop', facet: chip.facet },
+      })
+    },
+    [chat, config.config, words],
+  )
+
+  const handleCombination = useCallback(
+    (op: 'choose' | 'dismiss' | 'more', position: number | null) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      const text =
+        op === 'more'
+          ? words.moreCombinations
+          : op === 'choose'
+            ? words.chooseCombination(position ?? 1)
+            : words.notCombination(position ?? 1)
+      void chat.send(text, config.config, {
+        search: { kind: 'combination', op, position },
+      })
+    },
+    [chat, config.config, words],
+  )
+
   const handleChoice = useCallback(
-    (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => {
+    (
+      value: string,
+      action?: ProductAction | null,
+      bundle?: BundleAction | null,
+      search?: SearchAction | null,
+    ) => {
+      if (search) {
+        // A taste question's answer: its key, read back by the server.
+        if (chat.sending || chat.picking) return
+        setSwap(null)
+        void chat.send(value, config.config, { search })
+        return
+      }
       if (bundle) {
         // The yes/no on an over-budget swap: a structured room edit that answers
         // the held offer deterministically, never routed through the model.
@@ -432,6 +543,13 @@ export default function App() {
           onTogglePick={handleTogglePick}
           onRemovePick={handleRemovePick}
           onGoesWith={handleGoesWith}
+          liked={chat.liked}
+          pendingLikes={chat.pendingLikes}
+          onToggleLike={handleToggleLike}
+          onMoreLikeThis={handleMoreLikeThis}
+          onUnlike={handleUnlike}
+          onSelectLiked={handleSelectLiked}
+          onMoreLikeThisLiked={handleMoreLikeThisLiked}
           comparing={comparing}
           compareMax={compareMax}
           familyOf={familyOf}
@@ -441,6 +559,8 @@ export default function App() {
           onClearCompare={handleClearCompare}
           onChoice={handleChoice}
           onBriefSubmit={handleBriefSubmit}
+          onDropChip={handleDropChip}
+          onCombination={handleCombination}
         />
       </main>
       {catalogStep && (

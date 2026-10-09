@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from app.schemas.agent_decision import ProductInteractionOp
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_updates import AddItems, ProductInteractionUpdate, RemoveItems
-from app.schemas.picks import PickPosition, PickView
+from app.schemas.picks import LikedView, PickPosition, PickView
 from app.schemas.product import ProductCandidate
 from app.taxonomy.words import customer_words_or_none
 
@@ -63,6 +63,7 @@ def build_picks(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tu
     """
     interaction = state.product_interaction
     by_id = {product.product_id: product for product in products}
+    lists = _lists_on_screen(state)
     on_screen = (
         {
             product_id: ordinal
@@ -71,9 +72,6 @@ def build_picks(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tu
         if interaction.presented_search_revision is not None
         else {}
     )
-    lists = [(entry.revision, entry.product_ids) for entry in interaction.earlier_lists]
-    if interaction.presented_search_revision is not None:
-        lists.append((interaction.presented_search_revision, interaction.presented_product_ids))
     picks: list[PickView] = []
     for position, product_id in enumerate(interaction.selected_product_ids, start=1):
         product = by_id.get(product_id)
@@ -90,13 +88,55 @@ def build_picks(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tu
                     product.commerce.subcategory or product.commerce.category
                 ),
                 presented_ordinal=on_screen.get(product_id),
-                positions=tuple(
-                    PickPosition(list_revision=revision, ordinal=ordinal)
-                    for revision, ids in lists
-                    for ordinal, listed in enumerate(ids, start=1)
-                    if listed == product_id
-                ),
+                positions=_positions(product_id, lists),
                 focused=interaction.focused_product_id == product_id,
             )
         )
     return tuple(picks)
+
+
+def build_liked(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tuple[LikedView, ...]:
+    """The liked list as the tray draws it, numbered like the picks: a like
+    the catalog no longer returns is absent and the rest keep their numbers."""
+    interaction = state.product_interaction
+    by_id = {product.product_id: product for product in products}
+    lists = _lists_on_screen(state)
+    liked: list[LikedView] = []
+    for position, product_id in enumerate(interaction.liked_product_ids, start=1):
+        product = by_id.get(product_id)
+        if product is None:
+            continue
+        liked.append(
+            LikedView(
+                liked=position,
+                name_english=product.name_english,
+                image_url=product.image_url,
+                price_amount=product.price_amount,
+                price_unit=product.price_unit,
+                kind=customer_words_or_none(
+                    product.commerce.subcategory or product.commerce.category
+                ),
+                positions=_positions(product_id, lists),
+                picked=product_id in interaction.selected_product_ids,
+            )
+        )
+    return tuple(liked)
+
+
+def _lists_on_screen(state: AgentStateV1) -> list[tuple[int, tuple[int, ...]]]:
+    interaction = state.product_interaction
+    lists = [(entry.revision, entry.product_ids) for entry in interaction.earlier_lists]
+    if interaction.presented_search_revision is not None:
+        lists.append((interaction.presented_search_revision, interaction.presented_product_ids))
+    return lists
+
+
+def _positions(
+    product_id: int, lists: Sequence[tuple[int, tuple[int, ...]]]
+) -> tuple[PickPosition, ...]:
+    return tuple(
+        PickPosition(list_revision=revision, ordinal=ordinal)
+        for revision, ids in lists
+        for ordinal, listed in enumerate(ids, start=1)
+        if listed == product_id
+    )

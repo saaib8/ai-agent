@@ -61,6 +61,13 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "You haven't picked anything out yet, so there's nothing to show you "
         "here."
     ),
+    TurnFailureCode.CARD_NOT_ON_SCREEN: (
+        "That card isn't on screen any more - try it from the latest results."
+    ),
+    TurnFailureCode.NOTHING_LIKED: (
+        "You haven't liked anything yet - tap the heart on a card to keep the "
+        "pieces whose look you like."
+    ),
     TurnFailureCode.REQUEST_NOT_UNDERSTOOD: (
         "Sorry, I didn't quite catch that. Try saying it a little differently - "
         "for example, the kind of piece you're after, or what you'd like to "

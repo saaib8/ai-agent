@@ -74,6 +74,8 @@ def _engine(
     complements: Any = COMPLEMENTS,
     decision: Any = None,
     shows_products: bool = True,
+    capabilities: Any = None,
+    **settings: Any,
 ) -> tuple[CustomerTurnCoordinator, FakeDesign, ScriptedPipeline]:
     from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
 
@@ -89,7 +91,7 @@ def _engine(
         pipeline,  # type: ignore[arg-type]
         Catalog(),  # type: ignore[arg-type]
         SimilarSearchBuilder(TAXONOMY, ATTRIBUTES),
-        FakeCapabilities(pairs=stock),  # type: ignore[arg-type]
+        capabilities or FakeCapabilities(pairs=stock),  # type: ignore[arg-type]
         design,  # type: ignore[arg-type]
         DesignDiscoveryService(pipeline, TAXONOMY),  # type: ignore[arg-type]
         BundleReferenceResolver(TAXONOMY),
@@ -100,6 +102,7 @@ def _engine(
         complements=complements,
         companion_search=CompanionSearchBuilder(ATTRIBUTES),
         cross_sell_shows_products=shows_products,
+        **settings,
     )
     return coordinator, design, pipeline
 

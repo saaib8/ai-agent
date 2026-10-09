@@ -108,8 +108,33 @@ class CompanionOffer(BaseModel):
     pairings. Display only."""
 
 
+class MoreLikeThisAction(BaseModel):
+    """More like this card: a similarity search from it - its kind, leaning
+    towards its colour and style - on any list still on screen, exactly as a
+    typed "more like the second one" (docs/designer-led-shopping-plan.md,
+    phase 3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["more_like_this"] = "more_like_this"
+    card: CardRef | None = None
+    liked: int | None = Field(default=None, ge=1)
+    """Or a product in their liked list, by its position there - the liked
+    cards are their own list, not a result list."""
+
+    @model_validator(mode="after")
+    def _one_product(self) -> MoreLikeThisAction:
+        if (self.card is None) == (self.liked is None):
+            raise ValueError("more like this names a card or a liked product")
+        return self
+
+
 ProductActionRequest = Annotated[
-    GoesWithPickAction | ComparePicksAction | CompareCardsAction | CompanionAction,
+    GoesWithPickAction
+    | ComparePicksAction
+    | CompareCardsAction
+    | CompanionAction
+    | MoreLikeThisAction,
     Field(discriminator="kind"),
 ]
 """Any screen-driven product action, told apart by `kind`."""

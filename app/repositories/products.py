@@ -31,13 +31,14 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import SizeSettings
 from app.db.tables import core_product
 from app.schemas.catalog import CatalogFilter
 from app.schemas.dimensions import CENTIMETRES_PER_UNIT, UNIT_ALIASES, RawDimensions
 from app.schemas.discovery import (
     AxisConstraint,
     DimensionConstraintKind,
-    PlanarDimensionConstraint,
+    PairMatch,
     ProductSearchRequest,
     ProductSort,
 )
@@ -50,7 +51,7 @@ from app.schemas.product import (
     parse_style_tokens,
 )
 from app.schemas.retailer import RetailerContext
-from app.taxonomy.dimensions import SourceAxis
+from app.taxonomy.dimensions import FloorSide, SourceAxis
 
 _SELECTED_COLUMNS = (
     core_product.c.id,
@@ -78,6 +79,7 @@ _SELECTED_COLUMNS = (
 
 _POOL_COLUMNS = (
     core_product.c.id,
+    core_product.c.commerce_subcategory,
     core_product.c.price_amount,
     core_product.c.main_color,
     core_product.c.styles,
@@ -125,9 +127,38 @@ def _centimetres(axis: SourceAxis) -> ColumnElement[Any]:
     ).cast(Numeric(12, 4))
 
 
+def _floor_sides() -> tuple[ColumnElement[Any], ColumnElement[Any]]:
+    """A product's longer and shorter floor side, in centimetres.
+
+    Whichever stored column the merchant put each in: the longer is the longer
+    whatever its name, so no convention is needed to read it. NULL unless both
+    are present in a recognised unit.
+    """
+    first, second = _centimetres(SourceAxis.LENGTH), _centimetres(SourceAxis.WIDTH)
+    both = first.isnot(None) & second.isnot(None)
+    return (
+        case((both, func.greatest(first, second)), else_=None),
+        case((both, func.least(first, second)), else_=None),
+    )
+
+
+_LONG_SIDE, _SHORT_SIDE = _floor_sides()
+
+
+def _measured(axis: SourceAxis | FloorSide) -> ColumnElement[Any]:
+    """What one constraint compares, in centimetres: a stored column, or the
+    piece's longer or shorter floor side - the larger or smaller of its two
+    floor columns, so a merchant's column habits make no difference."""
+    if axis is FloorSide.LONGER:
+        return _LONG_SIDE
+    if axis is FloorSide.SHORTER:
+        return _SHORT_SIDE
+    return _centimetres(axis)
+
+
 def _axis_clauses(constraint: AxisConstraint) -> list[ColumnElement[bool]]:
     """Deterministic numeric comparisons for one resolved constraint."""
-    value = _centimetres(constraint.axis)
+    value = _measured(constraint.axis)
     if constraint.kind is DimensionConstraintKind.MIN:
         return [value >= constraint.min_cm]
     if constraint.kind is DimensionConstraintKind.MAX:
@@ -139,16 +170,22 @@ def _axis_clauses(constraint: AxisConstraint) -> list[ColumnElement[bool]]:
     return [value == constraint.target_cm]
 
 
-def _planar_clause(
-    constraint: PlanarDimensionConstraint, axes: tuple[SourceAxis, SourceAxis]
-) -> ColumnElement[bool]:
+def _planar_clause(match: PairMatch) -> ColumnElement[bool]:
     """Match a pair of sides in either order.
 
     A rug described as 200 x 300 is the same rug as 300 x 200, so both stored
-    orientations satisfy the request.
+    orientations satisfy the request. Read by side, the shorter and longer
+    floor side are compared directly - the order is the piece's, not the
+    merchant's - each within the match's tolerance.
     """
-    first, second = (_centimetres(axis) for axis in axes)
-    low, high = constraint.sides
+    low, high = match.constraint.sides
+    first_axis, second_axis = match.axes
+    if isinstance(first_axis, FloorSide):
+        share = match.tolerance
+        return _measured(first_axis).between(low * (1 - share), low * (1 + share)) & _measured(
+            second_axis
+        ).between(high * (1 - share), high * (1 + share))
+    first, second = _centimetres(first_axis), _centimetres(second_axis)  # type: ignore[arg-type]
     return ((first == low) & (second == high)) | ((first == high) & (second == low))
 
 
@@ -267,6 +304,9 @@ class CatalogOverviewRow:
     price_maximum: Decimal
     colours: tuple[str, ...]
     price_units: tuple[str, ...]
+    styles: tuple[str, ...] = ()
+    planar_measured: int = 0
+    planar_elongated: int = 0
 
 
 def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
@@ -286,6 +326,11 @@ def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
         price_maximum=row.price_maximum,
         colours=tuple(sorted(row.colours)) if row.colours else (),
         price_units=tuple(sorted(row.price_units)) if row.price_units else (),
+        styles=tuple(
+            sorted({token for raw in (row.styles or ()) for token in parse_style_tokens(raw)})
+        ),
+        planar_measured=row.planar_measured,
+        planar_elongated=row.planar_elongated,
     )
 
 
@@ -334,7 +379,7 @@ class ProductRepository:
         request: ProductSearchRequest,
         context: RetailerContext,
         axis_constraints: Sequence[AxisConstraint],
-        planar: tuple[PlanarDimensionConstraint, tuple[SourceAxis, SourceAxis]] | None,
+        planar: PairMatch | None,
     ) -> list[ColumnElement[bool]]:
         """Every predicate that decides eligibility, and nothing that decides
         presentation.
@@ -361,7 +406,11 @@ class ProductRepository:
             *self._scope_clauses(context),
             core_product.c.commerce_category == request.commerce_category,
         ]
-        if request.commerce_subcategory is not None:
+        if request.alongside_subcategories:
+            # The type asked for and the types shown beside it, under every
+            # other constraint alike (`ProductSearchRequest.subcategories`).
+            clauses.append(core_product.c.commerce_subcategory.in_(request.subcategories))
+        elif request.commerce_subcategory is not None:
             clauses.append(core_product.c.commerce_subcategory == request.commerce_subcategory)
 
         price = request.price
@@ -392,7 +441,7 @@ class ProductRepository:
             # customer could have had.
             clauses.extend(_axis_clauses(axis_constraint))
         if planar is not None:
-            clauses.append(_planar_clause(planar[0], planar[1]))
+            clauses.append(_planar_clause(planar))
 
         if request.colors_any_of:
             # Exact equality against the authoritative controlled colour
@@ -418,7 +467,7 @@ class ProductRepository:
         request: ProductSearchRequest,
         context: RetailerContext,
         axis_constraints: Sequence[AxisConstraint],
-        planar: tuple[PlanarDimensionConstraint, tuple[SourceAxis, SourceAxis]] | None,
+        planar: PairMatch | None,
     ) -> Select[Any]:
         """The eligible rows, projected to `columns`, with no ordering or bound.
 
@@ -437,7 +486,7 @@ class ProductRepository:
         *,
         limit: int,
         axis_constraints: Sequence[AxisConstraint] = (),
-        planar: tuple[PlanarDimensionConstraint, tuple[SourceAxis, SourceAxis]] | None = None,
+        planar: PairMatch | None = None,
     ) -> list[ProductRow]:
         """Products matching an already-validated structured request.
 
@@ -458,7 +507,7 @@ class ProductRepository:
         context: RetailerContext,
         *,
         axis_constraints: Sequence[AxisConstraint] = (),
-        planar: tuple[PlanarDimensionConstraint, tuple[SourceAxis, SourceAxis]] | None = None,
+        planar: PairMatch | None = None,
     ) -> list[int]:
         """Every eligible product id, with no presentation limit.
 
@@ -483,7 +532,7 @@ class ProductRepository:
         context: RetailerContext,
         *,
         axis_constraints: Sequence[AxisConstraint] = (),
-        planar: tuple[PlanarDimensionConstraint, tuple[SourceAxis, SourceAxis]] | None = None,
+        planar: PairMatch | None = None,
     ) -> list[EligibleProduct]:
         """Every eligible product with the one fact ranking orders on.
 
@@ -499,16 +548,23 @@ class ProductRepository:
         here (CLAUDE.md 16.1).
         """
         statement = self._eligible_select(
-            _POOL_COLUMNS, request, context, axis_constraints, planar
+            (*_POOL_COLUMNS, _LONG_SIDE.label("long_side_cm"), _SHORT_SIDE.label("short_side_cm")),
+            request,
+            context,
+            axis_constraints,
+            planar,
         ).order_by(*_ORDER_BY[request.sort])
         result = await self._session.execute(statement)
         return [
             EligibleProduct(
                 product_id=int(row.id),
+                subcategory=row.commerce_subcategory,
                 price_amount=row.price_amount,
                 main_color=row.main_color,
                 styles=parse_style_tokens(row.styles),
                 seating_capacity=row.seating_capacity,
+                long_side_cm=row.long_side_cm,
+                short_side_cm=row.short_side_cm,
             )
             for row in result
         ]
@@ -558,7 +614,9 @@ class ProductRepository:
         result = await self._session.execute(statement)
         return tuple((row[0], row[1], row[2]) for row in result.all())
 
-    async def catalog_overview(self, context: RetailerContext) -> tuple[CatalogOverviewRow, ...]:
+    async def catalog_overview(
+        self, context: RetailerContext, *, size: SizeSettings
+    ) -> tuple[CatalogOverviewRow, ...]:
         """The shape of this store's shelf, one row per commerce type.
 
         The same grouped, scoped, active-only scan as
@@ -573,9 +631,19 @@ class ProductRepository:
         an unverified capacity never inflates it (CLAUDE.md 6.2). Colours drop
         NULLs and duplicates. The currency question is left to the service, which
         sees every type's units together.
+
+        Styles come back as the stored strings, split into tokens on the way
+        out. For sizes, how many pieces have both floor sides within the
+        plausible range, and how many of those are clearly long and shallow -
+        one side at least `size.elongation_ratio` times the other - which is
+        the evidence the shape rule reads (``SubcategoryShelf.long_and_shallow``).
         """
+        plausible = (size.min_side_cm <= _SHORT_SIDE) & (size.max_side_cm >= _LONG_SIDE)
         colours = func.array_agg(core_product.c.main_color.distinct()).filter(
             core_product.c.main_color.isnot(None)
+        )
+        styles = func.array_agg(core_product.c.styles.distinct()).filter(
+            core_product.c.styles.isnot(None)
         )
         statement = (
             select(
@@ -591,6 +659,11 @@ class ProductRepository:
                 type_coerce(
                     func.array_agg(core_product.c.price_unit.distinct()), ARRAY(Text)
                 ).label("price_units"),
+                type_coerce(styles, ARRAY(Text)).label("styles"),
+                func.count(_LONG_SIDE).filter(plausible).label("planar_measured"),
+                func.count(_LONG_SIDE)
+                .filter(plausible & (_SHORT_SIDE * size.elongation_ratio <= _LONG_SIDE))
+                .label("planar_elongated"),
             )
             .where(
                 *self._scope_clauses(context),

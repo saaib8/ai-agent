@@ -168,7 +168,7 @@ def test_lifespan_builds_each_agent_client_only_when_configured() -> None:
     )
     assert "if decision_model:" in source
     assert "if response_model:" in source
-    assert "if design_model:" in source
+    assert "if design_settings is not None:" in source
     assert "if finder is not None:" in source
     assert "await finder_vision.close()" in source
 
@@ -220,8 +220,21 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "response_model",
         # Picks: how many the tray keeps.
         "max_picks",
+        "max_likes",
         # Whether a session may be answered in Arabic (docs/arabic-replies-plan.md).
         "arabic_replies",
         # Whether a pick is answered with products that go with it (CLAUDE.md 10.4).
         "cross_sell_shows_products",
+        # Whether a new search opens with two writer-chosen questions.
+        "designer_led_opening",
+        # Whether results carry removable chips and a pre-filled Narrow down.
+        "designer_led_brief",
+        "designer_led_buttons",
+        "designer_direction",
+        "designer_taste",
+        "designer_space_fit",
+        "designer_room_handoff",
+        "designer_fit",
+        # Whether a sofa search also shows sofa sets and sectionals.
+        "mixed_types",
     }

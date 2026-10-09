@@ -57,6 +57,7 @@ from app.schemas.agent_updates import (
     SetSemanticIntent,
     apply_items,
 )
+from app.schemas.geometry import REPEATABLE_ROLES, RoomGeometry
 from app.schemas.product_brief import PendingBrief, ProductBriefState
 from app.schemas.query import ConstraintSemantics
 
@@ -82,6 +83,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
+        taste=state.taste,
     )
 
 
@@ -113,6 +115,9 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
             semantic_preferences=search.semantic_preferences,
             semantic_intent=search.semantic_intent,
             ordered_by_pick=search.ordered_by_pick,
+            from_product=search.from_product,
+            seat_preference=search.seat_preference,
+            lean=search.lean,
             revision=revision,
         ),
         product_interaction=ProductInteractionState(
@@ -136,12 +141,15 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
                 else None
             ),
             selected_product_ids=interaction.selected_product_ids,
+            liked_product_ids=interaction.liked_product_ids,
+            explored_product_ids=interaction.explored_product_ids,
             # Carried across the new results deliberately. A comparison stays
             # on screen while fresh results arrive behind it, and "the one from
             # the comparison" has to keep meaning the same product - which is
             # exactly what failed when a cross-sell search replaced the sofas a
             # customer was still counting (M15 1).
             compared_product_ids=interaction.compared_product_ids,
+            compared_search_revision=interaction.compared_search_revision,
         ),
         room_project=state.room_project,
         derived_commerce=state.derived_commerce,
@@ -149,6 +157,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
+        taste=state.taste,
     )
 
 
@@ -178,8 +187,10 @@ def record_brief(
             shown=names,
             cards=max(current.cards, pending.card) if pending is not None else current.cards,
             pending=pending,
+            asked=current.asked,
         ),
         reply_language=state.reply_language,
+        taste=state.taste,
     )
 
 
@@ -232,6 +243,9 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         customer_preferences=CustomerPreferenceState(
             semantic_preferences=preferences.semantic_preferences,
             measurements_by_type=others,
+            room=preferences.room,
+            avoid_colours=preferences.avoid_colours,
+            avoid_styles=preferences.avoid_styles,
         ),
         active_search=state.active_search,
         product_interaction=state.product_interaction,
@@ -241,6 +255,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
+        taste=state.taste,
     )
 
 
@@ -255,6 +270,9 @@ def _customer(
     return CustomerPreferenceState(
         semantic_preferences=apply_items(current.semantic_preferences, update.semantic_preferences),
         measurements_by_type=current.measurements_by_type,
+        room=update.room or current.room,
+        avoid_colours=current.avoid_colours,
+        avoid_styles=current.avoid_styles,
     )
 
 
@@ -311,6 +329,10 @@ def _interaction(
         earlier_lists=current.earlier_lists,
         focused_product_id=focus,
         selected_product_ids=apply_items(current.selected_product_ids, update.selected_product_ids),
+        liked_product_ids=apply_items(current.liked_product_ids, update.liked_product_ids),
+        explored_product_ids=apply_items(
+            current.explored_product_ids, update.explored_product_ids
+        ),
         # Replaced wholesale, never merged: a comparison is one table, and two
         # sets of columns at once would restore the ambiguity it exists to
         # remove. `None` keeps the table already on screen.
@@ -318,6 +340,11 @@ def _interaction(
             current.compared_product_ids
             if update.compared_product_ids is None
             else update.compared_product_ids
+        ),
+        compared_search_revision=(
+            current.compared_search_revision
+            if update.compared_product_ids is None
+            else current.presented_search_revision
         ),
     )
 
@@ -330,7 +357,13 @@ def _room(
     base = current or RoomProjectState()
     return RoomProjectState(
         room_type=None if update.clear_room_type else (update.room_type or base.room_type),
-        geometry=None if update.clear_geometry else (update.geometry or base.geometry),
+        geometry=(
+            None
+            if update.clear_geometry
+            else update.geometry or base.geometry
+            if _another_room(base, update)
+            else _merged_geometry(base.geometry, update.geometry)
+        ),
         budget=None if update.clear_budget else (update.budget or base.budget),
         regular_seating_count=(
             None
@@ -338,9 +371,59 @@ def _room(
             else (update.regular_seating_count or base.regular_seating_count)
         ),
         design_preferences=apply_items(base.design_preferences, update.design_preferences),
+        seats_carried=(
+            update.seats_carried
+            if update.seats_carried is not None
+            else base.seats_carried
+            and update.regular_seating_count is None
+            and not update.clear_regular_seating_count
+        ),
         **_room_pieces(base, update),
         **_bundle(base, update.bundle_operations),
     )
+
+
+def _another_room(base: RoomProjectState, update: RoomProjectUpdate) -> bool:
+    """A different room is being described: its measurements start again
+    rather than joining the last room's walls and doors."""
+    return bool(
+        (base.room_kind and update.room_kind and update.room_kind != base.room_kind)
+        or (
+            base.room_type
+            and update.room_type
+            and update.room_type.casefold().strip() != base.room_type.casefold().strip()
+        )
+    )
+
+
+MAX_KEPT_PER_ROLE = 4
+"""Walls, and doorways, kept per room - the newest - so names that vary
+from turn to turn cannot grow the list without end."""
+
+
+def _merged_geometry(
+    current: RoomGeometry | None, update: RoomGeometry | None
+) -> RoomGeometry | None:
+    """The room's measurements after this turn's: a new figure replaces the
+    same measurement - the room's length, the wall with that name - and every
+    other one is kept, so a door said after a wall does not lose the wall."""
+    if update is None or current is None:
+        return update or current
+    replaced = {(m.role, m.label) for m in update.measurements}
+    singular = {m.role for m in update.measurements if m.role not in REPEATABLE_ROLES}
+    kept = tuple(
+        m
+        for m in current.measurements
+        if (m.role, m.label) not in replaced and m.role not in singular
+    )
+    merged = (*kept, *update.measurements)
+    newest = tuple(
+        m
+        for index, m in enumerate(merged)
+        if m.role not in REPEATABLE_ROLES
+        or sum(1 for later in merged[index + 1 :] if later.role is m.role) < MAX_KEPT_PER_ROLE
+    )
+    return RoomGeometry(measurements=newest)
 
 
 def _room_pieces(base: RoomProjectState, update: RoomProjectUpdate) -> dict[str, object]:

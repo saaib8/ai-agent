@@ -58,6 +58,10 @@ class ScreenCardDimensions(BaseModel):
     length_cm: Decimal | None = None
     width_cm: Decimal | None = None
     height_cm: Decimal | None = None
+    longer_side_cm: Decimal | None = None
+    shorter_side_cm: Decimal | None = None
+    """The piece's longer and shorter floor side, whichever column holds each -
+    what "how wide", "how long" and "how deep" are read on (CLAUDE.md 15.1)."""
 
     @model_validator(mode="after")
     def _at_least_one_measurement(self) -> Self:

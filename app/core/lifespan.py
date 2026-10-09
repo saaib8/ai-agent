@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.config import Settings, get_settings
+from app.core.config import LLMSettings, Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
 from app.db.catalog_schema import verify_commerce_schema
@@ -103,6 +103,20 @@ def get_resources(app: FastAPI) -> AppResources:
     return resources
 
 
+def design_llm_settings(settings: Settings) -> LLMSettings | None:
+    """The provider settings for the design specialist, or None when it is not
+    configured: its own model, and its own reasoning effort when one is set."""
+    design = settings.interior_design
+    if not design.model:
+        return None
+    return settings.llm.model_copy(
+        update={
+            "model": design.model,
+            "reasoning_effort": design.reasoning_effort or settings.llm.reasoning_effort,
+        }
+    )
+
+
 async def _check_catalog_schema(database: Database) -> None:
     """Verify the live catalog has the commerce columns this service requires.
 
@@ -141,7 +155,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     attributes = load_catalog_attributes()
     # Validated against the commerce taxonomy: a mapping for an unapproved
     # subcategory is a configuration error, not something to discover later.
-    dimensions = load_dimension_semantics(taxonomy=taxonomy)
+    dimensions = load_dimension_semantics(
+        taxonomy=taxonomy, by_side=settings.discovery.size_by_side
+    )
     seating = load_seating_semantics(taxonomy=taxonomy)
     rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
     complements = load_complements(taxonomy=taxonomy)
@@ -234,9 +250,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             max_bytes=visualization.reference_max_bytes,
         )
         closables.extend([*generators.values(), render_photos])
-    design_model = settings.interior_design.model
-    if design_model:
-        design_llm = OpenAIStructuredClient(settings.llm.model_copy(update={"model": design_model}))
+    design_settings = design_llm_settings(settings)
+    if design_settings is not None:
+        design_llm = OpenAIStructuredClient(design_settings)
     logger.info("chat_graph_compiled", nodes=len(NODE_ORDER))
     logger.info(
         "agents_configured",

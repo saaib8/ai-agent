@@ -35,6 +35,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 
+from app.core.config import SizeSettings
 from app.core.exceptions import (
     CatalogUnavailableError,
     ComparisonRefusedError,
@@ -55,11 +56,13 @@ from app.schemas.agent_decision import (
     CommercialReason,
     CustomerAgentDecision,
     DesignScope,
+    FollowUpGoal,
     FollowUpPolicy,
     ProductInteractionIntent,
     ProductInteractionOp,
 )
 from app.schemas.agent_state import (
+    MAX_EXPLORED,
     MAX_ROOM_ANCHORS,
     MAX_SEMANTIC_INTENT_CHARS,
     ActiveSearchState,
@@ -92,6 +95,7 @@ from app.schemas.agent_updates import (
     BundleLineSpec,
     BundleOperation,
     ClearSemanticIntent,
+    CustomerPreferenceUpdate,
     DesignNeedRefinement,
     DesignNeedSpec,
     PlannedBundleLineSpec,
@@ -137,8 +141,8 @@ from app.schemas.composition import (
 from app.schemas.design import (
     MAX_DESIGN_BRIEF_CHARS,
     MAX_DESIGN_QUESTION_CHARS,
-    AnchorProduct,
     DesignCategoryNeed,
+    DesignDirection,
     DesignGuidance,
     DesignPriority,
     DesignRevisionContext,
@@ -146,6 +150,8 @@ from app.schemas.design import (
     ExcludedDesignRole,
     InteriorDesignRequest,
     InteriorDesignResult,
+    SpaceFitRequest,
+    StockedLook,
 )
 from app.schemas.design_discovery import (
     DesignDiscoveryResult,
@@ -156,17 +162,21 @@ from app.schemas.design_override import DesignNeedSearchOverride
 from app.schemas.discovery import (
     MAX_EXCLUDED_PRODUCT_IDS,
     PriceConstraint,
+    ProductSearchRequest,
     SeatingCapacityConstraint,
 )
+from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
 from app.schemas.grounding import (
     GroundedProduct,
     SearchExecutionGrounding,
     SelectionGrounding,
     TurnFailure,
     TurnFailureCode,
+    TypeMix,
 )
 from app.schemas.language import ReplyLanguage
-from app.schemas.picks import PickView
+from app.schemas.next_step import NextStep, NextStepKind
+from app.schemas.picks import LikedView, PickView
 from app.schemas.product import ProductCandidate
 from app.schemas.product_action import (
     CompanionAction,
@@ -174,9 +184,10 @@ from app.schemas.product_action import (
     CompareCardsAction,
     ComparePicksAction,
     GoesWithPickAction,
+    MoreLikeThisAction,
     ProductActionRequest,
 )
-from app.schemas.product_brief import BriefMode, ProductBrief
+from app.schemas.product_brief import BriefMode, PendingBrief, ProductBrief
 from app.schemas.product_reference import (
     ComparedOrdinal,
     FocusedProduct,
@@ -189,6 +200,7 @@ from app.schemas.query import (
     ClarificationRequired,
     ConstraintStrength,
     QueryInterpretation,
+    RankingLean,
     ResolvedSearch,
     SemanticPreference,
     UnresolvedStrictRequirement,
@@ -201,6 +213,7 @@ from app.schemas.refinement import (
     SemanticIntentOp,
     SemanticIntentRefinement,
 )
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.resolution import (
     _UNAVAILABILITY_REASONS,
     BundleReferenceFailureReason,
@@ -220,20 +233,32 @@ from app.schemas.resolution import (
     SearchRequirementClarificationReason,
     SimilarSearchUnavailable,
 )
+from app.schemas.response import (
+    DirectionView,
+    RoomCarriedView,
+    SpaceFitView,
+    TasteAnsweredView,
+)
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.schemas.room_opener import RoomQuestion, RoomQuestionKind
 from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import (
     BriefAnswerAction,
+    CombinationAction,
+    DropFacetAction,
     MoreOptionsAction,
     SearchActionRequest,
+    TasteAnswerAction,
 )
 from app.schemas.seating_solution import (
     SeatingArrangement,
+    SeatingBundle,
+    SeatingBundleLine,
     SeatingRequirements,
     SeatingSolution,
     SeatingSolutionOutcome,
 )
+from app.schemas.taste import PendingTaste, TasteQuestionKind
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
@@ -245,6 +270,7 @@ from app.services.agent_view import project_state
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog_capability import CatalogCapabilityService
+from app.services.chip_wording import ORDINALS, Chip, chip
 from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.cross_sell import CompanionSearchBuilder, has_pairings
@@ -256,13 +282,15 @@ from app.services.design_revision import (
     project_current_plan,
     unprovable_against_exclusions,
 )
+from app.services.fit import fit_checks, knows_room_size, spaces_of
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
-from app.services.next_step import asks_for_product_type, next_step
+from app.services.next_step import already_asks, asks_for_product_type, next_step
 from app.services.numeric_guard import refinement_figures, stated_figures
-from app.services.product_brief import ProductBriefBuilder
-from app.services.product_interaction import build_picks, interaction_update
+from app.services.product_brief import ProductBriefBuilder, without_facet
+from app.services.product_interaction import build_liked, build_picks, interaction_update
+from app.services.product_size import floor_sides
 from app.services.proposal_mapping import MappedProposals, map_proposals
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
@@ -282,7 +310,12 @@ from app.services.screen_view import cards_from_candidates
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
+from app.services.taste import learned_taste
+from app.services.taste_question import NEITHER, choose_question, on_screen
+from app.services.taste_question import answer as taste_answer
+from app.services.taste_question import asked as taste_asked
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.briefs import BriefQuestionKind
 from app.taxonomy.compare_groups import CompareGroups
 from app.taxonomy.complements import Companion, Complements
 from app.taxonomy.dimensions import DimensionSemantics
@@ -292,6 +325,9 @@ from app.taxonomy.seating import SeatingSemantics
 from app.taxonomy.words import customer_words_or_none
 
 logger = get_logger(__name__)
+
+MAX_FIT_PIECES = 5
+"""The cards a fit question about the whole screen puts to the designer."""
 
 _HANDLED_CATALOG_FAILURES = (CatalogUnavailableError,)
 """A catalog read that failed while gathering *context*, not an answer.
@@ -442,6 +478,22 @@ class _Primary:
     seating_solution: SeatingSolution | None = None
     """A composed seating combination, when a seat count no single piece could
     meet was recovered by pairing pieces (CLAUDE.md 4, 27)."""
+
+    chosen_seating: SeatingBundle | None = None
+    """The combination they chose this turn, with how many of each piece."""
+
+    direction: DirectionView | None = None
+    """The designer's direction that ordered a suggestion after a pick."""
+
+    taste_answered: TasteAnsweredView | None = None
+    """What a taste answer this turn told us."""
+    space_fit: SpaceFitView | None = None
+    """What the designer would aim for in the space they gave."""
+    room_carried: RoomCarriedView | None = None
+    """What a room took from shopping this turn."""
+
+    narrowed: bool = False
+    """The search is their answer to Narrow down."""
 
     offered_instead_of: str | None = None
     """The seating type they asked for, when it never seats that many and the
@@ -594,6 +646,54 @@ def _budget_stretched(pre_turn: AgentStateV1, outcome: RoomBundle) -> BudgetStre
         new_total=total,
         overage=total - budget.max_amount,
         currency=outcome.currency,
+    )
+
+
+def _with_room_said(state: AgentStateV1, decision: CustomerAgentDecision) -> AgentStateV1:
+    """The state with the room this message named, so its card does not ask it.
+
+    The turn's proposals are applied after the primary action; a card is built
+    before that, and "a rug for the bedroom" must not be asked which room.
+    """
+    proposal = decision.state_proposal
+    if proposal is None or proposal.shopping_room is None:
+        return state
+    preferences = state.customer_preferences.model_copy(update={"room": proposal.shopping_room})
+    return state.model_copy(update={"customer_preferences": preferences})
+
+
+def _with_orderings(state: AgentStateV1, executed: ActiveSearchState) -> AgentStateV1:
+    """The committed search, keeping the orderings the executed one carried.
+
+    Promotion goes through the criteria reducer, which knows only criteria, so
+    how the cards are ordered - by a pick's look, by how many sit there - is
+    restored from the search that actually ran: the next page ("show me more",
+    "not this one") is ordered the same way, and a new search starts clean.
+    """
+    search = state.active_search
+    if search is None:
+        return state
+    return state.model_copy(
+        update={
+            "active_search": search.model_copy(
+                update={
+                    "ordered_by_pick": executed.ordered_by_pick,
+                    "from_product": executed.from_product,
+                    "seat_preference": executed.seat_preference,
+                    "lean": executed.lean,
+                }
+            )
+        }
+    )
+
+
+def _from_product(state: AgentStateV1) -> AgentStateV1:
+    """The committed search, marked as seeded from a product's own look."""
+    search = state.active_search
+    if search is None:
+        return state
+    return state.model_copy(
+        update={"active_search": search.model_copy(update={"from_product": True})}
     )
 
 
@@ -1003,7 +1103,42 @@ class CustomerTurnCoordinator:
         arabic_replies: bool = False,
         compare_groups: CompareGroups | None = None,
         cross_sell_shows_products: bool = False,
+        designer_led_opening: bool = False,
+        designer_led_brief: bool = False,
+        designer_led_buttons: bool = False,
+        designer_direction: bool = False,
+        designer_taste: bool = False,
+        designer_space_fit: bool = False,
+        room_handoff: bool = False,
+        designer_fit: bool = False,
+        size: SizeSettings | None = None,
+        mixed_types: bool = False,
     ) -> None:
+        self._mixed_types = mixed_types
+        """Whether a customer's search for a type also shows the types reviewed
+        to stand beside it - sofa sets and sectionals beside sofas."""
+        self._designer_fit = designer_fit
+        """Whether pieces in view are checked against the walls and doors they
+        gave."""
+        self._room_handoff = room_handoff
+        """Whether a room starts from what shopping already learned."""
+        self._designer_space_fit = designer_space_fit
+        """Whether the designer decides what width suits the space they gave."""
+        self._designer_taste = designer_taste
+        """Whether taste is learned from likes, picks and More like this, and
+        asked softly after products."""
+        self._designer_direction = designer_direction
+        """Whether a suggestion after a pick follows the designer's direction."""
+        self._size = size or SizeSettings()
+        self._designer_led_buttons = designer_led_buttons
+        """Whether cards carry ♡ Like and More like this, and every reply
+        reports the liked list."""
+        self._designer_led_brief = designer_led_brief
+        """Whether results carry their removable chips and a pre-filled
+        Narrow down, instead of the card folded once per family."""
+        self._designer_led_opening = designer_led_opening
+        """Whether a new search opens with two writer-chosen questions rather
+        than the card of every question."""
         self._compare_groups = compare_groups
         self._cross_sell_shows_products = cross_sell_shows_products
         """Whether a pick is answered with products that go with it, chosen by
@@ -1067,6 +1202,10 @@ class CustomerTurnCoordinator:
         result = await self._run_turn(turn)
         if started is not None:
             result = self._with_language(result, started, stored, turn.context.store_id)
+        result = await self._with_narrow_down(result, turn)
+        result = await self._with_taste_question(result, turn)
+        if result.next_step is not None:
+            return result
         capabilities = None
         if asks_for_product_type(result):
             try:
@@ -1082,6 +1221,210 @@ class CustomerTurnCoordinator:
             rooms=self._rooms,
         )
         return result.model_copy(update={"next_step": step}) if step is not None else result
+
+    async def _with_taste_question(
+        self, result: CustomerTurnResult, turn: CustomerTurnInput
+    ) -> CustomerTurnResult:
+        """One soft taste question after a list of their search results, about
+        what nothing has told us yet (docs/designer-led-shopping-plan.md, 5.2).
+
+        It takes the place of the old colour-or-style follow-up, so that one is
+        never asked beside it. Not beside what goes with a pick, a combination
+        or a room, and never when the turn already asks something - the seats
+        question for a sofa comes first.
+        """
+        if not self._designer_taste:
+            return result
+        grounding = result.grounding
+        if result.decision.follow_up_goal in (FollowUpGoal.COLOR, FollowUpGoal.STYLE):
+            grounding = grounding.model_copy(update={"follow_up_policy": FollowUpPolicy.NONE})
+            result = result.model_copy(update={"grounding": grounding})
+        search, active = grounding.search, result.state.active_search
+        seats_asked = (
+            result.decision.follow_up_goal is FollowUpGoal.SEATING_REQUIREMENT
+            and grounding.follow_up_policy is not FollowUpPolicy.NONE
+        )
+        if (
+            search is None
+            or not search.products
+            or active is None
+            or active.ordered_by_pick
+            or result.focus is not None
+            or result.companions
+            or result.seating_solution is not None
+            or result.swap_context is not None
+            or grounding.design_handoff_requested
+            or result.decision.skip_questions
+            or seats_asked
+            or result.taste_answered is not None
+            or already_asks(result)
+        ):
+            # Just answered one: the next can wait - one after another is a
+            # questionnaire, not a conversation.
+            return result
+        try:
+            overview = await self._capabilities.overview(turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            return result
+        stocked = next(
+            (
+                shelf.styles
+                for shelf in overview.shelves
+                if shelf.commerce_subcategory == active.request.commerce_subcategory
+            ),
+            (),
+        )
+        pending = choose_question(
+            search.products,
+            active,
+            result.state.customer_preferences.semantic_preferences,
+            stocked,
+            result.state.taste,
+            list_revision=result.state.product_interaction.presented_search_revision,
+        )
+        if pending is None:
+            return result
+        logger.info(
+            "taste_question_asked", store_id=turn.context.store_id, kind=str(pending.kind)
+        )
+        language = result.reply_language or ReplyLanguage.EN
+        return result.model_copy(
+            update={
+                "state": result.state.model_copy(
+                    update={"taste": taste_asked(result.state.taste, pending)}
+                ),
+                "next_step": NextStep(
+                    kind=_TASTE_STEP[pending.kind], chips=self._taste_chips(pending, language)
+                ),
+                "grounding": grounding.model_copy(
+                    update={"follow_up_policy": FollowUpPolicy.NONE}
+                ),
+            }
+        )
+
+    def _taste_chips(
+        self, pending: PendingTaste, language: ReplyLanguage
+    ) -> tuple[ReplyChoice, ...]:
+        """The taste question's answers, each its key read back on a tap."""
+        chips: list[ReplyChoice] = []
+        for option in pending.options:
+            action = TasteAnswerAction(question=pending.question, answer=option.key)
+            if option.position is not None:
+                chips.append(
+                    chip(
+                        Chip.TASTE_CARD,
+                        language,
+                        search_action=action,
+                        ordinal=ORDINALS[language][option.position - 1],
+                    )
+                )
+            elif option.key == NEITHER:
+                chips.append(chip(Chip.TASTE_NEITHER, language, search_action=action))
+            else:
+                family = AttributeFamily.COLOR if option.colour else AttributeFamily.STYLE
+                value = option.colour or option.styles[0]
+                name = (
+                    self._briefs.arabic_names(family, (value,))[0]
+                    if language is ReplyLanguage.AR and self._briefs is not None
+                    else value.replace("_", " ")
+                )
+                key = (
+                    Chip.TASTE_STYLE
+                    if pending.kind is TasteQuestionKind.STYLE
+                    else Chip.TASTE_AVOID
+                )
+                chips.append(
+                    chip(key, language, search_action=action, style=name, value=name)
+                )
+        return tuple(chips)
+
+    async def _answer_taste(
+        self, question: int, key: str, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """A taste question answered: the search on screen again, leaning the
+        way they said - never a pick (docs/designer-led-shopping-plan.md, 5.2).
+
+        A style they chose is theirs for any kind of piece; a colour only for
+        this kind; what to avoid goes after the rest; "neither" leaves those
+        two cards out. A question that is no longer on screen, or a key it
+        never offered, changes nothing."""
+        pending = on_screen(pre_turn)
+        active = pre_turn.active_search
+        meaning = (
+            taste_answer(pending, key)
+            if pending is not None and pending.question == question
+            else None
+        )
+        if pending is None or active is None or meaning is None:
+            logger.info("taste_answer_refused", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.QUESTIONS_EXPIRED)
+            )
+        state = pre_turn.model_copy(
+            update={"taste": pre_turn.taste.model_copy(update={"pending": None})}
+        )
+        said_styles = tuple(_said(AttributeFamily.STYLE, value) for value in meaning.styles)
+        if said_styles:
+            state = apply_update(
+                state,
+                AgentStateUpdate(
+                    customer_preferences=CustomerPreferenceUpdate(
+                        semantic_preferences=AddItems(items=said_styles)
+                    )
+                ),
+            )
+        colours = (
+            meaning.colours
+            if pending.commerce_subcategory == active.request.commerce_subcategory
+            else ()
+        )
+        have = {(p.family, p.canonical_value) for p in active.semantic_preferences}
+        added = tuple(
+            preference
+            for preference in (
+                *said_styles,
+                *(_said(AttributeFamily.COLOR, value) for value in colours),
+            )
+            if (preference.family, preference.canonical_value) not in have
+        )
+        preferences = state.customer_preferences
+        if meaning.avoid_colours or meaning.avoid_styles:
+            preferences = preferences.model_copy(
+                update={
+                    "avoid_colours": _merged(preferences.avoid_colours, meaning.avoid_colours),
+                    "avoid_styles": _merged(preferences.avoid_styles, meaning.avoid_styles),
+                }
+            )
+            state = state.model_copy(update={"customer_preferences": preferences})
+        lean = (active.lean or RankingLean()).model_copy(
+            update={
+                "said_avoid_colours": preferences.avoid_colours,
+                "said_avoid_styles": preferences.avoid_styles,
+            }
+        )
+        shown = pre_turn.product_interaction.presented_product_ids
+        leave_out = tuple(shown[p - 1] for p in meaning.leave_out if 0 < p <= len(shown))
+        logger.info(
+            "taste_answered",
+            store_id=turn.context.store_id,
+            kind=str(pending.kind),
+            neither=bool(meaning.leave_out),
+        )
+        leaning = active.model_copy(
+            update={
+                "semantic_preferences": (*active.semantic_preferences, *added),
+                "lean": lean,
+            }
+        )
+        searched = await self._rerun_excluding(leaning, leave_out, state, turn.context)
+        return replace(
+            searched,
+            taste_answered=TasteAnsweredView(
+                liked=tuple(dict.fromkeys((*meaning.styles, *colours))),
+                avoided=(*meaning.avoid_colours, *meaning.avoid_styles),
+                neither=bool(meaning.leave_out),
+            ),
+        )
 
     def _turn_language(
         self, turn: CustomerTurnInput, decision: CustomerAgentDecision
@@ -1253,11 +1596,12 @@ class CustomerTurnCoordinator:
         started = time.perf_counter()
         pre_turn = turn.state
 
+        visible = await self._visible_cards(turn)
         decision = await self._decisions.decide(
             DecisionInput(
                 message=turn.message,
                 conversation=turn.conversation,
-                state_view=project_state(pre_turn, await self._visible_cards(turn)),
+                state_view=project_state(pre_turn, visible),
                 # The language its own question to the customer is written in;
                 # None where Arabic replies are off or nothing settled it yet.
                 reply_language=(
@@ -1294,11 +1638,12 @@ class CustomerTurnCoordinator:
             # more (CLAUDE.md 10.4).
             grounding = grounding.model_copy(update={"follow_up_policy": FollowUpPolicy.NONE})
         self._log(decision, pre_turn, final_state, primary, interaction, started)
-        kinds, picks = await self._selection_facts(final_state, turn)
+        kinds, picks, liked = await self._selection_facts(final_state, turn)
         return CustomerTurnResult(
             state=final_state,
             selected_kinds=kinds,
             picks=picks,
+            liked=liked,
             decision=decision,
             grounding=grounding,
             selection_added=bool(
@@ -1308,7 +1653,12 @@ class CustomerTurnCoordinator:
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
             seating_solution=primary.seating_solution,
+            chosen_seating=primary.chosen_seating,
+            direction=primary.direction,
+            taste_answered=primary.taste_answered,
+            space_fit=primary.space_fit,
             room_question=primary.room_question,
+            room_carried=primary.room_carried,
             room_seats=self._room_seats(primary.bundle_outcome),
             offered_instead_of=primary.offered_instead_of,
             unstocked_type=primary.unstocked_type,
@@ -1316,6 +1666,11 @@ class CustomerTurnCoordinator:
             focus=primary.focus,
             companions=primary.companions,
             stated_figures=primary.stated_figures,
+            still_on_screen=(
+                visible
+                if _talks_about_the_screen(decision, primary, grounding, final_state, pre_turn)
+                else ()
+            ),
         )
 
     # ── a screen-driven room edit ───────────────────────────────────────────
@@ -1351,11 +1706,12 @@ class CustomerTurnCoordinator:
 
         decision = _bundle_action_decision(action)
         final_state = primary.state
-        kinds, picks = await self._selection_facts(final_state, turn)
+        kinds, picks, liked = await self._selection_facts(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
             selected_kinds=kinds,
             picks=picks,
+            liked=liked,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
             selection_added=False,
@@ -1396,18 +1752,29 @@ class CustomerTurnCoordinator:
 
         decision = _search_action_decision()
         final_state = primary.state
-        kinds, picks = await self._selection_facts(final_state, turn)
+        kinds, picks, liked = await self._selection_facts(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
             selected_kinds=kinds,
             picks=picks,
+            liked=liked,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
-            selection_added=False,
+            selection_added=bool(
+                set(final_state.product_interaction.selected_product_ids)
+                - set(pre_turn.product_interaction.selected_product_ids)
+            ),
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
             seating_solution=primary.seating_solution,
+            chosen_seating=primary.chosen_seating,
+            direction=primary.direction,
+            taste_answered=primary.taste_answered,
+            space_fit=primary.space_fit,
             offered_instead_of=primary.offered_instead_of,
+            narrowed=primary.narrowed,
+            focus=primary.focus,
+            companions=primary.companions,
         )
         logger.info(
             "search_action_completed",
@@ -1456,18 +1823,25 @@ class CustomerTurnCoordinator:
             case CompanionAction():
                 decision = _search_action_decision()
                 primary = await self._show_companion(action, pre_turn, turn)
+            case MoreLikeThisAction():
+                decision = _search_action_decision()
+                primary = await self._more_like_this(action, pre_turn, turn)
 
         final_state = primary.state
-        kinds, picks = await self._selection_facts(final_state, turn)
+        kinds, picks, liked = await self._selection_facts(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
             selected_kinds=kinds,
             picks=picks,
+            liked=liked,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
             selection_added=False,
             focus=primary.focus,
             companions=primary.companions,
+            direction=primary.direction,
+            taste_answered=primary.taste_answered,
+            space_fit=primary.space_fit,
         )
         logger.info(
             "product_action_completed",
@@ -1641,10 +2015,36 @@ class CustomerTurnCoordinator:
                 proposed=len(plan.needs),
             )
             return None
-        attempt = await self._first_viable_complement(needs, request, state, turn)
+        attempt = await self._first_viable_complement(
+            needs, request, state, turn, await self._direction_context(anchor, state, turn)
+        )
         if attempt.search is None or not attempt.search.products:
             return None
         return attempt
+
+    async def _direction_context(
+        self, anchor: ProductCandidate, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> _DirectionContext | None:
+        """What a designer's direction is measured against: the pick's longer
+        floor side, where the shape rule says it is the pick's width, and the
+        families the customer has spoken for themselves."""
+        if not self._designer_direction:
+            return None
+        overview = await self._capabilities.overview(turn.context)
+        shaped = any(
+            shelf.long_and_shallow
+            for shelf in overview.shelves
+            if shelf.commerce_subcategory == anchor.commerce.subcategory
+        )
+        sides = floor_sides(anchor.dimensions, self._size) if shaped else None
+        room = state.room_project.design_preferences if state.room_project else ()
+        expressed = self._composer.taste(room, state.customer_preferences.semantic_preferences)
+        return _DirectionContext(
+            anchor_long_cm=sides.long_cm if sides else None,
+            expressed=frozenset(preference.family for preference in expressed),
+            avoid_colours=state.customer_preferences.avoid_colours,
+            avoid_styles=state.customer_preferences.avoid_styles,
+        )
 
     def _taste(
         self, anchor: ProductCandidate, state: AgentStateV1
@@ -1676,6 +2076,7 @@ class CustomerTurnCoordinator:
         """
         if (
             decision.action is not AgentAction.ANSWER
+            or primary.chosen_seating is not None
             or primary.clarification is not None
             or primary.failure is not None
             or self._complements is None
@@ -1705,6 +2106,7 @@ class CustomerTurnCoordinator:
                 focus=offer.focus,
                 companions=offer.companions,
                 search=offer.search,
+                direction=offer.direction,
                 # The pick is drawn as their pick above the cards; reported as
                 # a selection or a detail, the reply would describe it instead
                 # of what goes with it.
@@ -1879,6 +2281,12 @@ class CustomerTurnCoordinator:
         """
         if isinstance(action, BriefAnswerAction):
             return await self._answer_brief(action, pre_turn, turn)
+        if isinstance(action, DropFacetAction):
+            return await self._drop_facet(action, pre_turn, turn)
+        if isinstance(action, CombinationAction):
+            return await self._combination_action(action, pre_turn, turn)
+        if isinstance(action, TasteAnswerAction):
+            return await self._answer_taste(action.question, action.answer, pre_turn, turn)
         active = pre_turn.active_search
         if active is None:
             return _Primary(
@@ -1942,14 +2350,21 @@ class CustomerTurnCoordinator:
                 )
                 return _Primary(state=working, clarification=clarification, failure=failure)
             new_exclusions = tuple(dict.fromkeys((*new_exclusions, outcome.product_id)))
+        if decision.only_asked_type and self._mixed_types:
+            # "More, but only regular sofas": the same search, kept to its type.
+            active = active.model_copy(
+                update={"request": active.request.model_copy(update={"single_type": True})}
+            )
         return await self._rerun_excluding(active, new_exclusions, working, turn.context)
 
     async def _more_combinations(
         self,
-        decision: CustomerAgentDecision,
         working: AgentStateV1,
         pre_turn: AgentStateV1,
         turn: CustomerTurnInput,
+        *,
+        show_more: bool,
+        dismiss: int | None,
     ) -> _Primary:
         """ "Show me more" or "not the second option" with combinations on screen.
 
@@ -1961,21 +2376,119 @@ class CustomerTurnCoordinator:
         offer = working.seating_offer
         active = pre_turn.active_search
         if offer is None or active is None:
-            return await self._continue_search(decision, working, pre_turn, turn)
-        leaving = list(offer.shown) if decision.show_more else []
-        position = decision.combination_dismiss
-        if position is not None and 1 <= position <= len(offer.shown):
-            leaving.append(offer.shown[position - 1])
+            return _Primary(
+                state=working,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.NO_SEARCH_TO_REFINE
+                ),
+            )
+        leaving = list(offer.shown) if show_more else []
+        if dismiss is not None and 1 <= dismiss <= len(offer.shown):
+            leaving.append(offer.shown[dismiss - 1])
         excluded = tuple(dict.fromkeys((*offer.excluded, *leaving)))[-MAX_EXCLUDED_COMBINATIONS:]
         remembered = _with_offer(working, offer.model_copy(update={"excluded": excluded}))
         logger.info(
             "seating_combinations_paged",
             store_id=turn.context.store_id,
-            show_more=decision.show_more,
-            dismissed=position,
+            show_more=show_more,
+            dismissed=dismiss,
             excluded_count=len(excluded),
         )
         return await self._rerun_excluding(active, (), remembered, turn.context)
+
+    async def _combination_action(
+        self, action: CombinationAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """A tap on the combinations on screen, on the typed path's own code."""
+        offer = pre_turn.seating_offer
+        if offer is None or not offer.shown:
+            return _Primary(
+                state=pre_turn,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.NO_SEARCH_TO_REFINE
+                ),
+            )
+        if action.op == "choose":
+            assert action.position is not None
+            return await self._choose_combination(action.position, pre_turn, turn)
+        return await self._more_combinations(
+            pre_turn,
+            pre_turn,
+            turn,
+            show_more=action.op == "more",
+            dismiss=action.position,
+        )
+
+    async def _choose_combination(
+        self, position: int, working: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """The combination they chose, saved to their picks with how many of
+        each, and then what goes with it - as for any pick (CLAUDE.md 10.4).
+
+        The pieces are read fresh from the catalog. A choice past the end of
+        what was shown, or one whose pieces have left the catalog, shows their
+        picks as they stand rather than claim a combination they do not have.
+        """
+        offer = working.seating_offer
+        assert offer is not None
+        chosen_state = _with_chosen_combination(working, offer, position)
+        chosen = chosen_state.seating_offer.chosen if chosen_state.seating_offer else None
+        if chosen_state is working or chosen is None:
+            return await self._show_selection(working, turn)
+        try:
+            products = await self._hydration.hydrate_ids(
+                tuple(line.product_id for line in chosen.lines), turn.context
+            )
+        except _HANDLED_SEARCH_FAILURES:
+            return await self._show_selection(chosen_state, turn)
+        bundle = self._chosen_bundle(chosen, products)
+        if bundle is None:
+            return await self._show_selection(chosen_state, turn)
+        main = max(bundle.lines, key=lambda line: line.seats_each)
+        anchor = next(p for p in products if p.product_id == main.product_id)
+        offered = await self._offer_companions(anchor, chosen_state, turn)
+        return replace(offered, chosen_seating=bundle)
+
+    def _chosen_bundle(
+        self, chosen: OfferedCombination, products: Sequence[ProductCandidate]
+    ) -> SeatingBundle | None:
+        """The chosen combination as it stands in the catalog today, or None
+        when a piece has gone or no longer records how many it seats."""
+        by_id = {product.product_id: product for product in products}
+        lines: list[SeatingBundleLine] = []
+        for line in chosen.lines:
+            product = by_id.get(line.product_id)
+            if product is None or product.commerce.subcategory is None:
+                return None
+            one_seat = self._seating is not None and self._seating.seats_one(
+                product.commerce.subcategory
+            )
+            seats = 1 if one_seat else product.commerce.seating_capacity
+            if seats is None or seats < 1:
+                return None
+            lines.append(
+                SeatingBundleLine(
+                    product_id=product.product_id,
+                    name=product.name_english,
+                    commerce_subcategory=product.commerce.subcategory,
+                    unit_price=product.price_amount,
+                    quantity=line.quantity,
+                    seats_each=seats,
+                    seats_are_confirmed=not one_seat,
+                    image_url=product.image_url,
+                    product_url=product.product_url,
+                )
+            )
+        currencies = {by_id[line.product_id].price_unit for line in lines}
+        if len(currencies) != 1:
+            return None
+        return SeatingBundle(
+            shape=chosen.shape,
+            lines=tuple(lines),
+            total_seats=sum(line.line_seats for line in lines),
+            total_price=sum((line.line_total for line in lines), Decimal(0)),
+            currency=currencies.pop(),
+        )
 
     async def _rerun_excluding(
         self,
@@ -1997,10 +2510,12 @@ class CustomerTurnCoordinator:
                 request=new_request,
                 semantics=active.semantics,
                 semantic_preferences=active.semantic_preferences,
+                seat_preference=active.seat_preference,
+                lean=active.lean,
                 semantic_text=active.semantic_intent,
             ),
         )
-        return await self._run_search(composed, working, context)
+        return await self._run_search(composed, working, context, mixed=True)
 
     async def _list_alternatives(
         self,
@@ -2084,6 +2599,9 @@ class CustomerTurnCoordinator:
             resolved = resolved.model_copy(
                 update={"request": resolved.request.model_copy(update={"price": price_ceiling})}
             )
+        # The room's own piece: its alternatives, and every page of them, keep
+        # to its type (CLAUDE.md 10.12).
+        resolved = _one_type(resolved)
         composed = self._composer.seed_new_task(
             resolved,
             room_preferences=room.design_preferences,
@@ -2592,7 +3110,7 @@ class CustomerTurnCoordinator:
 
     async def _selection_facts(
         self, state: AgentStateV1, turn: CustomerTurnInput
-    ) -> tuple[tuple[str, ...], tuple[PickView, ...] | None]:
+    ) -> tuple[tuple[str, ...], tuple[PickView, ...] | None, tuple[LikedView, ...] | None]:
         """What they have chosen: the kinds, for the reply, and the picks, for
         the tray - from one fresh read of the catalog.
 
@@ -2608,27 +3126,37 @@ class CustomerTurnCoordinator:
         left the catalog leaves a gap rather than renumbering the rest. None
         when the catalog could not be read: the client keeps the tray it has
         rather than being told the customer picked nothing.
+
+        **Liked**, the same way, from the same read - None when the buttons
+        are switched off, so no liked list is ever reported.
         """
         chosen = state.product_interaction.selected_product_ids
-        if not chosen:
-            return (), ()
+        liked_ids = (
+            state.product_interaction.liked_product_ids if self._designer_led_buttons else ()
+        )
+        wanted = tuple(dict.fromkeys((*chosen, *liked_ids)))
+        if not wanted:
+            return (), (), () if self._designer_led_buttons else None
         try:
-            products = await self._hydration.hydrate_ids(chosen, turn.context)
+            products = await self._hydration.hydrate_ids(wanted, turn.context)
         except _HANDLED_CATALOG_FAILURES:
             logger.warning("chosen_kinds_unavailable", store_id=turn.context.store_id)
-            return (), None
+            return (), None, None
         picks = build_picks(state, products)
-        if len(products) != len(chosen):
-            return (), picks
+        liked = build_liked(state, products) if self._designer_led_buttons else None
+        by_id = {product.product_id: product for product in products}
+        chosen_products = [by_id[p] for p in chosen if p in by_id]
+        if len(chosen_products) != len(chosen):
+            return (), picks, liked
         kinds = tuple(
             customer_words_or_none(product.commerce.subcategory or product.commerce.category)
-            for product in products
+            for product in chosen_products
         )
         return (
             ()
             if any(kind is None for kind in kinds)
             else tuple(kind for kind in kinds if kind is not None)
-        ), picks
+        ), picks, liked
 
     async def _visible_cards(self, turn: CustomerTurnInput) -> tuple[PresentedCardView, ...]:
         """The products the customer was looking at when they typed.
@@ -2750,6 +3278,22 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
         proposals: AgentStateUpdate,
     ) -> _Primary:
+        if decision.combination_choice is not None and working.seating_offer is not None:
+            return await self._choose_combination(decision.combination_choice, working, turn)
+        pending_taste = on_screen(working)
+        if (
+            decision.taste_answer is not None
+            and pending_taste is not None
+            and decision.interaction is None
+            and decision.action not in _NOT_A_TASTE_ANSWER
+        ):
+            return await self._answer_taste(
+                pending_taste.question, decision.taste_answer, working, turn
+            )
+        if decision.narrow_by is not None:
+            narrowing = await self._open_narrow_down(decision, working, turn)
+            if narrowing is not None:
+                return narrowing
         working = _with_seating_answer(working, decision)
         match decision.action:
             case AgentAction.CLARIFY if _asks_about_the_room(decision):
@@ -2765,7 +3309,13 @@ class CustomerTurnCoordinator:
                 return await self._design_handoff(decision, working, pre_turn, turn, proposals)
             case AgentAction.SEARCH:
                 if _pages_combinations(decision, working):
-                    return await self._more_combinations(decision, working, pre_turn, turn)
+                    return await self._more_combinations(
+                        working,
+                        pre_turn,
+                        turn,
+                        show_more=decision.show_more,
+                        dismiss=decision.combination_dismiss,
+                    )
                 if decision.show_more or decision.exclude_reference is not None:
                     return await self._continue_search(decision, working, pre_turn, turn)
                 if decision.reference is None:
@@ -2778,9 +3328,13 @@ class CustomerTurnCoordinator:
             case AgentAction.COMPARE:
                 return await self._compare(decision, working, pre_turn, turn)
             case AgentAction.SHOW_SELECTION:
-                return await self._show_selection(working, turn)
+                return await self._show_selection(
+                    working, turn, liked=decision.show_liked and self._designer_led_buttons
+                )
 
-    async def _show_selection(self, working: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
+    async def _show_selection(
+        self, working: AgentStateV1, turn: CustomerTurnInput, *, liked: bool = False
+    ) -> _Primary:
         """The products they have chosen, put back on screen.
 
         Read fresh from the catalog, in the order they chose them. The session
@@ -2798,12 +3352,19 @@ class CustomerTurnCoordinator:
         is not a new result set, and renumbering their search under them is how
         an ordinal starts meaning something else (M17 3).
         """
-        chosen = working.product_interaction.selected_product_ids
+        interaction = working.product_interaction
+        chosen = interaction.liked_product_ids if liked else interaction.selected_product_ids
         if not chosen:
-            logger.info("show_selection_empty", store_id=turn.context.store_id)
+            logger.info("show_selection_empty", store_id=turn.context.store_id, liked=liked)
             return _Primary(
                 state=working,
-                failure=TurnFailure(code=TurnFailureCode.NOTHING_SELECTED),
+                failure=TurnFailure(
+                    code=(
+                        TurnFailureCode.NOTHING_LIKED
+                        if liked
+                        else TurnFailureCode.NOTHING_SELECTED
+                    )
+                ),
             )
 
         try:
@@ -2833,7 +3394,22 @@ class CustomerTurnCoordinator:
             )
             for position, product in enumerate(products, start=1)
         )
-        return _Primary(state=working, selection=SelectionGrounding(products=grounded))
+        return _Primary(
+            state=working,
+            selection=SelectionGrounding(
+                products=grounded,
+                liked=liked,
+                also_picked=(
+                    sum(
+                        1
+                        for product in products
+                        if product.product_id in interaction.selected_product_ids
+                    )
+                    if liked
+                    else 0
+                ),
+            ),
+        )
 
     # ── refining the room ───────────────────────────────────────────────────
 
@@ -3419,6 +3995,21 @@ class CustomerTurnCoordinator:
         if decision.design_scope is DesignScope.ADVICE:
             return await self._design_advice(decision, state, turn)
 
+        state, carried = self._room_from_shopping(state, decision)
+        if carried is not None:
+            primary = await self._whole_room(decision, state, pre_turn, turn, started)
+            return replace(primary, room_carried=carried)
+        return await self._whole_room(decision, state, pre_turn, turn, started)
+
+    async def _whole_room(
+        self,
+        decision: CustomerAgentDecision,
+        state: AgentStateV1,
+        pre_turn: AgentStateV1,
+        turn: CustomerTurnInput,
+        started: float,
+    ) -> _Primary:
+        """The room itself: its questions, then its plan and its pieces."""
         if self._design is None:
             # Not configured here. Checked before anything is read or written,
             # so an unconfigured deployment leaves the customer's existing room
@@ -3571,6 +4162,109 @@ class CustomerTurnCoordinator:
             update=proposals.update.model_copy(update={"room_project": updated})
         )
 
+    def _room_from_shopping(
+        self, state: AgentStateV1, decision: CustomerAgentDecision
+    ) -> tuple[AgentStateV1, RoomCarriedView | None]:
+        """What shopping already told us, carried into a room before its
+        questions, so only what is new is asked (docs/designer-led-shopping-
+        plan.md, phase 6).
+
+        The head count they gave for seating - asked in the opening, tapped,
+        or a seat count no single piece met - is the room's, unasked. The
+        colours and styles they said are the room's taste; what was only
+        learned from likes and picks is not, so the colour question still
+        comes when they never said one. The wall they gave is the room's wall
+        for that piece. Each only where the room has nothing of its own, and
+        never once the room is planned. Their picks join only when they ask
+        (`anchor_picks`) - and then what the picks seat is confirmed instead
+        of any earlier head count (CLAUDE.md 10.3)."""
+        room = state.room_project
+        template = self._rooms.template(room.room_kind) if self._rooms and room else None
+        if (
+            not self._room_handoff
+            or room is None
+            or template is None
+            or room.design_needs
+            or room.bundle_items
+        ):
+            return state, None
+        around_picks = (
+            decision.anchor_picks
+            or decision.anchor_reference is not None
+            or bool(room.anchor_product_ids)
+        )
+        seats = (
+            _earlier_seat_count(state, template)
+            if template.asks_seats and room.regular_seating_count is None and not around_picks
+            else None
+        )
+        # What the search on screen says belongs to the room only when the
+        # customer stated it - not a search seeded from a product's own look -
+        # and only for a piece this room holds: a red rug's colour is not a
+        # whole living room's, a wardrobe's wall is not the sofa's.
+        active = state.active_search
+        own = active is not None and not active.from_product and not active.ordered_by_pick
+        of_room = (
+            own
+            and active is not None
+            and piece_for(
+                template, active.request.commerce_category, active.request.commerce_subcategory
+            )
+            is not None
+        )
+        held = {preference.family for preference in room.design_preferences}
+        taste = tuple(
+            {
+                (preference.family, preference.canonical_value): preference.model_copy(
+                    update={"strength": ConstraintStrength.PREFERRED}
+                )
+                for preference in (
+                    *(active.semantic_preferences if of_room and active is not None else ()),
+                    *state.customer_preferences.semantic_preferences,
+                )
+                if preference.family in (AttributeFamily.COLOR, AttributeFamily.STYLE)
+                and preference.canonical_value is not None
+                and preference.family not in held
+            }.values()
+        )
+        wall = _shopping_wall(state, room) if of_room else None
+        if seats is None and not taste and wall is None:
+            return state, None
+        geometry = (
+            RoomGeometry(
+                measurements=(*(room.geometry.measurements if room.geometry else ()), wall)
+            )
+            if wall is not None
+            else None
+        )
+        carried = apply_update(
+            state,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    regular_seating_count=seats,
+                    seats_carried=True if seats is not None else None,
+                    design_preferences=AddItems(items=taste) if taste else None,
+                    geometry=geometry,
+                )
+            ),
+        )
+        logger.info(
+            "room_carried_from_shopping",
+            seats=seats is not None,
+            taste=len(taste),
+            wall=wall is not None,
+        )
+        return carried, RoomCarriedView(
+            seats=seats,
+            colours=tuple(
+                p.canonical_value for p in taste if p.family is AttributeFamily.COLOR
+            ),
+            styles=tuple(
+                p.canonical_value for p in taste if p.family is AttributeFamily.STYLE
+            ),
+            wall=wall.centimetres if wall is not None else None,
+        )
+
     async def _room_question(self, state: AgentStateV1, turn: CustomerTurnInput) -> _Primary | None:
         """This turn's one question about the room, or `None` to build it.
 
@@ -3691,8 +4385,18 @@ class CustomerTurnCoordinator:
             asked=len(ids),
             kept=len(kept),
         )
+        # The seats their picks provide are confirmed in the room's own
+        # question; a head count only carried from shopping gives way to it.
+        carried = room.seats_carried and bool(kept)
         return apply_update(
-            state, AgentStateUpdate(room_project=RoomProjectUpdate(anchor_product_ids=kept))
+            state,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    anchor_product_ids=kept,
+                    clear_regular_seating_count=carried,
+                    seats_carried=False if carried else None,
+                )
+            ),
         )
 
     async def _room_kind_from_picks(
@@ -3995,13 +4699,46 @@ class CustomerTurnCoordinator:
             )
 
         room = state.room_project
+        geometry = room.geometry if room else None
+        fit = decision.fit_question and self._designer_fit
+        if fit and not knows_room_size(geometry):
+            # Whether it fits their room needs the room: one question first.
+            # Nothing failed, so this is a question and not a handoff that
+            # came to nothing.
+            logger.info("fit_needs_room_size", store_id=turn.context.store_id)
+            return _Primary(
+                state=state,
+                proposals_applied=True,
+                clarification=DeterministicClarification(
+                    reason=BlockingClarificationReason.MISSING_ROOM_SIZE
+                ),
+            )
+        about = await self._advice_pieces(decision, state, turn, every_card=fit)
+        if fit and about.unresolved is not None:
+            # Whether *that one* fits cannot be answered about no piece.
+            clarification, failure = _reference_outcome(
+                about.unresolved, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            )
+            return _Primary(state=state, clarification=clarification, failure=failure)
+        pieces = about.pieces
         request = InteriorDesignRequest(
             task=DesignTask.GENERAL_ADVICE,
             question=question,
-            room_type=room.room_type if room else None,
+            room_type=(room.room_type if room else None) or state.customer_preferences.room,
+            geometry=geometry,
             design_preferences=room.design_preferences if room else (),
             regular_seating_count=room.regular_seating_count if room else None,
-            anchors=await self._advice_anchors(decision, state, turn),
+            anchors=project_anchors(
+                list(pieces),
+                dimensions=self._dimensions,
+                locked_product_ids=(
+                    [p.product_id for p in pieces] if decision.reference is not None else []
+                ),
+                quantities={p.product_id: 1 for p in pieces},
+            )
+            if pieces
+            else (),
+            fit_checks=fit_checks(pieces, spaces_of(state), about.cards) if fit else (),
         )
         try:
             plan = await self._design.plan(request)
@@ -4035,37 +4772,46 @@ class CustomerTurnCoordinator:
             design_guidance=plan.guidance,
         )
 
-    async def _advice_anchors(
+    async def _advice_pieces(
         self,
         decision: CustomerAgentDecision,
         state: AgentStateV1,
         turn: CustomerTurnInput,
-    ) -> tuple[AnchorProduct, ...]:
-        """The piece the question is about, when it names one.
+        *,
+        every_card: bool = False,
+    ) -> _AdvicePieces:
+        """The pieces the question is about, read fresh from the catalog.
 
         "Would the second sofa work with a walnut coffee table?" is a design
         question *about something on screen*, so the specialist is told the
         design facts of that piece - its kind, colour, styles and size - and
-        nothing that identifies it (CLAUDE.md 42).
+        nothing that identifies it (CLAUDE.md 42). "Which of these go through
+        my door?" names no one card: for a fit question, every card of what
+        they are looking at.
 
-        An unresolvable reference yields no anchor rather than a failure: the
+        Each piece comes with its place on screen, so the reply calls it what
+        they see. A piece the catalog no longer has is left out of both.
+
+        An unresolvable reference yields no piece rather than a failure: the
         general form of the question is still answerable, and refusing it over
         a pointing word would be worse than answering it broadly.
         """
-        if decision.reference is None:
-            return ()
-        outcome = await self._references.resolve(decision.reference, state, turn.context)
-        if isinstance(outcome, ReferenceUnresolved):
-            return ()
-        products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
-        if not products:
-            return ()
-        return project_anchors(
-            list(products),
-            dimensions=self._dimensions,
-            locked_product_ids=[products[0].product_id],
-            quantities={products[0].product_id: 1},
-        )
+        if decision.reference is not None:
+            outcome = await self._references.resolve(decision.reference, state, turn.context)
+            if isinstance(outcome, ReferenceUnresolved):
+                return _AdvicePieces(unresolved=outcome.reason)
+            found = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
+            return _AdvicePieces(pieces=tuple(found), cards=(None,) * len(found))
+        if every_card:
+            shown = _on_screen(state.product_interaction)[:MAX_FIT_PIECES]
+            hydrated = {
+                p.product_id: p for p in await self._hydration.hydrate_ids(shown, turn.context)
+            }
+            kept = [(card, hydrated[i]) for card, i in enumerate(shown, start=1) if i in hydrated]
+            return _AdvicePieces(
+                pieces=tuple(p for _, p in kept), cards=tuple(card for card, _ in kept)
+            )
+        return _AdvicePieces()
 
     async def _complement(
         self,
@@ -4141,7 +4887,9 @@ class CustomerTurnCoordinator:
             logger.info("complement_no_need", store_id=turn.context.store_id)
             return _Primary(state=state, design_handoff=True, proposals_applied=True)
 
-        return await self._first_viable_complement(plan.needs, request, state, turn)
+        return await self._first_viable_complement(
+            plan.needs, request, state, turn, await self._direction_context(product, state, turn)
+        )
 
     async def _first_viable_complement(
         self,
@@ -4149,6 +4897,7 @@ class CustomerTurnCoordinator:
         request: InteriorDesignRequest,
         state: AgentStateV1,
         turn: CustomerTurnInput,
+        direction: _DirectionContext | None = None,
     ) -> _Primary:
         """The best complementary role this retailer can actually fill.
 
@@ -4174,11 +4923,14 @@ class CustomerTurnCoordinator:
         """
         for position, need in enumerate(needs, start=1):
             resolved = self._design_discovery.resolve_need(need, request)
+            if direction is not None and need.direction is not None:
+                resolved = _directed(resolved, need.direction, direction)
             composed = ComposedSearch(
                 candidate=ActiveSearchState(
                     request=resolved.request,
                     semantics=resolved.semantics,
                     semantic_preferences=resolved.semantic_preferences,
+                    lean=resolved.lean,
                     semantic_intent=resolved.semantic_text,
                     # Unread on this path: `_run_search` promotes the criteria
                     # through the reducer, which carries the live revision. The
@@ -4199,7 +4951,16 @@ class CustomerTurnCoordinator:
                         store_id=turn.context.store_id,
                         attempts=position,
                     )
-                return replace(attempt, design_handoff=True, proposals_applied=True)
+                return replace(
+                    attempt,
+                    design_handoff=True,
+                    proposals_applied=True,
+                    direction=(
+                        DirectionView.of(need, resolved.lean, self._size)
+                        if direction is not None and need.direction is not None
+                        else None
+                    ),
+                )
 
         # Every role the specialist proposed came back empty, or the catalog
         # could not be reached. Either way this was *our* idea and it produced
@@ -4282,10 +5043,15 @@ class CustomerTurnCoordinator:
         """
         room = state.room_project
         chosen = await self._chosen_alongside(product, state, turn)
+        # The room they said in the opening drives what comes next - an
+        # office desk wants a chair, a living-room sofa a table - unless a
+        # room is being designed, which says it better.
+        shopping_room = state.customer_preferences.room if self._designer_direction else None
         return InteriorDesignRequest(
             task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
             design_brief=_design_brief(turn.message),
-            room_type=room.room_type if room else None,
+            room_type=room.room_type if room else shopping_room,
+            stocked_looks=await self._stocked_looks(turn) if self._designer_direction else (),
             design_preferences=(
                 taste if taste is not None else (room.design_preferences if room else ())
             ),
@@ -4297,6 +5063,20 @@ class CustomerTurnCoordinator:
                 locked_product_ids=[p.product_id for p in chosen],
                 quantities={p.product_id: 1 for p in chosen},
             ),
+        )
+
+    async def _stocked_looks(self, turn: CustomerTurnInput) -> tuple[StockedLook, ...]:
+        """The colours and styles each stocked kind comes in, so a direction
+        names only what the shop can show."""
+        overview = await self._capabilities.overview(turn.context)
+        return tuple(
+            StockedLook(
+                commerce_subcategory=shelf.commerce_subcategory,
+                colours=shelf.colours,
+                styles=shelf.styles,
+            )
+            for shelf in overview.shelves
+            if shelf.commerce_subcategory is not None and (shelf.colours or shelf.styles)
         )
 
     async def _chosen_alongside(
@@ -4675,6 +5455,13 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=working, clarification=_interpretation_clarification(interpretation)
             )
+        if self._mixed_types and (
+            decision.only_asked_type
+            or await self._asks_for_what_is_not_on_screen(interpretation, working, turn)
+        ):
+            # Before the opening questions, which keep the search until their
+            # answers run it.
+            interpretation = _one_type(interpretation)
         primary = await self._ask_or_search(interpretation, decision, working, turn)
         return replace(primary, stated_figures=stated_figures(interpretation.request))
 
@@ -4697,6 +5484,15 @@ class CustomerTurnCoordinator:
         pending = working.product_brief.pending
         if answering and pending is not None and pending.drop_saved_sizes:
             decision = decision.model_copy(update={"drop_saved_sizes": True})
+        if answering and pending is not None and self._briefs is not None:
+            proposal = decision.state_proposal
+            interpretation = self._briefs.typed_head_count(
+                interpretation, pending, proposal.head_count if proposal else None
+            )
+            if pending.base.request.single_type and self._mixed_types:
+                # "Just sofas" said before the questions is not lost by typing
+                # the answer instead of tapping it (CLAUDE.md 17.1).
+                interpretation = _one_type(interpretation)
         asking = self._briefs is not None and not (decision.skip_questions or answering)
         language = self._turn_language(turn, decision)
         combining = asking and await self._needs_combining(interpretation, turn)
@@ -4706,7 +5502,7 @@ class CustomerTurnCoordinator:
             # tap them (CLAUDE.md 10.4).
             asked = await self._product_brief(
                 interpretation,
-                working,
+                _with_room_said(working, decision),
                 turn,
                 BriefMode.ASK,
                 drop_saved_sizes=decision.drop_saved_sizes,
@@ -4719,9 +5515,85 @@ class CustomerTurnCoordinator:
             # refine a request nobody is making.
             working = record_brief(working, None)
         primary = await self._seed_and_execute(interpretation, decision, working, turn)
-        if answering or combining:
+        if answering or combining or self._designer_led_brief:
             return primary
         return await self._offer_narrowing(interpretation, primary, turn, language)
+
+    async def _with_narrow_down(
+        self, result: CustomerTurnResult, turn: CustomerTurnInput
+    ) -> CustomerTurnResult:
+        """Beside a list of results they searched for: what the search uses as
+        removable chips, and Narrow down opened showing it.
+
+        Not beside what goes with a pick, a combination or a room - those are
+        ours to order, not a search of theirs to narrow.
+        """
+        search = result.grounding.search
+        active = result.state.active_search
+        if (
+            not self._designer_led_brief
+            or self._briefs is None
+            or search is None
+            or not search.products
+            or active is None
+            or active.ordered_by_pick
+            or result.grounding.design_handoff_requested
+            or result.focus is not None
+            or result.seating_solution is not None
+        ):
+            return result
+        language = result.reply_language or ReplyLanguage.EN
+        executed = ResolvedSearch(
+            request=active.request,
+            semantics=active.semantics,
+            semantic_preferences=active.semantic_preferences,
+            seat_preference=active.seat_preference,
+            semantic_text=active.semantic_intent,
+            lean=active.lean,
+        )
+        try:
+            built = await self._briefs.build(
+                executed,
+                result.state,
+                turn.context,
+                mode=BriefMode.NARROW,
+                language=language,
+                prefilled=True,
+            )
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("narrow_down_unavailable", store_id=turn.context.store_id)
+            built = None
+        return result.model_copy(
+            update={
+                "state": record_brief(result.state, built.pending) if built else result.state,
+                "narrow_down": built.card if built else None,
+                "brief_chips": self._briefs.chips(active, language),
+            }
+        )
+
+    async def _drop_facet(
+        self, action: DropFacetAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """✕ on a chip: the search on screen again, without that one thing."""
+        active = pre_turn.active_search
+        narrowed = without_facet(active, action.facet) if active is not None else None
+        if narrowed is None:
+            logger.info("brief_chip_drop_refused", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.QUESTIONS_EXPIRED)
+            )
+        composed = ComposedSearch(
+            candidate=narrowed,
+            resolved=ResolvedSearch(
+                request=narrowed.request,
+                semantics=narrowed.semantics,
+                semantic_preferences=narrowed.semantic_preferences,
+                seat_preference=narrowed.seat_preference,
+                lean=narrowed.lean,
+                semantic_text=narrowed.semantic_intent,
+            ),
+        )
+        return await self._run_search(composed, pre_turn, turn.context, mixed=True)
 
     async def _needs_combining(self, resolved: ResolvedSearch, turn: CustomerTurnInput) -> bool:
         """Whether no single piece in the store seats as many as they need.
@@ -4745,6 +5617,17 @@ class CustomerTurnCoordinator:
         except _HANDLED_SEARCH_FAILURES:
             return False
         ceiling = overview.max_seats_in(SEATING_CATEGORY)
+        if request.single_type and self._mixed_types:
+            # Their type alone: what it seats, not what a set beside it would.
+            ceiling = max(
+                (
+                    shelf.max_seats
+                    for shelf in overview.shelves_in(SEATING_CATEGORY)
+                    if shelf.commerce_subcategory == request.commerce_subcategory
+                    and shelf.max_seats is not None
+                ),
+                default=None,
+            )
         return ceiling is not None and capacity.min_capacity > ceiling
 
     async def _product_brief(
@@ -4767,7 +5650,12 @@ class CustomerTurnCoordinator:
             return None
         try:
             built = await self._briefs.build(
-                resolved, working, turn.context, mode=mode, language=language
+                resolved,
+                working,
+                turn.context,
+                mode=mode,
+                language=language,
+                opening=self._designer_led_opening and mode is BriefMode.ASK,
             )
         except _HANDLED_SEARCH_FAILURES:
             logger.warning("product_brief_unavailable", store_id=turn.context.store_id)
@@ -4782,6 +5670,54 @@ class CustomerTurnCoordinator:
         return _Primary(
             state=record_brief(working, pending, shown=pending.name),
             product_brief=built.card,
+        )
+
+    async def _open_narrow_down(
+        self, decision: CustomerAgentDecision, working: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary | None:
+        """ "Help me narrow these down", "narrow by size": Narrow down opened as
+        the turn's question, showing what the search uses - kept to the
+        questions they named, every question when they named none or the
+        family has none of those. None to answer as usual: no search on
+        screen, Narrow down switched off, or nothing to ask."""
+        active = working.active_search
+        if not self._designer_led_brief or self._briefs is None or active is None:
+            return None
+        executed = ResolvedSearch(
+            request=active.request,
+            semantics=active.semantics,
+            semantic_preferences=active.semantic_preferences,
+            seat_preference=active.seat_preference,
+            semantic_text=active.semantic_intent,
+            lean=active.lean,
+        )
+        language = self._turn_language(turn, decision)
+        try:
+            built = None
+            for only in dict.fromkeys((tuple(decision.narrow_by or ()), ())):
+                built = await self._briefs.build(
+                    executed,
+                    working,
+                    turn.context,
+                    mode=BriefMode.NARROW,
+                    language=language,
+                    prefilled=True,
+                    only=only,
+                )
+                if built is not None:
+                    break
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("narrow_down_unavailable", store_id=turn.context.store_id)
+            return None
+        if built is None:
+            return None
+        logger.info(
+            "narrow_down_opened",
+            store_id=turn.context.store_id,
+            narrow_by=[str(kind) for kind in decision.narrow_by or ()],
+        )
+        return _Primary(
+            state=record_brief(working, built.pending), product_brief=built.card
         )
 
     async def _offer_narrowing(
@@ -4835,17 +5771,23 @@ class CustomerTurnCoordinator:
         screen, or a key it never offered, searches nothing.
         """
         pending = pre_turn.product_brief.pending
-        resolved = (
+        answer = (
             self._briefs.answer(action, pending)
             if self._briefs is not None and pending is not None
             else None
         )
-        if resolved is None:
+        if answer is None:
             logger.info("product_brief_answer_refused", store_id=turn.context.store_id)
             return _Primary(
                 state=pre_turn, failure=TurnFailure(code=TurnFailureCode.QUESTIONS_EXPIRED)
             )
-        answered = record_brief(pre_turn, None)
+        resolved = answer.search
+        answered = _without_unticked(record_brief(pre_turn, None), pending, resolved)
+        if answer.room is not None:
+            answered = apply_update(
+                answered,
+                AgentStateUpdate(customer_preferences=CustomerPreferenceUpdate(room=answer.room)),
+            )
         wording = (resolved.semantic_text or "").strip()[:MAX_SEMANTIC_INTENT_CHARS].strip()
         composed = self._composer.seed_new_task(
             resolved,
@@ -4874,12 +5816,17 @@ class CustomerTurnCoordinator:
             store_id=turn.context.store_id,
             brief=pending.name if pending else None,
             piece=action.piece is not None,
+            room=action.room is not None,
+            people=action.people is not None,
             budget=action.budget is not None,
             colours=len(action.colours),
             styles=len(action.styles),
             feel=action.feel is not None,
         )
-        return await self._run_search(composed, answered, turn.context, save_sizes=True)
+        searched = await self._run_search(
+            composed, answered, turn.context, save_sizes=True, mixed=True
+        )
+        return replace(searched, narrowed=pending is not None and pending.narrowing)
 
     async def _seed_and_execute(
         self,
@@ -4908,13 +5855,25 @@ class CustomerTurnCoordinator:
             ),
             revision=_current_revision(working),
         )
-        return await self._run_search(composed, working, turn.context, save_sizes=True)
+        return await self._run_search(
+            composed, working, turn.context, save_sizes=True, mixed=True
+        )
+
+    def _measurable_by(self, subcategory: str | None, request: ProductSearchRequest) -> bool:
+        """Whether every size in the request can be searched for this type."""
+        if request.planar_dimensions is not None and not self._dimensions.reads_pair(subcategory):
+            return False
+        return all(
+            self._dimensions.measured_by(subcategory, d.role, d.side) is not None
+            for d in request.dimensions
+        )
 
     async def _maybe_compose_seating(
         self,
         resolved: ResolvedSearch,
         primary: _Primary,
         context: RetailerContext,
+        avoid: str | None = None,
     ) -> _Primary:
         """When a seat count no single piece can meet leaves a search empty,
         offer combinations instead of a dead end (CLAUDE.md 27).
@@ -4955,7 +5914,12 @@ class CustomerTurnCoordinator:
         offer = primary.state.seating_offer
         if offer is not None and offer.target_seats != target:
             offer = None
-        requirements = _seating_requirements(resolved)
+        requirements = _seating_requirements(resolved).model_copy(
+            update={
+                "avoid_type": avoid,
+                "single_type": resolved.request.single_type and self._mixed_types,
+            }
+        )
         solution = await self._seating_planner.plan(
             target_seats=target,
             budget_amount=budget,
@@ -4976,7 +5940,8 @@ class CustomerTurnCoordinator:
             return replace(
                 primary,
                 state=_with_offer(
-                    primary.state, SeatingOfferState(target_seats=target, shape_asked=True)
+                    primary.state,
+                    SeatingOfferState(target_seats=target, shape_asked=True, avoid_type=avoid),
                 ),
                 seating_solution=solution,
             )
@@ -4992,7 +5957,9 @@ class CustomerTurnCoordinator:
 
         shapes = tuple(option.shape for option in solution.options)
         if _should_ask_shape(offer, solution, requirements):
-            asked = SeatingOfferState(target_seats=target, offered_shapes=shapes, shape_asked=True)
+            asked = SeatingOfferState(
+                target_seats=target, offered_shapes=shapes, shape_asked=True, avoid_type=avoid
+            )
             question = SeatingSolution(
                 target_seats=solution.target_seats,
                 budget_amount=solution.budget_amount,
@@ -5010,6 +5977,7 @@ class CustomerTurnCoordinator:
 
         shown = SeatingOfferState(
             target_seats=target,
+            avoid_type=avoid,
             # Every shape ever offered: after paging, `shapes` lists only those
             # with unseen combinations, and a chosen shape must stay offered.
             offered_shapes=tuple(
@@ -5052,8 +6020,45 @@ class CustomerTurnCoordinator:
                 outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
             )
             return _Primary(state=working, clarification=clarification, failure=failure)
+        return await self._similar_to(outcome.product_id, working, turn)
 
-        products = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
+    async def _more_like_this(
+        self, action: MoreLikeThisAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """More like this card, on any list still on screen."""
+        if not self._designer_led_buttons:
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+            )
+        if action.card is None:
+            liked = pre_turn.product_interaction.liked_product_ids
+            position = action.liked or 0
+            if not 0 < position <= len(liked):
+                return _Primary(
+                    state=pre_turn, failure=TurnFailure(code=TurnFailureCode.CARD_NOT_ON_SCREEN)
+                )
+            return await self._similar_to(liked[position - 1], pre_turn, turn)
+        outcome = await self._references.resolve_on_list(
+            action.card.ordinal, action.card.list_revision, pre_turn, turn.context
+        )
+        if isinstance(outcome, ReferenceUnresolved):
+            # A tap cannot be ambiguous: the card is gone, not unclear.
+            code = (
+                TurnFailureCode.PRODUCT_UNAVAILABLE
+                if outcome.reason is ReferenceFailureReason.PRODUCT_UNAVAILABLE
+                else TurnFailureCode.CARD_NOT_ON_SCREEN
+            )
+            return _Primary(state=pre_turn, failure=TurnFailure(code=code))
+        return await self._similar_to(outcome.product_id, pre_turn, turn)
+
+    async def _similar_to(
+        self, product_id: int, working: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """A new search seeded from one product's reviewed classification -
+        and, with taste on, remembered as a quiet signal of what they like."""
+        if self._designer_taste:
+            working = _explored(working, product_id)
+        products = await self._hydration.hydrate_ids((product_id,), turn.context)
         if not products:
             return _Primary(
                 state=working,
@@ -5083,7 +6088,8 @@ class CustomerTurnCoordinator:
             customer_defaults=working.customer_preferences.semantic_preferences,
             revision=_current_revision(working),
         )
-        return await self._run_search(composed, working, turn.context)
+        searched = await self._run_search(composed, working, turn.context)
+        return replace(searched, state=_from_product(searched.state))
 
     async def _run_search(
         self,
@@ -5093,7 +6099,9 @@ class CustomerTurnCoordinator:
         *,
         save_sizes: bool = False,
         recover_seating: bool = True,
+        turned_down: str | None = None,
         presentation_limit: int | None = None,
+        mixed: bool = False,
     ) -> _Primary:
         """Execute, then promote and commit in one step.
 
@@ -5113,7 +6121,18 @@ class CustomerTurnCoordinator:
         (CLAUDE.md 27). `recover_seating=False` opts a caller out - the cross-sell
         suggestion loop does, because a piece we proposed that finds nothing is
         withheld, not turned into a bundle the customer never asked for.
+        `turned_down` is a multi-seat type the customer just moved away from
+        ("not an L-shape, a simple sofa"): never offered back, and never the
+        single piece that makes combining unnecessary.
+
+        `mixed` marks a search the customer asked for, so it also shows the
+        types reviewed to stand beside its own (`_with_family`); every other
+        search keeps to its one type.
         """
+        composed, left_out = self._with_family(composed, mixed=mixed)
+        if self._designer_taste:
+            composed = await self._with_learned_taste(composed, working, context)
+        composed, space_fit = await self._with_space_fit(composed, working, context)
         try:
             execution = await self._pipeline.execute(
                 composed.resolved,
@@ -5127,6 +6146,19 @@ class CustomerTurnCoordinator:
             return _Primary(
                 state=working,
                 failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE),
+            )
+        if left_out and composed.resolved.request.commerce_subcategory is not None:
+            execution = execution.model_copy(
+                update={
+                    "grounding": execution.grounding.model_copy(
+                        update={
+                            "type_mix": TypeMix(
+                                asked_type=composed.resolved.request.commerce_subcategory,
+                                left_out_for_size=left_out,
+                            )
+                        }
+                    )
+                }
             )
 
         promoted = apply_update(
@@ -5142,21 +6174,21 @@ class CustomerTurnCoordinator:
                 )
             ),
         )
-        committed = commit_search_results(promoted, execution.presented_product_ids)
-        if composed.candidate.ordered_by_pick:
-            # The next page of what goes with a pick ("show me more", "not
-            # this one") is still ordered by the pick, not by their words.
-            committed = _ordered_by_pick(committed)
+        committed = _with_orderings(
+            commit_search_results(promoted, execution.presented_product_ids), composed.candidate
+        )
         primary = _Primary(
             state=remember_measurements(committed) if save_sizes else committed,
             search=execution.grounding,
+            space_fit=space_fit,
         )
         if not recover_seating:
             return primary
-        another = await self._another_type_seats_them(composed, primary, working, context)
+        avoid = _avoided_type(working, composed.resolved, turned_down)
+        another = await self._another_type_seats_them(composed, primary, working, context, avoid)
         if another is not None:
             return another
-        seated = await self._maybe_compose_seating(composed.resolved, primary, context)
+        seated = await self._maybe_compose_seating(composed.resolved, primary, context, avoid)
         if seated is not primary:
             return seated
         closest = await self._offer_closest_type_instead(composed, primary, working, context)
@@ -5164,12 +6196,174 @@ class CustomerTurnCoordinator:
             return closest
         return primary
 
+    def _with_family(
+        self, composed: ComposedSearch, *, mixed: bool
+    ) -> tuple[ComposedSearch, tuple[str, ...]]:
+        """The search with the types it covers worked out afresh, and the
+        types a size left out.
+
+        A search the customer asked for also shows the types reviewed to stand
+        beside its own - sofa sets and sectional sofas beside sofas
+        (`seating_v1.yaml`, `shown_with`) - unless they asked for the type
+        alone ("just sofas"), or gave a size, which those types' listings
+        cannot answer (CLAUDE.md 15.1): then it keeps to its type and the reply
+        says why the others are not there. Suggestions after a pick and "more
+        like this" are ours to order and keep to theirs, as does every search
+        that is not the customer's, so the types are set on every run rather
+        than carried in state.
+        """
+        request = composed.resolved.request
+        candidate = composed.candidate
+        alongside: tuple[str, ...] = ()
+        left_out: tuple[str, ...] = ()
+        if (
+            mixed
+            and self._mixed_types
+            and self._seating is not None
+            and not request.single_type
+            and not candidate.ordered_by_pick
+            and not candidate.from_product
+        ):
+            family = self._seating.shown_with(request.commerce_subcategory)
+            if request.dimensions or request.planar_dimensions is not None:
+                left_out = family
+            else:
+                alongside = family
+        if alongside == request.alongside_subcategories:
+            return composed, left_out
+        resolved = composed.resolved.model_copy(
+            update={"request": request.model_copy(update={"alongside_subcategories": alongside})}
+        )
+        return composed.model_copy(update={"resolved": resolved}), left_out
+
+    async def _with_space_fit(
+        self, composed: ComposedSearch, working: AgentStateV1, context: RetailerContext
+    ) -> tuple[ComposedSearch, SpaceFitView | None]:
+        """The width that suits the space they gave, asked of the designer once.
+
+        The space already limits the width (nothing wider than the wall); this
+        decides what suits it - a sofa at about two-thirds of its wall - and
+        orders the cards by closeness to that width, hiding nothing. The
+        designer gives a proportion and code works out the width
+        (CLAUDE.md 3.3). Only for a kind the store's own data shows to be long
+        and shallow, where the longer side is the width (CLAUDE.md 10.8).
+        Asked once per space: paging and refinements keep the answer, and a
+        designer that cannot answer leaves the order as it was.
+        """
+        lean = composed.candidate.lean
+        kind = composed.resolved.request.commerce_subcategory
+        design = self._design
+        if (
+            not self._designer_space_fit
+            or design is None
+            or lean is None
+            or lean.space_cm is None
+            or lean.space_fitted
+            or kind is None
+        ):
+            return composed, None
+        fitted = lean.model_copy(update={"space_fitted": True})
+        view: SpaceFitView | None = None
+        try:
+            overview = await self._capabilities.overview(context)
+            shaped = any(
+                shelf.long_and_shallow
+                for shelf in overview.shelves
+                if shelf.commerce_subcategory == kind
+            )
+            advice = (
+                (
+                    await design.plan(
+                        InteriorDesignRequest(
+                            task=DesignTask.SPACE_FIT,
+                            space_fit=SpaceFitRequest(
+                                commerce_subcategory=kind, space_width_cm=lean.space_cm
+                            ),
+                            room_type=working.customer_preferences.room,
+                            regular_seating_count=composed.resolved.seat_preference,
+                            design_preferences=composed.resolved.semantic_preferences,
+                        )
+                    )
+                ).space_fit
+                if shaped
+                else None
+            )
+        except (*_HANDLED_DESIGN_FAILURES, *_HANDLED_CATALOG_FAILURES):
+            logger.warning("space_fit_unavailable", store_id=context.store_id)
+            advice = None
+        if advice is not None:
+            ideal = min(
+                lean.space_cm, (lean.space_cm * Decimal(str(advice.ratio))).quantize(Decimal("1"))
+            )
+            fitted = fitted.model_copy(update={"size_target_cm": ideal})
+            view = SpaceFitView(space_cm=lean.space_cm, ideal_cm=ideal, reason=advice.reason)
+        logger.info(
+            "space_fit_decided", store_id=context.store_id, kind=kind, aimed=view is not None
+        )
+        return (
+            composed.model_copy(
+                update={
+                    "candidate": composed.candidate.model_copy(update={"lean": fitted}),
+                    "resolved": composed.resolved.model_copy(update={"lean": fitted}),
+                }
+            ),
+            view,
+        )
+
+    async def _with_learned_taste(
+        self, composed: ComposedSearch, working: AgentStateV1, context: RetailerContext
+    ) -> ComposedSearch:
+        """The search leaning on what they liked, picked and asked more like of.
+
+        Worked out once a search, from the products as the catalog has them
+        now, and kept with it - paging and refinements lean the same way, and a
+        suggested value they took off stays off (docs/designer-led-shopping-
+        plan.md, 5.1).
+        """
+        lean = composed.candidate.lean
+        kind = composed.resolved.request.commerce_subcategory
+        if lean is not None and lean.learned and lean.learned_for == kind:
+            return composed
+        interaction = working.product_interaction
+        signals = tuple(
+            dict.fromkeys(
+                (
+                    *interaction.selected_product_ids,
+                    *interaction.liked_product_ids,
+                    *interaction.explored_product_ids,
+                )
+            )
+        )
+        try:
+            products = await self._hydration.hydrate_ids(signals, context) if signals else ()
+        except _HANDLED_CATALOG_FAILURES:
+            return composed
+        colours, styles = learned_taste(products, kind)
+        preferences = working.customer_preferences
+        learned = (lean or RankingLean()).model_copy(
+            update={
+                "learned": True,
+                "learned_for": kind,
+                "learned_colours": colours,
+                "learned_styles": styles,
+                "said_avoid_colours": preferences.avoid_colours,
+                "said_avoid_styles": preferences.avoid_styles,
+            }
+        )
+        return composed.model_copy(
+            update={
+                "candidate": composed.candidate.model_copy(update={"lean": learned}),
+                "resolved": composed.resolved.model_copy(update={"lean": learned}),
+            }
+        )
+
     async def _another_type_seats_them(
         self,
         composed: ComposedSearch,
         primary: _Primary,
         working: AgentStateV1,
         context: RetailerContext,
+        avoid: str | None,
     ) -> _Primary | None:
         """A seat count the type they asked for never reaches, but another main
         type does in a single piece - "a sofa for six" where sofas stop at
@@ -5178,7 +6372,9 @@ class CustomerTurnCoordinator:
         That other type is searched with everything else they asked kept, and
         shown as the best fit for them (CLAUDE.md 27.1). Only when the asked
         type itself cannot seat them: a purple sofa for three that found
-        nothing is a colour problem, not a reason to change the type.
+        nothing is a colour problem, not a reason to change the type. Never a
+        type they turned down: "not an L-shape, a simple sofa" after sofa sets
+        were shown is answered by the seating shapes, not by the same sets.
         """
         request = composed.resolved.request
         asked = request.commerce_subcategory
@@ -5187,6 +6383,8 @@ class CustomerTurnCoordinator:
             self._seating is None
             or primary.search is None
             or primary.search.products
+            # "A simple sofa" for seven is never answered with the sets.
+            or (request.single_type and self._mixed_types)
             or request.commerce_category != SEATING_CATEGORY
             or asked is None
             or capacity is None
@@ -5205,10 +6403,16 @@ class CustomerTurnCoordinator:
             (
                 shelf
                 for shelf in shelves
-                if shelf.commerce_subcategory not in (None, asked)
+                if shelf.commerce_subcategory not in (None, asked, avoid)
+                # A type this search already covered found nothing either.
+                and shelf.commerce_subcategory not in request.alongside_subcategories
                 and self._seating.is_combination_main(shelf.commerce_subcategory)
                 and shelf.seating is not None
                 and shelf.seating.maximum >= target
+                # A size they gave must be one this type can be measured by:
+                # a sofa set has no checkable width, so "no wider than 220 cm"
+                # never becomes a search it would refuse.
+                and self._measurable_by(shelf.commerce_subcategory, request)
             ),
             key=lambda shelf: shelf.price_minimum,
         )
@@ -5319,8 +6523,11 @@ class CustomerTurnCoordinator:
             # A plain "cheaper ones" after a similar-product search, which
             # stated no size, must not save that silence over the size they
             # gave earlier.
+            outcome = self._composer.refine(working.active_search, delta)
+            if decision.only_asked_type and self._mixed_types:
+                outcome = _kept_to_one_type(outcome)
             primary = await self._compose_and_run(
-                self._composer.refine(working.active_search, delta),
+                outcome,
                 working,
                 turn,
                 save_sizes=bool(delta.dimensions) or delta.planar_dimensions is not None,
@@ -5353,6 +6560,9 @@ class CustomerTurnCoordinator:
                 state=working,
                 clarification=_interpretation_clarification(interpretation),
             )
+        if decision.only_asked_type and self._mixed_types:
+            # Kept on a change of family too, which is searched as a new task.
+            interpretation = _one_type(interpretation)
 
         outcome = self._composer.refine_taxonomy(
             working.active_search,
@@ -5368,7 +6578,67 @@ class CustomerTurnCoordinator:
             # old one carries across (CLAUDE.md 13.3) - and it is asked its
             # card, as any new search for a kind of product is.
             return await self._ask_or_search(interpretation, decision, working, turn)
-        return await self._compose_and_run(outcome, working, turn, save_sizes=True)
+        if self._mixed_types and (
+            decision.only_asked_type or self._asks_the_same_type(working, outcome)
+        ):
+            outcome = _kept_to_one_type(outcome)
+        return await self._compose_and_run(
+            outcome, working, turn, save_sizes=True, turned_down=self._turned_down(working, outcome)
+        )
+
+    async def _asks_for_what_is_not_on_screen(
+        self, interpretation: ResolvedSearch, working: AgentStateV1, turn: CustomerTurnInput
+    ) -> bool:
+        """Sofas asked for again while the cards are all sets and sectionals -
+        "show me sofas instead" beside the sets for seven: the type alone, not
+        the same cards again (known issue 21). Only for the type the search is
+        already for, so a return to sofas from elsewhere is mixed as usual."""
+        active = working.active_search
+        subcategory = interpretation.request.commerce_subcategory
+        if (
+            active is None
+            or self._seating is None
+            or active.request.commerce_subcategory != subcategory
+            or not self._seating.shown_with(subcategory)
+        ):
+            return False
+        presented = turn.state.product_interaction.presented_product_ids
+        if not presented:
+            return False
+        try:
+            cards = await self._hydration.hydrate_ids(presented, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            return False
+        on_screen = {card.commerce.subcategory for card in cards}
+        beside = set(self._seating.shown_with(subcategory))
+        return subcategory not in on_screen and bool(on_screen & beside)
+
+    def _asks_the_same_type(self, working: AgentStateV1, outcome: CompositionOutcome) -> bool:
+        """A change of type to the very type the search is already for -
+        "rather a simple sofa" while sets and sectionals are beside the sofas -
+        asks for that type alone: the others on screen are what they turned
+        down (known issue 21)."""
+        active = working.active_search
+        if not isinstance(outcome, ComposedSearch) or active is None or self._seating is None:
+            return False
+        subcategory = outcome.resolved.request.commerce_subcategory
+        return active.request.commerce_subcategory == subcategory and bool(
+            self._seating.shown_with(subcategory)
+        )
+
+    def _turned_down(self, working: AgentStateV1, outcome: CompositionOutcome) -> str | None:
+        """The multi-seat type on screen before the customer changed type."""
+        if not isinstance(outcome, ComposedSearch) or working.active_search is None:
+            return None
+        left = working.active_search.request.commerce_subcategory
+        if (
+            self._seating is None
+            or left is None
+            or left == outcome.resolved.request.commerce_subcategory
+            or not self._seating.seats_several(left)
+        ):
+            return None
+        return left
 
     async def _compose_and_run(
         self,
@@ -5377,10 +6647,18 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
         *,
         save_sizes: bool,
+        turned_down: str | None = None,
     ) -> _Primary:
         match outcome:
             case ComposedSearch():
-                return await self._run_search(outcome, working, turn.context, save_sizes=save_sizes)
+                return await self._run_search(
+                    outcome,
+                    working,
+                    turn.context,
+                    save_sizes=save_sizes,
+                    turned_down=turned_down,
+                    mixed=True,
+                )
             case CompositionNeedsClarification():
                 return _Primary(
                     state=working,
@@ -5408,7 +6686,7 @@ class CustomerTurnCoordinator:
                 # it is not logged as an error.
                 log = (
                     logger.warning
-                    if outcome.defect is CompositionDefect.ONE_SEAT_ON_MULTI_SEAT_TYPE
+                    if outcome.defect in _CORRECTED_MISREADINGS
                     else logger.error
                 )
                 log("turn_composition_defect", defect=str(outcome.defect))
@@ -5736,6 +7014,7 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
+        taste=state.taste,
     )
 
 
@@ -5752,8 +7031,6 @@ def _with_seating_answer(state: AgentStateV1, decision: CustomerAgentDecision) -
     leave the choice open - the best of every shape is then shown.
     """
     offer = state.seating_offer
-    if offer is not None and decision.combination_choice is not None:
-        return _with_chosen_combination(state, offer, decision.combination_choice)
     answer = decision.seating_answer
     if offer is None or answer is None:
         return state
@@ -5792,6 +7069,7 @@ def _with_chosen_combination(
         swap_budget_offer=state.swap_budget_offer,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
+        taste=state.taste,
     )
     logger.info("seating_combination_chosen", choice=choice, pieces=len(chosen.lines))
     return with_picks
@@ -5935,31 +7213,273 @@ def _room_seating_wishes(room: RoomProjectState) -> SeatingRequirements:
     )
 
 
-def _earlier_seat_count(state: AgentStateV1, template: RoomTemplate) -> int | None:
-    """A head count they gave while searching for seating earlier in the chat.
+@dataclass(frozen=True, slots=True)
+class _AdvicePieces:
+    """The pieces a design question is about, each with its place on the
+    customer's screen when it is a card there."""
 
-    Offered for confirmation only - "is it for the nine you mentioned?" - and
-    never copied into the room unasked: a sofa search is not a statement about
-    the room (CLAUDE.md 10.1)."""
+    pieces: tuple[ProductCandidate, ...] = ()
+    cards: tuple[int | None, ...] = ()
+    unresolved: ReferenceFailureReason | None = None
+
+
+def _on_screen(interaction: ProductInteractionState) -> tuple[int, ...]:
+    """What they are looking at now: a comparison made over the current list
+    is newer than the list; otherwise the list, or the piece in focus."""
+    if (
+        interaction.compared_product_ids
+        and interaction.compared_search_revision == interaction.presented_search_revision
+    ):
+        return interaction.compared_product_ids
+    if interaction.presented_product_ids:
+        return interaction.presented_product_ids
+    if interaction.focused_product_id is not None:
+        return (interaction.focused_product_id,)
+    return ()
+
+
+def _shopping_wall(state: AgentStateV1, room: RoomProjectState) -> RoomMeasurement | None:
+    """The wall they said a piece goes on while shopping, as the room's wall
+    for that piece - only while the room records no wall of its own."""
+    active = state.active_search
+    lean = active.lean if active is not None else None
+    if lean is None or lean.space_cm is None:
+        return None
+    # Once the room has measurements of its own, they are the room's word.
+    if room.geometry is not None and room.geometry.of(RoomMeasurementRole.USABLE_WALL):
+        return None
+    words = customer_words_or_none(active.request.commerce_subcategory) if active else None
+    return RoomMeasurement(
+        role=RoomMeasurementRole.USABLE_WALL,
+        centimetres=lean.space_cm,
+        label=f"the wall for the {words}" if words else None,
+    )
+
+
+def _earlier_seat_count(state: AgentStateV1, template: RoomTemplate) -> int | None:
+    """A head count they gave while searching for seating earlier in the chat -
+    a seat count, or how many usually sit there. The room's own head count
+    unless the room already has one (docs/designer-led-shopping-plan.md,
+    phase 6)."""
     seating = template.seating
     if seating is None:
         return None
-    if state.seating_offer is not None:
-        return state.seating_offer.target_seats
     # A card of questions still on screen is the latest need they stated - "a
     # sofa for 9" is asked its budget before anything is searched - so its
-    # head count is the one to confirm.
+    # head count is the one. A search seeded from a product's own seats says
+    # nothing about who will sit.
     pending = state.product_brief.pending
+    active = state.active_search
     if pending is not None:
-        request = pending.base.request
-    elif state.active_search is not None:
-        request = state.active_search.request
+        request, people = pending.base.request, pending.base.seat_preference
+    elif active is not None and not active.from_product and not active.ordered_by_pick:
+        request, people = active.request, active.seat_preference
     else:
+        request, people = None, None
+    if request is not None and request.commerce_subcategory in seating.seating_types:
+        capacity = request.seating_capacity
+        if capacity is not None and capacity.min_capacity is not None:
+            return capacity.min_capacity
+        if people is not None:
+            return people
+    # A seat count no single piece met, offered as combinations - only while
+    # no newer seating search has said otherwise.
+    return state.seating_offer.target_seats if state.seating_offer is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectionContext:
+    """What a designer's direction for a suggestion is applied against."""
+
+    anchor_long_cm: Decimal | None
+    """The picked piece's longer floor side - only when its kind passes the
+    shape rule in this store, so a corner set stored as one piece's 96 cm is
+    never read as the size of the whole set."""
+    expressed: frozenset[AttributeFamily]
+    """Colour and style families the customer has spoken for themselves."""
+    avoid_colours: tuple[str, ...] = ()
+    avoid_styles: tuple[str, ...] = ()
+    """What the customer said they would rather avoid (phase 5)."""
+
+
+def _directed(
+    resolved: ResolvedSearch, direction: DesignDirection, context: _DirectionContext
+) -> ResolvedSearch:
+    """A suggestion's search, leaning the way the designer would.
+
+    The customer's own preferences stay as they are and rank first; the
+    designer's colours and styles rank after them, in a tier of their own, so
+    a customer's White is never outweighed by a designer's Modern - and when
+    none of the customer's colours is stocked for this kind, the designer's
+    decide. The pick's own style, only ever a stand-in, gives way when the
+    designer names styles. What to avoid and the size to sit near only order
+    products; nothing is filtered (docs/designer-led-shopping-plan.md, 4.2).
+    """
+    preferences = tuple(
+        preference
+        for preference in resolved.semantic_preferences
+        if preference.family in context.expressed
+        or preference.family is not AttributeFamily.STYLE
+        or not direction.styles
+    )
+    ratio = direction.size_ratio
+    lean = RankingLean(
+        colours=direction.colours,
+        styles=direction.styles,
+        avoid_colours=tuple(c for c in direction.avoid_colours if c not in direction.colours),
+        avoid_styles=tuple(s for s in direction.avoid_styles if s not in direction.styles),
+        said_avoid_colours=context.avoid_colours,
+        said_avoid_styles=context.avoid_styles,
+        size_target_cm=(
+            (context.anchor_long_cm * Decimal(str(ratio))).quantize(Decimal("1"))
+            if context.anchor_long_cm is not None and ratio is not None
+            else None
+        ),
+    )
+    return resolved.model_copy(
+        update={
+            "semantic_preferences": preferences,
+            "lean": None if lean == RankingLean() else lean,
+        }
+    )
+
+
+def _talks_about_the_screen(
+    decision: CustomerAgentDecision,
+    primary: _Primary,
+    grounding: TurnGrounding,
+    final_state: AgentStateV1,
+    pre_turn: AgentStateV1,
+) -> bool:
+    """Whether this turn is words about the cards already in front of them -
+    "which do you recommend?" - and not a turn that shows, asks or builds
+    something of its own. A room on screen is newer than any list behind it,
+    so then the list is not what they are looking at."""
+    room = final_state.room_project
+    return (
+        decision.action in (AgentAction.ANSWER, AgentAction.CLARIFY)
+        and grounding.search is None
+        and grounding.selection is None
+        and grounding.product_detail is None
+        and grounding.comparison is None
+        and primary.failure is None
+        and primary.product_brief is None
+        and primary.room_question is None
+        and primary.bundle_outcome is None
+        and primary.seating_solution is None
+        and primary.focus is None
+        and not primary.companions
+        and not (room is not None and room.bundle_items)
+        and final_state.product_interaction.presented_product_ids
+        == pre_turn.product_interaction.presented_product_ids
+    )
+
+
+_CORRECTED_MISREADINGS = frozenset(
+    {CompositionDefect.ONE_SEAT_ON_MULTI_SEAT_TYPE, CompositionDefect.UNSUPPORTED_DIMENSION_ROLE}
+)
+"""Expected model misreadings the correction fixes - not logged as errors."""
+
+_NOT_A_TASTE_ANSWER = frozenset(
+    {
+        AgentAction.COMPARE,
+        AgentAction.PRODUCT_DETAIL,
+        AgentAction.SHOW_SELECTION,
+        AgentAction.BUNDLE_REFINE,
+    }
+)
+"""A turn that takes, compares or looks into a card is about that card - a
+taste answer the decision set beside it is a misreading, never acted on."""
+
+_TASTE_STEP: dict[TasteQuestionKind, NextStepKind] = {
+    TasteQuestionKind.WHICH: NextStepKind.TASTE_WHICH,
+    TasteQuestionKind.STYLE: NextStepKind.TASTE_STYLE,
+    TasteQuestionKind.AVOID: NextStepKind.TASTE_AVOID,
+}
+
+
+def _merged(first: tuple[str, ...], second: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((*first, *second)))
+
+
+def _said(family: AttributeFamily, value: str) -> SemanticPreference:
+    """An approved value they chose on a taste question, as their own words."""
+    return SemanticPreference(
+        family=family,
+        raw_value=value,
+        canonical_value=value,
+        strength=ConstraintStrength.PREFERRED,
+    )
+
+
+def _explored(state: AgentStateV1, product_id: int) -> AgentStateV1:
+    """The state remembering one more More like this, newest last, the oldest
+    let go past the limit."""
+    explored = tuple(
+        p for p in state.product_interaction.explored_product_ids if p != product_id
+    )
+    return apply_update(
+        state,
+        AgentStateUpdate(
+            product_interaction=ProductInteractionUpdate(
+                explored_product_ids=ReplaceItems(
+                    items=(*explored, product_id)[-MAX_EXPLORED:]
+                )
+            )
+        ),
+    )
+
+
+def _without_unticked(
+    state: AgentStateV1, pending: PendingBrief | None, search: ResolvedSearch
+) -> AgentStateV1:
+    """Colours and styles they unticked on Narrow down are no longer theirs.
+
+    A remembered liking for one would otherwise seed the next search with it
+    again - "an unticked chip is taken away" (CLAUDE.md 10.6).
+    """
+    if pending is None:
+        return state
+    families = {
+        family
+        for kind, family in (
+            (BriefQuestionKind.COLOUR, AttributeFamily.COLOR),
+            (BriefQuestionKind.STYLE, AttributeFamily.STYLE),
+        )
+        if kind in pending.replaces
+    }
+    if not families:
+        return state
+    kept = {(p.family, p.canonical_value) for p in search.semantic_preferences}
+    kept |= {(AttributeFamily.COLOR, value) for value in search.request.colors_any_of}
+    kept |= {(AttributeFamily.STYLE, value) for value in search.request.styles_all_of}
+    current = state.customer_preferences.semantic_preferences
+    remaining = tuple(
+        p for p in current if p.family not in families or (p.family, p.canonical_value) in kept
+    )
+    if remaining == current:
+        return state
+    return apply_update(
+        state,
+        AgentStateUpdate(
+            customer_preferences=CustomerPreferenceUpdate(
+                semantic_preferences=ReplaceItems(items=remaining)
+            )
+        ),
+    )
+
+
+def _avoided_type(
+    state: AgentStateV1, resolved: ResolvedSearch, turned_down: str | None
+) -> str | None:
+    """A seating type turned down for this seat count - this turn, or when
+    the seating shapes were first offered for it."""
+    if turned_down is not None:
+        return turned_down
+    offer, capacity = state.seating_offer, resolved.request.seating_capacity
+    if offer is None or capacity is None or offer.target_seats != capacity.min_capacity:
         return None
-    if request.commerce_subcategory not in seating.seating_types:
-        return None
-    capacity = request.seating_capacity
-    return capacity.min_capacity if capacity is not None else None
+    return offer.avoid_type
 
 
 def _seating_requirements(resolved: ResolvedSearch) -> SeatingRequirements:
@@ -6073,6 +7593,29 @@ def _comparison_outcome(
     return (
         DeterministicClarification(reason=BlockingClarificationReason.COMPARISON_TARGETS),
         None,
+    )
+
+
+def _one_type(resolved: ResolvedSearch) -> ResolvedSearch:
+    """Their search kept to the type they named - "just sofas" - so nothing is
+    shown beside it, now or as they refine it."""
+    request = resolved.request.model_copy(
+        update={"single_type": True, "alongside_subcategories": ()}
+    )
+    return resolved.model_copy(update={"request": request})
+
+
+def _kept_to_one_type(outcome: CompositionOutcome) -> CompositionOutcome:
+    """A refinement that also asked for the type alone ("only regular sofas"),
+    in what runs and in what is kept."""
+    if not isinstance(outcome, ComposedSearch):
+        return outcome
+    kept = outcome.candidate.request.model_copy(update={"single_type": True})
+    return outcome.model_copy(
+        update={
+            "candidate": outcome.candidate.model_copy(update={"request": kept}),
+            "resolved": _one_type(outcome.resolved),
+        }
     )
 
 

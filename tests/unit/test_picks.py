@@ -121,13 +121,14 @@ def _runtime(
     rows: tuple[int, ...] = (*ON_SCREEN, 104),
     gone: tuple[int, ...] = (),
     max_picks: int = 10,
+    **settings: Any,
 ) -> PicksRuntime:
     repository = FakeRepository([_row(pid) for pid in rows if pid not in gone])
     return PicksRuntime(
         ProductReferenceResolver(cast(ProductRepository, repository), load_catalog_attributes()),
         Hydration(gone),  # type: ignore[arg-type]
         sessions,  # type: ignore[arg-type]
-        CustomerAgentSettings(max_picks=max_picks),
+        CustomerAgentSettings(max_picks=max_picks, **settings),
     )
 
 

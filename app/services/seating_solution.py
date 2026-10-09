@@ -188,7 +188,18 @@ class SeatingSolutionPlanner:
             "currency": currency,
         }
 
-        ceiling = overview.max_seats_in(SEATING_CATEGORY)
+        ceiling = max(
+            (
+                shelf.max_seats
+                for shelf in overview.shelves_in(SEATING_CATEGORY)
+                if shelf.max_seats is not None
+                and not self._left_out(shelf.commerce_subcategory, wanted)
+                # With a size, only a piece of the type it was given for could
+                # be the single answer: no other piece can be held to it.
+                and (not wanted.dimensions or shelf.commerce_subcategory == wanted.sized_type)
+            ),
+            default=None,
+        )
         if ceiling is None:
             return SeatingSolution(**base, outcome=SeatingSolutionOutcome.NO_SEATING)
         if ceiling >= target_seats:
@@ -348,7 +359,7 @@ class SeatingSolutionPlanner:
         pieces: list[_Piece] = []
         for shelf in overview.shelves_in(SEATING_CATEGORY):
             subcategory = shelf.commerce_subcategory
-            if subcategory is None:
+            if subcategory is None or self._left_out(subcategory, wanted):
                 continue
             large = self._seating.seats_several(subcategory)
             if types is not None:
@@ -376,6 +387,17 @@ class SeatingSolutionPlanner:
                     )
                 )
         return pieces
+
+    def _left_out(self, subcategory: str | None, wanted: SeatingRequirements) -> bool:
+        """A type turned down, or another multi-seat type when they asked for
+        theirs alone: never a piece of their seating."""
+        if subcategory == wanted.avoid_type:
+            return True
+        return (
+            wanted.single_type
+            and subcategory != wanted.asked_type
+            and self._seating.seats_several(subcategory)
+        )
 
     async def _bundles(
         self,

@@ -59,6 +59,12 @@ UNIT_ALIASES: Final[dict[str, DimensionUnit]] = {
 }
 
 
+PAIR_UNIT_WHEN_UNSAID: Final = "cm"
+"""The unit of a pair of sides given with none - "a bed 160 x 200". A single
+bare number is still asked about; a pair of furniture sizes is centimetres in
+practice, and asking would be a question nobody needs."""
+
+
 def parse_unit(raw: str | None) -> DimensionUnit | None:
     """Resolve a unit string, or ``None`` when it is not recognised.
 

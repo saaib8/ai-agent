@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.product_action import ProductActionRequest
+from app.schemas.search_action import SearchActionRequest
 
 
 class ReplyChoice(BaseModel):
@@ -34,8 +35,13 @@ class ReplyChoice(BaseModel):
     the client sends this structured action, not the words, so a tap answers the
     held offer deterministically (CLAUDE.md 3.6). At most one action is set."""
 
+    search_action: SearchActionRequest | None = None
+    """An answer to the search's own question - a taste question's key - sent
+    as that structured action, never as words a model must read."""
+
     @model_validator(mode="after")
     def _one_action_at_most(self) -> Self:
-        if self.product_action is not None and self.bundle_action is not None:
+        actions = (self.product_action, self.bundle_action, self.search_action)
+        if sum(action is not None for action in actions) > 1:
             raise ValueError("a chip performs at most one kind of action")
         return self

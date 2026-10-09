@@ -1621,3 +1621,197 @@ across `card_table_asks_kind_first`, `answer_card_table_dining`,
 `card_light_asks_kind_first` and `show_me_tables_whole_category`.
 
 **Reported:** found in the eval run for known issue 19 (2026-10-08).
+
+## 21. "Not an L-shape, a simple sofa" for 7 people kept showing sofa sets
+
+**Status:** Fixed (2026-10-08).
+
+**What happened:** session `web-78eb3a1cc8f3`. The customer asked for a sofa
+for 7 and was shown 7-seater corner sofa sets. They said "I don't want l shape
+sofa rather a simple sofa". The reply said a simple sofa can't seat 7 and an
+arrangement is needed, but offered no shape chips. "Yeah let's see those
+options" then showed the same sofa sets again.
+
+**Cause:** three faults combined.
+1. The decision model did not read turning down the kind on screen as a change
+   of product type, so the search stayed on sofa sets.
+2. Even when it switched to sofas, the "another type seats them in one piece"
+   step (CLAUDE.md 27.1) offered sofa sets again.
+3. The combination planner answered "a single piece suffices", because sofa
+   sets seat 7. So the arrangement question was never asked, and the reply
+   offered to set the seat count aside instead.
+
+**Fix:**
+- The decision prompt (`customer_decision/v1.6`) now says that turning down
+  the kind on screen ("not an L-shape, a simple sofa") changes the product type
+  and keeps the head count.
+- A multi-seat type the customer moves away from on a type change is
+  remembered for that seat count (`SeatingOfferState.avoid_type`). It is never
+  offered back, never used as a piece, and never counts as the single piece
+  that makes combining unnecessary. The same seat count, including
+  "show me more", keeps avoiding it.
+
+**Checked:** replaying the conversation live, the third turn offers "Sofa +
+armchairs · from 2,920 SAR" and "Separate sofas · from 3,230 SAR". Choosing
+the first shows sofa + armchair combinations, and "show me more" shows three
+new ones, none with a sofa set.
+
+**Reported:** by the user (2026-10-08).
+
+## 22. A chosen seating combination read as "one sofa, the second still to solve"
+
+**Status:** Fixed (2026-10-08).
+
+**What happened:** session `web-ae5aacf5ccf3`. For 8 people with separate
+sofas, the customer chose option 2: two of the same 4-seater sofa. The reply
+said "its 4 seats give us a strong starting point... with the second sofa
+still to solve". It showed nothing to go with it, only a chip asking whether
+to find what goes with their picks. Separately, the combination cards had no
+buttons: no way to choose one, turn one down or see more except by typing.
+
+**Cause:**
+- **Wrong reply:** the combination was saved correctly, with a quantity of 2,
+  but the reply writer was never told about it. It saw only the picks list,
+  which holds each product once: one 4-seater against a head count of 8.
+- **No products to go with it:** showing what goes with a pick ran only when
+  the decision model called the turn an answer. Choosing a combination is
+  labelled "show selection", so nothing was shown, and the generic next-step
+  question filled the gap.
+
+**Fix:**
+- **Choosing has its own path** (`_choose_combination`), typed or tapped. It
+  saves the choice and builds the combination from the catalog with its
+  quantities and seats.
+- **The reply is told what was chosen** (`chosen_seating`: pieces, how many,
+  total seats, the head count), and its writer rule (`customer_response/v1.7`)
+  says a chosen combination is complete.
+- **The screen** draws the combination as "Your seating", then products that
+  go with its largest piece.
+- **New screen action** (`combination`: choose / dismiss / more), wired to
+  Choose, Not this one and Show more options buttons on the combination cards.
+
+**Checked:** 15 new unit tests in `tests/unit/test_seating_choice.py`. Live,
+"i like option 2" got "Two of those 4-seaters will seat all 8 of you", the
+chosen sofas, and centre tables beside them. The tapped buttons show new
+arrangements, replace only the dismissed one, and choose with the same result.
+Ten seating eval cases, four of them new, passed 20 of 20 runs.
+
+**Reported:** by the user (2026-10-08).
+
+## 23. "We are a family of two" showed 3- and 4-seaters, the first labelled best match
+
+**What happened:** asked for a sofa, the customer answered the opening with "it
+is for my bedroom and we are family of two". The cards were a 3-seater, then
+two 4-seaters. The first carried a "Best match" badge, and the reply called it
+"the closest overall match". Store 50 has 69 active 2-seater sofas, and none
+was shown.
+
+**Cause:**
+- **Seat ordering:** a head count given in reply to the opening only orders
+  results (`seat_preference`). The ordering treats every piece that seats *at
+  least* that many as an equally good fit (`semantic_ranking._preference_match`,
+  `capacity >= people`). For two people, 2-, 3-, 4- and 5-seaters all tie, and
+  similarity to "bedroom" decides between them.
+- **Best match label:** `response_view.best_match_first` checks only that
+  semantic ranking ran, the sort is the default and the first card needed no
+  widening. It never checks the first card against the head count, so a
+  3-seater for two was badged and described as the best match.
+
+**Fix:**
+- **Seat ordering** (`semantic_ranking._preference_match`) now puts the closest
+  seat count first: exactly the head count, then the fewest extra seats, then
+  unknown seat counts, then too few. CLAUDE.md 10.5 already said "pieces
+  reviewed to seat that many first".
+- **Best match** (`best_match_first`) needs the first card to seat exactly the
+  head count, when one was given.
+
+**Checked:** the user's conversation replayed live 3 times: five 2-seaters
+each time, with "Best match" on a 2-seater. 60 seat and opening eval cases
+passed 60/60. 5,537 unit tests pass.
+
+**Reported:** by the user (2026-10-09).
+
+## 24. "The one I liked" was not understood, and liked cards had no buttons
+
+**What happened (session web-e1e05121fa65):**
+- "actually i like the one that i liked" got "Which one do you mean?", though
+  only one product was liked.
+- "the one i pressed like button on i want to buy that one" showed the liked
+  product and said to select it, but did not add it to the picks.
+- The liked cards had no Select, ♡ or More like this.
+- The liked list also sat in a row above the message box, which is not wanted.
+
+**Cause:**
+- The model had no way to point at a liked product. The only "the one I liked"
+  reference meant the single *pick* (`SoleSelectedProduct`, older than the ♡
+  button), and there were no picks.
+- Liked cards were drawn as a plain list. Only search results got card buttons.
+
+**Fix:**
+- **New reference `liked_product`:** the liked list by position, or the only
+  like. Decision prompt `customer_decision/v1.11` and a `liked_count` in the
+  state view.
+- **Liked cards are `product_source` `liked`:** each has Select
+  (`select_liked`), ♡ (`unlike`) and More like this (`more_like_this` with
+  `liked`).
+- **The tray shows picks only.**
+
+**Checked:**
+- Unit tests for the reference, the liked cards and More like this from a like.
+- 3 new eval cases passed 6/6 live.
+- In the browser, the liked cards carry all three buttons, Select adds the pick
+  and shows what goes with it, and there is no liked row above the message box.
+
+**Reported:** by the user (2026-10-09).
+
+## 25. Narrowing by size asked three questions, then failed with a 422
+
+**What happened (session web-cc9c20fbbeb5):**
+- "Help me narrow these down" was answered with "What would you most like to
+  narrow by?".
+- "Narrow by size" was answered with "Which aspect of size?".
+- "Length along the wall" asked for a maximum and a unit, and the next turn
+  failed with HTTP 422.
+- More broadly, a sofa's opening almost never asked how wide the space was.
+
+**Cause:**
+- **No route to Narrow down:** the model had no way to open the Narrow down
+  card, so it wrote its own questions.
+- **The 422:** "length along the wall" became the sofa's *length*, which sofas
+  are not searched by (their along-wall size is their overall width).
+  Refinements never checked the measurement against the size registry, so
+  search refused it and the turn failed.
+- **The opening:** the writer chose two of seven questions and almost always
+  picked the room and the head count.
+
+**Fix:**
+- **Narrowing:** a new `narrow_by` field opens Narrow down, limited to the
+  questions named.
+- **The 422:** refinements refuse a measurement the kind cannot be searched by
+  (`UNSUPPORTED_DIMENSION_ROLE`), and the model is corrected once.
+- **The opening:** the space question is always asked where it is offered
+  (`ALWAYS_ASKED`), simply.
+- **A wall size** is the space the piece must fit, and the designer chooses
+  the width that suits it (CLAUDE.md 10.10).
+
+**Reported:** by the user (2026-10-09).
+
+## 26. "Which one do you recommend?" said it could not see the cards
+
+**What happened (session web-7cfe277471b8):** with centre tables on screen,
+"which one do you recommend?" was answered with "I don't have the centre-table
+options in front of me now".
+
+**Cause:**
+- **Wrong route:** the question went to the design specialist, which never
+  sees the cards.
+- **The writer could not see them either:** it only sees a turn's own cards,
+  and this turn showed none.
+
+**Fix:**
+- **Routing:** a question about the cards on screen is answered directly.
+- **What the writer sees:** a turn that shows no cards of its own is given the
+  ones still on screen (`still_on_screen`, read fresh). It names them in words
+  and picks one, with at most one alternative.
+
+**Reported:** by the user (2026-10-09).

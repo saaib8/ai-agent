@@ -26,7 +26,9 @@ from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.language import ReplyLanguage
 from app.schemas.product_action import ProductActionRequest
 from app.schemas.reply_choice import ReplyChoice
+from app.schemas.search_action import SearchActionRequest
 from app.taxonomy.briefs import BriefQuestionKind
+from app.taxonomy.dimensions import DimensionRole
 
 EN, AR = ReplyLanguage.EN, ReplyLanguage.AR
 
@@ -38,6 +40,11 @@ class ChipText:
 
 
 class Chip(StrEnum):
+    # A taste question after products (phase 5).
+    TASTE_CARD = "taste_card"
+    TASTE_NEITHER = "taste_neither"
+    TASTE_STYLE = "taste_style"
+    TASTE_AVOID = "taste_avoid"
     # The next step a reply ends on (app/services/next_step.py).
     WHAT_GOES_WITH_PICK = "what_goes_with_pick"
     ROOM_AROUND_PICKS = "room_around_picks"
@@ -80,6 +87,22 @@ class Chip(StrEnum):
 
 CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
     {
+        Chip.TASTE_CARD: {
+            EN: ChipText("The {ordinal}", "The {ordinal} one feels more like me"),
+            AR: ChipText("{ordinal}", "{ordinal} أقرب إلى ذوقي"),
+        },
+        Chip.TASTE_NEITHER: {
+            EN: ChipText("Neither", "Neither of those feels like me"),
+            AR: ChipText("ولا واحدة", "لا هذه ولا تلك تشبه ذوقي"),
+        },
+        Chip.TASTE_STYLE: {
+            EN: ChipText("{style}", "I like {style}"),
+            AR: ChipText("{style}", "يعجبني طراز {style}"),
+        },
+        Chip.TASTE_AVOID: {
+            EN: ChipText("{value}", "I'd rather avoid {value}"),
+            AR: ChipText("{value}", "أفضّل تجنّب {value}"),
+        },
         Chip.PRODUCT_TYPE: {
             EN: ChipText("{label}", "Show me {kind}"),
             AR: ChipText("{label}", "أرني {kind}"),
@@ -237,6 +260,7 @@ def chip(
     *,
     product_action: ProductActionRequest | None = None,
     bundle_action: BundleActionRequest | None = None,
+    search_action: SearchActionRequest | None = None,
     **figures: Any,
 ) -> ReplyChoice:
     """One chip, worded in `language`, performing the same action in either."""
@@ -246,7 +270,17 @@ def chip(
         value=text.value.format(**figures),
         product_action=product_action,
         bundle_action=bundle_action,
+        search_action=search_action,
     )
+
+
+ORDINALS: Mapping[ReplyLanguage, tuple[str, ...]] = MappingProxyType(
+    {
+        EN: ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"),
+        AR: ("الأولى", "الثانية", "الثالثة", "الرابعة", "الخامسة", "السادسة", "السابعة", "الثامنة"),
+    }
+)
+"""A card's place on screen, as a taste chip names it - words, never digits."""
 
 
 def currency_word(currency: str, language: ReplyLanguage) -> str:
@@ -262,6 +296,8 @@ def currency_word(currency: str, language: ReplyLanguage) -> str:
 CARD_QUESTIONS: Mapping[BriefQuestionKind, Mapping[ReplyLanguage, str]] = MappingProxyType(
     {
         BriefQuestionKind.TYPE: {EN: "What kind?", AR: "أي نوع؟"},
+        BriefQuestionKind.ROOM: {EN: "Which room is it for?", AR: "لأي غرفة؟"},
+        BriefQuestionKind.PEOPLE: {EN: "How many usually sit there?", AR: "كم شخصًا يجلس عادةً؟"},
         BriefQuestionKind.BUDGET: {EN: "Budget", AR: "الميزانية"},
         BriefQuestionKind.SPACE: {EN: "How wide a space?", AR: "ما عرض المساحة؟"},
         BriefQuestionKind.COLOUR: {EN: "Colours you like", AR: "الألوان التي تعجبك"},
@@ -272,17 +308,91 @@ CARD_QUESTIONS: Mapping[BriefQuestionKind, Mapping[ReplyLanguage, str]] = Mappin
 product family."""
 
 SPACE_UPTO: Mapping[ReplyLanguage, str] = MappingProxyType(
-    {EN: "Up to {width} cm", AR: "حتى {width} سم"}
+    {EN: "About {width} cm", AR: "حوالي {width} سم"}
 )
 SPACE_ANY: Mapping[ReplyLanguage, str] = MappingProxyType(
-    {EN: "Any width", AR: "أي عرض"}
+    {EN: "Not sure", AR: "لست متأكدًا"}
 )
-"""The space question's bands: along-wall width ceilings a customer taps, plus
-the "any width" escape that filters nothing."""
+"""The space question's answers: how wide the wall or spot is, plus "not
+sure", which adds nothing. The space orders; it never filters."""
+
+SEATS_AT_LEAST: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Seats {people}+", AR: "{people} مقاعد أو أكثر"}
+)
+SEATS_EXACTLY: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Seats {people}", AR: "{people} مقاعد"}
+)
+SEATS_FOR: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "For {people}", AR: "لـ {people} أشخاص"}
+)
+SPACE_FOR: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "For a {cm} cm space", AR: "لمساحة {cm} سم"}
+)
+"""The space the piece goes in: it orders, so it is said as what it is for."""
+SIZE_BOUND: Mapping[ReplyLanguage, Mapping[str, str]] = MappingProxyType(
+    {
+        EN: MappingProxyType(
+            {
+                "max": "Up to {cm} cm {role}",
+                "min": "At least {cm} cm {role}",
+                "target": "Around {cm} cm {role}",
+                "range": "{low}-{high} cm {role}",
+            }
+        ),
+        AR: MappingProxyType(
+            {
+                "max": "{role} حتى {cm} سم",
+                "min": "{role} {cm} سم على الأقل",
+                "target": "{role} حوالي {cm} سم",
+                "range": "{role} {low}-{high} سم",
+            }
+        ),
+    }
+)
+SIZE_ROLE: Mapping[ReplyLanguage, Mapping[DimensionRole, str]] = MappingProxyType(
+    {
+        EN: MappingProxyType(
+            {
+                DimensionRole.OVERALL_WIDTH: "wide",
+                DimensionRole.LENGTH: "long",
+                DimensionRole.DEPTH: "deep",
+                DimensionRole.HEIGHT: "high",
+            }
+        ),
+        AR: MappingProxyType(
+            {
+                DimensionRole.OVERALL_WIDTH: "العرض",
+                DimensionRole.LENGTH: "الطول",
+                DimensionRole.DEPTH: "العمق",
+                DimensionRole.HEIGHT: "الارتفاع",
+            }
+        ),
+    }
+)
+SUGGESTED: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "{value} · suggested", AR: "{value} · مقترح"}
+)
+"""A value learned from what they liked or picked, not one they said."""
+
+SIZE_PAIR: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "{first} x {second} cm", AR: "{first} x {second} سم"}
+)
+"""Chips naming what the search on screen uses, each removable: a size is
+named by its own figures, never as "your size"."""
+
+PEOPLE_OR_MORE: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "{people}+", AR: "{people} أو أكثر"}
+)
+"""The head-count question's last chip: that many or more."""
 
 CARD_SUBMIT: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Show me {noun}", AR: "أرني {noun}"}
 )
+CARD_SKIP: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Just show me {noun}", AR: "أرني {noun} مباشرة"}
+)
+"""The button with nothing tapped: show them straight away."""
+
 CARD_SUBMIT_ANY: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Show me {noun}", AR: "أرني النتائج"}
 )

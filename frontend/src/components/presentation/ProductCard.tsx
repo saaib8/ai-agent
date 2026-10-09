@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { GroundedProduct } from '../../api/types'
 import { dimensionsLine, humanise, money } from '../../lib/format'
-import { CheckIcon, PlusIcon } from '../icons'
+import { CheckIcon, HeartIcon, PlusIcon, SparkIcon } from '../icons'
 
 function Chip({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'accent' }) {
   const cls =
@@ -31,6 +31,12 @@ export interface CardCompare {
   hint?: string
 }
 
+/** ♡ on a card: kept in the liked list, apart from the picks. */
+export interface CardLike {
+  liked: boolean
+  onToggle: (product: GroundedProduct) => void
+}
+
 /** Ticking a card into the customer's picks. */
 export interface CardSelect {
   picked: boolean
@@ -45,6 +51,9 @@ export function ProductCard({
   select,
   compare,
   bestMatch = false,
+  like,
+  onMoreLikeThis,
+  busy = false,
 }: {
   product: GroundedProduct
   pick?: AlternativePick
@@ -57,6 +66,12 @@ export function ProductCard({
   compare?: CardCompare
   /** The closest to what they described: their own words ordered the list. */
   bestMatch?: boolean
+  /** Present when the card can be liked. */
+  like?: CardLike
+  /** Present when a similarity search can start from this card. */
+  onMoreLikeThis?: (product: GroundedProduct) => void
+  /** A turn is in flight: actions that start one wait for it. */
+  busy?: boolean
 }) {
   const [imgFailed, setImgFailed] = useState(false)
   const { commerce } = product
@@ -104,6 +119,19 @@ export function ProductCard({
               </span>
             )}
           </div>
+        )}
+        {like && !pick && (
+          <button
+            onClick={() => like.onToggle(product)}
+            aria-pressed={like.liked}
+            aria-label={like.liked ? `Unlike ${product.name_english}` : `Like ${product.name_english}`}
+            title={like.liked ? 'Liked' : 'Like'}
+            className={`absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-surface/90 shadow-card backdrop-blur-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 ${
+              like.liked ? 'text-rose' : 'text-muted hover:text-rose'
+            }`}
+          >
+            <HeartIcon size={16} filled={like.liked} />
+          </button>
         )}
         {exact && (
           <span className="absolute right-2 top-2 rounded-full bg-sage px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -175,6 +203,16 @@ export function ProductCard({
               className="w-full rounded-lg bg-clay px-3 py-2 text-xs font-semibold text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
             >
               Use this {pick.role}
+            </button>
+          )}
+          {!pick && onMoreLikeThis && product.presented_ordinal != null && (
+            <button
+              onClick={() => onMoreLikeThis(product)}
+              disabled={busy}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink transition hover:border-clay/50 hover:text-clay focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <SparkIcon size={13} />
+              More like this
             </button>
           )}
           {!pick && onExclude && product.presented_ordinal != null && (

@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from app.schemas.acquisition import BundleAcquisition
-from app.schemas.agent_state import MAX_SEMANTIC_INTENT_CHARS, PurchaseStage
+from app.schemas.agent_state import MAX_ROOM_WORDS, MAX_SEMANTIC_INTENT_CHARS, PurchaseStage
 from app.schemas.bundle_reference import (
     BundleReferenceSelector,
     DesignNeedCategoryMatch,
@@ -55,6 +55,7 @@ from app.schemas.refinement import (
 from app.schemas.seating_solution import SeatingAnswer
 from app.schemas.text_choice import TextReplyChoice, require_a_question, validate_text_choices
 from app.taxonomy.attributes import CatalogAttributes
+from app.taxonomy.briefs import BriefQuestionKind
 
 MAX_CLARIFICATION_CHARS = 300
 
@@ -560,6 +561,14 @@ class CustomerStateProposal(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     customer_preferences: PreferenceProposal | None = None
+    shopping_room: str | None = Field(default=None, min_length=1, max_length=MAX_ROOM_WORDS)
+    """The room the piece they are looking for is for, when they say so - "a
+    sofa for my living room", "it's for my office" - in their words. Not a
+    room being designed: that is `room_type`."""
+    head_count: int | None = Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT)
+    """How many usually sit there, typed in answer to the questions on screen
+    - "there are four of us". Never a size of piece they name ("a 3-seater"),
+    which stays a requirement (CLAUDE.md 10.5)."""
     room_type: str | None = None
     clear_room_type: bool = False
     room_geometry: RoomGeometryProposal | None = None
@@ -683,6 +692,9 @@ class BlockingClarificationReason(StrEnum):
     MISSING_REFINEMENT_CURRENCY = "missing_refinement_currency"
     MISSING_DIMENSION_ROLE = "missing_dimension_role"
     MISSING_DIMENSION_UNIT = "missing_dimension_unit"
+    MISSING_ROOM_SIZE = "missing_room_size"
+    """Whether a piece fits their room was asked, and the room's length and
+    width are not on record - the one question before a designer can judge."""
     AMBIGUOUS_PRODUCT_REFERENCE = "ambiguous_product_reference"
     AMBIGUOUS_COMPARATIVE_REFERENCE = "ambiguous_comparative_reference"
     UNDEFINED_QUALITY_CRITERION = "undefined_quality_criterion"
@@ -832,6 +844,20 @@ class CustomerAgentDecision(BaseModel):
     screen (the state shows how many); code checks it against what was shown.
     """
 
+    taste_answer: str | None = Field(default=None, min_length=1, max_length=64)
+    """Their answer to the taste question on screen, as one of its keys - a
+    reaction to a card, a style, something to avoid. Never a pick."""
+
+    show_liked: bool = False
+    """With show_selection: their liked list - what they tapped ♡ on -
+    rather than their picks."""
+
+    narrow_by: tuple[BriefQuestionKind, ...] | None = None
+    """They asked to narrow the results on screen down - "help me narrow these
+    down" (empty: every question), "narrow by size" (space), "by price"
+    (budget). Only with answer. The application opens Narrow down as the
+    turn's question, with its tappable answers; never ask these yourself."""
+
     combination_dismiss: int | None = Field(default=None, ge=1, le=3)
     """A seating combination on screen they turned down - "I don't like the
     second option". Only with search: it is left out and another takes its
@@ -889,6 +915,13 @@ class CustomerAgentDecision(BaseModel):
     country style"). Any action: it changes only the words they read
     (docs/arabic-replies-plan.md)."""
 
+    only_asked_type: SkipJsonSchema[bool] = False
+    """They want the type they named and nothing beside it - "just sofas",
+    "only regular sofas", "a simple sofa, not a set". On a search or a
+    refinement: a sofa search otherwise also shows sofa sets and sectional
+    sofas. Left out of the model's response schema unless that is on
+    (`with_mixed_types`), so the model is asked exactly what it was before."""
+
     writes_arabizi: SkipJsonSchema[bool] = False
     """This message is Arabic written in Latin letters and numbers - "abi
     kanaba", "3ayez kanaba b 3000 riyal". Not English with a number ("3 seater",
@@ -933,6 +966,13 @@ class CustomerAgentDecision(BaseModel):
 
     Read only on a search.
     """
+
+    fit_question: bool = False
+    """They asked whether a piece fits - their room, a wall, through a door:
+    "will the second one fit?", "which of these go through my door?". With
+    design_handoff and design_scope advice; reference names the piece, or
+    none for the cards on screen. The designer judges it, with the room's
+    size; the application asks for that size when it is not on record."""
 
     design_question: str | None = Field(
         default=None, min_length=1, max_length=MAX_DESIGN_QUESTION_CHARS
@@ -1047,14 +1087,18 @@ class CustomerAgentDecision(BaseModel):
                 self.refinement is None
                 and not self.taxonomy_change_requested
                 and self.seating_answer is None
+                and not self.only_asked_type
             ):
                 raise ValueError("a refinement needs a delta or a taxonomy change")
             # An empty delta beside a change of type says "nothing else
             # changes", which is unambiguous - refusing it only cost a turn.
+            # So does one beside "only regular sofas": the search keeps to the
+            # type asked for, and nothing else about it changes.
             if (
                 self.refinement is not None
                 and self.refinement.is_empty()
                 and not self.taxonomy_change_requested
+                and not self.only_asked_type
             ):
                 raise ValueError("a refinement delta that changes nothing is not one")
         elif self.refinement is not None or self.taxonomy_change_requested:
@@ -1065,6 +1109,12 @@ class CustomerAgentDecision(BaseModel):
             raise ValueError("choosing a combination shows what they have chosen")
         if self.combination_dismiss is not None and self.action is not AgentAction.SEARCH:
             raise ValueError("turning a combination down searches for another")
+        if self.show_liked and self.action is not AgentAction.SHOW_SELECTION:
+            raise ValueError("the liked list is shown with show_selection")
+        if self.fit_question and self.action is not AgentAction.DESIGN_HANDOFF:
+            raise ValueError("whether a piece fits is the designer's: design_handoff")
+        if self.narrow_by is not None and self.action is not AgentAction.ANSWER:
+            raise ValueError("narrowing the results on screen is an answer")
 
     def _check_reference_payloads(self) -> None:
         if self.action is AgentAction.PRODUCT_DETAIL and self.reference is None:
@@ -1289,6 +1339,18 @@ def with_reply_language(schema: type[CustomerAgentDecision]) -> type[CustomerAge
     )
 
 
+def with_mixed_types(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """`schema` with `only_asked_type` shown to the model, where a sofa search
+    also shows sofa sets and sectionals. Transport only, like the language
+    fields: `to_plain_decision` turns the result back into the plain contract."""
+    return create_model(
+        f"{schema.__name__}WithMixedTypes",
+        __base__=schema,
+        __doc__=schema.__doc__,
+        only_asked_type=(bool, False),
+    )
+
+
 def to_plain_decision(decision: CustomerAgentDecision) -> CustomerAgentDecision:
     """The same decision in the plain contract's own classes.
 
@@ -1331,5 +1393,6 @@ __all__ = [
     "SoleSelectedProduct",
     "build_constrained_decision",
     "to_plain_decision",
+    "with_mixed_types",
     "with_reply_language",
 ]

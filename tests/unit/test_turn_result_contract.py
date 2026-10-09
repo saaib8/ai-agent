@@ -118,6 +118,13 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # it carries product ids the application renders, and the grounding is
         # kept id-free.
         "seating_solution",
+        "chosen_seating",
+        "direction",
+        "taste_answered",
+        "space_fit",
+        "room_carried",
+        "still_on_screen",
+        "narrowed",
         # The room question asked this turn, and the pieces it offers as chips.
         "room_question",
         # How many the room's seating really seats, counted from its pieces.
@@ -142,11 +149,16 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # pick they asked about, shown not described; and the companion types
         # offered beside it as chips. None of them reaches the reply model.
         "picks",
+        "liked",
         "focus",
         "companions",
         # The card of questions for a product search, drawn by the client. The
         # reply sees only what it asks about.
         "product_brief",
+        # Beside results: Narrow down opened showing what the search uses, and
+        # the removable chips naming it. A tool beside the cards, not a question.
+        "narrow_down",
+        "brief_chips",
         # The language this turn is answered in. None where Arabic replies are off.
         "reply_language",
         # The customer's own budget and seat figures, as query understanding
@@ -446,6 +458,9 @@ def test_the_model_facing_enum_holds_only_its_original_vocabulary() -> None:
         # than a failed turn.
         "no_search_to_refine",
         "missing_dimension_unit",
+        # Phase 7: whether a piece fits their room needs the room's size. The
+        # application asks it; the model may know it from the state view too.
+        "missing_room_size",
         "ambiguous_product_reference",
         "ambiguous_comparative_reference",
         "undefined_quality_criterion",
@@ -529,6 +544,7 @@ def test_the_provider_structure_stays_intact_as_the_schema_grows() -> None:
         "PickedOrdinal",
         "FocusedProduct",
         "SoleSelectedProduct",
+        "LikedProduct",
         "PresentedAttributeMatch",
         "PresentedExtremum",
     }

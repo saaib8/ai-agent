@@ -173,5 +173,6 @@ async def _build_public_response(
             state["presentation"],
             state["result"].picks,
             state["result"].reply_language,
+            state["result"].liked,
         )
     }

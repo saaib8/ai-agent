@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { RENDER_VIEWS } from '../../api/types'
 import type {
   BundleStatus,
@@ -25,6 +25,9 @@ interface RoomBundleProps {
   /** Hide the complete/partial/infeasible badge. A seating combination is
    *  complete by construction, so the badge is noise there. */
   hideStatus?: boolean
+  /** Buttons drawn beneath the package - a seating option's choose and
+   *  turn-down. */
+  actions?: ReactNode
 }
 
 const STATUS_META: Record<BundleStatus, { label: string; cls: string }> = {
@@ -71,6 +74,7 @@ export function RoomBundle({
   onVisualize,
   label = 'Room package',
   hideStatus = false,
+  actions,
 }: RoomBundleProps) {
   const status = STATUS_META[room.status]
   const t = room.totals
@@ -170,6 +174,11 @@ export function RoomBundle({
         )}
       </div>
 
+      {actions && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-line bg-canvas/60 px-4 py-3">
+          {actions}
+        </div>
+      )}
       {onVisualize && room.items.length > 0 && <VisualizeBar busy={busy} onVisualize={onVisualize} />}
     </div>
   )

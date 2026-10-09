@@ -39,7 +39,7 @@ from app.schemas.discovery import (
 from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome, TurnFailureCode
 from app.schemas.picks import PicksRequest, SelectPickAction
 from app.schemas.product import CommerceClassification, ProductCandidate
-from app.schemas.product_brief import BriefMode
+from app.schemas.product_brief import BriefMode, PendingBrief
 from app.schemas.query import (
     ConstraintSemantics,
     ConstraintStrength,
@@ -325,10 +325,11 @@ async def test_the_space_question_offers_width_ceilings_and_an_any_escape() -> N
     assert built is not None
     assert BriefQuestionKind.SPACE in _asked(built)
     assert _labels(built, BriefQuestionKind.SPACE) == [
-        "Up to 200 cm",
-        "Up to 240 cm",
-        "Up to 280 cm",
-        "Any width",
+        "About 250 cm",
+        "About 300 cm",
+        "About 400 cm",
+        "About 500 cm",
+        "Not sure",
     ]
 
 
@@ -400,10 +401,10 @@ async def test_a_pinned_width_trusted_kind_on_the_tables_card_is_asked_for_space
     assert BriefQuestionKind.TYPE not in _asked(built)  # the kind is pinned
     assert BriefQuestionKind.SPACE in _asked(built)
     assert _labels(built, BriefQuestionKind.SPACE) == [
-        "Up to 90 cm",
-        "Up to 120 cm",
-        "Up to 150 cm",
-        "Any width",
+        "About 120 cm",
+        "About 160 cm",
+        "About 200 cm",
+        "Not sure",
     ]
 
 
@@ -593,7 +594,9 @@ async def test_a_kind_from_a_whole_category_card_can_move_to_its_own_category() 
     )
     assert built is not None
 
-    search = builder.answer(BriefAnswerAction(card=1, piece="dining-table"), built.pending)
+    search = _answered_search(
+        builder, BriefAnswerAction(card=1, piece="dining-table"), built.pending
+    )
 
     assert search is not None
     assert (search.request.commerce_category, search.request.commerce_subcategory) == (
@@ -619,6 +622,14 @@ async def test_a_category_with_no_card_is_just_searched() -> None:
 # ── reading the answers ═════════════════════════════════════════════════════
 
 
+
+def _answered_search(
+    builder: ProductBriefBuilder, action: BriefAnswerAction, pending: PendingBrief
+) -> Any:
+    """The search a tapped card makes, or None when it is refused."""
+    answer = builder.answer(action, pending)
+    return answer.search if answer is not None else None
+
 async def _pending() -> Any:
     builder, _ = _builder()
     built = await builder.build(_need(), AgentStateV1(), CONTEXT, mode=BriefMode.ASK)
@@ -633,7 +644,8 @@ def _key(pending: Any, field: str, index: int) -> str:
 async def test_a_kind_and_a_budget_become_requirements() -> None:
     builder, pending = await _pending()
 
-    search = builder.answer(
+    search = _answered_search(
+        builder,
         BriefAnswerAction(card=1, piece="sofa:3", budget=_key(pending, "budgets", 1)), pending
     )
 
@@ -651,8 +663,8 @@ async def test_a_kind_and_a_budget_become_requirements() -> None:
 async def test_a_different_kind_changes_the_type_and_a_minimum_seats() -> None:
     builder, pending = await _pending()
 
-    four = builder.answer(BriefAnswerAction(card=1, piece="sofa:4+"), pending)
-    corner = builder.answer(BriefAnswerAction(card=1, piece="sectional-sofa"), pending)
+    four = _answered_search(builder, BriefAnswerAction(card=1, piece="sofa:4+"), pending)
+    corner = _answered_search(builder, BriefAnswerAction(card=1, piece="sectional-sofa"), pending)
 
     assert four is not None and four.request.seating_capacity == SeatingCapacityConstraint(
         min_capacity=4
@@ -662,29 +674,29 @@ async def test_a_different_kind_changes_the_type_and_a_minimum_seats() -> None:
     assert corner.request.seating_capacity is None
 
 
-async def test_a_chosen_width_becomes_a_locked_max_overall_width_filter() -> None:
+async def test_a_chosen_width_is_the_space_and_filters_nothing() -> None:
+    """How wide the spot is orders the cards - what suits it first, wider ones
+    last - and hides nothing: a room being designed may use a piece
+    differently (CLAUDE.md 10.10)."""
     builder, pending = await _pending()
 
-    search = builder.answer(
+    search = _answered_search(
+        builder,
         BriefAnswerAction(card=1, piece="sofa:3", space=_key(pending, "spaces", 0)), pending
     )
 
     assert search is not None
-    (constraint,) = search.request.dimensions
-    assert constraint.role is DimensionRole.OVERALL_WIDTH
-    assert constraint.kind is DimensionConstraintKind.MAX
-    assert constraint.max_cm == Decimal("200")
-    # They tapped the ceiling, so it is a requirement, recorded role-for-role.
-    (strength,) = search.semantics.dimensions
-    assert strength.role is DimensionRole.OVERALL_WIDTH
-    assert strength.strength is ConstraintStrength.LOCKED
+    assert search.request.dimensions == ()
+    assert search.lean is not None and search.lean.space_cm == Decimal("250")
+    assert not search.lean.space_fitted
 
 
 async def test_any_width_adds_no_filter() -> None:
     builder, pending = await _pending()
     any_width = pending.spaces[-1].key
 
-    search = builder.answer(
+    search = _answered_search(
+        builder,
         BriefAnswerAction(card=1, piece="sofa:3", space=any_width), pending
     )
 
@@ -699,7 +711,8 @@ async def test_a_width_is_dropped_when_the_chosen_kind_has_no_trusted_width() ->
     the wrong side (CLAUDE.md 15.1), not silently applied."""
     builder, pending = await _pending()
 
-    search = builder.answer(
+    search = _answered_search(
+        builder,
         BriefAnswerAction(
             card=1, piece="sectional-sofa", space=_key(pending, "spaces", 0)
         ),
@@ -715,7 +728,8 @@ async def test_a_width_is_dropped_when_the_chosen_kind_has_no_trusted_width() ->
 async def test_colours_styles_and_a_feel_rank_and_never_filter() -> None:
     builder, pending = await _pending()
 
-    search = builder.answer(
+    search = _answered_search(
+        builder,
         BriefAnswerAction(
             card=1,
             colours=("Beige", "Grey"),
@@ -746,7 +760,7 @@ async def test_colours_styles_and_a_feel_rank_and_never_filter() -> None:
 async def test_a_choice_the_card_never_offered_searches_nothing(answer: BriefAnswerAction) -> None:
     builder, pending = await _pending()
 
-    assert builder.answer(answer, pending) is None
+    assert _answered_search(builder, answer, pending) is None
 
 
 # ── what the session remembers ══════════════════════════════════════════════
@@ -877,6 +891,7 @@ def _coordinator(
     pipeline: Any = None,
     closest_type: Any = None,
     arabic_replies: bool = False,
+    **settings: bool,
 ) -> tuple[CustomerTurnCoordinator, Any]:
     pipeline = pipeline or Pipeline()
     builder, _ = _builder()
@@ -903,6 +918,7 @@ def _coordinator(
         briefs=builder,
         closest_type=closest_type,
         arabic_replies=arabic_replies,
+        **settings,
     )
     return coordinator, pipeline
 
@@ -1003,10 +1019,9 @@ async def test_tapped_answers_run_one_search_and_close_the_card() -> None:
     assert answered.grounding.search is not None
 
 
-async def test_a_tapped_width_reaches_the_pipeline_as_a_max_overall_width() -> None:
-    """The whole chain: tapping a width ceiling on the sofa card runs one search
-    whose request carries a MAX OVERALL_WIDTH filter - the same constraint a
-    typed "under 200 cm wide" would, so M8 and its recovery apply unchanged."""
+async def test_a_tapped_width_reaches_the_pipeline_as_the_space() -> None:
+    """The whole chain: tapping a width on the sofa card runs one search that
+    filters on no width and carries the space it must suit."""
     coordinator, pipeline = _coordinator(_search())
     asked = await coordinator.run(_typed(AgentStateV1()))
     pending = asked.state.product_brief.pending
@@ -1024,10 +1039,8 @@ async def test_a_tapped_width_reaches_the_pipeline_as_a_max_overall_width() -> N
     )
 
     (ran,) = pipeline.requests
-    (constraint,) = ran.request.dimensions
-    assert constraint.role is DimensionRole.OVERALL_WIDTH
-    assert constraint.kind is DimensionConstraintKind.MAX
-    assert constraint.max_cm == Decimal("200")
+    assert ran.request.dimensions == ()
+    assert ran.lean is not None and ran.lean.space_cm == Decimal("250")
     assert answered.state.product_brief.pending is None
 
 

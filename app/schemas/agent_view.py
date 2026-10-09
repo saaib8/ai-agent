@@ -42,7 +42,7 @@ from app.schemas.query import ConstraintStrength
 from app.schemas.screen import PresentedCardView
 from app.schemas.seating_solution import SeatingShape
 from app.taxonomy.attributes import AttributeFamily
-from app.taxonomy.dimensions import DimensionRole
+from app.taxonomy.dimensions import DimensionRole, FloorSide
 
 
 class PreferenceView(BaseModel):
@@ -85,6 +85,8 @@ class DimensionView(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     role: DimensionRole
+    side: FloorSide | None = None
+    """Which floor side of the piece it is read on, when said."""
     kind: DimensionConstraintKind
     min_cm: Decimal | None = None
     max_cm: Decimal | None = None
@@ -140,6 +142,9 @@ class PresentedProductsView(BaseModel):
     count: int = Field(default=0, ge=0)
     has_focused_product: bool = False
     selected_count: int = Field(default=0, ge=0)
+    liked_count: int = Field(default=0, ge=0)
+    """How many products they tapped ♡ on - their liked list, apart from
+    their picks."""
     selected_ordinals: tuple[int, ...] = ()
     """Positions within the presented list, for selections still visible there.
 
@@ -312,6 +317,25 @@ class SeatingOfferView(BaseModel):
     combinations_on_screen: int = 0
 
 
+class TasteOptionView(BaseModel):
+    """One answer the taste question offers: its key, and what it means."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str
+    means: str
+
+
+class TasteQuestionView(BaseModel):
+    """The soft taste question on screen (phase 5): a reply naming one of its
+    answers is that answer, read into `taste_answer` - never a pick."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    asks: str
+    options: tuple[TasteOptionView, ...]
+
+
 class QuestionCardView(BaseModel):
     """A card of questions on screen for a product search (CLAUDE.md 10.4).
 
@@ -344,3 +368,6 @@ class AgentStateView(BaseModel):
     purchase_stage: PurchaseStage | None = None
     seating_offer: SeatingOfferView | None = None
     question_card: QuestionCardView | None = None
+    taste_question: TasteQuestionView | None = None
+    shopping_room: str | None = None
+    """The room they said they are shopping for, in their words."""

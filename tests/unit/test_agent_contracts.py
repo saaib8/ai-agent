@@ -292,6 +292,9 @@ def test_customer_state_carries_only_stated_facts() -> None:
     room - including the measurements, which are theirs and never inferred."""
     assert set(CustomerStateProposal.model_fields) == {
         "customer_preferences",
+        # The room the piece they want is for, in their words.
+        "shopping_room",
+        "head_count",
         "room_type",
         "clear_room_type",
         "room_geometry",

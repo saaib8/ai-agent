@@ -34,7 +34,7 @@ from app.schemas.discovery import DimensionConstraintKind, ProductSort
 from app.schemas.product_reference import ProductReferenceSelector
 from app.schemas.query import ConstraintStrength
 from app.taxonomy.attributes import AttributeFamily
-from app.taxonomy.dimensions import DimensionRole
+from app.taxonomy.dimensions import DimensionRole, FloorSide
 
 
 class RefinementOp(StrEnum):
@@ -321,6 +321,9 @@ class DimensionRefinement(BaseModel):
 
     op: RefinementOp
     role: DimensionRole
+    side: FloorSide | None = None
+    """Which floor side the measurement is: longer for a sofa's width or a
+    bed's length, shorter for a bed's width or any depth; none for height."""
     kind: DimensionConstraintKind | None = None
     min_value: str | None = None
     max_value: str | None = None
@@ -448,6 +451,18 @@ class SortRefinement(BaseModel):
         return self
 
 
+class SpaceRefinement(BaseModel):
+    """How wide the wall or spot is where the piece will go - "my wall is
+    300 cm". The space it must fit, never a size of the piece."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    value: str = Field(min_length=1)
+    unit: str | None = None
+    """The unit they used. A bare number is never read as cm: the space is
+    then not used."""
+
+
 class SearchRefinementDelta(BaseModel):
     """One turn's changes to the active search. Absent means untouched.
 
@@ -463,6 +478,7 @@ class SearchRefinementDelta(BaseModel):
     seating_capacity: CapacityRefinement | None = None
     dimensions: tuple[DimensionRefinement, ...] = ()
     planar_dimensions: PlanarRefinement | None = None
+    space_width: SpaceRefinement | None = None
     attributes: tuple[AttributeRefinement, ...] = ()
     semantic_intent: SemanticIntentRefinement | None = None
     sort: SortRefinement | None = None
@@ -490,6 +506,7 @@ class SearchRefinementDelta(BaseModel):
                 self.seating_capacity,
                 self.dimensions,
                 self.planar_dimensions,
+                self.space_width,
                 self.attributes,
                 self.semantic_intent,
                 self.sort,

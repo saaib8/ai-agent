@@ -70,7 +70,7 @@ class RoomMeasurementRole(StrEnum):
     """Whether it gets into the room at all. A width, never a position."""
 
 
-_REPEATABLE = frozenset({RoomMeasurementRole.USABLE_WALL, RoomMeasurementRole.DOORWAY_WIDTH})
+REPEATABLE_ROLES = frozenset({RoomMeasurementRole.USABLE_WALL, RoomMeasurementRole.DOORWAY_WIDTH})
 """Roles a room can legitimately have several of. The rest are singular: a room
 has one length, and two different answers would mean one of them is wrong."""
 
@@ -110,7 +110,7 @@ class RoomGeometry(BaseModel):
     def _singular_roles_appear_once(self) -> Self:
         counts = Counter(m.role for m in self.measurements)
         repeated = sorted(
-            role for role, n in counts.items() if n > 1 and role not in _REPEATABLE
+            role for role, n in counts.items() if n > 1 and role not in REPEATABLE_ROLES
         )
         if repeated:
             raise ValueError(f"a room has one of each: {repeated}")

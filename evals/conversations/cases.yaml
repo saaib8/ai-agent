@@ -39,6 +39,10 @@
 #   card: true|false      a question card is (not) asked before searching
 #   no_card: true         no card at all, not even folded beside the results
 #   card_mode: ask|narrow the card is asked first, or folded as "Narrow down"
+#   narrow_down: true|false  Narrow down is (not) beside the results
+#   brief_chips_include / brief_chips_exclude: [...]  the brief chips name / no longer name these facets
+#   opening: N            an opening is shown asking exactly N questions
+#   opening_never: [...]  the opening asks none of these (e.g. budget, room)
 #   card_asks: [...]      the card asks these (type budget colour feel style)
 #   card_skips: [...]     the card does not ask these - they were already said
 #   card_first: kind      the card's first question
@@ -74,6 +78,9 @@
 #   {answer_card: {piece: 3-seater, budget: 2, colours: [Beige], styles: [Modern],
 #                  feel: Bouclé}}   labels, or a 1-based position; any may be left out
 #   {answer_card: {stale: true, ...}}  answer a card number that is not on screen
+#   {answer_card: {each_first: true}}  tap the first answer of every question shown
+#   {narrow: {...}}       answer Narrow down, as answer_card answers the card
+#   {drop: facet}         tap ✕ on the brief chip with this facet
 #   {skip_card: true}     "Just show me ..." with nothing tapped
 #   {search: "show me sofas"}  say it, then skip the card of questions if one
 #                         comes first - for cases about what happens after the
@@ -327,16 +334,19 @@ cases:
 
   # ── one question per reply on ordinary searches ──────────────────────────────
   - id: follow_up_seats_for_sofas
+    opening: "off"
     issue: "just show me sofas: products, with the folded card as the turn's only question (was a follow-up, 2026-09-28; 'show me sofas' asks its card first since 2026-09-29)"
     turns: ["just show me sofas, no questions"]
     checks: {not_fallback: true, min_products: 3, card_mode: narrow, card_asks: [type], no_follow_up: true}
 
   - id: follow_up_style_when_seats_known
+    opening: "off"
     issue: "seats known: the card does not ask the kind again"
     turns: ["show me sofas for 4 people"]
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_skips: [type], card_asks: [budget]}
 
   - id: need_asks_seats_first
+    opening: "off"
     issue: "a stated need gets the question card first - the kind (seats) among them (was one question, 2026-09-28)"
     turns: ["I need a sofa for the living room"]
     checks: {not_fallback: true, max_products: 0, card: true, card_asks: [type, budget]}
@@ -378,9 +388,9 @@ cases:
     checks: {not_fallback: true, room_status: complete, room_seats: 4, room_has: [center-table, carpet, service-table]}
 
   - id: room_built_for_nine_confirms_earlier
-    issue: "a head count from a sofa search is confirmed, then met exactly"
-    turns: ["I am looking for a sofa for 9 people", "I want to design a living room", "Under 12000 SAR", "Choose for me"]
-    checks: {not_fallback: true, mentions: ["9", "nine"]}
+    issue: "a head count from a sofa search is the room's (phase 6: never asked again), then met exactly"
+    turns: ["I am looking for a sofa for 9 people", "I want to design a living room"]
+    checks: {not_fallback: true, mentions: ["9", "nine"], not_mentions: ["how many"]}
 
   - id: room_nine_people_seated
     issue: "nine people seated by a combination inside the room budget"
@@ -403,6 +413,36 @@ cases:
     turns: [{search: "show me a sofa for 6 people"}]
     checks: {not_fallback: true, min_products: 1, subcategory: sofa-set, not_mentions: ["none of our", "no sofa", "don't have"]}
 
+  - id: seat_combo_after_turning_down_the_set
+    issue: "issue 21: 'not an L-shape, a simple sofa' for 7 asks the seating shape, never the sets again"
+    turns: [{search: "show me a sofa for 7 people"}, "I dont want l shape sofa rather a simple sofa"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["from"]}
+
+  - id: seat_combo_after_turning_down_the_set_shows
+    issue: "issue 21: the chosen shape shows combinations, none built from the sets turned down"
+    turns: [{search: "show me a sofa for 7 people"}, "I dont want l shape sofa rather a simple sofa", "a sofa with armchairs"]
+    checks: {not_fallback: true, min_combinations: 1}
+
+  - id: seat_combo_chosen_counts_its_quantities
+    issue: "issue 22: two of one 4-seater chosen for 8 is settled seating, never 'one still to solve'"
+    turns: ["I need a sofa for 8 people", "separate sofas arranged together", "i like option 2"]
+    checks: {not_fallback: true, chosen_seating: true, min_products: 1, not_mentions: ["still to", "second sofa", "another sofa", "remaining"]}
+
+  - id: seat_combo_tapped_choose_shows_what_goes_with
+    issue: "issue 22: tapping Choose on a combination shows it and what goes with it"
+    turns: ["I need a sofa for 8 people", "separate sofas arranged together", {combination: {op: choose, position: 1}}]
+    checks: {not_fallback: true, chosen_seating: true, min_products: 1}
+
+  - id: seat_combo_tapped_more_is_new
+    issue: "issue 22: tapping Show more on combinations shows new ones"
+    turns: ["I need a sofa for 8 people", "separate sofas arranged together", {combination: {op: more}}]
+    checks: {not_fallback: true, min_combinations: 1, new_combinations: true}
+
+  - id: seat_combo_tapped_not_this_one
+    issue: "issue 22: tapping Not this one replaces just that combination"
+    turns: ["I need a sofa for 8 people", "separate sofas arranged together", {combination: {op: dismiss, position: 2}}]
+    checks: {not_fallback: true, min_combinations: 1, drops_previous_combination: 2}
+
   - id: seat_combo_over_budget_says_closest
     issue: "nothing seats 9 within budget: the closest real total is offered as a question"
     turns: ["sofas for 9 people under 1500 SAR"]
@@ -422,16 +462,19 @@ cases:
 
   # ── a stated need gets the card first ───────────────────────────────────────
   - id: card_sofa_asks_everything
+    opening: "off"
     issue: "discovery: 'I need a sofa' asks the kind first, then budget, colour, feel and style"
     turns: ["I need a sofa"]
     checks: {not_fallback: true, max_products: 0, card: true, card_first: type, card_asks: [type, budget, colour, feel, style], card_kinds_include: [2-seater, 3-seater, L-shape, Sofa set], card_kind_first: 3-seater}
 
   - id: card_bed
+    opening: "off"
     issue: "discovery: a bed's card asks budget, colours, headboard and style - no kind"
     turns: ["We want a new bed"]
     checks: {not_fallback: true, max_products: 0, card: true, card_asks: [budget, feel], card_skips: [type]}
 
   - id: card_rug_asks_material_feel
+    opening: "off"
     issue: "discovery: 'for the bedroom' is not a feel, so the rug's material feel is still asked"
     turns: ["I'm looking for a rug for the bedroom"]
     checks: {not_fallback: true, max_products: 0, card: true, card_asks: [budget, feel]}
@@ -457,6 +500,7 @@ cases:
     checks: {not_fallback: true, card: true, card_skips: [type]}
 
   - id: card_skips_what_was_said
+    opening: "off"
     issue: "discovery: a grey 3-seater is not asked its kind or its colour"
     turns: ["I need a grey 3-seater sofa"]
     checks: {not_fallback: true, card: true, card_skips: [type, colour], card_asks: [budget]}
@@ -467,11 +511,13 @@ cases:
     checks: {not_fallback: true, card: true, card_skips: [budget, feel]}
 
   - id: card_everything_said_searches
-    issue: "discovery: with nothing left to ask, the stated need is searched at once"
+    opening: "off"
+    issue: "discovery: everything else said, the card asks only how wide a space (since the space question)"
     turns: ["I need a beige modern 3-seater boucle sofa under 3000 SAR"]
-    checks: {not_fallback: true, card: false, min_products: 1, max_price: 3000, seats: 3}
+    checks: {not_fallback: true, card: true, card_asks: [space], card_skips: [type, budget, colour, style, feel]}
 
   - id: card_type_without_a_card
+    opening: "off"
     issue: "discovery: a type with no card (vases) is simply searched"
     turns: ["I need a vase"]
     checks: {not_fallback: true, card: false, min_products: 1}
@@ -493,6 +539,7 @@ cases:
 
   # ── answering the card ──────────────────────────────────────────────────────
   - id: answer_card_everything
+    opening: "off"
     issue: "discovery: kind, band, colour, fabric and style - 3-seaters in the band, beige first, best match"
     turns: ["I need a sofa", {answer_card: {piece: 3-seater, budget: 2, colours: [Beige], feel: Bouclé, styles: [Modern]}}]
     checks: {not_fallback: true, min_products: 1, max_products: 5, subcategory: sofa, seats: 3, within_chosen_budget: true, top_colors_any: {n: 1, colors: [Beige]}, best_match: true, no_follow_up: true}
@@ -503,21 +550,25 @@ cases:
     checks: {not_fallback: true, min_products: 5, max_products: 5, subcategory: sofa, best_match: false}
 
   - id: answer_card_l_shape
+    opening: "off"
     issue: "discovery: L-shape is the sectional type"
     turns: ["I need a sofa", {answer_card: {piece: L-shape}}]
     checks: {not_fallback: true, min_products: 1, subcategory: sectional-sofa}
 
   - id: answer_card_four_plus
+    opening: "off"
     issue: "discovery: 4+ seater means at least four reviewed seats"
     turns: ["I need a sofa", {answer_card: {piece: 4+ seater}}]
     checks: {not_fallback: true, min_products: 1, subcategory: sofa, min_seats: 4}
 
   - id: answer_card_sofa_set_top_band
+    opening: "off"
     issue: "discovery: a sofa set in the top band"
     turns: ["I need a sofa", {answer_card: {piece: Sofa set, budget: 4}}]
     checks: {not_fallback: true, min_products: 1, subcategory: sofa-set}
 
   - id: answer_card_sofa_bed_lowest_band
+    opening: "off"
     issue: "discovery: a sofa bed in the lowest band stays inside it"
     turns: ["I need a sofa", {answer_card: {piece: Sofa bed, budget: 1}}]
     checks: {not_fallback: true, min_products: 1, subcategory: sofa-bed, within_chosen_budget: true}
@@ -528,16 +579,19 @@ cases:
     checks: {not_fallback: true, min_products: 1, subcategory: dining-table}
 
   - id: answer_card_side_table_wood
+    opening: "off"
     issue: "discovery: wood ranks side tables; the reply never claims what they are made of"
     turns: ["I need a table", {answer_card: {piece: Side table, feel: Wood}}]
     checks: {not_fallback: true, min_products: 1, subcategory: service-table, not_mentions: ["made of", "made from", "kept this to"]}
 
   - id: answer_card_rug_wool_grey
+    opening: "off"
     issue: "discovery: a wool feel ranks grey rugs; no material claimed"
     turns: ["I need a rug", {answer_card: {feel: Wool, colours: [Grey]}}]
     checks: {not_fallback: true, min_products: 1, subcategory: carpet, top_colors_any: {n: 3, colors: [Grey, Light Grey, Charcoal]}, not_mentions: ["made of", "made from", "pure wool"]}
 
   - id: answer_card_bed_storage
+    opening: "off"
     issue: "discovery: a bed in the second band with storage leaning"
     turns: ["We want a new bed", {answer_card: {budget: 2, feel: With storage}}]
     checks: {not_fallback: true, min_products: 1, subcategory: bed, within_chosen_budget: true}
@@ -548,6 +602,7 @@ cases:
     checks: {not_fallback: true, min_products: 1, subcategory: floor-lamp}
 
   - id: answer_card_armchair_boucle
+    opening: "off"
     issue: "discovery: an armchair with a boucle feel"
     turns: ["I need an armchair", {answer_card: {feel: Bouclé}}]
     checks: {not_fallback: true, min_products: 1, subcategory_in: [chair, single-seater-sofa, lounge-chair, recliner]}
@@ -568,11 +623,13 @@ cases:
     checks: {not_fallback: true, min_products: 1, max_price: 900, not_mentions: ["filtering by material", "without filtering"]}
 
   - id: answer_card_stale
+    opening: "off"
     issue: "discovery: answers to a card no longer on screen search nothing"
     turns: ["I need a sofa", {answer_card: {stale: true, piece: 3-seater}}]
     checks: {max_products: 0, mentions: ["moved on"]}
 
   - id: answer_card_ignored
+    opening: "off"
     issue: "discovery: ignoring the card for another kind gets that kind's card"
     turns: ["I need a sofa", "actually show me rugs"]
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_asks: [budget, feel]}
@@ -585,21 +642,25 @@ cases:
   # ── every way of asking for a kind gets its card (2026-09-29) ───────────────
 
   - id: card_find_me_a_sofa
+    opening: "off"
     issue: "discovery: 'find me a sofa' asks its card"
     turns: ["find me a sofa"]
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_first: type}
 
   - id: card_would_like_to_see_sofas
+    opening: "off"
     issue: "discovery: 'I would like to see some sofas' asks its card"
     turns: ["I would like to see some sofas"]
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_first: type}
 
   - id: card_show_me_sofas
+    opening: "off"
     issue: "discovery: 'show me sofas' asks its card"
     turns: ["show me sofas"]
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_asks: [type, budget, colour, feel, style], no_follow_up: true}
 
   - id: card_any_rugs
+    opening: "off"
     issue: "discovery: 'do you have any rugs?' asks its card"
     turns: ["do you have any rugs?"]
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_asks: [budget, feel]}
@@ -620,6 +681,7 @@ cases:
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_skips: [type]}
 
   - id: card_dining_tables_known_kind
+    opening: "off"
     issue: "discovery: 'show me dining tables' knows its kind, asks the rest"
     turns: ["show me dining tables"]
     checks: {not_fallback: true, max_products: 0, card_mode: ask, card_skips: [type], card_asks: [budget]}
@@ -645,6 +707,7 @@ cases:
     checks: {not_fallback: true, min_products: 1, no_card: true, new_products: true}
 
   - id: card_just_show_me_declines_it
+    opening: "off"
     issue: "discovery: 'just show me beds' shows beds at once, the card folded beside them"
     turns: ["just show me beds, no questions please"]
     checks: {not_fallback: true, min_products: 5, card_mode: narrow, no_follow_up: true}
@@ -656,6 +719,7 @@ cases:
     checks: {not_fallback: true, min_products: 5, max_products: 5}
 
   - id: show_me_card_then_answer
+    opening: "off"
     issue: "discovery: 'show me beds' asks its card; beige with storage"
     turns: ["show me beds", {answer_card: {colours: [Beige], feel: With storage}}]
     checks: {not_fallback: true, min_products: 1, subcategory: bed, top_colors_any: {n: 1, colors: [Beige]}, best_match: true}
@@ -980,7 +1044,7 @@ cases:
   - id: ar_gulf_search
     issue: "arabic: a Gulf request, card skipped - sofas, in Arabic"
     turns: [{search: "ابغى كنبة رمادية"}]
-    checks: {not_fallback: true, min_products: 1, subcategory: sofa, arabic_reply: true}
+    checks: {not_fallback: true, min_products: 1, subcategory_in: [sofa, sofa-set, sectional-sofa], arabic_reply: true}
 
   - id: ar_arabizi_search
     issue: "arabic: Arabizi is answered in Arabic and searched as sofas"
@@ -988,6 +1052,7 @@ cases:
     checks: {not_fallback: true, min_products: 1, subcategory: sofa, arabic_reply: true}
 
   - id: ar_card_tapped
+    opening: "off"
     issue: "arabic: a card answered by tapping stays Arabic"
     turns: ["أبحث عن كنبة", {answer_card: {piece: "3 مقاعد"}}]
     checks: {not_fallback: true, min_products: 1, subcategory: sofa, seats: 3, arabic_reply: true}
@@ -1125,7 +1190,7 @@ cases:
   - id: ar_sofas_again_keeps_the_type
     issue: "arabic, known issue 19: back to sofas after coffee tables shows sofas, not all seating"
     turns: ["أرني كنبات بدون أسئلة", "أرني طاولات قهوة بدون أسئلة", "رجعني للكنبات، بدون أسئلة"]
-    checks: {not_fallback: true, min_products: 3, subcategory: sofa, arabic_reply: true}
+    checks: {not_fallback: true, min_products: 3, subcategory_in: [sofa, sofa-set, sectional-sofa], arabic_reply: true}
 
   - id: ar_table_card_kind_first
     issue: "arabic, known issue 20: 'I need a table' gets the card with the kind first, never a typed question"
@@ -1156,3 +1221,375 @@ cases:
     issue: "arabic: the closing question and its chips always match, in Arabic"
     turns: [{search: "أبي كنبات عرضها أقل من 200 سم"}, {search: "أرني كراسي بدلاً منها"}, "رجعني للكنبات"]
     checks: {not_fallback: true, next_step: true, arabic_reply: true, arabic_chips: true}
+
+  # ── the designer-led opening (customer_agent.designer_led_opening on) ───────
+  # Run these against a server with the opening switched on.
+  - id: opening_sofa_two_questions
+    issue: "opening: 'I need a sofa' asks exactly two soft questions, never the budget"
+    turns: ["I need a sofa"]
+    checks: {not_fallback: true, max_products: 0, opening: 2, opening_never: [budget]}
+
+  - id: opening_room_said_is_not_asked
+    issue: "opening: a room said with the need is never asked"
+    turns: ["I need a sofa for my living room"]
+    checks: {not_fallback: true, max_products: 0, opening: 2, opening_never: [budget, room]}
+
+  - id: opening_head_count_said_is_not_asked
+    issue: "opening: a head count said with the need is never asked"
+    turns: ["I need a sofa for the 4 of us"]
+    checks: {not_fallback: true, max_products: 0, opening: 2, opening_never: [budget, people]}
+
+  - id: opening_tapped_answers_search
+    issue: "opening: tapping the two questions shows sofas"
+    turns: ["I need a sofa", {answer_card: {each_first: true}}]
+    checks: {not_fallback: true, min_products: 3, subcategory_in: [sofa, sectional-sofa, sofa-set, sofa-bed]}
+
+  - id: opening_typed_answer_not_asked_again
+    issue: "opening: answering in words searches and never asks the opening again"
+    turns: ["I need a sofa", "it's for our living room, there are four of us"]
+    checks: {not_fallback: true, min_products: 3, card: false}
+
+  - id: opening_skipped
+    issue: "opening: 'just show me' goes straight to the products"
+    turns: ["just show me sofas, no questions"]
+    checks: {not_fallback: true, min_products: 3}
+
+  - id: opening_room_carries_to_the_next_piece
+    issue: "opening: the room answered for a sofa is not asked again for a rug"
+    turns: ["I need a sofa for my living room", {answer_card: {each_first: true}}, "now I need a rug"]
+    checks: {not_fallback: true, opening_never: [room, budget]}
+
+  - id: opening_type_with_no_card
+    issue: "opening: a type no card covers still gets two questions"
+    turns: ["I need a vase"]
+    checks: {not_fallback: true, max_products: 0, opening: 2, opening_never: [budget]}
+
+  - id: opening_vague_table_asks_kind
+    issue: "opening: 'I need a table' never guesses the kind"
+    turns: ["I need a table"]
+    checks: {not_fallback: true, max_products: 0, opening: 2, card_asks: [type]}
+
+  - id: opening_no_single_piece_seats_them
+    issue: "opening: a head count no single piece seats asks the seating shape instead"
+    turns: ["I need a sofa for 9 people"]
+    checks: {not_fallback: true, max_products: 0, card: false}
+
+  - id: opening_ar_sofa
+    issue: "opening, arabic: two soft questions in Arabic with Arabic chips"
+    turns: ["أبحث عن كنبة"]
+    checks: {not_fallback: true, max_products: 0, opening: 2, opening_never: [budget], arabic_reply: true, arabic_chips: true}
+
+  - id: opening_ar_tapped
+    issue: "opening, arabic: the tapped answers search, replied in Arabic"
+    turns: ["أبحث عن كنبة", {answer_card: {each_first: true}}]
+    checks: {not_fallback: true, min_products: 1, arabic_reply: true}
+
+  - id: opening_room_in_the_need_is_not_asked
+    issue: "opening (QA): 'a rug for the bedroom' never asks which room"
+    turns: ["I need a rug for the bedroom, something beige and modern"]
+    checks: {not_fallback: true, opening_never: [room, budget]}
+
+  - id: opening_room_asked_once_per_visit
+    issue: "opening (QA): a room question skipped for a vase is not asked again for coffee tables"
+    turns: ["I need a vase", {answer_card: {}}, "now I need a coffee table"]
+    checks: {not_fallback: true, opening_never: [room, budget]}
+
+  # ── results with their brief (customer_agent.designer_led_brief on) ─────────
+  - id: brief_chips_beside_results
+    issue: "brief: results carry chips naming what the search uses, and Narrow down"
+    turns: [{search: "show me beige sofas under 3000 SAR"}]
+    checks: {not_fallback: true, min_products: 3, narrow_down: true, brief_chips_include: [price, "colour:Beige"]}
+
+  - id: brief_drop_a_chip
+    issue: "brief: ✕ on the budget runs the search again without it"
+    turns: [{search: "show me sofas under 2000 SAR"}, {drop: price}]
+    checks: {not_fallback: true, min_products: 3, narrow_down: true, brief_chips_exclude: [price]}
+
+  - id: brief_narrow_down_answered
+    issue: "brief: a budget chosen in Narrow down narrows the results"
+    turns: [{search: "just show me sofas"}, {narrow: {budget: 1}}]
+    checks: {not_fallback: true, min_products: 1, within_chosen_budget: true, brief_chips_include: [price]}
+
+  - id: brief_not_beside_suggestions
+    issue: "brief: what goes with a pick has no Narrow down - it is ours to order"
+    turns: [{search: "show me sofas"}, {tick: 1}]
+    checks: {not_fallback: true, narrow_down: false}
+
+  - id: brief_ar_chips
+    issue: "brief, arabic: chips and Narrow down in Arabic"
+    turns: [{search: "أبي كنبة بيج بأقل من 3000 ريال"}]
+    checks: {not_fallback: true, min_products: 1, narrow_down: true, arabic_reply: true, arabic_chips: true}
+
+  # ── phase 3: the buttons - Select, ♡ Like, More like this ───────────────────
+  - id: like_is_silent_and_apart_from_picks
+    issue: "a heart keeps the card in the liked list, says nothing and picks nothing"
+    turns: [{search: "show me sofas"}, {like: 2}]
+    checks: {liked: 1, picks: 0, silent_tick: true}
+
+  - id: typed_i_like_is_a_pick_not_a_like
+    issue: "'I like the second one' in words is a pick; only the heart is a like"
+    turns: [{search: "show me sofas"}, "I like the second one"]
+    checks: {not_fallback: true, picks: 1, liked: 0}
+
+  - id: what_have_i_liked_shows_the_hearts
+    issue: "'what have I liked so far?' shows the hearted cards, not the picks"
+    turns: [{search: "show me sofas"}, {like: 1}, {like: 3}, {tick: 2}, "what have I liked so far?"]
+    checks: {not_fallback: true, min_products: 2, max_products: 2, liked: 2}
+
+  - id: nothing_liked_yet
+    issue: "asking for likes with none gives the honest fixed answer"
+    turns: ["what have I liked so far?"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["heart"]}
+
+  - id: more_like_this_from_a_card
+    issue: "More like this on a card searches its kind, leaning to its look"
+    turns: [{search: "show me sofas"}, {more_like_this: 2}]
+    checks: {not_fallback: true, min_products: 1, same_kind_as_card: 2}
+
+  - id: more_like_this_on_an_earlier_list
+    issue: "More like this works on a list the screen has moved past"
+    turns: [{search: "show me sofas"}, {search: "show me coffee tables"}, {more_like_this: {ordinal: 1, grid: -2}}]
+    checks: {not_fallback: true, min_products: 1, subcategory: sofa}
+
+  - id: ar_nothing_liked_yet
+    issue: "arabic: asking for likes with none answers in Arabic"
+    turns: [{say: "ما الذي أعجبني حتى الآن؟", locale: ar}]
+    checks: {not_fallback: true, max_products: 0, arabic_reply: true}
+
+  # ── phase 4: the designer's direction, and the best one or two ──────────────
+  - id: direction_after_a_sofa_pick
+    issue: "a sofa pick shows another kind, ordered by the designer's direction, and the reply explains one or two"
+    turns: [{search: "show me grey sofas"}, {tick: 1}]
+    checks: {not_fallback: true, shows_with_pick: true, cards_named: [1, 2], not_mentions: ["leather", "velvet", "best seller", "popular"]}
+
+  - id: direction_office_desk_then_chair
+    issue: "a desk picked for an office is followed by an office chair"
+    turns: ["I need an office desk", "it's for my office", {tick: 1}]
+    checks: {not_fallback: true, shows_with_pick: true, subcategory: office-chair}
+
+  - id: plain_search_names_one_or_two
+    issue: "a plain search reply picks out one or two cards with a reason, never all five"
+    turns: [{search: "show me beige sofas"}]
+    checks: {not_fallback: true, min_products: 1, cards_named: [1, 2]}
+
+  - id: direction_keeps_on_the_next_page
+    issue: "show me more on the suggestions keeps the same kind and the designer's lean"
+    turns: [{search: "show me grey sofas"}, {tick: 1}, {more_options: true}]
+    checks: {not_fallback: true, min_products: 1, shows_with_pick: false, same_kind_as_previous: true}
+
+  - id: direction_rug_beside_a_beige_sofa
+    issue: "a beige sofa's suggestion names one or two cards and claims no material"
+    turns: [{search: "show me beige sofas"}, {tick: 1}]
+    checks: {not_fallback: true, shows_with_pick: true, cards_named: [1, 2], not_mentions: ["wool", "leather", "velvet", "cotton", "jute"]}
+
+  - id: dining_table_search_names_one_or_two
+    issue: "a short list of dining tables still picks out one or two"
+    turns: [{search: "show me dining tables"}]
+    checks: {not_fallback: true, min_products: 1, cards_named: [1, 2]}
+
+  - id: ar_direction_after_a_pick
+    issue: "arabic: a pick's suggestion is explained in Arabic, one or two cards"
+    turns: [{search: "أبي كنبة رمادية"}, {tick: 1}]
+    checks: {not_fallback: true, arabic_reply: true, cards_named: [1, 2]}
+
+  # ── phase 5: taste after products ───────────────────────────────────────────
+  - id: taste_which_after_results
+    issue: "results close softly on which of two feels more like them"
+    turns: [{search: "show me sofas"}]
+    checks: {not_fallback: true, min_products: 1, taste_asked: true, taste_which: true}
+
+  - id: taste_answer_is_never_a_pick
+    issue: "tapping 'the first' teaches taste, adds no pick, and asks nothing more at once"
+    turns: [{search: "show me sofas"}, {chip: 1}]
+    checks: {not_fallback: true, min_products: 1, picks: 0, taste_asked: false}
+
+  - id: taste_typed_answer_is_never_a_pick
+    issue: "'the first one feels more like me' typed is a taste answer, not a pick"
+    turns: [{search: "show me sofas"}, "the first one feels more like me"]
+    checks: {not_fallback: true, picks: 0, taste_asked: false}
+
+  - id: taste_likes_spare_the_which_question
+    issue: "likes already told us their look: which-of-two is not asked"
+    turns: [{search: "show me sofas"}, {like: 1}, {like: 2}, "show me some other sofas"]
+    checks: {not_fallback: true, min_products: 1, taste_which: false}
+
+  - id: ar_taste_question
+    issue: "arabic: the taste question and its chips in Arabic"
+    turns: [{search: "أبي كنبة"}]
+    checks: {not_fallback: true, arabic_reply: true, arabic_chips: true, taste_asked: true}
+
+  - id: taste_typed_pick_is_a_pick
+    issue: "'I'll take the second one' beside a taste question is a pick, not a taste answer"
+    turns: [{search: "show me sofas"}, "I'll take the second one"]
+    checks: {not_fallback: true, picks: 1}
+
+  - id: taste_not_after_declining_questions
+    issue: "'just show me, no questions' closes on no taste question"
+    turns: ["just show me rugs, no questions"]
+    checks: {not_fallback: true, min_products: 1, taste_asked: false}
+
+  - id: buy_the_one_i_liked
+    issue: "'I want to buy the one I liked' picks the hearted product, without asking which"
+    turns: [{search: "show me sofas"}, {like: 2}, "the one i pressed like button on i want to buy that one"]
+    checks: {not_fallback: true, picks: 1, liked: 1}
+
+  - id: the_one_i_liked_is_a_pick
+    issue: "'actually i like the one that i liked' picks the hearted product"
+    turns: [{search: "show me sofas"}, {like: 2}, "actually i like the one that i liked"]
+    checks: {not_fallback: true, picks: 1}
+
+  - id: show_liked_draws_liked_cards
+    issue: "'show me what I have liked so far' shows the liked products as liked cards"
+    turns: [{search: "show me sofas"}, {like: 1}, {like: 3}, "show me what have i liked so far"]
+    checks: {not_fallback: true, min_products: 2, product_source: liked, picks: 0}
+
+  - id: opening_asks_the_space
+    issue: "a sofa's opening always asks how wide the spot is"
+    turns: ["hey i am looking for sofa"]
+    checks: {not_fallback: true, card_asks: [space]}
+
+  - id: space_wall_orders_and_aims
+    issue: "'the sofa wall is about 400 cm' leads with sofas that fit, hides none, and says the width a designer would aim for"
+    turns: ["hey i am looking for sofa", "the sofa wall is about 400 cm"]
+    checks: {not_fallback: true, min_products: 1, max_dimension: {field: length_cm, value: 400}, mentions: ["aim", "around", "about"]}
+
+  - id: narrow_by_wall_length_is_the_space_question
+    issue: "'narrow by length along the wall' opens the width chips, never a 422 or a question about units"
+    turns: ["hey just show me some sofas", "Narrow by length along the wall"]
+    checks: {not_fallback: true, card_asks: [space]}
+
+  - id: recommend_from_the_cards_on_screen
+    issue: "'which one do you recommend?' is answered about the cards on screen, never 'I don't have them'"
+    turns: ["just show me some coffee tables", "which one do you recommend?"]
+    checks: {not_fallback: true, mentions: ["first", "second", "third", "fourth", "fifth"], not_mentions: ["don't have", "do not have", "not able to"]}
+
+  - id: size_bed_width_is_its_short_side
+    issue: "a bed's width is its short side, read whichever column holds it - once refused"
+    turns: [{search: "show me beds no wider than 170 cm"}]
+    checks: {not_fallback: true, min_products: 1, max_floor_side: {side: shorter, value: 170}}
+
+  - id: size_sofa_width_is_its_long_side
+    issue: "a sofa's width is its long side, whichever column holds it"
+    turns: [{search: "sofas no wider than 220 cm"}]
+    checks: {not_fallback: true, min_products: 1, max_floor_side: {side: longer, value: 220}}
+
+  - id: size_dining_table_length_is_its_long_side
+    issue: "a dining table's length is its long side"
+    turns: [{search: "a dining table up to 180 cm long"}]
+    checks: {not_fallback: true, min_products: 1, max_floor_side: {side: longer, value: 180}}
+
+  - id: size_wardrobe_depth_is_its_short_side
+    issue: "any depth is the short side"
+    turns: [{search: "wardrobes no deeper than 60 cm"}]
+    checks: {not_fallback: true, min_products: 1, max_floor_side: {side: shorter, value: 60}}
+
+  - id: size_pair_sofa
+    issue: "'a sofa 220 by 90' reads as the long and short side, whichever column holds each"
+    turns: [{search: "a sofa 220 by 90 cm"}]
+    checks: {not_fallback: true, min_products: 1, pair_within: {short: 90, long: 220, share: 0.05}}
+
+  - id: size_pair_bed_nothing_exact_offers_the_rest
+    issue: "a bed 160 x 200 cm: store 50 lists frame sizes, so nothing matches exactly - the reply says so and offers the beds without that size"
+    turns: [{search: "a bed 160 x 200 cm"}]
+    checks: {not_fallback: true, mentions: ["aside", "open", "without"]}
+
+  - id: size_pair_office_table
+    issue: "a pair of sides works for any piece - a desk 120 x 60"
+    turns: [{search: "an office desk 120 x 60 cm"}]
+    checks: {not_fallback: true, min_products: 1, pair_within: {short: 60, long: 120, share: 0.05}}
+
+  - id: size_pair_without_a_unit_is_centimetres
+    issue: "'a sofa 220 x 90' with no unit is read as centimetres, never asked"
+    turns: [{search: "a sofa 220 x 90"}]
+    checks: {not_fallback: true, min_products: 1, pair_within: {short: 90, long: 220, share: 0.05}, not_mentions: ["centimetres or", "which unit", "inches"]}
+
+  - id: size_pair_bed_without_a_unit_is_not_asked
+    issue: "'a bed 160 x 200' is not asked 'centimetres or inches?'"
+    turns: [{search: "a bed 160 x 200"}]
+    checks: {not_fallback: true, not_mentions: ["centimetres or", "which unit", "inches"]}
+
+  - id: room_handoff_asks_only_the_budget
+    issue: "phase 6: after shopping a beige sofa for 4, 'design my living room' asks the budget and keeps the rest"
+    turns: ["a beige sofa for the living room, there are 4 of us, just show me", "now design my living room"]
+    checks: {not_fallback: true, max_products: 0, mentions: ["budget", "spend"], not_mentions: ["how many people", "which colours", "what colours"]}
+
+  - id: room_handoff_builds_after_budget_and_pieces
+    issue: "phase 6: the room is built for the 4 they said while shopping, never asked again"
+    turns: ["a beige sofa for the living room, there are 4 of us, just show me", "now design my living room", "Under 12000 SAR", "Choose for me"]
+    checks: {not_fallback: true, room_status: complete, room_seats: 4}
+
+  - id: ar_room_handoff_asks_only_the_budget
+    issue: "phase 6 in Arabic: the room keeps the head count from shopping"
+    turns: ["أبي كنبة بيج لغرفة المعيشة، نحن أربعة أشخاص، فقط اعرض لي", "صمم لي غرفة المعيشة"]
+    checks: {not_fallback: true, arabic_reply: true, max_products: 0}
+
+  - id: fit_asks_the_room_size_first
+    issue: "phase 7: 'will the second one fit?' with no room size asks for the room's size first, never guesses"
+    turns: [{search: "show me 3 seater sofas"}, "will the second one fit on my 250 cm wall?"]
+    checks: {not_fallback: true, mentions: ["room", "size", "length"], not_mentions: ["to spare", "wasn't able"]}
+
+  - id: fit_designer_judges_with_the_room_size
+    issue: "phase 7: with the room size, the designer judges whether it fits"
+    turns: [{search: "show me 3 seater sofas"}, "will the second one fit on my 250 cm wall?", "the room is 5 by 4 metres"]
+    checks: {not_fallback: true, mentions: ["second", "wall"]}
+
+  - id: fit_which_go_through_my_door
+    issue: "phase 7: a doorway question with the room size is the designer's, measured against depth and height"
+    turns: [{search: "show me 3 seater sofas"}, "my living room is 4 x 5 m and the door is 80 cm wide - which of these will get through?"]
+    checks: {not_fallback: true, mentions: ["door"]}
+
+  - id: ar_fit_will_it_fit
+    issue: "phase 7 in Arabic: will it fit, with the room size"
+    turns: [{search: "أبي كنب ثلاثي"}, "غرفتي 5 في 4 متر، هل الكنبة الثانية تناسب جدار عرضه 250 سم؟"]
+    checks: {not_fallback: true, arabic_reply: true}
+
+  # ── a sofa search shows sets and sectionals (CLAUDE.md 10.12) ──────────────────
+  - id: mix_show_me_sofas
+    issue: "10.12: a sofa search mixes sofa sets and sectional sofas into the cards"
+    turns: [{search: "show me sofas"}]
+    checks: {not_fallback: true, min_products: 3, kinds_include: ["sofa", "sofa-set", "sectional-sofa"]}
+
+  - id: mix_five_typed
+    issue: "10.12: five people typed after the opening - the one 5-seat sofa and 5-seat sets, said plainly"
+    turns: ["I need a sofa", "5 people"]
+    checks: {not_fallback: true, min_products: 3, min_seats_all: 5, kinds_include: ["sofa", "sofa-set"], mentions: ["only one", "just one", "only 1", "just 1", "one sofa"]}
+
+  - id: mix_five_with_the_request
+    issue: "10.12: 'a sofa for 5 people' finds the sofa and the sets that seat five, not one sofa"
+    turns: [{search: "I need a sofa for 5 people"}]
+    checks: {not_fallback: true, min_products: 3, min_seats_all: 5, kinds_include: ["sofa", "sofa-set"]}
+
+  - id: mix_three_people
+    issue: "10.12: three people - 3-seat sofas and 3-seat sectionals together"
+    turns: ["I need a sofa", "3 of us"]
+    checks: {not_fallback: true, min_products: 3, min_seats_all: 3, kinds_include: ["sofa", "sectional-sofa"]}
+
+  - id: mix_six_people_best_fit
+    issue: "10.12: six people - the sets that seat six, presented as the best fit, never 'none of our sofas'"
+    turns: [{search: "a sofa for 6 people"}]
+    checks: {not_fallback: true, min_products: 3, min_seats_all: 6, not_mentions: ["none of our sofas", "no sofa seats"]}
+
+  - id: mix_cheapest_is_cheapest
+    issue: "10.12: an explicit price sort is never interleaved by type"
+    turns: [{search: "show me the cheapest sofas"}]
+    checks: {not_fallback: true, min_products: 3, price_ascending: true}
+
+  - id: mix_just_sofas
+    issue: "10.12: 'just regular sofas' keeps to sofas"
+    turns: [{search: "show me sofas"}, "just regular sofas please, no sets or sectionals"]
+    checks: {not_fallback: true, min_products: 3, subcategory: sofa}
+
+  - id: mix_a_width_keeps_to_sofas
+    issue: "10.12: a size keeps the search to sofas - sets' and sectionals' sizes cannot be checked"
+    turns: [{search: "a sofa under 220 cm wide"}]
+    checks: {not_fallback: true, min_products: 3, subcategory: sofa, max_floor_side: {side: longer, value: 220}}
+
+  - id: ar_mix_five
+    issue: "10.12 in Arabic: five of us - the 5-seat sofa and the 5-seat sets"
+    turns: ["أبي كنبة", "حنا خمسة"]
+    checks: {not_fallback: true, min_products: 3, min_seats_all: 5, kinds_include: ["sofa", "sofa-set"], arabic_reply: true}
+
+  - id: ar_mix_just_sofas
+    issue: "10.12 in Arabic: a regular sofa, not a set, keeps to sofas"
+    turns: [{search: "أبي أشوف كنب"}, "أبي كنب عادي بس، مو طقم"]
+    checks: {not_fallback: true, min_products: 3, subcategory: sofa, arabic_reply: true}

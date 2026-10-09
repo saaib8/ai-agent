@@ -1,10 +1,10 @@
-import type { BundleAction, ProductAction, ReplyChoice } from '../api/types'
+import type { BundleAction, ProductAction, ReplyChoice, SearchAction } from '../api/types'
 
 interface QuickRepliesProps {
   replies: ReplyChoice[]
   /** The reply's words, and the action it runs when it carries one - a product
    *  action, or a room edit for the yes/no on an over-budget swap. */
-  onPick: (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => void
+  onPick: (value: string, action?: ProductAction | null, bundle?: BundleAction | null, search?: SearchAction | null) => void
   disabled: boolean
   /** What the row is. Defaults to "Quick reply". */
   label?: string
@@ -23,7 +23,7 @@ export function QuickReplies({
       {replies.map((reply) => (
         <button
           key={reply.value}
-          onClick={() => onPick(reply.value, reply.product_action, reply.bundle_action)}
+          onClick={() => onPick(reply.value, reply.product_action, reply.bundle_action, reply.search_action)}
           disabled={disabled}
           className="rounded-full border border-clay/30 bg-surface px-3.5 py-1.5 text-sm font-medium text-clay transition hover:border-clay hover:bg-clay hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
         >

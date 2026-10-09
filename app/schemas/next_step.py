@@ -43,6 +43,15 @@ class NextStepKind(StrEnum):
     KEEP_BROWSING = "keep_browsing"
     """Products on screen and nothing asked about them yet."""
 
+    TASTE_WHICH = "taste_which"
+    """Which of two cards feels more like them - taste, never a pick (phase 5)."""
+
+    TASTE_STYLE = "taste_style"
+    """Which of the store's styles for this kind feels right."""
+
+    TASTE_AVOID = "taste_avoid"
+    """Anything they would rather avoid - pushed down, never hidden."""
+
 
 QUESTIONS: dict[NextStepKind, str] = {
     NextStepKind.CHOOSE_PIECE: "What type of furniture are you looking for?",
@@ -60,6 +69,9 @@ QUESTIONS: dict[NextStepKind, str] = {
     NextStepKind.AFTER_COMPARISON: "Which one are you leaning towards?",
     NextStepKind.AFTER_ROOM: "Would you like to swap any piece, or add a finishing touch?",
     NextStepKind.KEEP_BROWSING: "Would you like to narrow these down, or see more options?",
+    NextStepKind.TASTE_WHICH: "Which of these two feels more like you?",
+    NextStepKind.TASTE_STYLE: "Which style feels right to you?",
+    NextStepKind.TASTE_AVOID: "Is there anything you'd rather avoid?",
 }
 """The fixed question for each next step - digit-free, so the number check never
 refuses it - used when a reply ends without one. The reply model words its own

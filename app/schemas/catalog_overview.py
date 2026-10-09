@@ -115,6 +115,16 @@ class SubcategoryShelf(BaseModel):
     colour, but here's what we do have" instead of a blank search.
     """
 
+    styles: tuple[str, ...] = ()
+    """The distinct style tokens this type comes in, sorted - the styles a
+    direction for this kind can actually find."""
+
+    long_and_shallow: bool = False
+    """The shape rule holds for this kind in this store: its pieces are clearly
+    longer than they are deep, so a piece's longer floor side is its width and
+    the shorter its depth, whatever column the merchant used. Decided from the
+    store's own data (`SizeSettings`), never from the kind's name."""
+
     @model_validator(mode="after")
     def _price_range_is_ordered(self) -> Self:
         if self.price_minimum > self.price_maximum:

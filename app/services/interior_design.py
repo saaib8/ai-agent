@@ -27,10 +27,12 @@ from app.integrations.llm import StructuredLLMClient
 from app.prompts.interior_design.v1 import VERSION, build_instructions
 from app.schemas.design import (
     DesignCategoryNeed,
+    DesignDirection,
     DesignTask,
     ExcludedDesignRole,
     InteriorDesignRequest,
     InteriorDesignResult,
+    StockedLook,
 )
 from app.taxonomy.registry import CommerceTaxonomy
 
@@ -50,6 +52,62 @@ specialist still has to choose. It is not licence to furnish a room nobody
 asked about: the roles beyond the first are fallbacks, discarded once one
 works.
 """
+
+
+def _with_stocked_direction(
+    need: DesignCategoryNeed, looks: Sequence[StockedLook]
+) -> DesignCategoryNeed:
+    """The need with a direction that names only what the shop stocks for it.
+
+    Spelling is normalised (case, spaces, "_" and "-"); a value the kind does
+    not come in is dropped, never matched to something near it - the direction
+    only orders products, so a dropped value costs a little ranking and can
+    hide nothing (CLAUDE.md 12.4, 21.1).
+    """
+    direction = need.direction
+    if direction is None or not looks:
+        # No stocked looks were sent - the setting is off - so there is
+        # nothing a direction could name.
+        return need.model_copy(update={"direction": None})
+    look = next((x for x in looks if x.commerce_subcategory == need.commerce_subcategory), None)
+    colours = look.colours if look else ()
+    styles = look.styles if look else ()
+    kept = DesignDirection(
+        colours=_stocked(direction.colours, colours),
+        styles=_stocked(direction.styles, styles),
+        avoid_colours=_stocked(direction.avoid_colours, colours),
+        avoid_styles=_stocked(direction.avoid_styles, styles),
+        size_ratio=direction.size_ratio,
+    )
+    dropped = sum(
+        len(asked) - len(found)
+        for asked, found in (
+            (direction.colours, kept.colours),
+            (direction.styles, kept.styles),
+            (direction.avoid_colours, kept.avoid_colours),
+            (direction.avoid_styles, kept.avoid_styles),
+        )
+    )
+    if dropped:
+        logger.info(
+            "design_direction_unstocked_values_dropped",
+            commerce_subcategory=need.commerce_subcategory,
+            dropped=dropped,
+        )
+    return need.model_copy(update={"direction": None if kept.is_empty else kept})
+
+
+def _stocked(values: Sequence[str], stocked: Sequence[str]) -> tuple[str, ...]:
+    by_spelling = {_spelling(value): value for value in stocked}
+    return tuple(
+        dict.fromkeys(
+            by_spelling[_spelling(value)] for value in values if _spelling(value) in by_spelling
+        )
+    )
+
+
+def _spelling(value: str) -> str:
+    return "".join(value.casefold().replace("_", " ").replace("-", " ").split())
 
 
 class InteriorDesignAgent:
@@ -121,6 +179,12 @@ class InteriorDesignAgent:
                 reason="design result used an unapproved product type"
             ) from exc
 
+        if request.task is DesignTask.SPACE_FIT:
+            if result.space_fit is None:
+                raise LLMResponseInvalidError(reason="space fit returned no proportion")
+            # A proportion and its reason only: nothing to buy, nothing to plan.
+            return InteriorDesignResult(space_fit=result.space_fit)
+
         if request.task is DesignTask.GENERAL_ADVICE:
             return self._advice_only(result)
 
@@ -191,7 +255,10 @@ class InteriorDesignAgent:
         """
         fulfillable = self._fulfillable(result, request)
         beside = self._not_the_anchors_own_kind(fulfillable.needs, request)
-        kept = beside[:MAX_COMPLEMENTARY_NEEDS]
+        kept = tuple(
+            _with_stocked_direction(need, request.stocked_looks)
+            for need in beside[:MAX_COMPLEMENTARY_NEEDS]
+        )
         if len(fulfillable.needs) > len(kept):
             logger.info(
                 "interior_design_complement_trimmed",

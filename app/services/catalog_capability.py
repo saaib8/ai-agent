@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 
+from app.core.config import SizeSettings
 from app.core.logging import get_logger
 from app.repositories.products import CatalogOverviewRow, ProductRepository
 from app.schemas.catalog_overview import (
@@ -52,10 +53,12 @@ class CatalogCapabilityService:
         repository: ProductRepository,
         taxonomy: CommerceTaxonomy,
         seating: SeatingSemantics,
+        size: SizeSettings | None = None,
     ) -> None:
         self._repository = repository
         self._taxonomy = taxonomy
         self._seating = seating
+        self._size = size or SizeSettings()
 
     async def capabilities(self, context: RetailerContext) -> RetailerCatalogCapabilities:
         """What this retailer stocks, in approved vocabulary only.
@@ -111,7 +114,7 @@ class CatalogCapabilityService:
         Not cached in this first cut: it is one grouped scan, and correctness
         comes before the cache TTL the design calls for (CLAUDE.md 9).
         """
-        rows = await self._repository.catalog_overview(context)
+        rows = await self._repository.catalog_overview(context, size=self._size)
         shelves: list[SubcategoryShelf] = []
         units: set[str] = set()
         rejected: list[str] = []
@@ -121,7 +124,7 @@ class CatalogCapabilityService:
                 rejected.append(f"{row.commerce_category}/{row.commerce_subcategory}")
                 continue
             implied = self._seating.implied_capacity(row.commerce_subcategory)
-            shelves.append(_shelf_from_row(row, implied))
+            shelves.append(_shelf_from_row(row, implied, self._size))
             units.update(row.price_units)
 
         if rejected:
@@ -149,7 +152,9 @@ class CatalogCapabilityService:
         return self._taxonomy.is_pair(category, subcategory)
 
 
-def _shelf_from_row(row: CatalogOverviewRow, implied_seats: int | None) -> SubcategoryShelf:
+def _shelf_from_row(
+    row: CatalogOverviewRow, implied_seats: int | None, size: SizeSettings
+) -> SubcategoryShelf:
     """One aggregation row as an agent-facing shelf.
 
     A seating spread is attached only when the catalog actually recorded seat
@@ -175,6 +180,11 @@ def _shelf_from_row(row: CatalogOverviewRow, implied_seats: int | None) -> Subca
         seating=seating,
         implied_seats=implied_seats,
         colours=row.colours,
+        styles=row.styles,
+        long_and_shallow=(
+            row.planar_measured >= size.min_measured
+            and row.planar_elongated >= row.planar_measured * size.long_and_shallow_share
+        ),
     )
 
 
