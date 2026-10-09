@@ -5,6 +5,7 @@ import {
   postFinderPhoto,
   postFinderPick,
   postPicks,
+  postRoomPhoto,
   postVisualize,
 } from '../api/client'
 import type {
@@ -19,6 +20,7 @@ import type {
   PicksResponse,
   ProductAction,
   RenderView,
+  RoomPhotoResponse,
   SearchAction,
 } from '../api/types'
 import type { ConsoleConfig } from './useConfig'
@@ -39,13 +41,19 @@ export type PhotoState =
   | { status: 'error'; httpStatus: number | 'network'; error: ErrorBody }
 
 export type Turn =
-  | { kind: 'user'; id: string; text: string; rejected?: RejectedRef }
+  | { kind: 'user'; id: string; text: string; rejected?: RejectedRef; imageUrl?: string }
   | { kind: 'assistant'; id: string; data: ChatResponse; selection?: CatalogSelection }
   | { kind: 'error'; id: string; status: number | 'network'; error: ErrorBody }
   | { kind: 'photo'; id: string; url: string; photo: PhotoState }
 
 /** A long-running turn the waiting indicator should name. */
-export type Activity = 'rendering' | null
+export type Activity = 'rendering' | 'preparing_room' | null
+
+/** A room photo the server kept for the session, and the picture to show for it. */
+export interface UploadedRoomPhoto {
+  data: RoomPhotoResponse
+  previewUrl: string
+}
 
 /** Options a message can carry: a structured action, and how to show it. */
 export interface SendOptions {
@@ -80,8 +88,18 @@ export interface UseChat {
     object: FinderObject,
     config: ConsoleConfig,
   ) => Promise<void>
-  /** Render the room package from a camera view. A committed turn. */
-  visualize: (view: RenderView, viewLabel: string, config: ConsoleConfig) => Promise<void>
+  /** Upload a photo of the customer's room: checked and emptied, kept for the
+   *  session. Shows the photo as their message; resolves to null on failure,
+   *  which is shown as an error turn. */
+  uploadRoomPhoto: (file: File, config: ConsoleConfig) => Promise<UploadedRoomPhoto | null>
+  /** Render the room package from a camera view - or in their own room photo,
+   *  when its id is given. A committed turn. */
+  visualize: (
+    view: RenderView,
+    viewLabel: string,
+    config: ConsoleConfig,
+    roomPhotoId?: string,
+  ) => Promise<string | null>
   /** Render pieces picked from the catalogue. A committed turn, which keeps
    *  the selection so it can be drawn again or edited. */
   visualizeSelection: (
@@ -89,7 +107,7 @@ export interface UseChat {
     view: RenderView,
     summary: string,
     config: ConsoleConfig,
-  ) => Promise<void>
+  ) => Promise<string | null>
   reset: () => void
 }
 
@@ -240,11 +258,42 @@ export function useChat(): UseChat {
     [],
   )
 
-  const visualize = useCallback(
-    async (view: RenderView, viewLabel: string, config: ConsoleConfig) => {
+  const uploadRoomPhoto = useCallback(
+    async (file: File, config: ConsoleConfig): Promise<UploadedRoomPhoto | null> => {
+      const previewUrl = URL.createObjectURL(file)
+      photoUrls.current.push(previewUrl)
       setTurns((prev) => [
         ...prev,
-        { kind: 'user', id: nextId(), text: `Visualize my room — ${viewLabel.toLowerCase()} view` },
+        { kind: 'user', id: nextId(), text: 'Here’s a photo of my room', imageUrl: previewUrl },
+      ])
+      setSending(true)
+      setActivity('preparing_room')
+
+      const result = await postRoomPhoto(config.apiBase, {
+        sessionId: config.sessionId,
+        storeId: config.storeId,
+        file,
+      })
+
+      if (!result.ok) fail(result.status, result.error)
+      setActivity(null)
+      setSending(false)
+      return result.ok ? { data: result.data, previewUrl } : null
+    },
+    [],
+  )
+
+  const visualize = useCallback(
+    async (view: RenderView, viewLabel: string, config: ConsoleConfig, roomPhotoId?: string) => {
+      setTurns((prev) => [
+        ...prev,
+        {
+          kind: 'user',
+          id: nextId(),
+          text: roomPhotoId
+            ? 'Place my room package in my room'
+            : `Visualize my room — ${viewLabel.toLowerCase()} view`,
+        },
       ])
       setSending(true)
       setActivity('rendering')
@@ -253,6 +302,7 @@ export function useChat(): UseChat {
         session_id: config.sessionId,
         store_id: config.storeId,
         view,
+        ...(roomPhotoId ? { room_photo_id: roomPhotoId } : {}),
         ...expected(config),
       })
 
@@ -260,6 +310,7 @@ export function useChat(): UseChat {
       else fail(result.status, result.error)
       setActivity(null)
       setSending(false)
+      return result.ok ? null : result.error.code
     },
     [],
   )
@@ -282,6 +333,7 @@ export function useChat(): UseChat {
       else fail(result.status, result.error)
       setActivity(null)
       setSending(false)
+      return result.ok ? null : result.error.code
     },
     [],
   )
@@ -308,6 +360,7 @@ export function useChat(): UseChat {
     changePicks,
     uploadPhoto,
     pickObject,
+    uploadRoomPhoto,
     visualize,
     visualizeSelection,
     reset,

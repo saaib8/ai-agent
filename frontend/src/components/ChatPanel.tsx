@@ -39,6 +39,13 @@ interface ChatPanelProps {
   onShowMoreOptions: () => void
   onExcludeProduct: (product: GroundedProduct) => void
   onVisualize: (view: RenderView, viewLabel: string) => void
+  /** Place the room package in the customer's own room: a new photo, or
+   *  (null) the one the session keeps. */
+  onVisualizeInRoom: (file: File | null) => void
+  /** Draw a package render again in the room photo it was drawn in. */
+  onRerenderInRoom: (roomPhotoId: string) => void
+  /** The room photo the session keeps, as a picture to show. */
+  roomPhotoPreview: string | null
   onOpenCatalog: () => void
   /** Draw a catalogue selection again, from another view. */
   onRerenderSelection: (selection: CatalogSelection, view: RenderView, viewLabel: string) => void
@@ -89,6 +96,9 @@ export function ChatPanel({
   onShowMoreOptions,
   onExcludeProduct,
   onVisualize,
+  onVisualizeInRoom,
+  onRerenderInRoom,
+  roomPhotoPreview,
   onOpenCatalog,
   onRerenderSelection,
   onEditSelection,
@@ -210,18 +220,21 @@ export function ChatPanel({
     turnId: string,
     selection: CatalogSelection | undefined,
   ) => {
-    if (room) return turnId === currentRoomId ? { onVisualize } : {}
+    if (room)
+      return turnId === currentRoomId ? { onVisualize, onVisualizeInRoom, roomPhotoPreview } : {}
     // A catalogue render pictures the customer's own picks, which no later
     // turn changes: it never goes out of date.
     if (render && selection)
       return {
         onRerender: (view: RenderView, label: string) => onRerenderSelection(selection, view, label),
-        onEditSelection: () => onEditSelection(selection, render.view),
+        onEditSelection: () => onEditSelection(selection, render.view ?? 'corner'),
       }
     if (render?.source === 'catalog') return {}
     if (render) {
       const outdated = currentRoomKey !== null && renderKey(render) !== currentRoomKey
-      return { renderOutdated: outdated, ...(outdated ? {} : { onRerender: onVisualize }) }
+      const photoId = render.room_photo_id
+      const again = photoId ? () => onRerenderInRoom(photoId) : onVisualize
+      return { renderOutdated: outdated, ...(outdated ? {} : { onRerender: again }) }
     }
     return {}
   }
@@ -240,7 +253,14 @@ export function ChatPanel({
           <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
             {turns.map((turn) => {
               if (turn.kind === 'user')
-                return <UserBubble key={turn.id} text={turn.text} rejected={turn.rejected} />
+                return (
+                  <UserBubble
+                    key={turn.id}
+                    text={turn.text}
+                    rejected={turn.rejected}
+                    imageUrl={turn.imageUrl}
+                  />
+                )
               if (turn.kind === 'assistant')
                 return (
                   <AssistantBubble
@@ -293,6 +313,11 @@ export function ChatPanel({
                   {activity === 'rendering' && (
                     <span className="text-sm text-muted">
                       Rendering your room — this takes about 30 seconds…
+                    </span>
+                  )}
+                  {activity === 'preparing_room' && (
+                    <span className="text-sm text-muted">
+                      Clearing your room — this takes about 30 seconds…
                     </span>
                   )}
                 </div>

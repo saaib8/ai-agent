@@ -84,6 +84,11 @@ class AppResources:
     # Both None when room visualisation is not configured.
     render_generator: ImageGenerator | None = None
     render_photos: ProductImageFetcher | None = None
+    # The customer's own room photo: a vision model that says whether it is a
+    # room, and the image models that empty it. Both None when room photos
+    # are not configured.
+    room_checker: OpenAIStructuredClient | None = None
+    empty_room_generator: ImageGenerator | None = None
     # The reviewed pairings - what goes with what. Defaulted so a deployment
     # built without them constructs as before: products open without
     # cross-sell, and nothing else changes.
@@ -212,6 +217,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finder_index = PineconeFinderIndex(finder)
     render_generator: ImageGenerator | None = None
     render_photos: ProductImageFetcher | None = None
+    room_checker: OpenAIStructuredClient | None = None
+    empty_room_generator: ImageGenerator | None = None
     closables: list[OpenAIImageGenerator | GeminiImageGenerator | ProductImageFetcher] = []
     visualization = settings.visualization
     if visualization is not None:
@@ -229,6 +236,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             (g for name, g in generators.items() if name != visualization.primary), None
         )
         render_generator = FallbackImageGenerator(primary, fallback)
+        if visualization.room_check_model is not None:
+            # Same provider and key as every other model client; its own
+            # model, effort and timeout - the customer is waiting on it.
+            room_checker = OpenAIStructuredClient(
+                settings.llm.model_copy(
+                    update={
+                        "model": visualization.room_check_model,
+                        "reasoning_effort": visualization.room_check_reasoning_effort,
+                        "temperature": None,
+                        "timeout_s": visualization.room_check_timeout_s,
+                    }
+                )
+            )
+            # The same two image models, in the order that keeps a photo
+            # closest to itself; whichever is configured when only one is.
+            emptier = generators.get(visualization.empty_room_primary, primary)
+            empty_room_generator = FallbackImageGenerator(
+                emptier, next((g for g in generators.values() if g is not emptier), None)
+            )
         render_photos = ProductImageFetcher(
             timeout_s=visualization.reference_timeout_s,
             max_bytes=visualization.reference_max_bytes,
@@ -258,6 +284,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "visualization_configured",
         enabled=render_generator is not None,
+        room_photos_enabled=room_checker is not None,
         primary=visualization.primary if visualization else None,
         fallback_configured=bool(
             visualization and visualization.openai_model and visualization.gemini_model
@@ -288,6 +315,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         finder_index=finder_index,
         render_generator=render_generator,
         render_photos=render_photos,
+        room_checker=room_checker,
+        empty_room_generator=empty_room_generator,
     )
 
     await _check_catalog_schema(database)
@@ -301,6 +330,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await detector.close()
         if finder_vision is not None:
             await finder_vision.close()
+        if room_checker is not None:
+            await room_checker.close()
         if finder_embedder is not None:
             await finder_embedder.close()
         for closable in closables:

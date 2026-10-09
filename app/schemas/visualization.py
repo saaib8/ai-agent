@@ -9,6 +9,10 @@ A catalogue render is the other kind: the customer picked the pieces
 themselves and described the room (see :mod:`app.schemas.catalog`). Its
 products are still read from the store-scoped catalog, and its room is
 described in closed vocabularies, never free text.
+
+Either can instead be drawn in the customer's own room: a `room_photo_id`
+names the emptied photo the session keeps (see :mod:`app.schemas.room_photo`).
+The photo is the room and the camera, so no view is chosen for it.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
+from app.schemas.room_photo import ROOM_PHOTO_ID_PATTERN
 
 
 class RenderView(StrEnum):
@@ -73,6 +78,9 @@ class VisualizeRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
     store_id: int = Field(ge=1)
     view: RenderView = RenderView.CORNER
+    room_photo_id: str | None = Field(default=None, pattern=ROOM_PHOTO_ID_PATTERN)
+    """Draw the package in the customer's own room instead: the emptied photo
+    this session keeps. The photo is the camera, so `view` is not used."""
     expected_session_revision: int | None = Field(default=None, ge=0)
     """Same meaning as on a chat message: the revision the client's screen was
     drawn from, checked before any image model is paid."""
@@ -106,8 +114,11 @@ class RoomRenderPresentation(BaseModel):
 
     width: int = Field(gt=0)
     height: int = Field(gt=0)
-    view: RenderView
+    view: RenderView | None
+    """None when drawn in the customer's own room: their photo is the camera."""
     view_label: str
     items: tuple[RoomRenderItem, ...]
     source: RenderSource = RenderSource.PACKAGE
     room: RenderRoomSpec | None = None
+    room_photo_id: str | None = Field(default=None, pattern=ROOM_PHOTO_ID_PATTERN)
+    """The customer's room it was drawn in, so it can be drawn there again."""

@@ -24,6 +24,7 @@ from app.schemas.dimensions import NormalisedDimensions
 from app.schemas.discovery import ProductSort
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 from app.schemas.product import CommerceClassification
+from app.schemas.room_photo import ROOM_PHOTO_ID_PATTERN
 from app.schemas.visualization import RenderRoomSpec, RenderView, RoomType
 
 # ── browsing ────────────────────────────────────────────────────────────────
@@ -225,7 +226,11 @@ class CatalogVisualizeRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
     store_id: int = Field(ge=1)
     items: tuple[CatalogSelectionItem, ...] = Field(min_length=1, max_length=50)
-    room: RenderRoomSpec
+    room: RenderRoomSpec | None = None
+    """The room they set up - or None when they render in their own room,
+    whose photo already shows its type, look and size."""
+    room_photo_id: str | None = Field(default=None, pattern=ROOM_PHOTO_ID_PATTERN)
+    """The emptied photo of their own room this session keeps."""
     view: RenderView = RenderView.CORNER
     expected_session_revision: int | None = Field(default=None, ge=0)
 
@@ -234,4 +239,10 @@ class CatalogVisualizeRequest(BaseModel):
         ids = [item.product_id for item in self.items]
         if len(ids) != len(set(ids)):
             raise ValueError("each product may appear once; use its quantity for more")
+        return self
+
+    @model_validator(mode="after")
+    def _one_room(self) -> Self:
+        if (self.room is None) == (self.room_photo_id is None):
+            raise ValueError("render in a room set up, or in a room photo - one of the two")
         return self

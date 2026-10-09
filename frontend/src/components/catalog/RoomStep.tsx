@@ -1,9 +1,10 @@
+import { useEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { StudioOptions } from '../../api/types'
 import type { FitCheck, RoomDraft, SelectedPiece } from '../../lib/catalog'
 import { ROOM_PRESETS, fitCheck, parseSide, styleLabel } from '../../lib/catalog'
 import { money } from '../../lib/format'
-import { AlertIcon, CloseIcon } from '../icons'
+import { AlertIcon, CloseIcon, UploadIcon } from '../icons'
 import { ViewPicker } from '../presentation/ViewPicker'
 import { QuantityStepper } from './QuantityStepper'
 
@@ -13,6 +14,8 @@ interface RoomStepProps {
   onRoomChange: (room: RoomDraft) => void
   selection: SelectedPiece[]
   onQuantity: (productId: number, quantity: number) => void
+  /** The room photo the session already keeps, as a picture to show. */
+  roomPhotoPreview: string | null
 }
 
 const fieldClass =
@@ -25,8 +28,16 @@ const pillClass = (active: boolean) =>
       : 'border-line bg-surface text-ink hover:border-clay/40 hover:text-clay'
   }`
 
-/** Describe the room, check the pieces fit it, choose the camera. */
-export function RoomStep({ studio, room, onRoomChange, selection, onQuantity }: RoomStepProps) {
+/** Describe the room - or use a photo of their own - check the pieces fit it,
+ *  choose the camera. */
+export function RoomStep({
+  studio,
+  room,
+  onRoomChange,
+  selection,
+  onQuantity,
+  roomPhotoPreview,
+}: RoomStepProps) {
   const set = (patch: Partial<RoomDraft>) => onRoomChange({ ...room, ...patch })
   const min = studio.min_room_side_m
   const max = studio.max_room_side_m
@@ -45,6 +56,37 @@ export function RoomStep({ studio, room, onRoomChange, selection, onQuantity }: 
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-5">
+          <Field label="Where">
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Where to place the pieces">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!room.usePhoto}
+                onClick={() => set({ usePhoto: false })}
+                className={pillClass(!room.usePhoto)}
+              >
+                Set up a room
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={room.usePhoto}
+                onClick={() => set({ usePhoto: true })}
+                className={pillClass(room.usePhoto)}
+              >
+                My room photo
+              </button>
+            </div>
+          </Field>
+
+          {room.usePhoto ? (
+            <RoomPhotoField
+              file={room.photoFile}
+              keptPreview={roomPhotoPreview}
+              onFile={(photoFile) => set({ photoFile })}
+            />
+          ) : (
+            <>
           <Field label="Room">
             <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Room type">
               {studio.room_types.map((option) => (
@@ -77,7 +119,10 @@ export function RoomStep({ studio, room, onRoomChange, selection, onQuantity }: 
             </select>
           </Field>
 
-          <Field label="Size (metres)">
+            </>
+          )}
+
+          <Field label={room.usePhoto ? 'Size (metres) - optional, for the fit check' : 'Size (metres)'}>
             <div className="flex flex-wrap items-center gap-2">
               <SideInput label="Room length in metres" value={room.length} min={min} max={max} onChange={(v) => set({ length: v })} />
               <span className="text-muted" aria-hidden>
@@ -100,9 +145,11 @@ export function RoomStep({ studio, room, onRoomChange, selection, onQuantity }: 
             {sizeError && <p className="mt-1.5 text-xs text-rose">{sizeError}</p>}
           </Field>
 
-          <Field label="View">
-            <ViewPicker value={room.view} onChange={(view) => set({ view })} />
-          </Field>
+          {!room.usePhoto && (
+            <Field label="View">
+              <ViewPicker value={room.view} onChange={(view) => set({ view })} />
+            </Field>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -146,6 +193,62 @@ export function RoomStep({ studio, room, onRoomChange, selection, onQuantity }: 
         </div>
       </div>
     </div>
+  )
+}
+
+/** The customer's room photo: a new one chosen here, or the one the session
+ *  already keeps. Their room shows its own type and look, so neither is asked. */
+function RoomPhotoField({
+  file,
+  keptPreview,
+  onFile,
+}: {
+  file: File | null
+  keptPreview: string | null
+  onFile: (file: File | null) => void
+}) {
+  const input = useRef<HTMLInputElement>(null)
+  const filePreview = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
+  useEffect(() => () => (filePreview ? URL.revokeObjectURL(filePreview) : undefined), [filePreview])
+  const preview = filePreview ?? keptPreview
+  return (
+    <Field label="Your room">
+      <input
+        ref={input}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const chosen = e.target.files?.[0]
+          e.target.value = ''
+          if (chosen) onFile(chosen)
+        }}
+      />
+      {preview ? (
+        <div className="flex items-center gap-3">
+          <img src={preview} alt="Your room" className="h-20 w-28 rounded-xl border border-line object-cover" />
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            className="rounded-full border border-line px-3 py-1.5 text-sm text-ink transition hover:border-clay/40 hover:text-clay"
+          >
+            Change photo
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => input.current?.click()}
+          className="flex w-full max-w-sm items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong bg-surface px-4 py-6 text-sm text-muted transition hover:border-clay/50 hover:text-clay"
+        >
+          <UploadIcon size={18} />
+          Upload a photo of your room
+        </button>
+      )}
+      <p className="mt-1.5 text-xs text-muted">
+        We clear out its furniture and decor first, then place your pieces in it.
+      </p>
+    </Field>
   )
 }
 

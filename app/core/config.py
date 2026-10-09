@@ -364,6 +364,34 @@ class VisualizationSettings(BaseModel):
     """Used only when a model answers in another format: the picture travels
     inside the reply, so a multi-megabyte PNG is re-encoded rather than sent."""
 
+    # ── the customer's own room photo ───────────────────────────────────────
+
+    room_check_model: str | None = Field(default=None, min_length=1)
+    """A vision model that says whether an upload is a photo of a room, before
+    anything is emptied or paid for. None turns room photos off: the uploads
+    are refused as not configured."""
+    room_check_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    """Set for a reasoning model, unset for one that rejects it."""
+    room_check_timeout_s: float = Field(default=30.0, gt=0)
+
+    empty_room_primary: Literal["openai", "gemini"] = "gemini"
+    """Which image model empties a room photo; the other, when configured, is
+    tried once if it fails. Gemini by default: it keeps the customer's walls,
+    floor and windows closest to the photo."""
+    photo_edit_temperature: float | None = Field(default=0.15, ge=0, le=2)
+    """Gemini's temperature when it edits the customer's photo. Low, because
+    the room must come back as itself, not a reinterpretation of it."""
+
+    room_photo_max_bytes: int = Field(default=15 * 1024 * 1024, gt=0)
+    room_photo_min_side: int = Field(default=480, gt=0)
+    room_photo_max_side: int = Field(default=2048, gt=0)
+    """Longer sides are scaled down before anything is sent: the image models
+    work at about 2K, so more pixels would only cost upload time."""
+
+    @property
+    def room_photos_enabled(self) -> bool:
+        return self.room_check_model is not None
+
     @model_validator(mode="after")
     def _providers_are_usable(self) -> VisualizationSettings:
         if self.gemini_model is not None and self.gemini_api_key is None:

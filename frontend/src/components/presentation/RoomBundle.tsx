@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { RENDER_VIEWS } from '../../api/types'
 import type {
   BundleStatus,
@@ -7,7 +7,7 @@ import type {
   RenderView,
 } from '../../api/types'
 import { humanise, money, toNumber } from '../../lib/format'
-import { ImageIcon, SwapIcon } from '../icons'
+import { ImageIcon, SwapIcon, UploadIcon } from '../icons'
 import { ViewPicker } from './ViewPicker'
 
 interface RoomBundleProps {
@@ -19,6 +19,11 @@ interface RoomBundleProps {
   busy?: boolean
   /** Present on the current package only: render it from a camera view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void
+  /** Present on the current package only: place it in the customer's own room -
+   *  a new photo, or (null) the one this session already keeps. */
+  onVisualizeInRoom?: (file: File | null) => void
+  /** The room photo this session keeps, to show and reuse. */
+  roomPhotoPreview?: string | null
   /** Header label. Defaults to "Room package"; a seating combination overrides
    *  it with "Seating option N". */
   label?: string
@@ -69,6 +74,8 @@ export function RoomBundle({
   onSwapStart,
   busy = false,
   onVisualize,
+  onVisualizeInRoom,
+  roomPhotoPreview = null,
   label = 'Room package',
   hideStatus = false,
 }: RoomBundleProps) {
@@ -170,7 +177,14 @@ export function RoomBundle({
         )}
       </div>
 
-      {onVisualize && room.items.length > 0 && <VisualizeBar busy={busy} onVisualize={onVisualize} />}
+      {onVisualize && room.items.length > 0 && (
+        <VisualizeBar
+          busy={busy}
+          onVisualize={onVisualize}
+          onVisualizeInRoom={onVisualizeInRoom}
+          roomPhotoPreview={roomPhotoPreview}
+        />
+      )}
     </div>
   )
 }
@@ -178,23 +192,92 @@ export function RoomBundle({
 function VisualizeBar({
   busy,
   onVisualize,
+  onVisualizeInRoom,
+  roomPhotoPreview,
 }: {
   busy: boolean
   onVisualize: (view: RenderView, viewLabel: string) => void
+  onVisualizeInRoom?: (file: File | null) => void
+  roomPhotoPreview: string | null
 }) {
   const [view, setView] = useState<RenderView>('corner')
   const label = RENDER_VIEWS.find((v) => v.value === view)?.label ?? 'Corner'
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-canvas/60 px-4 py-3">
       <ViewPicker value={view} onChange={setView} disabled={busy} />
-      <button
-        onClick={() => onVisualize(view, label)}
-        disabled={busy}
-        className="inline-flex items-center gap-2 rounded-full bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:bg-line-strong"
-      >
-        <ImageIcon size={16} />
-        Visualize
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        {onVisualizeInRoom && (
+          <RoomPhotoButton
+            busy={busy}
+            preview={roomPhotoPreview}
+            onVisualizeInRoom={onVisualizeInRoom}
+          />
+        )}
+        <button
+          onClick={() => onVisualize(view, label)}
+          disabled={busy}
+          className="inline-flex items-center gap-2 rounded-full bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:bg-line-strong"
+        >
+          <ImageIcon size={16} />
+          Visualize
+        </button>
+      </div>
     </div>
+  )
+}
+
+/**
+ * Put the package in the customer's own room. The first time it asks for a
+ * photo; after that the session keeps the emptied room, so the pieces can be
+ * placed in it again - or a different photo chosen.
+ */
+function RoomPhotoButton({
+  busy,
+  preview,
+  onVisualizeInRoom,
+}: {
+  busy: boolean
+  preview: string | null
+  onVisualizeInRoom: (file: File | null) => void
+}) {
+  const input = useRef<HTMLInputElement>(null)
+  const pick = () => input.current?.click()
+  const secondary =
+    'inline-flex items-center gap-2 rounded-full border border-clay/40 bg-surface px-4 py-2 text-sm font-medium text-clay transition hover:border-clay hover:bg-clay-soft/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50'
+  return (
+    <>
+      <input
+        ref={input}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+          if (file) onVisualizeInRoom(file)
+        }}
+      />
+      {preview ? (
+        <>
+          <button type="button" onClick={() => onVisualizeInRoom(null)} disabled={busy} className={secondary}>
+            <img src={preview} alt="" className="-ml-2 h-6 w-6 rounded-full object-cover" />
+            Place in my room
+          </button>
+          <button
+            type="button"
+            onClick={pick}
+            disabled={busy}
+            className="rounded-full px-2 py-2 text-xs font-medium text-muted transition hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Change photo
+          </button>
+        </>
+      ) : (
+        <button type="button" onClick={pick} disabled={busy} className={secondary}>
+          <UploadIcon size={16} />
+          Upload room photo
+        </button>
+      )}
+    </>
   )
 }

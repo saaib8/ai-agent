@@ -94,6 +94,35 @@ reply as a JPEG data URL, as a chat turn (`ChatResponse.presentation.render`)
 that is recorded in the history but changes no state. It lasts as long as the
 customer's browser session. Configure with `ZORY_VISUALIZATION__*`.
 
+### Upload room photo
+
+Put the pieces in the customer's own room instead of an imagined one - from a
+room package ("Upload room photo" beside Visualize) or from Browse Catalogue
+("My room photo" on the room step).
+
+* `POST /v1/room-photos` (multipart: `session_id`, `store_id`, `image`) prepares
+  the photo like a Furniture Finder upload, asks a vision model whether it is a
+  room at all (a selfie or a product shot is refused with `not_a_room`, before
+  anything is emptied), then **always empties it**: an image model carries out
+  the furniture and decor and keeps the room - walls, floor, ceiling, windows,
+  curtains, doors, built-ins and ceiling lights - scaled back to the photo's
+  exact size (`app/prompts/room_photo/v1.py`). The emptied room is kept in the
+  session (one per session; a new upload replaces it) and the answer is only
+  its handle: `{room_photo_id, width, height}`. The customer never sees the
+  empty room on its own.
+* `POST /v1/visualizations` and `POST /v1/catalog/visualizations` take a
+  `room_photo_id` instead of a view (the catalogue one then needs no `room`):
+  the pieces are placed into the emptied room - image 1 - at the photo's own
+  shape, and the render comes back as a chat turn labelled "Your room"
+  (`view: null`). Renders after a swap, or again, reuse the kept room: no new
+  upload and no second emptying. A photo the session no longer holds is
+  `room_photo_not_found` - upload it again.
+
+Gemini empties by default (it keeps a photo closest to itself, at
+`PHOTO_EDIT_TEMPERATURE`), with the other image model as the fallback; the
+primary render model places the pieces. Turn it on with
+`ZORY_VISUALIZATION__ROOM_CHECK_MODEL` (see `.env.example`).
+
 ## Browse Catalogue
 
 Pick products straight from the store's catalogue, say how many of each,

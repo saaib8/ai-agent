@@ -23,7 +23,16 @@ import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 
-export function UserBubble({ text, rejected }: { text: string; rejected?: RejectedRef }) {
+export function UserBubble({
+  text,
+  rejected,
+  imageUrl,
+}: {
+  text: string
+  rejected?: RejectedRef
+  /** A photo they shared with the message - their room. */
+  imageUrl?: string
+}) {
   // A "Not this one" tap: show the product that was dismissed, so the thread
   // makes clear what was passed on rather than a bare line of text.
   if (rejected) {
@@ -52,7 +61,14 @@ export function UserBubble({ text, rejected }: { text: string; rejected?: Reject
     )
   }
   return (
-    <div className="flex animate-rise justify-end">
+    <div className="flex animate-rise flex-col items-end gap-1.5">
+      {imageUrl && (
+        <img
+          src={imageUrl}
+          alt="Your room"
+          className="max-h-56 max-w-[70%] rounded-2xl rounded-br-md border border-line object-cover shadow-card"
+        />
+      )}
       <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">
         {text}
       </div>
@@ -86,6 +102,11 @@ interface AssistantBubbleProps {
   onQuickReply?: (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => void
   /** Present on the current room package only: render it from a view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void
+  /** Present on the current room package only: place it in the customer's
+   *  own room - a new photo, or (null) the one the session keeps. */
+  onVisualizeInRoom?: (file: File | null) => void
+  /** The room photo the session keeps, to show beside that button. */
+  roomPhotoPreview?: string | null
   /** Present while this turn's render can be drawn again from another view. */
   onRerender?: (view: RenderView, viewLabel: string) => void
   /** A catalogue render: reopen the catalogue with its pieces. */
@@ -109,6 +130,8 @@ export function AssistantBubble({
   quickReplies,
   onQuickReply,
   onVisualize,
+  onVisualizeInRoom,
+  roomPhotoPreview = null,
   onRerender,
   onEditSelection,
   renderOutdated = false,
@@ -193,6 +216,8 @@ export function AssistantBubble({
             onSwapStart={onSwapStart}
             busy={busy}
             onVisualize={onVisualize}
+            onVisualizeInRoom={onVisualizeInRoom}
+            roomPhotoPreview={roomPhotoPreview}
           />
         )}
         {render && (

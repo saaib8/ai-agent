@@ -56,6 +56,7 @@ from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 from tests.unit.test_room_visualization import (
     FakeCatalog,
     FakePhotos,
+    FakeRoomPhotos,
     RecordingGenerator,
     viz_settings,
 )
@@ -431,6 +432,7 @@ def a_runtime(
         SessionSettings(max_history_messages=6),
         CatalogSettings(**catalog),
         ATTRIBUTES,
+        FakeRoomPhotos(),  # type: ignore[arg-type]
     )
     return runtime, parts, store
 
