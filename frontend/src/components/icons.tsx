@@ -203,3 +203,10 @@ export const SlidersIcon = (p: IconProps) => (
     <circle cx="18" cy="18" r="2" />
   </Base>
 )
+
+export const UploadIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M12 15V4M7.5 8.5 12 4l4.5 4.5" />
+    <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+  </Base>
+)

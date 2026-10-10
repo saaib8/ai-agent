@@ -14,6 +14,11 @@ export interface RoomDraft {
   length: string
   width: string
   view: RenderView
+  /** Render in the customer's own room photo instead of a room set up. Its
+   *  type and look come from the photo; the size is only for the fit check. */
+  usePhoto: boolean
+  /** A new photo chosen for it; null reuses the one the session keeps. */
+  photoFile: File | null
 }
 
 /** The style is left empty: it is filled from the store's own most common
@@ -24,6 +29,8 @@ export const DEFAULT_ROOM: RoomDraft = {
   length: '4',
   width: '5',
   view: 'corner',
+  usePhoto: false,
+  photoFile: null,
 }
 
 export const ROOM_PRESETS: [number, number][] = [

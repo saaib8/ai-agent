@@ -23,7 +23,9 @@ interface RoomRenderProps {
  */
 export function RoomRender({ render, outdated, busy = false, onRerender, onEdit }: RoomRenderProps) {
   const [fullScreen, setFullScreen] = useState(false)
-  const firstOther = RENDER_VIEWS.find((v) => v.value !== render.view)?.value ?? render.view
+  // In their own room the photo is the camera: no other view to try.
+  const inRoom = !!render.room_photo_id
+  const firstOther = RENDER_VIEWS.find((v) => v.value !== render.view)?.value ?? 'corner'
   const [nextView, setNextView] = useState<RenderView>(firstOther)
   const nextLabel = RENDER_VIEWS.find((v) => v.value === nextView)?.label ?? ''
 
@@ -32,7 +34,7 @@ export function RoomRender({ render, outdated, busy = false, onRerender, onEdit 
       <div className="flex items-center justify-between border-b border-line bg-canvas/60 px-4 py-3">
         <span className="text-sm font-semibold text-ink">Your room</span>
         <span className="rounded-full bg-canvas px-2.5 py-0.5 text-[11px] font-medium text-muted">
-          {render.view_label} view
+          {inRoom ? render.view_label : `${render.view_label} view`}
         </span>
       </div>
 
@@ -50,7 +52,7 @@ export function RoomRender({ render, outdated, busy = false, onRerender, onEdit 
       >
         <img
           src={render.image_url}
-          alt={`Your room, ${render.view_label.toLowerCase()} view`}
+          alt={inRoom ? 'Your room, furnished' : `Your room, ${render.view_label.toLowerCase()} view`}
           className={`h-full w-full object-cover ${outdated ? 'opacity-70' : ''}`}
         />
         <span className="absolute right-3 top-3 rounded-full bg-ink/55 p-1.5 text-white opacity-0 transition group-hover:opacity-100">
@@ -74,7 +76,19 @@ export function RoomRender({ render, outdated, busy = false, onRerender, onEdit 
           </ActionButton>
         )}
 
-        {onRerender && !outdated && (
+        {onRerender && !outdated && inRoom && (
+          <div className="ml-auto">
+            <button
+              onClick={() => onRerender('corner', render.view_label)}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-full border border-clay/30 px-3 py-1.5 text-xs font-medium text-clay transition hover:border-clay hover:bg-clay hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ImageIcon size={14} />
+              Render again
+            </button>
+          </div>
+        )}
+        {onRerender && !outdated && !inRoom && (
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <ViewPicker value={nextView} onChange={setNextView} disabled={busy} />
             <button
@@ -138,7 +152,7 @@ function Lightbox({ render, onClose }: { render: RoomRenderPresentation; onClose
       </button>
       <img
         src={render.image_url}
-        alt={`Your room, ${render.view_label.toLowerCase()} view`}
+        alt={render.room_photo_id ? 'Your room, furnished' : `Your room, ${render.view_label.toLowerCase()} view`}
         onClick={(e) => e.stopPropagation()}
         className="max-h-full max-w-full rounded-xl object-contain shadow-soft"
       />
@@ -157,7 +171,7 @@ async function download(render: RoomRenderPresentation): Promise<void> {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `zory-room-${render.view}.jpg`
+  link.download = `zory-room-${render.view ?? 'in-my-room'}.jpg`
   document.body.appendChild(link)
   link.click()
   link.remove()

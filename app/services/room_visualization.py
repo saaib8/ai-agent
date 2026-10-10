@@ -9,6 +9,11 @@ the picture. An image model draws it, and the picture is returned inside the
 reply as a data URL. Nothing is stored: the render lives on the customer's
 screen, like the rest of the conversation they are looking at.
 
+Either kind can instead be drawn in the customer's own room: the emptied photo
+the session keeps (:mod:`app.services.room_photo`) becomes the canvas, and the
+pieces are placed into it. The photo is the room and the camera, so no room is
+described and no view is chosen.
+
 A render is a turn of the conversation, like a pick in a photo: it is
 recorded in the history, in words, so the agent knows the customer has seen
 their room, and it moves the session revision. It changes no state - a
@@ -34,7 +39,9 @@ from app.core.exceptions import (
     SelectionUnavailableError,
 )
 from app.core.logging import get_logger
-from app.integrations.image_generation import ImageGenerator, ImageReference
+from app.integrations.image_generation import Frame, ImageGenerator, ImageReference
+from app.prompts.room_photo.v1 import VERSION as PHOTO_VERSION
+from app.prompts.room_photo.v1 import build_placement_prompt, room_caption
 from app.prompts.visualization.v1 import (
     VERSION,
     RenderPiece,
@@ -46,6 +53,7 @@ from app.prompts.visualization.v1 import (
     view_label,
 )
 from app.repositories.products import ProductRepository
+from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
 from app.schemas.agent_state import AgentStateV1, RoomProjectState
 from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
@@ -55,6 +63,7 @@ from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.retailer import RetailerContext
+from app.schemas.room_photo import RoomPhoto
 from app.schemas.visualization import (
     RenderRoomSpec,
     RenderSource,
@@ -65,13 +74,22 @@ from app.schemas.visualization import (
 )
 from app.services.chat_runtime import commit_exchange, load_for_turn
 from app.services.discovery import to_candidate
-from app.services.media_wording import ARABIC_ROOMS, VIEW_PHRASES, render_reply
+from app.services.media_wording import (
+    ARABIC_ROOMS,
+    VIEW_PHRASES,
+    render_reply,
+    room_photo_reply,
+)
 from app.services.reply_language import session_language
+from app.services.room_photo import fit_exactly, load_room_photo
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 
 logger = get_logger(__name__)
 
 _VIEW_PHRASES = VIEW_PHRASES[ReplyLanguage.EN]
+
+_PHOTO_VIEW_LABEL = "Your room"
+"""What a render in the customer's own photo is called where a view would be."""
 
 
 class PhotoFetcher(Protocol):
@@ -92,9 +110,14 @@ class RoomVisualizer:
         self._settings = settings
 
     async def render(
-        self, state: AgentStateV1, view: RenderView, context: RetailerContext
+        self,
+        state: AgentStateV1,
+        view: RenderView,
+        context: RetailerContext,
+        photo: RoomPhoto | None = None,
     ) -> RoomRenderPresentation:
-        """The session's room package."""
+        """The session's room package - imagined from a view, or placed in
+        the customer's own room when `photo` is given."""
         room = state.room_project
         if room is None or not room.bundle_items:
             raise NothingToVisualizeError(store_id=context.store_id)
@@ -104,16 +127,20 @@ class RoomVisualizer:
             # Every piece has gone from the catalog since the room was put
             # together. A render of an empty room would be a picture of nothing.
             raise NothingToVisualizeError(store_id=context.store_id, reason="no_available_pieces")
+        if photo is not None:
+            return await self._draw_in_photo(items, photo, context, RenderSource.PACKAGE)
         return await self._draw(items, _room(room), view, context, RenderSource.PACKAGE, None)
 
     async def render_selection(
         self,
         selection: Sequence[CatalogSelectionItem],
-        spec: RenderRoomSpec,
+        spec: RenderRoomSpec | None,
         view: RenderView,
         context: RetailerContext,
+        photo: RoomPhoto | None = None,
     ) -> RoomRenderPresentation:
-        """Pieces the customer picked from the catalogue, in the room they set up.
+        """Pieces the customer picked from the catalogue, in the room they set
+        up - or in their own room, when `photo` is given.
 
         The ids are read back through the store-scoped repository; any the
         store no longer sells are left out, in the order the customer picked.
@@ -127,6 +154,10 @@ class RoomVisualizer:
         ]
         if not items:
             raise SelectionUnavailableError(store_id=context.store_id, requested=len(selection))
+        if photo is not None:
+            return await self._draw_in_photo(items, photo, context, RenderSource.CATALOG)
+        if spec is None:
+            raise ValueError("a catalogue render needs its room or a room photo")
         room = RenderRoom(
             room_label=room_type_words(spec.room_type),
             style=_style_words(spec.style),
@@ -183,17 +214,73 @@ class RoomVisualizer:
             height=height,
             view=view,
             view_label=view_label(view),
-            items=tuple(
-                RoomRenderItem(
-                    name_english=product.name_english,
-                    image_url=product.image_url,
-                    product_url=product.product_url,
-                    quantity=quantity,
-                )
-                for product, quantity in items
-            ),
+            items=_render_items(items),
             source=source,
             room=spec,
+        )
+
+    async def _draw_in_photo(
+        self,
+        items: Sequence[tuple[ProductCandidate, int]],
+        photo: RoomPhoto,
+        context: RetailerContext,
+        source: RenderSource,
+    ) -> RoomRenderPresentation:
+        """The pieces placed into the customer's emptied room.
+
+        The room travels first, as image 1; the products follow, numbered from
+        2. The answer is scaled to the photo's exact size, so it lines up with
+        the room they photographed.
+        """
+        started = time.perf_counter()
+        room_ref = ImageReference(data=base64.b64decode(photo.jpeg_b64), caption=room_caption())
+        # The room takes one of the images a render can carry.
+        photos = await self._photos_for(items, self._settings.max_references - 1)
+        pieces: list[RenderPiece] = []
+        references: list[ImageReference] = [room_ref]
+        for (product, quantity), product_photo in zip(items, photos, strict=True):
+            number = len(references) + 1 if product_photo is not None else None
+            piece = RenderPiece(
+                reference=number,
+                name=product.name_english,
+                kind=_kind(product),
+                size_cm=_size(product),
+                quantity=quantity,
+            )
+            pieces.append(piece)
+            if product_photo is not None:
+                references.append(
+                    ImageReference(data=product_photo, caption=reference_caption(piece))
+                )
+
+        frame = Frame(width=photo.width, height=photo.height)
+        image = await self._generator.generate(
+            build_placement_prompt(tuple(pieces)), references, frame
+        )
+        jpeg = fit_exactly(image.data, frame, self._settings.jpeg_quality)
+
+        logger.info(
+            "room_rendered",
+            store_id=context.store_id,
+            source=source.value,
+            view="room_photo",
+            piece_count=len(pieces),
+            reference_count=len(references),
+            provider=image.provider,
+            image_bytes=len(jpeg),
+            prompt_version=PHOTO_VERSION,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+        return RoomRenderPresentation(
+            image_url="data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
+            width=frame.width,
+            height=frame.height,
+            view=None,
+            view_label=_PHOTO_VIEW_LABEL,
+            items=_render_items(items),
+            source=source,
+            room=None,
+            room_photo_id=photo.photo_id,
         )
 
     async def _pieces(
@@ -213,10 +300,10 @@ class RoomVisualizer:
         return [(by_id[pid], qty) for pid, qty in quantities.items() if pid in by_id]
 
     async def _photos_for(
-        self, items: Sequence[tuple[ProductCandidate, int]]
+        self, items: Sequence[tuple[ProductCandidate, int]], limit: int | None = None
     ) -> list[bytes | None]:
         """Photos for as many pieces as a render can take, fetched together."""
-        limit = self._settings.max_references
+        limit = self._settings.max_references if limit is None else limit
         fetched = await asyncio.gather(
             *(self._photos.fetch(product.image_url) for product, _ in items[:limit])
         )
@@ -231,6 +318,7 @@ class VisualizationTurnRuntime:
         visualizer: RoomVisualizer,
         sessions: SessionStore,
         settings: SessionSettings,
+        room_photos: RoomPhotoStore,
         *,
         arabic_replies: bool = False,
     ) -> None:
@@ -238,6 +326,7 @@ class VisualizationTurnRuntime:
         self._visualizer = visualizer
         self._sessions = sessions
         self._settings = settings
+        self._room_photos = room_photos
 
     async def visualize(self, request: VisualizeRequest, context: RetailerContext) -> ChatResponse:
         """Load, render, commit, answer.
@@ -254,13 +343,30 @@ class VisualizationTurnRuntime:
         )
         state = loaded.envelope.state
         language = session_language(state.reply_language, enabled=self._arabic_replies)
-        render = await self._visualizer.render(state, request.view, context)
+        photo = (
+            await load_room_photo(
+                self._room_photos,
+                session_id=request.session_id,
+                photo_id=request.room_photo_id,
+                context=context,
+            )
+            if request.room_photo_id is not None
+            else None
+        )
+        render = await self._visualizer.render(state, request.view, context, photo)
         room_label = _room_label(state.room_project)
         if language is ReplyLanguage.AR:
             room_kind = state.room_project.room_kind if state.room_project else None
             room_key = room_kind or room_label.replace(" ", "_")
             room_label = ARABIC_ROOMS.get(room_key, "الغرفة")
-        response = render_reply(room_label, request.view, language)
+        if photo is not None:
+            response = room_photo_reply(room_label, language)
+            customer_said = "[Asked to see the room package placed in a photo of their own room]"
+        else:
+            response = render_reply(room_label, request.view, language)
+            customer_said = (
+                f"[Asked to see the room package visualised, {render.view_label.lower()} view]"
+            )
         revision = await commit_exchange(
             self._sessions,
             self._settings,
@@ -268,9 +374,7 @@ class VisualizationTurnRuntime:
             session_id=request.session_id,
             loaded=loaded,
             state=state,
-            customer_said=(
-                f"[Asked to see the room package visualised, {render.view_label.lower()} view]"
-            ),
+            customer_said=customer_said,
             response=response,
         )
         return ChatResponse(
@@ -297,6 +401,7 @@ class CatalogVisualizationRuntime:
         session_settings: SessionSettings,
         catalog_settings: CatalogSettings,
         attributes: CatalogAttributes,
+        room_photos: RoomPhotoStore,
         *,
         arabic_replies: bool = False,
     ) -> None:
@@ -306,6 +411,7 @@ class CatalogVisualizationRuntime:
         self._session_settings = session_settings
         self._catalog = catalog_settings
         self._attributes = attributes
+        self._room_photos = room_photos
 
     async def visualize(
         self, request: CatalogVisualizeRequest, context: RetailerContext
@@ -315,7 +421,7 @@ class CatalogVisualizationRuntime:
         Everything the customer set is checked before the session is loaded,
         and the revision before an image model is paid.
         """
-        spec = self._checked_room(request.room)
+        spec = self._checked_room(request.room) if request.room is not None else None
         self._check_items(request.items)
         loaded = await load_for_turn(
             self._sessions,
@@ -323,21 +429,46 @@ class CatalogVisualizationRuntime:
             session_id=request.session_id,
             expected_revision=request.expected_session_revision,
         )
-        render = await self._visualizer.render_selection(request.items, spec, request.view, context)
+        photo = (
+            await load_room_photo(
+                self._room_photos,
+                session_id=request.session_id,
+                photo_id=request.room_photo_id,
+                context=context,
+            )
+            if request.room_photo_id is not None
+            else None
+        )
+        render = await self._visualizer.render_selection(
+            request.items, spec, request.view, context, photo
+        )
 
-        room_words = f"{_style_words(spec.style)} {room_type_label(spec.room_type).lower()}"
+        units = sum(item.quantity for item in render.items)
         language = session_language(
             loaded.envelope.state.reply_language, enabled=self._arabic_replies
         )
-        reply_room = room_words
-        if language is ReplyLanguage.AR:
-            reply_room = ARABIC_ROOMS[spec.room_type]
-            style = self._attributes.arabic(AttributeFamily.STYLE, spec.style)
-            if style:
-                reply_room += f" بطراز {style}"
         dropped = len(request.items) - len(render.items)
-        response = render_reply(reply_room, request.view, language, dropped=dropped)
-        units = sum(item.quantity for item in render.items)
+        if spec is None:
+            # Their own room: the photo is the room, so none is named.
+            response = room_photo_reply(None, language, dropped=dropped)
+            customer_said = (
+                f"[Visualised {units} pieces picked from the catalogue in a photo of "
+                "their own room]"
+            )
+        else:
+            room_words = f"{_style_words(spec.style)} {room_type_label(spec.room_type).lower()}"
+            reply_room = room_words
+            if language is ReplyLanguage.AR:
+                reply_room = ARABIC_ROOMS[spec.room_type]
+                style = self._attributes.arabic(AttributeFamily.STYLE, spec.style)
+                if style:
+                    reply_room += f" بطراز {style}"
+            response = render_reply(reply_room, request.view, language, dropped=dropped)
+            customer_said = (
+                f"[Visualised {units} pieces picked from the catalogue in a "
+                f"{spec.length_m:g} x {spec.width_m:g} m {room_words}, "
+                f"{render.view_label.lower()} view]"
+            )
         revision = await commit_exchange(
             self._sessions,
             self._session_settings,
@@ -345,11 +476,7 @@ class CatalogVisualizationRuntime:
             session_id=request.session_id,
             loaded=loaded,
             state=loaded.envelope.state,
-            customer_said=(
-                f"[Visualised {units} pieces picked from the catalogue in a "
-                f"{spec.length_m:g} x {spec.width_m:g} m {room_words}, "
-                f"{render.view_label.lower()} view]"
-            ),
+            customer_said=customer_said,
             response=response,
         )
         return ChatResponse(
@@ -387,6 +514,18 @@ class CatalogVisualizationRuntime:
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def _render_items(items: Sequence[tuple[ProductCandidate, int]]) -> tuple[RoomRenderItem, ...]:
+    return tuple(
+        RoomRenderItem(
+            name_english=product.name_english,
+            image_url=product.image_url,
+            product_url=product.product_url,
+            quantity=quantity,
+        )
+        for product, quantity in items
+    )
 
 
 def _style_words(style: str) -> str:

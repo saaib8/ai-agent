@@ -109,22 +109,44 @@ def render_reply(
     room: str, view: RenderView, language: ReplyLanguage, *, dropped: int = 0
 ) -> CustomerResponse:
     phrase = VIEW_PHRASES[language][view]
+    message = f"إليك تصوّر {room}، {phrase}." if language is AR else f"Here's your {room}, {phrase}."
+    return CustomerResponse(message=message + _left_out(dropped, language))
+
+
+def room_photo_reply(
+    room: str | None, language: ReplyLanguage, *, dropped: int = 0
+) -> CustomerResponse:
+    """A render placed in the customer's own room photo: no view is named - the
+    photo is the camera - and a room only when the pieces are a room package."""
     if language is AR:
-        message = f"إليك تصوّر {room}، {phrase}."
-        if dropped == 1:
-            message += " إحدى القطع التي اخترتها لم تعد متوفرة، لذا لم أدرجها في الصورة."
-        elif dropped:
-            # Two pieces take the dual; more, the feminine singular of a
-            # non-human plural.
-            reason = "لأنهما لم تعودا متوفرتين" if dropped == 2 else "لأنها لم تعد متوفرة"
-            message += f" لم أدرج {_pieces(dropped)} مما اخترته في الصورة {reason}."
+        message = (
+            f"إليك تصوّر {room} داخل صورة غرفتك."
+            if room is not None
+            else "إليك القطع التي اخترتها داخل صورة غرفتك."
+        )
     else:
-        message = f"Here's your {room}, {phrase}."
+        message = (
+            f"Here's your {room} package, placed in your own room."
+            if room is not None
+            else "Here are the pieces you picked, placed in your own room."
+        )
+    return CustomerResponse(message=message + _left_out(dropped, language))
+
+
+def _left_out(dropped: int, language: ReplyLanguage) -> str:
+    """The pieces a render could not include, said after it; empty for none."""
+    if not dropped:
+        return ""
+    if language is AR:
         if dropped == 1:
-            message += " 1 piece you picked is no longer available, so I left it out."
-        elif dropped:
-            message += f" {dropped} pieces you picked are no longer available, so I left them out."
-    return CustomerResponse(message=message)
+            return " إحدى القطع التي اخترتها لم تعد متوفرة، لذا لم أدرجها في الصورة."
+        # Two pieces take the dual; more, the feminine singular of a
+        # non-human plural.
+        reason = "لأنهما لم تعودا متوفرتين" if dropped == 2 else "لأنها لم تعد متوفرة"
+        return f" لم أدرج {_pieces(dropped)} مما اخترته في الصورة {reason}."
+    if dropped == 1:
+        return " 1 piece you picked is no longer available, so I left it out."
+    return f" {dropped} pieces you picked are no longer available, so I left them out."
 
 
 def _closest_products(count: int) -> str:

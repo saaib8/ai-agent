@@ -158,6 +158,36 @@ class FinderImageNotFoundError(ZoryError):
     public_message = "That photo is no longer available. Please upload it again."
 
 
+# ── The customer's own room photo ───────────────────────────────────────────
+
+
+class NotARoomError(ImageRejectedError):
+    """An upload that is a usable photo, but not of a room. Refused before it
+    is emptied, so nothing is paid for a picture that cannot be furnished."""
+
+    code = "not_a_room"
+    public_message = "This doesn't look like a room - please upload a photo of the room."
+
+
+class RoomPhotoNotFoundError(ZoryError):
+    """A render asked for a room photo this session no longer holds.
+
+    Expired, replaced by a newer upload, or uploaded under another store or
+    session - indistinguishable on purpose, like a finder photo.
+    """
+
+    code = "room_photo_not_found"
+    http_status = HTTPStatus.NOT_FOUND
+    public_message = "Your room photo is no longer available. Please upload it again."
+
+
+class RoomPhotoUnavailableError(IntegrationUnavailableError):
+    """The room photo could not be checked or emptied right now."""
+
+    code = "room_photo_unavailable"
+    public_message = "We couldn't prepare your room photo right now. Please try again."
+
+
 class LLMRequestError(ZoryError):
     """The provider refused our request as invalid.
 

@@ -12,6 +12,7 @@ import type {
   HealthResponse,
   PicksRequest,
   PicksResponse,
+  RoomPhotoResponse,
   VisualizeRequest,
 } from './types'
 
@@ -86,6 +87,24 @@ export async function postFinderPick(
   signal?: AbortSignal,
 ): Promise<ChatResult> {
   return postJson<ChatResponse>(base, '/v1/furniture-finder/picks', body, isChatResponse, signal)
+}
+
+/** Upload a photo of the customer's room: checked to be a room, emptied, and
+ *  kept for the session. Slow - the emptying is an image edit. */
+export async function postRoomPhoto(
+  base: string,
+  fields: { sessionId: string; storeId: number; file: File },
+): Promise<Fetched<RoomPhotoResponse>> {
+  const form = new FormData()
+  form.append('session_id', fields.sessionId)
+  form.append('store_id', String(fields.storeId))
+  form.append('image', fields.file)
+  const root = normaliseBase(base)
+  return send<RoomPhotoResponse>(
+    root,
+    () => fetch(`${root}/v1/room-photos`, { method: 'POST', body: form }),
+    (payload) => typeof payload === 'object' && payload !== null && 'room_photo_id' in payload,
+  )
 }
 
 /** Render the session's room package. The answer is a chat turn with a render. */

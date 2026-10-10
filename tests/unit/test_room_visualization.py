@@ -34,6 +34,7 @@ from app.core.exceptions import (
 )
 from app.integrations.image_generation import (
     FallbackImageGenerator,
+    Frame,
     GeminiImageGenerator,
     GeneratedImage,
     ImageReference,
@@ -53,6 +54,7 @@ from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementR
 from app.schemas.product import CommerceClassification, ProductRow
 from app.schemas.query import ConstraintStrength, SemanticPreference
 from app.schemas.retailer import RetailerContext
+from app.schemas.room_photo import RoomPhoto
 from app.schemas.session import SessionEnvelope, new_session
 from app.schemas.visualization import RenderView, VisualizeRequest
 from app.services.room_visualization import RoomVisualizer, VisualizationTurnRuntime
@@ -297,9 +299,13 @@ class ScriptedGenerator:
     def __init__(self, outcome: GeneratedImage | Exception) -> None:
         self.outcome = outcome
         self.calls = 0
+        self.frames: list[Frame | None] = []
 
-    async def generate(self, prompt: str, references: Sequence[ImageReference]) -> GeneratedImage:
+    async def generate(
+        self, prompt: str, references: Sequence[ImageReference], frame: Frame | None = None
+    ) -> GeneratedImage:
         self.calls += 1
+        self.frames.append(frame)
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
@@ -423,11 +429,15 @@ class RecordingGenerator:
     def __init__(self, image: bytes | None = None) -> None:
         self.prompts: list[str] = []
         self.references: list[Sequence[ImageReference]] = []
+        self.frames: list[Frame | None] = []
         self.image = image if image is not None else a_jpeg(1536, 1024)
 
-    async def generate(self, prompt: str, references: Sequence[ImageReference]) -> GeneratedImage:
+    async def generate(
+        self, prompt: str, references: Sequence[ImageReference], frame: Frame | None = None
+    ) -> GeneratedImage:
         self.prompts.append(prompt)
         self.references.append(references)
+        self.frames.append(frame)
         return GeneratedImage(self.image, "image/jpeg", "openai")
 
 
@@ -588,8 +598,23 @@ async def a_stored_session(store: FakeSessionStore, state: AgentStateV1) -> None
     assert await store.save_if_revision(STORE, SESSION, expected_revision=0, envelope=envelope)
 
 
+class FakeRoomPhotos:
+    """The session's one emptied room photo, in memory."""
+
+    def __init__(self, photo: RoomPhoto | None = None) -> None:
+        self.photo = photo
+
+    async def load(self, store_id: int, session_id: str, photo_id: str) -> RoomPhoto | None:
+        if self.photo is None or self.photo.photo_id != photo_id:
+            return None
+        return self.photo
+
+
 def a_turn_runtime(
-    store: FakeSessionStore, *, arabic_replies: bool = False
+    store: FakeSessionStore,
+    photos: FakeRoomPhotos | None = None,
+    *,
+    arabic_replies: bool = False,
 ) -> tuple[VisualizationTurnRuntime, dict[str, Any]]:
     visualizer, parts = a_visualizer()
     return (
@@ -597,6 +622,7 @@ def a_turn_runtime(
             visualizer,
             store,  # type: ignore[arg-type]
             SessionSettings(max_history_messages=6),
+            photos or FakeRoomPhotos(),  # type: ignore[arg-type]
             arabic_replies=arabic_replies,
         ),
         parts,

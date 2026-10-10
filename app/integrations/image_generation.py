@@ -13,6 +13,7 @@ Model identifiers, quality and size are configuration (CLAUDE.md 31).
 from __future__ import annotations
 
 import base64
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -29,6 +30,12 @@ logger = get_logger(__name__)
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 _JPEG_QUALITY = 88
 
+_OPENAI_SIZES = ("1536x1024", "1024x1024", "1024x1536")
+"""The canvases gpt-image models draw on."""
+
+_GEMINI_RATIOS = ("21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16")
+"""The aspect ratios Gemini image models accept."""
+
 
 @dataclass(frozen=True, slots=True)
 class ImageReference:
@@ -36,6 +43,31 @@ class ImageReference:
 
     data: bytes
     caption: str
+
+
+@dataclass(frozen=True, slots=True)
+class Frame:
+    """The shape of the customer's own photo, which an edit of it must keep.
+
+    Each provider draws on the canvas nearest this shape; the caller scales
+    the answer back to the photo's exact size.
+    """
+
+    width: int
+    height: int
+
+
+def nearest_shape(frame: Frame, shapes: Sequence[str], separator: str) -> str:
+    """The provider's canvas closest in proportion to the photo's.
+
+    Compared on a log scale, so 3:2 is as far from 1:1 as 2:3 is.
+    """
+
+    def distance(shape: str) -> float:
+        across, down = (int(part) for part in shape.split(separator))
+        return abs(math.log(across / down) - math.log(frame.width / frame.height))
+
+    return min(shapes, key=distance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,8 +79,14 @@ class GeneratedImage:
 
 class ImageGenerator(Protocol):
     async def generate(
-        self, prompt: str, references: Sequence[ImageReference]
-    ) -> GeneratedImage: ...
+        self,
+        prompt: str,
+        references: Sequence[ImageReference],
+        frame: Frame | None = None,
+    ) -> GeneratedImage:
+        """`frame` is set when the first reference is the customer's photo and
+        the answer must keep its shape; unset, the configured canvas is used."""
+        ...
 
 
 class OpenAIImageGenerator:
@@ -76,11 +114,16 @@ class OpenAIImageGenerator:
             api_key=api_key, base_url=base_url, timeout=settings.timeout_s, max_retries=0
         )
 
-    async def generate(self, prompt: str, references: Sequence[ImageReference]) -> GeneratedImage:
+    async def generate(
+        self,
+        prompt: str,
+        references: Sequence[ImageReference],
+        frame: Frame | None = None,
+    ) -> GeneratedImage:
         common: dict[str, Any] = {
             "model": self._model,
             "prompt": prompt,
-            "size": self._size,
+            "size": nearest_shape(frame, _OPENAI_SIZES, "x") if frame else self._size,
             "quality": self._quality,
             "n": 1,
             "output_format": "jpeg",
@@ -129,17 +172,21 @@ class GeminiImageGenerator:
         if settings.gemini_model is None or settings.gemini_api_key is None:
             raise ValueError("gemini_model and gemini_api_key are required")
         self._url = _GEMINI_URL.format(model=settings.gemini_model)
-        self._image_config = {
-            "aspectRatio": settings.gemini_aspect_ratio,
-            "imageSize": settings.gemini_image_size,
-        }
+        self._aspect_ratio = settings.gemini_aspect_ratio
+        self._image_size = settings.gemini_image_size
+        self._photo_temperature = settings.photo_edit_temperature
         self._client = httpx.AsyncClient(
             transport=transport,
             timeout=settings.timeout_s,
             headers={"x-goog-api-key": settings.gemini_api_key.get_secret_value()},
         )
 
-    async def generate(self, prompt: str, references: Sequence[ImageReference]) -> GeneratedImage:
+    async def generate(
+        self,
+        prompt: str,
+        references: Sequence[ImageReference],
+        frame: Frame | None = None,
+    ) -> GeneratedImage:
         parts: list[dict[str, Any]] = [{"text": prompt}]
         for ref in references:
             parts.append({"text": ref.caption})
@@ -151,13 +198,19 @@ class GeminiImageGenerator:
                     }
                 }
             )
-        body = {
-            "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "imageConfig": self._image_config,
+        generation: dict[str, Any] = {
+            "responseModalities": ["IMAGE"],
+            "imageConfig": {
+                "aspectRatio": (
+                    nearest_shape(frame, _GEMINI_RATIOS, ":") if frame else self._aspect_ratio
+                ),
+                "imageSize": self._image_size,
             },
         }
+        if frame is not None and self._photo_temperature is not None:
+            # Editing their photo: it must come back as itself.
+            generation["temperature"] = self._photo_temperature
+        body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": generation}
         try:
             response = await self._client.post(self._url, json=body)
         except httpx.HTTPError as exc:
@@ -204,11 +257,16 @@ class FallbackImageGenerator:
         self._primary = primary
         self._fallback = fallback
 
-    async def generate(self, prompt: str, references: Sequence[ImageReference]) -> GeneratedImage:
+    async def generate(
+        self,
+        prompt: str,
+        references: Sequence[ImageReference],
+        frame: Frame | None = None,
+    ) -> GeneratedImage:
         try:
-            return await self._primary.generate(prompt, references)
+            return await self._primary.generate(prompt, references, frame)
         except RenderUnavailableError:
             if self._fallback is None:
                 raise
             logger.warning("render_falling_back")
-            return await self._fallback.generate(prompt, references)
+            return await self._fallback.generate(prompt, references, frame)

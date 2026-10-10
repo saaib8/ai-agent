@@ -21,6 +21,7 @@ from app.integrations.redis import RedisClient
 from app.orchestration.graph import ChatGraphRunner
 from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
+from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
 from app.services.bundle_optimizer import BundleOptimizer
@@ -50,6 +51,7 @@ from app.services.relative_price import RelativePriceResolver
 from app.services.relaxation import RelaxationPlanner
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.retailer_context import RetailerContextProvider
+from app.services.room_photo import RoomPhotoService
 from app.services.room_visualization import (
     CatalogVisualizationRuntime,
     RoomVisualizer,
@@ -623,6 +625,7 @@ def visualization_turn_runtime(
         _room_visualizer(session, app_resources),
         session_store(app_resources),
         app_resources.settings.session,
+        _room_photo_store(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
 
@@ -637,8 +640,30 @@ def catalog_visualization_runtime(
         app_resources.settings.session,
         app_resources.settings.effective_catalog(),
         app_resources.attributes,
+        _room_photo_store(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
+
+
+def _room_photo_store(app_resources: AppResources) -> RoomPhotoStore:
+    return RoomPhotoStore(app_resources.redis.client, app_resources.settings.session)
+
+
+def room_photo_service(app_resources: ResourcesDep) -> RoomPhotoService:
+    """Checking and emptying the customer's own room photo, or a refusal
+    naming what is missing."""
+    settings = app_resources.settings.visualization
+    checker = app_resources.room_checker
+    emptier = app_resources.empty_room_generator
+    if settings is None or checker is None or emptier is None:
+        raise ConfigurationError(
+            detail="visualization.room_check_model must be configured to use room photos",
+            public_message="Room photos are not configured.",
+        )
+    return RoomPhotoService(checker, emptier, _room_photo_store(app_resources), settings)
+
+
+RoomPhotoServiceDep = Annotated[RoomPhotoService, Depends(room_photo_service)]
 
 
 def catalog_service(session: SessionDep, app_resources: ResourcesDep) -> CatalogService:

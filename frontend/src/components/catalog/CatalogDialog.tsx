@@ -27,7 +27,16 @@ interface CatalogDialogProps {
   /** A turn is in flight: rendering waits for it. */
   busy: boolean
   onClose: () => void
-  onVisualize: (items: CatalogSelection['items'], room: RenderRoomSpec, view: RenderView) => void
+  /** Render the pieces in a room set up - or, with `photo`, in the customer's
+   *  own room: a new photo, or 'kept' for the one the session keeps. */
+  onVisualize: (
+    items: CatalogSelection['items'],
+    room: RenderRoomSpec | null,
+    view: RenderView,
+    photo: File | 'kept' | null,
+  ) => void
+  /** The room photo the session keeps, as a picture to show. */
+  roomPhotoPreview: string | null
 }
 
 /**
@@ -46,6 +55,7 @@ export function CatalogDialog({
   busy,
   onClose,
   onVisualize,
+  roomPhotoPreview,
 }: CatalogDialogProps) {
   const [step, setStep] = useState<CatalogStep>(initialStep)
   const [facets, setFacets] = useState<CatalogFacets | null>(null)
@@ -102,20 +112,26 @@ export function CatalogDialog({
   const studio = facets?.studio
   const length = studio ? parseSide(room.length, studio.min_room_side_m, studio.max_room_side_m) : null
   const width = studio ? parseSide(room.width, studio.min_room_side_m, studio.max_room_side_m) : null
-  const canRender =
-    !!studio?.render_available &&
-    selection.length > 0 &&
-    length !== null &&
-    width !== null &&
-    studio.styles.includes(room.style) &&
-    !busy
+  // Their own room needs only a photo: its type, look and size are in it.
+  const photo: File | 'kept' | null = room.photoFile ?? (roomPhotoPreview ? 'kept' : null)
+  const roomReady = room.usePhoto
+    ? photo !== null
+    : length !== null && width !== null && !!studio?.styles.includes(room.style)
+  const canRender = !!studio?.render_available && selection.length > 0 && roomReady && !busy
 
   const visualize = () => {
-    if (!canRender || length === null || width === null) return
+    if (!canRender) return
+    const items = selection.map((p) => ({ product_id: p.item.product_id, quantity: p.quantity }))
+    if (room.usePhoto) {
+      onVisualize(items, null, room.view, photo)
+      return
+    }
+    if (length === null || width === null) return
     onVisualize(
-      selection.map((p) => ({ product_id: p.item.product_id, quantity: p.quantity })),
+      items,
       { room_type: room.roomType, style: room.style, length_m: length, width_m: width },
       room.view,
+      null,
     )
   }
 
@@ -199,6 +215,7 @@ export function CatalogDialog({
                 onRoomChange={onRoomChange}
                 selection={selection}
                 onQuantity={setQuantity}
+                roomPhotoPreview={roomPhotoPreview}
               />
             )}
           </>
@@ -279,7 +296,7 @@ export function CatalogDialog({
                 className="inline-flex shrink-0 items-center gap-2 rounded-full bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 disabled:cursor-not-allowed disabled:bg-line-strong"
               >
                 <ImageIcon size={16} />
-                Visualize room
+                {room.usePhoto ? 'Place in my room' : 'Visualize room'}
               </button>
             )}
           </div>

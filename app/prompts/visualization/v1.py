@@ -123,7 +123,7 @@ def build_prompt(room: RenderRoom, pieces: tuple[RenderPiece, ...], view: Render
         "Reproduce each product faithfully from its reference image - same shape, "
         "proportions, material and colour. The image is the authority on how a product "
         "looks; the text below only identifies it and gives its approximate size.",
-        *(_piece_line(piece) for piece in pieces),
+        *(piece_line(piece) for piece in pieces),
         "",
         "Arrange the pieces the way an interior designer would for this room, with "
         "realistic walkways and clearances.",
@@ -143,7 +143,8 @@ def reference_caption(piece: RenderPiece) -> str:
     return f"Image {piece.reference}: {piece.name} ({piece.kind})"
 
 
-def _piece_line(piece: RenderPiece) -> str:
+def piece_line(piece: RenderPiece) -> str:
+    """One product as the prompt lists it, pointing at its photo when it has one."""
     details = [piece.kind]
     if piece.size_cm:
         details.append(" x ".join(f"{v:.0f}" for v in piece.size_cm) + " cm")

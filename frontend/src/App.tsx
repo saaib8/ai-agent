@@ -79,6 +79,9 @@ export default function App() {
   const [catalogStep, setCatalogStep] = useState<CatalogStep | null>(null)
   const [selection, setSelection] = useState<SelectedPiece[]>([])
   const [roomDraft, setRoomDraft] = useState<RoomDraft>(DEFAULT_ROOM)
+  // The customer's room photo the server keeps for this session (emptied),
+  // and the picture of it to show. One per session; a new upload replaces it.
+  const [roomPhoto, setRoomPhoto] = useState<{ id: string; previewUrl: string } | null>(null)
   // Every product ever picked, so a render's pieces can be put back in the
   // selection when the customer asks to edit it.
   const picked = useRef(new Map<number, CatalogItem>())
@@ -463,36 +466,108 @@ export default function App() {
     [chat, config.config],
   )
 
+  /** The session's room photo id - after uploading a new photo first, when one
+   *  is given. Null when there is none, or the upload was refused (shown in the
+   *  chat). */
+  const roomPhotoFor = useCallback(
+    async (file: File | null): Promise<string | null> => {
+      if (!file) return roomPhoto?.id ?? null
+      const uploaded = await chat.uploadRoomPhoto(file, config.config)
+      if (!uploaded) return null
+      setRoomPhoto({ id: uploaded.data.room_photo_id, previewUrl: uploaded.previewUrl })
+      return uploaded.data.room_photo_id
+    },
+    [chat, config.config, roomPhoto],
+  )
+
+  /** A render in their room failed because the session no longer holds the
+   *  photo (it expired): forget it, so the next try asks for a new one. */
+  const forgetLostRoomPhoto = useCallback((code: string | null, photoId: string) => {
+    if (code !== 'room_photo_not_found') return
+    // Only the photo that was asked for: an older render's photo going
+    // missing says nothing about the one uploaded since.
+    setRoomPhoto((current) => (current?.id === photoId ? null : current))
+  }, [])
+
+  const handleVisualizeInRoom = useCallback(
+    async (file: File | null) => {
+      if (chat.sending) return
+      setSwap(null)
+      const photoId = await roomPhotoFor(file)
+      if (!photoId) return
+      const code = await chat.visualize('corner', 'Your room', config.config, photoId)
+      forgetLostRoomPhoto(code, photoId)
+    },
+    [chat, config.config, roomPhotoFor, forgetLostRoomPhoto],
+  )
+
+  const handleRerenderInRoom = useCallback(
+    async (photoId: string) => {
+      if (chat.sending) return
+      setSwap(null)
+      const code = await chat.visualize('corner', 'Your room', config.config, photoId)
+      forgetLostRoomPhoto(code, photoId)
+    },
+    [chat, config.config, forgetLostRoomPhoto],
+  )
+
   const closeCatalog = useCallback(() => setCatalogStep(null), [])
 
   const renderSelection = useCallback(
-    (selection: CatalogSelection, view: RenderView, summary: string) => {
+    async (selection: CatalogSelection, view: RenderView, summary: string) => {
       if (chat.sending) return
       setSwap(null)
-      void chat.visualizeSelection(selection, view, summary, config.config)
+      const code = await chat.visualizeSelection(selection, view, summary, config.config)
+      if (selection.room_photo_id) forgetLostRoomPhoto(code, selection.room_photo_id)
     },
-    [chat, config.config],
+    [chat, config.config, forgetLostRoomPhoto],
   )
 
   const handleCatalogVisualize = useCallback(
-    (items: CatalogSelection['items'], room: RenderRoomSpec, view: RenderView) => {
+    (
+      items: CatalogSelection['items'],
+      room: RenderRoomSpec | null,
+      view: RenderView,
+      photo: File | 'kept' | null,
+    ) => {
       const units = items.reduce((n, item) => n + item.quantity, 0)
-      const viewLabel = RENDER_VIEWS.find((v) => v.value === view)?.label ?? view
+      const pieces = `${units} ${units === 1 ? 'piece' : 'pieces'}`
       setCatalogStep(null)
+      if (photo !== null || room === null) {
+        void (async () => {
+          const photoId = await roomPhotoFor(photo instanceof File ? photo : null)
+          if (!photoId) return
+          // The new photo is now the session's; the draft no longer holds it.
+          setRoomDraft((draft) => ({ ...draft, photoFile: null }))
+          renderSelection(
+            { items, room: null, room_photo_id: photoId },
+            view,
+            `Place my selection in my room — ${pieces}`,
+          )
+        })()
+        return
+      }
+      const viewLabel = RENDER_VIEWS.find((v) => v.value === view)?.label ?? view
       renderSelection(
         { items, room },
         view,
-        `Visualize my selection — ${units} ${units === 1 ? 'piece' : 'pieces'} in a ` +
+        `Visualize my selection — ${pieces} in a ` +
           `${room.length_m} × ${room.width_m} m ${styleLabel(room.style).toLowerCase()} ` +
           `${humanise(room.room_type)}, ${viewLabel.toLowerCase()} view`,
       )
     },
-    [renderSelection],
+    [renderSelection, roomPhotoFor],
   )
 
   const handleRerenderSelection = useCallback(
     (selection: CatalogSelection, view: RenderView, viewLabel: string) =>
-      renderSelection(selection, view, `Show my selection — ${viewLabel.toLowerCase()} view`),
+      renderSelection(
+        selection,
+        view,
+        selection.room_photo_id
+          ? 'Show my selection in my room again'
+          : `Show my selection — ${viewLabel.toLowerCase()} view`,
+      ),
     [renderSelection],
   )
 
@@ -502,13 +577,21 @@ export default function App() {
       return known ? [{ item: known, quantity: item.quantity }] : []
     })
     if (pieces.length) setSelection(pieces)
-    setRoomDraft({
-      roomType: selection.room.room_type,
-      style: selection.room.style,
-      length: String(selection.room.length_m),
-      width: String(selection.room.width_m),
-      view,
-    })
+    const room = selection.room
+    setRoomDraft((draft) =>
+      room
+        ? {
+            ...draft,
+            roomType: room.room_type,
+            style: room.style,
+            length: String(room.length_m),
+            width: String(room.width_m),
+            view,
+            usePhoto: false,
+          }
+        : // Drawn in their own room: reopen it there, with the photo kept.
+          { ...draft, usePhoto: true, photoFile: null },
+    )
     setCatalogStep('browse')
   }, [])
 
@@ -517,6 +600,8 @@ export default function App() {
     chat.reset()
     setSwap(null)
     setSelection([])
+    setRoomPhoto(null)
+    setRoomDraft((draft) => ({ ...draft, photoFile: null }))
     handleClearCompare()
   }, [config, chat, handleClearCompare])
 
@@ -550,6 +635,9 @@ export default function App() {
           onShowMoreOptions={handleShowMoreOptions}
           onExcludeProduct={handleExcludeProduct}
           onVisualize={handleVisualize}
+          onVisualizeInRoom={(file) => void handleVisualizeInRoom(file)}
+          onRerenderInRoom={(photoId) => void handleRerenderInRoom(photoId)}
+          roomPhotoPreview={roomPhoto?.previewUrl ?? null}
           onOpenCatalog={() => setCatalogStep('browse')}
           onRerenderSelection={handleRerenderSelection}
           onEditSelection={handleEditSelection}
@@ -591,6 +679,7 @@ export default function App() {
           busy={chat.sending}
           onClose={closeCatalog}
           onVisualize={handleCatalogVisualize}
+          roomPhotoPreview={roomPhoto?.previewUrl ?? null}
         />
       )}
     </div>

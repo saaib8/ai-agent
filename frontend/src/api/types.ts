@@ -243,20 +243,32 @@ export interface RoomRenderPresentation {
   image_url: string
   width: number
   height: number
-  view: RenderView
+  /** Null when drawn in the customer's own room: their photo is the camera. */
+  view: RenderView | null
   view_label: string
   /** Exactly the pieces the render was asked to show. */
   items: RoomRenderItem[]
   source?: RenderSource
   /** The room a catalogue render was set up with. */
   room?: RenderRoomSpec | null
+  /** The customer's room photo it was drawn in, so it can be drawn there again. */
+  room_photo_id?: string | null
 }
 
 export interface VisualizeRequest {
   session_id: string
   store_id: number
   view: RenderView
+  /** Draw it in the customer's own room photo instead; `view` is then unused. */
+  room_photo_id?: string
   expected_session_revision?: number
+}
+
+/** A room photo the server checked, emptied and keeps for the session. */
+export interface RoomPhotoResponse {
+  room_photo_id: string
+  width: number
+  height: number
 }
 
 export interface CustomerResponse {
@@ -603,16 +615,20 @@ export interface CatalogFacets {
 
 /** What a catalogue render was made from: kept by the client that sent it,
  *  because chat presentations never carry catalog ids. */
+/** Picked pieces, and where they go: a room set up, or the customer's own
+ *  room photo - one of the two. */
 export interface CatalogSelection {
   items: { product_id: number; quantity: number }[]
-  room: RenderRoomSpec
+  room: RenderRoomSpec | null
+  room_photo_id?: string | null
 }
 
 export interface CatalogVisualizeRequest {
   session_id: string
   store_id: number
   items: { product_id: number; quantity: number }[]
-  room: RenderRoomSpec
+  room: RenderRoomSpec | null
+  room_photo_id?: string | null
   view: RenderView
   expected_session_revision?: number
 }
