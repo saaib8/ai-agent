@@ -233,6 +233,7 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "designer_direction",
         "designer_taste",
         "designer_space_fit",
+        "designer_space_question",
         "designer_room_handoff",
         "designer_fit",
         # Whether a sofa search also shows sofa sets and sectionals.

@@ -59,8 +59,10 @@ from app.services.product_brief import opening_asked, record_asked
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first, offers_what_goes_with
 from app.services.room_presentation import (
+    finishing_choices,
     piece_picker,
     room_answer_choices,
+    room_card_choices,
     swap_offer_choices,
 )
 from app.services.seating_presentation import (
@@ -196,6 +198,10 @@ class ChatRuntime:
             choices = room_answer_choices(result.room_question, language)
         elif result.seating_solution is not None:
             choices = seating_choices(result.seating_solution, language)
+        elif result.finishing_pieces:
+            choices = finishing_choices(result.finishing_pieces, language)
+        elif result.room_cards:
+            choices = room_card_choices(result.room_cards, language)
         else:
             choices = companion_choices(
                 result.companions, offering=offers_what_goes_with(result), language=language
@@ -213,7 +219,10 @@ class ChatRuntime:
             )
             choices = (
                 model_choices
-                if own and model_choices and result.next_step.kind not in _TASTE_STEPS
+                if own
+                and model_choices
+                and result.next_step.kind not in _TASTE_STEPS
+                and result.next_step.kind not in _ACTION_STEPS
                 else result.next_step.chips
             )
         elif not choices and not (
@@ -570,3 +579,8 @@ _TASTE_STEPS = frozenset(
 )
 """A taste question's chips carry the answer's key: never replaced by chips
 the reply wrote, which a tap would send back as words."""
+
+_ACTION_STEPS = frozenset({NextStepKind.AFTER_ROOM})
+"""A next step whose chips carry an action - a room's "Add a finishing touch"
+opens its finishing touches directly - so chips the reply wrote, which a tap
+would send back as words for a model to route, never replace them."""

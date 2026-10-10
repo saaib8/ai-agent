@@ -326,7 +326,11 @@ def customer_turn_coordinator(
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         briefs=(
             ProductBriefBuilder(
-                repository, app_resources.briefs, app_resources.attributes, app_resources.taxonomy
+                repository,
+                app_resources.briefs,
+                app_resources.attributes,
+                app_resources.taxonomy,
+                ask_space=settings.customer_agent.designer_space_question,
             )
             if app_resources.briefs is not None
             else None
@@ -340,6 +344,7 @@ def customer_turn_coordinator(
         designer_direction=settings.customer_agent.designer_direction,
         designer_taste=settings.customer_agent.designer_taste,
         designer_space_fit=settings.customer_agent.designer_space_fit,
+        designer_space_question=settings.customer_agent.designer_space_question,
         room_handoff=settings.customer_agent.designer_room_handoff,
         designer_fit=settings.customer_agent.designer_fit,
         size=settings.size,

@@ -81,6 +81,11 @@ class Chip(StrEnum):
     # What goes with a pick (app/services/cross_sell.py).
     COMPANION = "companion"
     NO_THANKS = "no_thanks"
+    # A finishing touch for a finished room (app/services/room_presentation.py).
+    ADD_PIECE = "add_piece"
+    YOU_CHOOSE_PIECE = "you_choose_piece"
+    # Which piece of a finished room (app/services/room_presentation.py).
+    ROOM_CARD = "room_card"
 
 
 CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
@@ -239,6 +244,18 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
         Chip.NO_THANKS: {
             EN: ChipText("No thanks", "No thanks"),
             AR: ChipText("لا، شكرًا", "لا، شكرًا"),
+        },
+        Chip.ADD_PIECE: {
+            EN: ChipText("{label}", "{label}, please"),
+            AR: ChipText("{label}", "{label} من فضلك"),
+        },
+        Chip.YOU_CHOOSE_PIECE: {
+            EN: ChipText("You choose", "You choose one for me"),
+            AR: ChipText("اختر أنت", "اختر لي واحدة"),
+        },
+        Chip.ROOM_CARD: {
+            EN: ChipText("{label}", "Show me other {piece} options"),
+            AR: ChipText("{label}", "أرني خيارات أخرى لـ{label}"),
         },
     }
 )

@@ -169,11 +169,16 @@ export function AssistantBubble({
   const language = data.reply_language === 'ar' ? 'ar' : 'en'
   const words = turnWords(language)
   const brief = presentation?.brief ?? null
+  // "Help me narrow these down" is the turn's question: the card opens with its
+  // questions showing and stays as a record, like a card of questions. Beside
+  // results it is folded, and only beside the latest list.
+  const askedToNarrow = brief?.mode === 'narrow' && !hasProducts
   const briefCard = brief && onBriefSubmit && (
     <BriefCard
       brief={brief}
       language={language}
       active={!!latest}
+      opened={askedToNarrow}
       busy={!!busy}
       onSubmit={onBriefSubmit}
     />
@@ -222,7 +227,7 @@ export function AssistantBubble({
             busy={busy}
           />
         )}
-        {brief?.mode === 'narrow' && latest && briefCard}
+        {brief?.mode === 'narrow' && (latest || askedToNarrow) && briefCard}
         {showBrief && (chips.length > 0 || narrowDown) && (
           <div className="flex flex-col gap-2">
             {chips.length > 0 && onDropChip && (

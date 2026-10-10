@@ -90,6 +90,7 @@ from app.services.response_wording import (
     DESIGN_HANDOFF_WORDING,
     DETERMINISTIC_FALLBACK,
     FAILURE_WORDING,
+    FINISHING_TOUCH_OFFER_WORDING,
     SIDE_NOTICE_WORDING,
     compose,
     fallback_for,
@@ -367,6 +368,11 @@ class CustomerResponseGenerator:
                 # authorised - dropping a lock, changing a budget.
                 assert primary.bundle_reason is not None
                 return _say(BUNDLE_UNAVAILABLE_WORDING[primary.bundle_reason], language), 0, False
+
+            case DeterministicResponseKind.FINISHING_TOUCH_OFFER:
+                # The pieces are the chips beside it; nothing was planned, so
+                # the question is the whole reply.
+                return _say(FINISHING_TOUCH_OFFER_WORDING, language), 0, False
 
     async def _generated(
         self,

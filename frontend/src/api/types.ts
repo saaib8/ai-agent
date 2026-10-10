@@ -307,6 +307,16 @@ export interface SwapAlternativesAction {
 export interface SwapDismissAction {
   kind: 'swap_dismiss'
 }
+/** A finishing touch for a finished room: the registry's piece key, or null for
+ *  "you choose", which lets the designer pick. */
+export interface AddPieceAction {
+  kind: 'add_piece'
+  piece: string | null
+}
+/** A room's "Add a finishing touch" chip: shows the pieces it could still take. */
+export interface FinishingTouchesAction {
+  kind: 'finishing_touches'
+}
 
 export type BundleAction =
   | BundleAlternativesAction
@@ -315,6 +325,8 @@ export type BundleAction =
   | SwapDeclineAction
   | SwapAlternativesAction
   | SwapDismissAction
+  | AddPieceAction
+  | FinishingTouchesAction
 
 export interface MoreOptionsAction {
   kind: 'more_options'

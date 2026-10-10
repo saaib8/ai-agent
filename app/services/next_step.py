@@ -26,6 +26,7 @@ from app.prompts.visualization.v1 import ROOM_TYPES
 from app.schemas.agent_decision import BlockingClarificationReason
 from app.schemas.agent_turn import CustomerResponse, CustomerTurnResult
 from app.schemas.bundle import RoomBundle
+from app.schemas.bundle_action import FinishingTouchesAction
 from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep, NextStepKind
 from app.schemas.picks import PickView
@@ -123,7 +124,12 @@ def next_step(
     if isinstance(result.bundle_outcome, RoomBundle):
         return NextStep(
             kind=NextStepKind.AFTER_ROOM,
-            chips=_chips(language, Chip.SWAP_A_PIECE, Chip.FINISHING_TOUCH),
+            chips=(
+                chip(Chip.SWAP_A_PIECE, language),
+                # Opens the room's finishing touches directly, never through
+                # a model reading the words.
+                chip(Chip.FINISHING_TOUCH, language, bundle_action=FinishingTouchesAction()),
+            ),
         )
     if picks:
         # Beside cards of what goes with their pick, "what goes with it?"
@@ -226,6 +232,7 @@ def already_asks(result: CustomerTurnResult) -> bool:
         or result.swap_offer is not None
         or result.seating_solution is not None
         or result.companions
+        or result.finishing_pieces
         or grounding.clarification is not None
         or grounding.deterministic_clarification is not None
     )

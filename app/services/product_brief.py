@@ -142,11 +142,17 @@ class ProductBriefBuilder:
         briefs: Briefs,
         attributes: CatalogAttributes,
         taxonomy: CommerceTaxonomy,
+        *,
+        ask_space: bool = True,
     ) -> None:
         self._repository = repository
         self._briefs = briefs
         self._attributes = attributes
         self._taxonomy = taxonomy
+        self._ask_space = ask_space
+        """Whether a card asks how wide the space is ("How wide a space?").
+        Off, the question is left off every card - opening, card and Narrow
+        down alike - and a space given in words is still used."""
 
     async def build(
         self,
@@ -213,7 +219,8 @@ class ProductBriefBuilder:
         open_questions = [
             kind
             for kind in candidates
-            if prefilled or not _answered(kind, brief, resolved, state)
+            if (prefilled or not _answered(kind, brief, resolved, state))
+            and (self._ask_space or kind is not BriefQuestionKind.SPACE)
         ]
         if not open_questions:
             return None

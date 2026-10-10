@@ -1916,3 +1916,34 @@ the model's.
   seven mattresses, one per width, showing them is the better answer.
 
 **Reported:** by the user (2026-10-10).
+
+
+## 29. A room planned again undoes a piece the customer swapped in
+
+**Status:** Open (found live 2026-10-10, testing on `bug-fixes`). Noted for
+the owner of the whole-room flow; not changed.
+
+**Seen:** a living room with a rug of 980 SAR. The customer swapped it through
+the rug's Swap button for one of 620 SAR ("Use option 5 for the carpet"). Their
+next message, "I'd like to add a finishing touch", was read by the decision
+model as `design_handoff` with `design_scope: whole_room`, and the room was
+planned again: the 980 SAR rug came back, and the reply did not say so.
+
+**Cause:** a swap commits the chosen product as an ordinary suggested line, not
+a locked one (`_apply_swap` → `_reoptimise`). A whole-room re-plan
+(`_whole_room`, a revision) and every `_reoptimise` choose each unlocked role
+again from scratch (by design: "Every role, not just the one that changed"),
+so a piece the customer picked themselves is treated like one we suggested.
+The same happens to any unlocked piece: in the same session a vase added
+through a re-plan also replaced the sofa (since fixed for finishing touches,
+which now pin every piece - CLAUDE.md 10.3).
+
+**Proposed fix (for the owner to decide):**
+- Treat a product the customer chose through Swap as theirs: lock it, or
+  record it so later re-plans keep it (as `forced_product_id` does for a
+  finishing touch) until they swap it again.
+- Or, when a re-plan changes a piece they did not ask about, say so in the
+  reply ("I switched the rug back to …") - the room summary would need to carry
+  what changed.
+
+**Reported:** found while testing the finishing-touch fix (2026-10-10).

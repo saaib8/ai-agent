@@ -12,6 +12,8 @@ from __future__ import annotations
 from app.schemas.agent_state import SwapBudgetOfferStage
 from app.schemas.agent_turn import SwapBudgetOffer
 from app.schemas.bundle_action import (
+    AddPieceAction,
+    BundleAlternativesAction,
     SwapAlternativesAction,
     SwapConfirmAction,
     SwapDeclineAction,
@@ -20,7 +22,12 @@ from app.schemas.bundle_action import (
 from app.schemas.chat import PieceChoice, PiecePicker
 from app.schemas.language import ReplyLanguage
 from app.schemas.reply_choice import ReplyChoice
-from app.schemas.room_opener import RoomQuestion, RoomQuestionKind
+from app.schemas.room_opener import (
+    RoomCardChoice,
+    RoomPieceOffer,
+    RoomQuestion,
+    RoomQuestionKind,
+)
 from app.services.chip_wording import DESIGN_MY_ROOM, PIECE_PICKED, Chip, chip
 from app.taxonomy.rooms import PieceTier
 
@@ -164,3 +171,44 @@ def _piece_label(label: str, label_ar: str | None, picked: bool, language: Reply
     if language is EN or label_ar is None:
         return label
     return PIECE_PICKED[language].format(label=label_ar) if picked else label_ar
+
+
+def finishing_choices(
+    pieces: tuple[RoomPieceOffer, ...], language: ReplyLanguage = EN
+) -> tuple[ReplyChoice, ...]:
+    """A finished room's finishing touches as chips: each piece it could still
+    take, then "you choose". Each carries its room edit, so a tap adds exactly
+    that piece - or lets the designer pick one - whatever the words say
+    (CLAUDE.md 3.6)."""
+    if not pieces:
+        return ()
+    return (
+        *(
+            chip(
+                Chip.ADD_PIECE,
+                language,
+                bundle_action=AddPieceAction(piece=piece.key),
+                label=_piece_label(piece.label, piece.label_ar, False, language),
+            )
+            for piece in pieces
+        ),
+        chip(Chip.YOU_CHOOSE_PIECE, language, bundle_action=AddPieceAction()),
+    )
+
+
+def room_card_choices(
+    cards: tuple[RoomCardChoice, ...], language: ReplyLanguage = EN
+) -> tuple[ReplyChoice, ...]:
+    """A room's pieces as chips answering "which piece?". Each carries the
+    alternatives action its Swap button sends, so a tap shows that piece's
+    options and nothing is read from the words (CLAUDE.md 3.6)."""
+    return tuple(
+        chip(
+            Chip.ROOM_CARD,
+            language,
+            bundle_action=BundleAlternativesAction(bundle_ordinal=card.ordinal),
+            label=card.label_ar if language is not EN and card.label_ar else card.label,
+            piece=card.label.lower(),
+        )
+        for card in cards
+    )

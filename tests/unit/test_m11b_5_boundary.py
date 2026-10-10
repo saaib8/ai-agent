@@ -129,6 +129,7 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "designer_direction",
         "designer_taste",
         "designer_space_fit",
+        "designer_space_question",
         "room_handoff",
         "designer_fit",
         "size",

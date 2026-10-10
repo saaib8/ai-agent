@@ -308,6 +308,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             kind=DeterministicResponseKind.BUNDLE_UNAVAILABLE,
             bundle_reason=result.bundle_outcome.reason,
         )
+    if result.finishing_pieces:
+        # A finishing touch for a finished room, with no piece named: which
+        # one is the question, and the room's missing pieces are its chips.
+        # Checked before the handoff marker, which would otherwise report that
+        # nothing came of the request.
+        return DeterministicResponse(kind=DeterministicResponseKind.FINISHING_TOUCH_OFFER)
     if grounding.design_handoff_requested and not lapsed:
         # Asked for, and nothing came of it. A clarification beside it is
         # worded on its own, from the route's `required_clarification`.
@@ -453,6 +459,7 @@ def _room_bundle(
                 for entry in bundle.unmet
                 if entry.commerce_category is not None
             ),
+            added_pieces=tuple(_piece_words(None, kind) for kind in result.pieces_added),
             seating_for=(
                 result.room_seats
                 if room is not None

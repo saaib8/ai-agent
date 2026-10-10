@@ -197,6 +197,35 @@ def composed_needs(
     return needs
 
 
+MAX_FINISHING_PIECES = 8
+"""A row of chips, not the whole registry: anything else can still be asked
+for in words."""
+
+
+def finishing_offers(
+    template: RoomTemplate,
+    capabilities: RetailerCatalogCapabilities,
+    in_room: frozenset[str],
+) -> tuple[RoomPieceOffer, ...]:
+    """The pieces a finished room could still take, as finishing-touch chips.
+
+    Every piece of the room the store stocks and the room does not hold yet, in
+    the registry's order - so a recommended piece leads an optional one. The
+    room's seating is never offered: it is the room's anchor, not a touch.
+    """
+    return tuple(
+        RoomPieceOffer(
+            key=piece.key,
+            label=piece.label,
+            label_ar=piece.label_ar,
+            tier=piece.tier,
+            selected=False,
+        )
+        for piece in offered(template, capabilities)
+        if piece.key not in in_room and not piece.is_seating
+    )[:MAX_FINISHING_PIECES]
+
+
 def seating_piece(
     template: RoomTemplate, keys: Sequence[str], capabilities: RetailerCatalogCapabilities
 ) -> RoomPiece | None:

@@ -595,6 +595,35 @@ If a customer accepts/locks an item, later optimization must preserve it unless 
 
 Distinguish required, recommended, and optional furnishing categories so budget optimization can remove lower-priority items before degrading core room requirements.
 
+**A finishing touch for a finished room asks which piece.** The room's own
+"Add a finishing touch" chip opens it directly (`bundle_action`
+`finishing_touches`; after a room, the step's chips are never replaced by ones
+the reply wrote), and the decision model is told that "add a finishing touch"
+with no piece named is `complement`, never `whole_room`. "Add a finishing
+touch" names no piece; with a room package on record it is answered with a
+fixed question and the room's pieces the store stocks that the room does not
+hold yet as chips, in the registry's order (at most `MAX_FINISHING_PIECES`),
+plus "You choose" - never "I wasn't able to put that together". Each chip is a
+`bundle_action` `add_piece` with the registry key; "You choose" carries none.
+A tap adds that piece and changes nothing else: every chosen piece is pinned
+to the product it is for this choice (`forced_product_id`, never a lock, so its
+Swap button stays), and the new piece joins the plan last as an optional need,
+so it can never push a piece out - short of budget, it is the one left unfilled
+and the reply names it as missing. The words sent with the tap are never read.
+For "You choose" the designer is asked what would complete the space around
+everything in the room (`complementary_recommendation`), kept to the pieces the
+room could still take, falling back to the registry's first. The reply is told
+which types the room gained (`added_pieces`) and names them as added.
+
+**"Which piece?" beside a finished room is answered with its pieces.** When a
+turn asks which product (`ambiguous_product_reference`), shows nothing new, has
+no answers of its own and a room package is on record - "I'd like to swap one
+of the pieces", "fine-tune another piece" - each piece a Swap button is drawn
+for (to buy, not locked) becomes a chip (`room_cards`), numbered as the room's
+cards are and named by the room registry (by type for seating). A chip is that
+piece's Swap button: `list_alternatives` for its ordinal, and the console
+enters swap mode, so picking an option replaces the piece.
+
 ### 10.4 The card for a product search
 
 "I need a sofa" - or "find me a sofa", "show me sofas" - says what they want
@@ -866,7 +895,10 @@ most once a session (`taste`), and never about what was said or learned:
 1. "How wide is the spot where it will go?" - for a kind a space can be
    fitted to (`SPACE_WIDTHS`), while no wall and no width for the piece is
    known: the widths as chips, and "Not sure". The answer is the space of
-   10.10 - it orders, never filters.
+   10.10 - it orders, never filters. **Off by default**
+   (`customer_agent.designer_space_question`): the next question is asked
+   instead, and no card - opening, card or Narrow down - offers "How wide a
+   space?" either. A space given in words is still used.
 2. "Which of these two feels more like you?" - the two cards on screen that
    differ most in colour and style, and "Neither". The answer is said taste
    (the card's styles for any kind, its colour for this kind) and is **never a
@@ -914,7 +946,9 @@ unless its family names what it asks instead - a sofa's opening asks the
 room, and its space is the first question after products (10.9) - simply:
 how wide the wall or spot is, never which measurement or unit. "Help
 me narrow these down", "narrow by size" open Narrow down as the turn's
-question (`narrow_by`), kept to the questions named. A measurement a kind
+question (`narrow_by`), kept to the questions named. The console draws it open
+with its questions showing - never as the folded "Narrow down" button - and
+keeps it in the chat, read-only, once they move on. A measurement a kind
 cannot be searched by is corrected once, never a failed turn.
 
 ### 10.11 Will it fit (`customer_agent.designer_fit`)

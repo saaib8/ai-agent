@@ -46,9 +46,11 @@ def choose_question(
     taste: TasteState,
     *,
     list_revision: int | None,
+    ask_space: bool = True,
 ) -> PendingTaste | None:
     """The one taste question worth asking now, beside the list at
-    `list_revision`, or None."""
+    `list_revision`, or None. `ask_space` off skips "how wide is the spot?"
+    and goes on to the next question."""
     colour_known, style_known = _known(search, said)
     asked = set(taste.asked)
     question = taste.asked_count + 1
@@ -57,7 +59,12 @@ def choose_question(
     style_settled = TasteQuestionKind.STYLE in asked or style_known
 
     widths = SPACE_WIDTHS.get(kind or "", ())
-    if widths and TasteQuestionKind.SPACE not in asked and not _space_known(search):
+    if (
+        ask_space
+        and widths
+        and TasteQuestionKind.SPACE not in asked
+        and not _space_known(search)
+    ):
         return PendingTaste(
             question=question,
             kind=TasteQuestionKind.SPACE,

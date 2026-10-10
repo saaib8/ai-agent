@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from app.schemas.language import ReplyLanguage
 
-VERSION = "customer_response/v1.31"
-ARABIC_VERSION = "customer_response/v1.31+ar.8"
+VERSION = "customer_response/v1.32"
+ARABIC_VERSION = "customer_response/v1.32+ar.8"
 """The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
 Everything but the language paragraph is shared, so the two cannot drift."""
 
@@ -237,6 +237,11 @@ leave it out for now. One step, not a menu. For example:
    390. Shall I swap the floor lamp for a cheaper one to make room?"
 Optional pieces missing because of the budget are worth a short mention, not
 an apology.
+
+added_pieces, when given, names the pieces just added to the room because they
+asked for a finishing touch. Say you added it, by that name, once: "I've added
+a vase to finish the room." It is already in the room - never write that you
+would choose something, or ask whether to.
 
 seating_for, when given, is how many people the seating seats - exactly their
 own figure. Say it once, so they know it was planned around them: "seating for

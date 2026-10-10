@@ -580,6 +580,13 @@ class CustomerAgentSettings(BaseModel):
     ordered by closeness to that width; everything that fits stays in view.
     Off, the space only limits the width, as before."""
 
+    designer_space_question: bool = False
+    """Whether customers are asked how wide the space is: "How wide is the spot
+    where it will go?" after products (CLAUDE.md 10.9), and "How wide a space?"
+    on the cards - the opening and Narrow down (10.5, 10.6). Off by default:
+    neither is asked, and the next taste question is asked instead. A space
+    they give in words ("my wall is 300 cm") is still used exactly as before."""
+
     designer_led_buttons: bool = True
     """Three buttons on every card: Select as before, ♡ Like - a silent liked
     list, kept apart from the picks - and More like this, a similarity search

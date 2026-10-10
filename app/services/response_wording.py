@@ -158,6 +158,12 @@ So it claims nothing at all: not about the design, not about a selection, not
 about what the capability can or cannot do. Something did not come back, and
 that is the whole message."""
 
+FINISHING_TOUCH_OFFER_WORDING = (
+    "Happy to add one. Pick a piece below, or shall I choose one for you?"
+)
+"""Which finishing touch, with the pieces as chips beside it and "you choose"
+among them. No product, no figure: nothing has been planned yet."""
+
 SIDE_NOTICE_WORDING: dict[SideEffectNotice, str] = {
     SideEffectNotice.SELECTION_NOT_UPDATED: "I wasn't able to save that selection.",
     SideEffectNotice.SELECTION_NOT_REMOVED: "I wasn't able to remove that selection.",
@@ -268,6 +274,7 @@ DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
     DeterministicResponseKind.BUNDLE_UNAVAILABLE: (
         "I wasn't able to work the room package out just now."
     ),
+    DeterministicResponseKind.FINISHING_TOUCH_OFFER: FINISHING_TOUCH_OFFER_WORDING,
 }
 """For a deterministic branch whose own wording could not be produced - a
 clarification with no question on it, for instance."""

@@ -122,9 +122,11 @@ from app.schemas.bundle import (
     UnmetReason,
 )
 from app.schemas.bundle_action import (
+    AddPieceAction,
     BundleActionRequest,
     BundleAlternativesAction,
     BundleSwapAction,
+    FinishingTouchesAction,
     SwapAlternativesAction,
     SwapConfirmAction,
     SwapDeclineAction,
@@ -243,7 +245,12 @@ from app.schemas.response import (
     TasteAnsweredView,
 )
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
-from app.schemas.room_opener import RoomQuestion, RoomQuestionKind
+from app.schemas.room_opener import (
+    RoomCardChoice,
+    RoomPieceOffer,
+    RoomQuestion,
+    RoomQuestionKind,
+)
 from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import (
     BriefAnswerAction,
@@ -270,6 +277,7 @@ from app.services.agent_state import (
     remember_measurements,
 )
 from app.services.agent_view import project_state
+from app.services.bundle_cards import group_bundle_cards
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog_capability import CatalogCapabilityService
@@ -305,6 +313,7 @@ from app.services.room_composition import (
     chosen_keys,
     composed_needs,
     default_pieces,
+    finishing_offers,
     next_question,
     piece_for,
     seating_piece,
@@ -323,9 +332,9 @@ from app.taxonomy.compare_groups import CompareGroups
 from app.taxonomy.complements import Companion, Complements
 from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
-from app.taxonomy.rooms import RoomPieces, RoomTemplate
+from app.taxonomy.rooms import RoomPiece, RoomPieces, RoomTemplate
 from app.taxonomy.seating import SeatingSemantics
-from app.taxonomy.words import customer_words_or_none
+from app.taxonomy.words import customer_words, customer_words_or_none, label_words
 
 logger = get_logger(__name__)
 
@@ -525,6 +534,13 @@ class _Primary:
 
     product_brief: ProductBrief | None = None
     """A card of questions for a product search, when one was drawn this turn."""
+
+    finishing_pieces: tuple[RoomPieceOffer, ...] = ()
+    """The pieces a finished room could still take, asked about when they want
+    a finishing touch and named none (`CustomerTurnResult.finishing_pieces`)."""
+
+    pieces_added: tuple[str, ...] = ()
+    """The types a tapped finishing touch added (`CustomerTurnResult.pieces_added`)."""
     """The room edit this turn made, for the deterministic acknowledgement.
 
     Set only when lines actually changed: an operation that asked for a state a
@@ -567,6 +583,12 @@ you mean?" is answerable and "that one is gone" is not. A customer cannot
 resolve a piece the catalog stopped returning, nor a room we could not finish
 reading, so neither becomes a question.
 """
+
+
+def _expired(state: AgentStateV1) -> _Primary:
+    """A tapped chip whose room has moved on: nothing changes, and the reply
+    says those choices are no longer current."""
+    return _Primary(state=state, failure=TurnFailure(code=TurnFailureCode.QUESTIONS_EXPIRED))
 
 
 def _unresolved_bundle(reason: BundleReferenceFailureReason, state: AgentStateV1) -> _Primary:
@@ -1025,9 +1047,18 @@ def _bundle_action_decision(action: BundleActionRequest) -> CustomerAgentDecisio
             | SwapDeclineAction()
             | SwapKeepOriginalAction()
             | SwapDismissAction()
+            | FinishingTouchesAction()
         ):
             return CustomerAgentDecision(
                 action=AgentAction.ANSWER,
+                commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+            )
+        case AddPieceAction():
+            # A finishing touch tapped: the room planned again with one more
+            # piece, routed and worded like "add a mirror to the room" typed.
+            return CustomerAgentDecision(
+                action=AgentAction.DESIGN_HANDOFF,
+                design_scope=DesignScope.WHOLE_ROOM,
                 commercial_reason=CommercialReason.CUSTOMER_REQUEST,
             )
 
@@ -1165,6 +1196,7 @@ class CustomerTurnCoordinator:
         designer_direction: bool = False,
         designer_taste: bool = False,
         designer_space_fit: bool = False,
+        designer_space_question: bool = True,
         room_handoff: bool = False,
         designer_fit: bool = False,
         size: SizeSettings | None = None,
@@ -1184,6 +1216,9 @@ class CustomerTurnCoordinator:
         """Whether a room starts from what shopping already learned."""
         self._designer_space_fit = designer_space_fit
         """Whether the designer decides what width suits the space they gave."""
+        self._designer_space_question = designer_space_question
+        """Whether "How wide is the spot?" is asked after products, as the
+        first taste question."""
         self._designer_taste = designer_taste
         """Whether taste is learned from likes, picks and More like this, and
         asked softly after products."""
@@ -1265,6 +1300,7 @@ class CustomerTurnCoordinator:
         result = await self._with_narrow_down(result, turn)
         result = await self._with_taste_question(result, turn)
         result = self._with_room_check(result)
+        result = await self._with_room_cards(result, turn)
         if result.next_step is not None:
             return result
         capabilities = None
@@ -1282,6 +1318,81 @@ class CustomerTurnCoordinator:
             rooms=self._rooms,
         )
         return result.model_copy(update={"next_step": step}) if step is not None else result
+
+    async def _with_room_cards(
+        self, result: CustomerTurnResult, turn: CustomerTurnInput
+    ) -> CustomerTurnResult:
+        """ "Which piece?" beside a finished room, asked with no answers of its
+        own: the room's pieces as chips, each doing exactly what that piece's
+        Swap button does.
+
+        Only a turn that asks which product and shows nothing new; only the
+        pieces a Swap button is drawn for (to buy, not locked), numbered as the
+        room's cards are, so chip two is card two. Named by the room registry,
+        or by type for seating and anything it does not name.
+        """
+        grounding = result.grounding
+        model = grounding.clarification
+        asked = model or grounding.deterministic_clarification
+        room = result.state.room_project
+        if (
+            asked is None
+            or asked.reason is not BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            or (model is not None and model.choices)
+            or room is None
+            or not room.bundle_items
+            or grounding.search is not None
+            or grounding.selection is not None
+            or grounding.product_detail is not None
+            or grounding.comparison is not None
+            or result.bundle_outcome is not None
+        ):
+            return result
+        cards = [
+            (ordinal, card)
+            for ordinal, card in enumerate(group_bundle_cards(room.bundle_items), start=1)
+            if card.acquisition is BundleAcquisition.TO_BUY and not card.locked
+        ]
+        if not cards:
+            return result
+        try:
+            products = await self._hydration.hydrate_ids(
+                [card.product_id for _, card in cards], turn.context
+            )
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("room_cards_unavailable", store_id=turn.context.store_id)
+            return result
+        by_id = {product.product_id: product for product in products}
+        template = self._rooms.template(room.room_kind) if self._rooms is not None else None
+        choices: list[RoomCardChoice] = []
+        seen: dict[str, int] = {}
+        for ordinal, card in cards:
+            product = by_id.get(card.product_id)
+            if product is None:
+                continue
+            kind = product.commerce.subcategory or product.commerce.category or "piece"
+            piece = (
+                piece_for(template, product.commerce.category, product.commerce.subcategory)
+                if template is not None
+                else None
+            )
+            named = piece is not None and not piece.is_seating
+            label = (
+                piece.label if piece is not None and named else label_words(customer_words(kind))
+            )
+            label_ar = (
+                piece.label_ar if piece is not None and named else self._taxonomy.arabic(kind)
+            )
+            # Two cards of one kind stay tellable apart.
+            count = seen[label] = seen.get(label, 0) + 1
+            if count > 1:
+                label_ar = f"{label_ar} {count}" if label_ar else None
+                label = f"{label} {count}"
+            choices.append(RoomCardChoice(ordinal=ordinal, label=label, label_ar=label_ar))
+        if not choices:
+            return result
+        logger.info("room_cards_offered", store_id=turn.context.store_id, cards=len(choices))
+        return result.model_copy(update={"room_cards": tuple(choices)})
 
     def _answers_room_check(
         self, decision: CustomerAgentDecision, state: AgentStateV1
@@ -1433,6 +1544,7 @@ class CustomerTurnCoordinator:
             stocked,
             result.state.taste,
             list_revision=result.state.product_interaction.presented_search_revision,
+            ask_space=self._designer_space_question,
         )
         if pending is None:
             return result
@@ -1834,6 +1946,7 @@ class CustomerTurnCoordinator:
             product_brief=primary.product_brief,
             focus=primary.focus,
             companions=primary.companions,
+            finishing_pieces=primary.finishing_pieces,
             stated_figures=primary.stated_figures,
             still_on_screen=(
                 visible
@@ -1872,6 +1985,10 @@ class CustomerTurnCoordinator:
                 primary = await self._swap_alternatives(pre_turn, turn)
             case SwapDismissAction():
                 primary = await self._dismiss_swap(pre_turn, turn)
+            case AddPieceAction():
+                primary = await self._add_piece(action, pre_turn, turn)
+            case FinishingTouchesAction():
+                primary = await self._finishing_offer(pre_turn, turn) or _expired(pre_turn)
 
         decision = _bundle_action_decision(action)
         final_state = primary.state
@@ -1890,6 +2007,8 @@ class CustomerTurnCoordinator:
             swap_offer=primary.swap_offer,
             swap_context=primary.swap_context,
             budget_stretched=primary.budget_stretched,
+            pieces_added=primary.pieces_added,
+            finishing_pieces=primary.finishing_pieces,
         )
         logger.info(
             "bundle_action_completed",
@@ -5079,6 +5198,12 @@ class CustomerTurnCoordinator:
 
         product = anchored.product or await self._settled_product(pre_turn, turn)
         if product is None:
+            # A finished room is something to complement: "add a finishing
+            # touch" with no piece named asks which piece, with the pieces the
+            # room could still take as chips.
+            offer = await self._finishing_offer(state, turn)
+            if offer is not None:
+                return offer
             # Nothing to complement. Asking the specialist what goes with
             # nothing in particular is a different question.
             return _Primary(
@@ -5124,6 +5249,241 @@ class CustomerTurnCoordinator:
         return await self._first_viable_complement(
             plan.needs, request, state, turn, await self._direction_context(product, state, turn)
         )
+
+    async def _finishing_offer(
+        self, state: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary | None:
+        """Which finishing touch, when a finished room is what they would add to.
+
+        The room registry's pieces this store stocks that the room does not
+        hold yet - what it holds read from its products, fresh. None where
+        there is no finished room of a kind the registry knows, or nothing left
+        to offer: the turn then asks which piece they meant, as it always did.
+        """
+        room = state.room_project
+        if self._rooms is None or room is None or not room.bundle_items:
+            return None
+        template = self._rooms.template(room.room_kind)
+        if template is None:
+            return None
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+            products = await self._hydration.hydrate_ids(
+                [item.product_id for item in room.bundle_items], turn.context
+            )
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("finishing_touch_unavailable", store_id=turn.context.store_id)
+            return None
+        in_room = frozenset(
+            piece.key
+            for product in products
+            if (
+                piece := piece_for(
+                    template, product.commerce.category, product.commerce.subcategory
+                )
+            )
+            is not None
+        )
+        pieces = finishing_offers(template, capabilities, in_room)
+        if not pieces:
+            return None
+        logger.info(
+            "finishing_touch_offered",
+            store_id=turn.context.store_id,
+            room_kind=template.kind,
+            pieces=len(pieces),
+        )
+        return _Primary(
+            state=state, design_handoff=True, proposals_applied=True, finishing_pieces=pieces
+        )
+
+    async def _add_piece(
+        self, action: AddPieceAction, pre_turn: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """One more piece in the room, and nothing else changed: the finishing
+        touch they tapped, or the one the designer thinks finishes it best.
+
+        Every piece already chosen stays the product it is - pinned to it for
+        this choice, never locked, so its Swap button stays - and the new piece
+        joins the plan last, as an optional need. The optimiser fills tiers in
+        order and keeps earlier needs on a tie, so the new piece can never push
+        one out: if the budget is short it is the one left unfilled, and the
+        reply names it as missing with its cheapest price (CLAUDE.md 27).
+        """
+        room = pre_turn.room_project
+        template = (
+            self._rooms.template(room.room_kind)
+            if self._rooms is not None and room is not None and room.bundle_items
+            else None
+        )
+        piece = (
+            template.piece(action.piece)
+            if template is not None and action.piece is not None
+            else None
+        )
+        if (
+            room is None
+            or template is None
+            or (action.piece is not None and (piece is None or piece.is_seating))
+        ):
+            # No finished room to add to, or a piece this room cannot hold: the
+            # chip belongs to a room that has moved on.
+            logger.info("add_piece_refused", store_id=turn.context.store_id)
+            return _expired(pre_turn)
+        try:
+            capabilities = await self._capabilities.capabilities(turn.context)
+            held = await self._hydration.hydrate_ids(
+                [item.product_id for item in room.bundle_items], turn.context
+            )
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("add_piece_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+            )
+        in_room = frozenset(
+            found.key
+            for product in held
+            if (
+                found := piece_for(
+                    template, product.commerce.category, product.commerce.subcategory
+                )
+            )
+            is not None
+        )
+        if piece is None:
+            piece = await self._designers_pick(
+                room, held, capabilities, finishing_offers(template, capabilities, in_room), turn
+            )
+        if piece is None or piece.key in in_room:
+            # Nothing left to add, or a piece the room already holds.
+            logger.info("add_piece_refused", store_id=turn.context.store_id)
+            return _expired(pre_turn)
+        logger.info("add_piece_requested", store_id=turn.context.store_id, piece=piece.key)
+
+        locks = await self._verify_locks(pre_turn, turn.context)
+        if locks is None:
+            return _Primary(
+                state=pre_turn,
+                failure=TurnFailure(code=TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE),
+            )
+        existing = _plan_from(room)
+        plan = InteriorDesignResult(
+            needs=(
+                *existing.needs,
+                DesignCategoryNeed(
+                    commerce_category=piece.commerce_category,
+                    commerce_subcategory=piece.commerce_subcategory,
+                    priority=DesignPriority.OPTIONAL,
+                    quantity=piece.quantity,
+                ),
+            )
+        )
+        # Each chosen piece, pinned to the product it is. A locked one needs no
+        # pin: the optimiser keeps every lock.
+        chosen = {
+            line.need_id: line.product_id
+            for line in room.bundle_items
+            if line.need_id is not None and line.status is not BundleItemStatus.LOCKED
+        }
+        overrides = {
+            position: DesignNeedSearchOverride(
+                need_id=need.need_id, forced_product_id=chosen[need.need_id]
+            )
+            for position, need in enumerate(room.design_needs)
+            if need.need_id in chosen
+        }
+        try:
+            discovery = await self._design_discovery.discover(
+                InteriorDesignRequest(
+                    task=DesignTask.ROOM_PLAN,
+                    room_type=room.room_type,
+                    geometry=room.geometry,
+                    budget=room.budget,
+                    design_preferences=room.design_preferences,
+                    catalog_capabilities=capabilities,
+                ),
+                plan,
+                turn.context,
+                overrides=overrides,
+            )
+        except _HANDLED_SEARCH_FAILURES:
+            logger.warning("add_piece_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=pre_turn, failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
+            )
+        outcome = self._optimizer.optimize(
+            BundleOptimizationRequest(
+                discovery=discovery,
+                budget=room.budget,
+                locked=tuple(product for _, product in locks),
+            )
+        )
+        # Named as the room names it ("decorative statue"), and only when the
+        # new need was filled: short of budget it is missing, not added.
+        added = (
+            (piece.label.lower(),)
+            if isinstance(outcome, RoomBundle)
+            and any(line.need_index == len(existing.needs) for line in outcome.lines)
+            else ()
+        )
+        return _Primary(
+            state=self._commit(pre_turn, plan, outcome),
+            design_handoff=True,
+            proposals_applied=True,
+            bundle_outcome=outcome,
+            pieces_added=added,
+        )
+
+    async def _designers_pick(
+        self,
+        room: RoomProjectState,
+        held: Sequence[ProductCandidate],
+        capabilities: RetailerCatalogCapabilities,
+        offers: Sequence[RoomPieceOffer],
+        turn: CustomerTurnInput,
+    ) -> RoomPiece | None:
+        """ "You choose": the piece the designer thinks finishes this room best.
+
+        Asked as what would complete the space around everything in the room,
+        and kept to the pieces the room could still take. Where the designer
+        cannot answer, or names none of them, the registry's first - a
+        recommended piece before an optional one.
+        """
+        template = self._rooms.template(room.room_kind) if self._rooms is not None else None
+        if template is None or not offers:
+            return None
+        offered = {offer.key for offer in offers}
+        fallback = template.piece(offers[0].key)
+        if self._design is None or not held:
+            return fallback
+        quantities: dict[int, int] = {}
+        for line in room.bundle_items:
+            quantities[line.product_id] = quantities.get(line.product_id, 0) + line.quantity
+        try:
+            advice = await self._design.plan(
+                InteriorDesignRequest(
+                    task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
+                    design_brief="The one finishing touch that would best complete this room.",
+                    room_type=room.room_type,
+                    design_preferences=room.design_preferences,
+                    regular_seating_count=room.regular_seating_count,
+                    catalog_capabilities=capabilities,
+                    anchors=project_anchors(
+                        held,
+                        dimensions=self._dimensions,
+                        locked_product_ids=[product.product_id for product in held],
+                        quantities=quantities,
+                    ),
+                )
+            )
+        except _HANDLED_DESIGN_FAILURES:
+            logger.warning("designers_pick_unavailable", store_id=turn.context.store_id)
+            return fallback
+        for need in advice.needs:
+            found = piece_for(template, need.commerce_category, need.commerce_subcategory)
+            if found is not None and found.key in offered:
+                return found
+        return fallback
 
     async def _first_viable_complement(
         self,

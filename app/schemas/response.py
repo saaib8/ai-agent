@@ -190,6 +190,12 @@ class DeterministicResponseKind(StrEnum):
     model asked to explain it would start guessing at remedies.
     """
 
+    FINISHING_TOUCH_OFFER = "finishing_touch_offer"
+    """A finishing touch asked for with no piece named: which one is the
+    question, and the pieces the room could still take are its chips. Fixed
+    wording: nothing was planned or priced, so there is nothing for a model to
+    describe, and one given this would be inventing a piece."""
+
 
 class DeterministicResponse(BaseModel):
     """A branch that answers without reaching a model. Application-only."""
@@ -285,6 +291,10 @@ class BundleGroundingView(BaseModel):
     missing_pieces: tuple[MissingPieceView, ...] = ()
     """Each missing piece by name, with its reason - so the reply says "the rug
     didn't fit the budget", never "1 needed piece couldn't be included"."""
+
+    added_pieces: tuple[str, ...] = ()
+    """The pieces this turn added to the room at their request, in words - so
+    the reply says it added the vase, never that it would choose something."""
 
     seating_for: int | None = Field(default=None, ge=1)
     """How many people the room's seating seats, when that is exactly the

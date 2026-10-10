@@ -112,6 +112,9 @@ ARABIC: Mapping[str, str] = MappingProxyType(
             " تراه محدّثًا."
         ),
         "I wasn't able to put that together just now.": "لم أتمكن من تجهيز ذلك الآن.",
+        "Happy to add one. Pick a piece below, or shall I choose one for you?": (
+            "يسعدني إضافة لمسة أخيرة. اختر قطعة من الأسفل، أم تريدني أن أختار لك؟"
+        ),
         # ── a side effect that did not happen ──────────────────────────────
         "I wasn't able to save that selection.": "لم أتمكن من حفظ هذا الاختيار.",
         "I wasn't able to remove that selection.": "لم أتمكن من إزالة هذا الاختيار.",

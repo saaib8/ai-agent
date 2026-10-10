@@ -110,6 +110,35 @@ class SwapDismissAction(BaseModel):
     kind: Literal["swap_dismiss"] = "swap_dismiss"
 
 
+class AddPieceAction(BaseModel):
+    """Add one piece to the room package: a finishing touch the customer tapped.
+
+    `piece` is the room registry's key ("mirror"), never a product - the room
+    is planned again with that piece added, exactly as "add a mirror to the
+    room" typed would plan it, so the designer and the optimiser choose the
+    product. Absent means "you choose": the designer picks the one piece that
+    best finishes the room.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["add_piece"] = "add_piece"
+    piece: str | None = Field(default=None, min_length=1, max_length=40)
+
+
+class FinishingTouchesAction(BaseModel):
+    """Show the finishing touches a finished room could still take.
+
+    What the room's "Add a finishing touch" chip sends, so the offer never
+    depends on a model reading the words: the room's missing pieces the store
+    stocks, as chips, each an `AddPieceAction`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["finishing_touches"] = "finishing_touches"
+
+
 BundleActionRequest = Annotated[
     BundleAlternativesAction
     | BundleSwapAction
@@ -117,7 +146,9 @@ BundleActionRequest = Annotated[
     | SwapDeclineAction
     | SwapKeepOriginalAction
     | SwapAlternativesAction
-    | SwapDismissAction,
+    | SwapDismissAction
+    | AddPieceAction
+    | FinishingTouchesAction,
     Field(discriminator="kind"),
 ]
 """Any room-edit action, told apart by `kind`."""

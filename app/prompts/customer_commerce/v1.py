@@ -18,8 +18,8 @@ from collections.abc import Sequence
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.rooms import RoomPiece, RoomPieces
 
-VERSION = "customer_decision/v1.21"
-LANGUAGE_VERSION = "customer_decision/v1.21+reply-language.9"
+VERSION = "customer_decision/v1.22"
+LANGUAGE_VERSION = "customer_decision/v1.22+reply-language.9"
 """The same prompt with the LANGUAGE section, used where Arabic replies are on
 (docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
 
@@ -518,6 +518,13 @@ complement - the single furnishing role that would most finish the space
 advice     - a design question, answered as knowledge. Produces no products.
 
 On any other action the field is not read; leave it at whole_room.
+
+A finishing touch for a room already put together is complement, never
+whole_room: "add a finishing touch", "what would finish the room?", "add
+something else", with no piece named. The application asks which piece, with
+the pieces the room could still take. whole_room would plan the room again and
+could change pieces they already have. A piece they do name is whole_room, as
+before.
 
 A DESIGN ANSWER SHOULD LEAD SOMEWHERE
 Answering the question is the job, and it is rarely the end of it. Someone who

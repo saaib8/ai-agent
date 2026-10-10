@@ -419,6 +419,22 @@ export default function App() {
         void chat.send(value, config.config, { search })
         return
       }
+      if (bundle?.kind === 'list_alternatives') {
+        // A room piece's chip answering "which piece?" is that piece's Swap
+        // button: the same request, and swap mode on, so picking an
+        // alternative replaces the piece. Named as the room card names it.
+        const room = [...chat.turns]
+          .reverse()
+          .flatMap((t) =>
+            t.kind === 'assistant' && t.data.presentation?.room ? [t.data.presentation.room] : [],
+          )[0]
+        const item = room?.items.find((i) => i.grounding_ref === bundle.bundle_ordinal)
+        handleSwapStart(
+          bundle.bundle_ordinal,
+          humanise(item?.commerce.subcategory ?? item?.commerce.category ?? 'item'),
+        )
+        return
+      }
       if (bundle) {
         // The yes/no on an over-budget swap: a structured room edit that answers
         // the held offer deterministically, never routed through the model.
@@ -435,7 +451,7 @@ export default function App() {
       setSwap(null)
       void chat.send(value, config.config, { product: action })
     },
-    [chat, config.config, handleSend],
+    [chat, config.config, handleSend, handleSwapStart],
   )
 
   const handleVisualize = useCallback(

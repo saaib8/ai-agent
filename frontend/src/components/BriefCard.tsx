@@ -9,6 +9,9 @@ interface BriefCardProps {
   language: ReplyLanguage
   /** Only the latest turn's card can be answered; older ones stay as a record. */
   active: boolean
+  /** Narrow down they asked for is the turn's question, so it starts open with
+   *  its questions showing; beside results it starts folded. */
+  opened?: boolean
   busy: boolean
   /** The answers as the keys the card offered, and words for the chat thread -
    *  or, when they typed something more, no answer and all of it as words. */
@@ -26,9 +29,9 @@ type Picked = Record<string, string[]>
  * about, so sending an empty card shows what they first asked for. Beside
  * results it starts folded, as a way to narrow them down.
  */
-export function BriefCard({ brief, language, active, busy, onSubmit }: BriefCardProps) {
+export function BriefCard({ brief, language, active, opened, busy, onSubmit }: BriefCardProps) {
   const words = briefWords(language)
-  const [open, setOpen] = useState(brief.mode === 'ask')
+  const [open, setOpen] = useState(brief.mode === 'ask' || !!opened)
   // Narrow down opens showing what the search on screen already uses.
   const [picked, setPicked] = useState<Picked>(() =>
     Object.fromEntries(

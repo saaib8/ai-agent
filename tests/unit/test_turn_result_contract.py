@@ -154,6 +154,13 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         "liked",
         "focus",
         "companions",
+        # A finished room's missing pieces, asked about when they want a
+        # finishing touch and named none.
+        "finishing_pieces",
+        # The types a tapped finishing touch added, for the reply to name.
+        "pieces_added",
+        # A room's pieces as chips, answering "which piece?".
+        "room_cards",
         # The card of questions for a product search, drawn by the client. The
         # reply sees only what it asks about.
         "product_brief",

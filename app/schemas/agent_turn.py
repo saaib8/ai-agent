@@ -51,7 +51,7 @@ from app.schemas.response import (
     TasteAnsweredView,
 )
 from app.schemas.retailer import RetailerContext
-from app.schemas.room_opener import RoomQuestion
+from app.schemas.room_opener import RoomCardChoice, RoomPieceOffer, RoomQuestion
 from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingBundle, SeatingSolution
@@ -478,6 +478,23 @@ class CustomerTurnResult(BaseModel):
     narrowed: bool = False
     """This turn's search is their answer to Narrow down: what it uses now
     replaces what it used, and the reply describes it as it is now."""
+
+    finishing_pieces: tuple[RoomPieceOffer, ...] = ()
+    """The pieces a finished room could still take, offered as chips when the
+    customer asked for a finishing touch without naming one - with "you choose"
+    beside them. Asking which is the turn's question; nothing is planned until
+    they tap one."""
+
+    pieces_added: tuple[str, ...] = ()
+    """The piece a tapped finishing touch added to the room, as the room names
+    it - so the reply names the piece the designer chose for "you choose"
+    rather than guessing it from the words of the tap. Empty when the budget
+    left it out."""
+
+    room_cards: tuple[RoomCardChoice, ...] = ()
+    """The room's pieces as chips, when the turn asks "which piece?" beside a
+    room and gave no answers of its own - each showing that piece's
+    alternatives, exactly as its Swap button does."""
 
 
 class CustomerResponse(BaseModel):
