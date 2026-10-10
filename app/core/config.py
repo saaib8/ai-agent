@@ -254,6 +254,10 @@ class SizeSettings(BaseModel):
     similar_high: Decimal = Field(default=Decimal("1.15"), gt=0)
     """A size proportion between these is "similar" to the pick in words;
     below is "smaller", above "larger"."""
+    fit_share: Decimal = Field(default=Decimal("0.03"), gt=0, lt=1)
+    """A piece that goes in the pick - a mattress in a bed - is in the pick's
+    size when its shorter floor side is within this share of the size the
+    designer read off the pick: 180 matches 183, never 160."""
 
 
 class PineconeSettings(BaseModel):
@@ -581,6 +585,13 @@ class CustomerAgentSettings(BaseModel):
     list, kept apart from the picks - and More like this, a similarity search
     from any card (docs/designer-led-shopping-plan.md, phase 3). Off, a like
     or More like this is refused and no liked list is reported."""
+
+    fit_after_pick: bool = True
+    """A pick checked against the room (reviewed: a bed) asks the room's size
+    once and has the designer judge the space around it; a piece that goes in
+    the pick - a mattress for a bed - is shown in the size the designer reads
+    off the pick, first; and a fit between two pieces never asks for the room.
+    Off, a pick asks nothing and "will it fit?" asks the room as before."""
 
     mixed_types: bool = True
     """A customer's search for a type also shows the types reviewed to stand

@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from app.core.exceptions import LLMResponseInvalidError, TaxonomyValidationError
 from app.core.logging import get_logger
 from app.integrations.llm import StructuredLLMClient
-from app.prompts.interior_design.v1 import VERSION, build_instructions
+from app.prompts.interior_design.v1 import FIT_AFTER_PICK_SUFFIX, VERSION, build_instructions
 from app.schemas.design import (
     DesignCategoryNeed,
     DesignDirection,
@@ -55,14 +55,15 @@ works.
 
 
 def _with_stocked_direction(
-    need: DesignCategoryNeed, looks: Sequence[StockedLook]
+    need: DesignCategoryNeed, looks: Sequence[StockedLook], *, fits_inside: bool = False
 ) -> DesignCategoryNeed:
     """The need with a direction that names only what the shop stocks for it.
 
     Spelling is normalised (case, spaces, "_" and "-"); a value the kind does
     not come in is dropped, never matched to something near it - the direction
     only orders products, so a dropped value costs a little ranking and can
-    hide nothing (CLAUDE.md 12.4, 21.1).
+    hide nothing (CLAUDE.md 12.4, 21.1). The width that goes inside the pick is
+    kept only where `fits_inside` is on (CLAUDE.md 10.11).
     """
     direction = need.direction
     if direction is None or not looks:
@@ -78,6 +79,7 @@ def _with_stocked_direction(
         avoid_colours=_stocked(direction.avoid_colours, colours),
         avoid_styles=_stocked(direction.avoid_styles, styles),
         size_ratio=direction.size_ratio,
+        fits_inside_cm=direction.fits_inside_cm if fits_inside else None,
     )
     dropped = sum(
         len(asked) - len(found)
@@ -113,10 +115,18 @@ def _spelling(value: str) -> str:
 class InteriorDesignAgent:
     """A design request in, structured design reasoning out."""
 
-    def __init__(self, client: StructuredLLMClient, taxonomy: CommerceTaxonomy) -> None:
+    def __init__(
+        self,
+        client: StructuredLLMClient,
+        taxonomy: CommerceTaxonomy,
+        *,
+        fit_after_pick: bool = False,
+    ) -> None:
         self._client = client
         self._taxonomy = taxonomy
-        self._instructions = build_instructions(taxonomy)
+        self._fit_after_pick = fit_after_pick
+        self._instructions = build_instructions(taxonomy, fit_after_pick=fit_after_pick)
+        self._prompt_version = VERSION + (FIT_AFTER_PICK_SUFFIX if fit_after_pick else "")
 
     async def plan(self, request: InteriorDesignRequest) -> InteriorDesignResult:
         """One design task, answered once.
@@ -141,7 +151,7 @@ class InteriorDesignAgent:
         # measurements (CLAUDE.md 22).
         logger.info(
             "interior_design_completed",
-            prompt_version=VERSION,
+            prompt_version=self._prompt_version,
             model=self._client.model,
             task=str(request.task),
             guidance_count=len(result.guidance),
@@ -256,7 +266,7 @@ class InteriorDesignAgent:
         fulfillable = self._fulfillable(result, request)
         beside = self._not_the_anchors_own_kind(fulfillable.needs, request)
         kept = tuple(
-            _with_stocked_direction(need, request.stocked_looks)
+            _with_stocked_direction(need, request.stocked_looks, fits_inside=self._fit_after_pick)
             for need in beside[:MAX_COMPLEMENTARY_NEEDS]
         )
         if len(fulfillable.needs) > len(kept):

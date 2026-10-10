@@ -26,6 +26,10 @@ class TasteQuestionKind(StrEnum):
     """"Which style feels right?" - the styles the store has for this kind."""
     AVOID = "avoid"
     """"Anything you'd rather avoid?" - pushed down, never hidden."""
+    SPACE = "space"
+    """"How wide is the spot where it will go?" - asked after products, not
+    before, for a kind a space can be fitted to. It orders, never filters
+    (CLAUDE.md 10.10)."""
 
 
 class TasteOption(BaseModel):
@@ -38,6 +42,9 @@ class TasteOption(BaseModel):
     """For "which feels more like you": the card's place on screen."""
     colour: str | None = None
     styles: tuple[str, ...] = ()
+    space_cm: int | None = Field(default=None, gt=0, exclude_if=lambda v: v is None)
+    """For "how wide is the spot": the width this answer gives; none for "not
+    sure"."""
 
 
 class PendingTaste(BaseModel):

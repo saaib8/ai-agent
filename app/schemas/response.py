@@ -453,10 +453,19 @@ class DirectionView(BaseModel):
     avoid: tuple[str, ...] = ()
     size: Literal["smaller", "similar", "larger"] | None = None
     """Beside the pick, when a size proportion was used to order the cards."""
+    sized_for_the_pick: bool = False
+    """The first card is in the size that goes in the pick - a mattress for
+    this bed, as the designer read it off the bed. Never when no card is: the
+    ordering is then no claim the reply can make."""
 
     @classmethod
     def of(
-        cls, need: DesignCategoryNeed, lean: RankingLean | None, size: SizeSettings
+        cls,
+        need: DesignCategoryNeed,
+        lean: RankingLean | None,
+        size: SizeSettings,
+        *,
+        first_fits: bool = False,
     ) -> DirectionView:
         direction = need.direction
         assert direction is not None
@@ -476,6 +485,7 @@ class DirectionView(BaseModel):
                 if ratio > size.similar_high
                 else "similar"
             ),
+            sized_for_the_pick=first_fits and lean is not None and lean.fit_side_cm is not None,
         )
 
 
@@ -485,7 +495,7 @@ class TasteQuestionGroundingView(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: Literal["which", "style", "avoid"]
+    kind: Literal["which", "style", "avoid", "space"]
     positions: tuple[int, ...] = ()
     options: tuple[str, ...] = ()
 
@@ -523,6 +533,8 @@ class TasteAnsweredView(BaseModel):
     liked: tuple[str, ...] = ()
     avoided: tuple[str, ...] = ()
     neither: bool = False
+    space: bool = False
+    """They said how wide the spot is: the cards now fit it first."""
 
 
 class ChosenSeatingPieceView(BaseModel):
@@ -855,6 +867,11 @@ class ResponseGroundingView(BaseModel):
     """The kinds a search showed beside the one asked for, or left out for a
     size: say it as it is - "I have only one sofa that seats 5; these sofa
     sets seat you all" - and call each card by its own kind."""
+
+    sized_for_their_pick: str | None = None
+    """Their own results for what goes inside a piece they picked - a bed -
+    and the first card is in the size it takes, as the designer read it off
+    the pick: the ones in that size come first."""
 
     compared_count: int = Field(default=0, ge=0)
     comparison_differs_on: tuple[ComparisonField, ...] = ()

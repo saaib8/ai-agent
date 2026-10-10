@@ -42,7 +42,7 @@ from app.schemas.semantic import (
     SemanticRankingResult,
     SemanticSkipReason,
 )
-from app.services.product_size import sides_of, size_distance
+from app.services.product_size import made_to_fit, sides_of, size_distance
 from app.services.query_document import build_query_document, has_semantic_intent
 from app.taxonomy.attributes import AttributeFamily
 
@@ -88,6 +88,7 @@ def _preference_match(resolved: ResolvedSearch, size: SizeSettings) -> _MatchRan
     avoided = _avoided(lean.avoid_colours if lean else (), lean.avoid_styles if lean else ())
     fits = _fits(lean)
     sized = _size_band(lean, size)
+    in_the_pick = _fits_the_pick(lean, size)
     people = resolved.seat_preference
 
     def seats(candidate: RelaxedCandidate) -> tuple[int, int]:
@@ -101,6 +102,7 @@ def _preference_match(resolved: ResolvedSearch, size: SizeSettings) -> _MatchRan
         return (2, people - capacity)
 
     return lambda candidate: (
+        in_the_pick(candidate),
         fits(candidate),
         colour_or_style(candidate),
         *seats(candidate),
@@ -150,6 +152,26 @@ def _fits(lean: RankingLean | None) -> Callable[[RelaxedCandidate], int]:
         if long_side is None:
             return 1
         return 0 if long_side <= space else 2
+
+    return fit
+
+
+def _fits_the_pick(
+    lean: RankingLean | None, size: SizeSettings
+) -> Callable[[RelaxedCandidate], int]:
+    """0 for a piece in the size that goes in the pick - a mattress in this
+    bed's size - 1 for any other size, 2 for one with no usable size; 0 for
+    everyone when there is no such size. First, before anything else: a
+    mattress that does not fit the bed is no choice at all."""
+    target = lean.fit_side_cm if lean is not None else None
+    if target is None:
+        return lambda _: 0
+
+    def fit(candidate: RelaxedCandidate) -> int:
+        side = candidate.product.short_side_cm
+        if side is None:
+            return 2
+        return 0 if made_to_fit(side, target, size) else 1
 
     return fit
 

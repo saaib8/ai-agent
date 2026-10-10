@@ -1325,6 +1325,7 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # Kinds a search showed beside the one asked for, in registry words,
         # and counts of each - no product, no price.
         "type_mix",
+        "sized_for_their_pick",
         "compared_count",
         "comparison_differs_on",
         "bundle",

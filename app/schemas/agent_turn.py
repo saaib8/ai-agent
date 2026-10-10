@@ -371,6 +371,9 @@ class CustomerTurnResult(BaseModel):
     them in front of me"."""
     taste_answered: TasteAnsweredView | None = None
     space_fit: SpaceFitView | None = None
+    opening_answered: bool = False
+    """The message answered the questions on screen in words: the questions
+    after products still come, as they do after a tapped answer."""
     """What the designer would aim for in the space they gave, this turn."""
     room_carried: RoomCarriedView | None = None
     """What a room took from shopping this turn."""

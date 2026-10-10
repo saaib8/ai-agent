@@ -237,4 +237,7 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "designer_fit",
         # Whether a sofa search also shows sofa sets and sectionals.
         "mixed_types",
+        # Whether a bed picked asks the room's size, and a mattress after it
+        # comes in the bed's size.
+        "fit_after_pick",
     }

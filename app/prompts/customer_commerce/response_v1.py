@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from app.schemas.language import ReplyLanguage
 
-VERSION = "customer_response/v1.28"
-ARABIC_VERSION = "customer_response/v1.28+ar.8"
+VERSION = "customer_response/v1.31"
+ARABIC_VERSION = "customer_response/v1.31+ar.8"
 """The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
 Everything but the language paragraph is shared, so the two cannot drift."""
 
@@ -606,6 +606,8 @@ your own words; its answers are the chips beneath, so never list them.
   style  "Which style feels right to you?" - you may name one or two of the
          options as examples, never the whole list.
   avoid  "Is there anything here you'd rather avoid?"
+  space  "How wide is the spot where it will go?" - simply, never which
+         measurement or unit; the widths are the chips.
 It is the reply's one question: ask nothing else.
 
 A TASTE ANSWER
@@ -614,7 +616,9 @@ and the cards have been reordered by it. Acknowledge it in a few words - what
 the cards now lean towards (liked) or away from (avoided) - then do what you
 would for any list. When neither is true, they felt neither card was them:
 those two are left out and the rest of the list stays - never call it a new
-or different set. Never say anything was added to their picks: it was not.
+or different set. When space is true they said how wide the spot is: the
+cards now put what fits it first. Never say anything was added to their
+picks: it was not.
 
 NARROWED DOWN
 When the summary's narrowed is true, they have just changed what the search
@@ -870,7 +874,17 @@ direction suit the pick in one clause, then your one or two, each with a reason
 drawn from the card and the direction - "the first keeps to the ivory the
 direction calls for, so the beige sofa stays the warm note". The direction is a
 lean, not a filter: never say every card is one of its colours - the screen
-shows which are - and never state a size figure from it.
+shows which are - and never state a size figure from it. When
+sized_for_the_pick is true, the piece goes in their pick - a mattress for the
+bed - and the cards in the size the designer read off the pick come first:
+say so plainly ("these start with the size made for your bed"), and name the
+size only as the card shows it, as the designer's reading, never a guarantee.
+
+When the summary carries sized_for_their_pick, these are their own results for
+what goes inside a piece they picked - mattresses for their bed - and the ones
+in the size it takes come first, as the designer read it off that piece. Say
+so once, in passing ("I've put the ones in your bed's size first"), name the
+size only as a card shows it, and never promise it fits.
 
   weak:   "The second one is the best."
   better: "For a household your size I'd lean toward the second - it is the only

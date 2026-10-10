@@ -18,8 +18,6 @@ interface ProductGridProps {
   refine?: SearchRefineControls
   /** Present on the search results on screen: each card can be ticked. */
   selection?: GridSelection
-  /** The first card is the closest to what they described. */
-  bestMatch?: boolean
   /** Present on search results: each card can be checked for comparison. */
   compare?: GridCompare
   /** Present when cards can be liked: which are, by card number. */
@@ -51,7 +49,6 @@ export function ProductGrid({
   pick,
   refine,
   selection,
-  bestMatch = false,
   compare,
   likes,
   onMoreLikeThis,
@@ -68,7 +65,7 @@ export function ProductGrid({
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {products.map((p, index) => (
+        {products.map((p) => (
           <ProductCard
             key={p.grounding_ref}
             product={p}
@@ -76,7 +73,6 @@ export function ProductGrid({
             onExclude={refine?.onExclude}
             select={cardSelect(p, selection, !!busy)}
             compare={compare?.compareFor(p)}
-            bestMatch={bestMatch && index === 0}
             like={cardLike(p, likes)}
             onMoreLikeThis={onMoreLikeThis}
             busy={busy}

@@ -3,8 +3,9 @@
 
 Decided in code from what is known: at most one question a reply, each kind at
 most once a session, and never about something the customer said or something
-their likes, picks and More like this already told us. Which of two feels more
-like them first, then which of the store's styles, then anything to avoid.
+their likes, picks and More like this already told us. How wide the spot is
+first - a sofa's opening asks the room instead - then which of two feels more
+like them, then which of the store's styles, then anything to avoid.
 """
 
 from __future__ import annotations
@@ -24,9 +25,12 @@ from app.schemas.taste import (
     TasteQuestionKind,
     TasteState,
 )
+from app.services.product_brief import SPACE_WIDTHS
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.dimensions import DimensionRole
 
 NEITHER = "neither"
+SPACE_NOT_SURE = "space:any"
 MAX_STYLE_CHOICES = 6
 MAX_AVOID_CHOICES = 3
 """Of colours, and of styles: a short row, not the catalogue."""
@@ -52,6 +56,18 @@ def choose_question(
     which_settled = TasteQuestionKind.WHICH in asked or (colour_known and style_known)
     style_settled = TasteQuestionKind.STYLE in asked or style_known
 
+    widths = SPACE_WIDTHS.get(kind or "", ())
+    if widths and TasteQuestionKind.SPACE not in asked and not _space_known(search):
+        return PendingTaste(
+            question=question,
+            kind=TasteQuestionKind.SPACE,
+            commerce_subcategory=kind,
+            list_revision=list_revision,
+            options=(
+                *(TasteOption(key=f"space:{width}", space_cm=width) for width in widths),
+                TasteOption(key=SPACE_NOT_SURE),
+            ),
+        )
     if not which_settled:
         pair = _most_different(products)
         if pair is not None:
@@ -130,6 +146,8 @@ class TasteAnswer:
     avoid_styles: tuple[str, ...] = ()
     leave_out: tuple[int, ...] = ()
     """Positions on screen of the cards neither of which felt like them."""
+    space_cm: int | None = None
+    """How wide the spot is: the cards are ordered to fit it."""
 
 
 def answer(pending: PendingTaste, key: str) -> TasteAnswer | None:
@@ -154,6 +172,19 @@ def answer(pending: PendingTaste, key: str) -> TasteAnswer | None:
                 avoid_colours=(option.colour,) if option.colour else (),
                 avoid_styles=option.styles,
             )
+        case TasteQuestionKind.SPACE:
+            return TasteAnswer(space_cm=option.space_cm)
+
+
+def _space_known(search: ActiveSearchState) -> bool:
+    """Whether the space is already known: a wall they gave, or a width for
+    the piece itself."""
+    if search.lean is not None and search.lean.space_cm is not None:
+        return True
+    if search.request.planar_dimensions is not None:
+        return True
+    floor = (DimensionRole.OVERALL_WIDTH, DimensionRole.LENGTH)
+    return any(constraint.role in floor for constraint in search.request.dimensions)
 
 
 def _known(search: ActiveSearchState, said: Sequence[SemanticPreference]) -> tuple[bool, bool]:

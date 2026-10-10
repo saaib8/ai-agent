@@ -41,6 +41,9 @@
 #   narrow_default
 #         what Narrow down offers beside results of a type no card covers:
 #         budget, colour and style only.
+#   not_by_look
+#         kinds whose look decides nothing: no opening, and never asked about
+#         colour or style.
 #   rooms the answers to "which room is it for?". `room` is how it is
 #         remembered; "Other" remembers nothing - their own words name it.
 
@@ -48,6 +51,12 @@ version: v1
 
 opening_default: [room, colour, style]
 narrow_default: [budget, colour, style]
+
+# Kinds chosen by size and comfort, never by their look: a mattress lies under
+# the bedding, so its colour and style decide nothing. They are shown at once,
+# with no questions before them, and never asked about colour or style - not
+# after the results, not in Narrow down. A kind here has no card of its own.
+not_by_look: [mattresses]
 
 rooms:
   - {key: living-room, label: Living room, room: living room}
@@ -70,7 +79,9 @@ briefs:
     for: [sofa, sectional-sofa, sofa-set, sofa-bed]
     noun: sofas
     ask: [type, budget, space, colour, feel, style]
-    opening: [room, people, space, type, feel, colour, style]
+    # The room first; how wide the spot is waits until products are shown.
+    opening: [room, people, type, feel, colour, style]
+    always: [room]
     type:
       - {label: 2-seater, subcategory: sofa, seats: 2}
       - {label: 3-seater, subcategory: sofa, seats: 3}
@@ -109,6 +120,9 @@ briefs:
     for: [bed]
     ask: [budget, colour, feel, style]
     opening: [feel, colour, style]
+    # Picked, it is checked against the room: its size is asked once, then
+    # the designer judges the walking space around it.
+    room_check_on_pick: true
     feel:
       label: Headboard & extras
       options:

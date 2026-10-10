@@ -1394,8 +1394,8 @@ cases:
 
   # ── phase 5: taste after products ───────────────────────────────────────────
   - id: taste_which_after_results
-    issue: "results close softly on which of two feels more like them"
-    turns: [{search: "show me sofas"}]
+    issue: "results close softly on which of two feels more like them (rugs: a sofa's space comes first)"
+    turns: [{search: "show me rugs"}]
     checks: {not_fallback: true, min_products: 1, taste_asked: true, taste_which: true}
 
   - id: taste_answer_is_never_a_pick
@@ -1444,8 +1444,8 @@ cases:
     checks: {not_fallback: true, min_products: 2, product_source: liked, picks: 0}
 
   - id: opening_asks_the_space
-    issue: "a sofa's opening always asks how wide the spot is"
-    turns: ["hey i am looking for sofa"]
+    issue: "an opening that offers the space always asks it - a wardrobe's (a sofa's asks the room, its space after results)"
+    turns: ["hey i am looking for a wardrobe"]
     checks: {not_fallback: true, card_asks: [space]}
 
   - id: space_wall_orders_and_aims
@@ -1593,3 +1593,50 @@ cases:
     issue: "10.12 in Arabic: a regular sofa, not a set, keeps to sofas"
     turns: [{search: "أبي أشوف كنب"}, "أبي كنب عادي بس، مو طقم"]
     checks: {not_fallback: true, min_products: 3, subcategory: sofa, arabic_reply: true}
+
+  # ── a bed at the pick, a mattress in its size (CLAUDE.md 10.11) ──────────────
+  - id: bed_pick_asks_the_rooms_size
+    issue: "10.11: a bed picked asks the room's length and width, once"
+    turns: [{search: "show me beds"}, "I will take the first one"]
+    checks: {not_fallback: true, mentions: ["length", "width"]}
+
+  - id: bed_room_size_answer_checks_the_bed
+    issue: "10.11: the room's size typed after the question is judged against the bed"
+    turns: [{search: "show me beds"}, "I will take the first one", "my room is 5 by 4 metres"]
+    checks: {not_fallback: true, mentions: ["bed"], not_mentions: ["length and width", "how big is your room"]}
+
+  - id: mattress_in_a_bed_never_asks_the_room
+    issue: "10.11: will this mattress fit my bed is judged from the two pieces, never the room"
+    turns: [{search: "show me beds"}, "I will take the first one", "will the first mattress fit my bed?"]
+    checks: {not_fallback: true, not_mentions: ["length and width", "room's size", "how big is your room"]}
+
+  - id: ar_bed_pick_asks_the_rooms_size
+    issue: "10.11 in Arabic: a bed picked asks the room's length and width"
+    turns: [{search: "أبي أشوف سراير"}, "بآخذ الأول"]
+    checks: {not_fallback: true, arabic_reply: true, mentions: ["طول", "عرض"]}
+
+  - id: bed_room_check_never_takes_a_room_request
+    issue: "known issue 27 QA: a room to design, with its size, right after a bed's room question is a room, not the bed's answer"
+    turns: [{search: "show me beds"}, "I will take the first one", "Please design my living room, it's 5 by 6 metres, budget 20000 SAR"]
+    checks: {not_fallback: true, piece_picker: true}
+
+  - id: bed_room_check_lapses_after_moving_on
+    issue: "known issue 27 QA: once another list replaces the question, a room's size later is never the bed's answer"
+    turns: [{search: "show me beds"}, "I will take the first one", "just show me nightstands", "Please design my living room, it's 5 by 6 metres, budget 20000 SAR"]
+    checks: {not_fallback: true, piece_picker: true}
+
+  # ── a mattress is not chosen by its look (known issue 28) ───────────────────
+  - id: mattress_shown_at_once
+    issue: "known issue 28: a mattress is shown at once, never asked which room or style"
+    turns: ["hey i am looking for matteress"]
+    checks: {not_fallback: true, min_products: 3, subcategory: mattresses, card: false, not_mentions: ["which room", "what style", "which style", "drawn to"]}
+
+  - id: mattress_after_a_bed_in_its_size
+    issue: "known issue 28: their own mattress search after picking a bed comes in the bed's size"
+    turns: [{search: "show me beds"}, "I will take the first one", "show me nightstands", "now show me mattresses"]
+    checks: {not_fallback: true, subcategory: mattresses, mentions: ["bed"]}
+
+  - id: ar_mattress_shown_at_once
+    issue: "known issue 28 in Arabic: a mattress is shown at once"
+    turns: ["أبحث عن مرتبة"]
+    checks: {not_fallback: true, min_products: 3, subcategory: mattresses, card: false, arabic_reply: true}

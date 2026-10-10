@@ -24,7 +24,7 @@ from typing import Final, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.query import ResolvedSearch
-from app.taxonomy.briefs import BriefQuestionKind
+from app.taxonomy.briefs import ALWAYS_ASKED, BriefQuestionKind
 
 MAX_BRIEF_COLOURS: Final[int] = 3
 """Colours they may tick together. Alternatives, so a few is plenty."""
@@ -220,6 +220,11 @@ class PendingBrief(BaseModel):
     feels: tuple[BriefFeelOption, ...] = ()
     rooms: tuple[BriefRoomOption, ...] = Field(default=(), exclude_if=lambda v: not v)
     people: tuple[BriefPeopleOption, ...] = Field(default=(), exclude_if=lambda v: not v)
+    must_ask: tuple[BriefQuestionKind, ...] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    """What this opening asks whatever the reply prefers - the family's own
+    list; None for an opening saved before families had one (`ALWAYS_ASKED`)."""
     opening: bool = Field(default=False, exclude_if=lambda v: not v)
     """The card opens a new search: the reply writer chose which of its
     questions to show, and only those were asked."""
@@ -232,6 +237,12 @@ class PendingBrief(BaseModel):
     """They let go of the sizes saved for this kind in the message the card
     answers - "back to sofas, any size is fine". Kept with the card, so the
     search its answers run does not bring those sizes back."""
+
+    @property
+    def always_asked(self) -> tuple[BriefQuestionKind, ...]:
+        """What the opening asks whatever the reply prefers: its family's list
+        - the room, for sofas - or the default for one saved before."""
+        return ALWAYS_ASKED if self.must_ask is None else self.must_ask
 
 
 class ProductBriefState(BaseModel):

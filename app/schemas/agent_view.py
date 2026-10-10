@@ -371,3 +371,6 @@ class AgentStateView(BaseModel):
     taste_question: TasteQuestionView | None = None
     shopping_room: str | None = None
     """The room they said they are shopping for, in their words."""
+    room_check_for: str | None = None
+    """The kind of piece they picked - "bed" - whose fit their room's size,
+    just asked for, will be checked against; None when nothing waits."""

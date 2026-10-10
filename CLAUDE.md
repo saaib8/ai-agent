@@ -648,10 +648,11 @@ does not stock is not offered - every chip leads to real products.
   material field (5), so it becomes descriptive wording for semantic ranking,
   nothing is filtered on it, and the reply never says a piece is made of it.
 - Answered or skipped, the search runs like any other, showing the configured
-  number of products (five by default) with the closest first. The first card
-  is labelled the best match only when their own words ordered the list (16.1)
-  and it met their request exactly - never beside a price sort, and never on
-  what goes with a pick, which is ordered by the pick's look.
+  number of products (five by default) with the closest first. The reply may
+  call the first card the best match only when their own words ordered the
+  list (16.1) and it met their request exactly - never beside a price sort,
+  and never on what goes with a pick, which is ordered by the pick's look. The
+  console draws no "best match" or "exact" tag on a card.
 - **Declining the card** ("just show me sofas", "no questions") shows
   products at once; the card sits folded beside them as "Narrow down" -
   offered once per family per session, so it does not follow every list
@@ -730,9 +731,17 @@ card of 10.4 for a new product search (switched off, the card returns):
   this message, earlier, on record) and anything asked before in that family
   (`product_brief.asked`). A choice outside the offer is refused
   (`opening_not_offered`) and the fixed sentence asks the first two offered.
+  A family may name what its every opening asks while open (`always`): a
+  sofa's asks **the room**, and how wide the spot is waits until products are
+  on screen (10.9); a family that names nothing asks the space where it
+  offers one (`ALWAYS_ASKED`).
 - **Only the chosen questions' chips are drawn**, from the registry and the
   live catalog, so every chip is a real answer; answers are keys read back
   through the pending card, as in 10.4.
+- **A kind not chosen by its look has no opening** (`not_by_look` in
+  `briefs_v1.yaml`: mattresses, which lie under the bedding). It is shown at
+  once, and never asked about colour or style - not after results (10.9), not
+  in Narrow down, which offers it the budget only.
 - **Which room is it for?** is remembered (`customer_preferences.room`,
   tapped or named in words as the decision's `shopping_room`) and filters
   nothing - no product records a room. It is never `room_project`, which is a
@@ -854,19 +863,24 @@ Said ranks before learned, learned before the designer's.
 follow-up, decided in code (`app/services/taste_question.py`), each kind at
 most once a session (`taste`), and never about what was said or learned:
 
-1. "Which of these two feels more like you?" - the two cards on screen that
+1. "How wide is the spot where it will go?" - for a kind a space can be
+   fitted to (`SPACE_WIDTHS`), while no wall and no width for the piece is
+   known: the widths as chips, and "Not sure". The answer is the space of
+   10.10 - it orders, never filters.
+2. "Which of these two feels more like you?" - the two cards on screen that
    differ most in colour and style, and "Neither". The answer is said taste
    (the card's styles for any kind, its colour for this kind) and is **never a
    pick**; "Neither" leaves both cards out.
-2. "Which style feels right?" - the store's real styles for this kind, the
+3. "Which style feels right?" - the store's real styles for this kind, the
    ones on screen first. No mood words.
-3. "Anything you'd rather avoid?" - colours and styles on screen they have
+4. "Anything you'd rather avoid?" - colours and styles on screen they have
    not said, required or shown they like. **Pushed down, never hidden** - in
    this search and every later one (`customer_preferences.avoid_colours` /
    `avoid_styles`), right after what they said they like and ahead of
    anything learned or suggested.
 
-Not asked beside a seats question, a combination, a room or a room's
+Not asked of a kind not chosen by its look (a mattress, 10.5), nor beside a
+seats question, a combination, a room or a room's
 alternatives, suggestions, a turn that already asks, a turn that declined
 questions ("just show me"), or the turn that answered one. Answers are keys
 read back through the pending question (`search_action` `taste`); a typed
@@ -896,7 +910,9 @@ tapped - says two things, handled apart:
   only limiting. The reply says the width aimed for and why, once.
 
 An opening that offers the space question always asks it (`ALWAYS_ASKED`),
-simply - how wide the wall or spot is, never which measurement or unit. "Help
+unless its family names what it asks instead - a sofa's opening asks the
+room, and its space is the first question after products (10.9) - simply:
+how wide the wall or spot is, never which measurement or unit. "Help
 me narrow these down", "narrow by size" open Narrow down as the turn's
 question (`narrow_by`), kept to the questions named. A measurement a kind
 cannot be searched by is corrected once, never a failed turn.
@@ -919,6 +935,33 @@ and never the writer's. Code only measures:
   works - walking space, room beside it, what else the room must hold, how it
   comes through the door - and the reply relays that, never more than was
   measured. No chips and no labels: the conversation carries it.
+
+**At the pick, and piece in piece** (`customer_agent.fit_after_pick`, on by
+default; off is the behaviour above, exactly):
+
+- **A bed picked is checked against the room.** Which kinds are is reviewed
+  data (`briefs_v1.yaml`, `room_check_on_pick`: beds). Picked with the room's
+  size unknown, the turn closes on its length and width (`room_size`), in
+  place of the step after a pick - once a session (`room_check`), never beside
+  another question, and never for a piece of a room being designed. It is
+  answered only while the list it was asked beside is on screen and the bed is
+  still picked (`awaiting_room_check`): then a reply giving just the room's
+  length and width, with the unit, is its answer even where the decision read
+  it as a plain one, and the designer judges that bed in that room, not the
+  cards on screen. A room to design, a new search or a question about another
+  piece is theirs to have, with the size recorded beside it.
+- **What goes in the pick comes in its size.** After a bed, the designer reads
+  the mattress width that goes inside it off the bed's listed size and name
+  (`fits_inside_cm`); the mattresses in that size come first (`fit_side_cm`),
+  nothing hidden, and - only when the first card is that size - the reply says
+  they start with the size made for the bed: the designer's reading, never a
+  guarantee. The reading is kept with the pick (`inside_sizes`), so their own
+  later search for that kind - typed, or the chip beneath the pick - comes in
+  that size too, while the bed is still picked (`sized_for_their_pick`).
+- **A piece in a piece never asks for the room.** "Will this mattress fit my
+  bed?" is the decision's `fit_with_piece`: the designer judges it from what
+  is on screen and what they picked, with no room size asked and no wall or
+  doorway measured.
 
 ### 10.12 A sofa search shows sets and sectionals (`customer_agent.mixed_types`)
 

@@ -1815,3 +1815,104 @@ options in front of me now".
   and picks one, with at most one alternative.
 
 **Reported:** by the user (2026-10-09).
+
+## 27. A bed picked never asked the room's size, mattresses ignored the bed's size, and "will this mattress fit my bed?" asked for the room
+
+**Status:** Fixed (2026-10-10), behind `customer_agent.fit_after_pick`.
+
+**What happened:** after picking a bed, the agent suggested mattresses in no
+particular size and never checked the bed against the room. Asked whether a
+mattress fits the bed, it asked for the room's length and width, then said the
+room's size could not confirm the mattress - and closed on a generic question.
+
+**Cause:**
+- **No check at the pick:** the room's size was asked only when the customer
+  asked "will it fit?" themselves.
+- **No size link:** the catalog records no mattress size for a bed, and the
+  designer's direction had no way to say one, so mattresses were ordered by
+  colour and style only.
+- **One rule for every fit:** "will it fit?" always asked for the room's size
+  first (`fit_needs_room_size`), even for a mattress in a frame, where the room
+  has nothing to add.
+
+**Fix:**
+- **At the pick:** a bed (reviewed: `briefs_v1.yaml`, `room_check_on_pick`)
+  picked with the room's size unknown closes on its length and width, once a
+  session; the size typed next is that question's answer, and the designer
+  judges that bed in that room.
+- **In the bed's size:** the designer reads the mattress width off the bed's
+  listed size (`fits_inside_cm`), and mattresses in that width come first -
+  the designer's reading, never a guarantee.
+- **Piece in a piece:** "will this mattress fit my bed?" (`fit_with_piece`)
+  never asks for the room; the designer judges it from the two pieces.
+- **Found on the way:** the decision's response schema name, stacked from its
+  optional parts, reached 75 characters; the provider refuses more than 64, so
+  every turn failed. It is now capped (`_within_name_limit`), with a test for
+  every combination of settings.
+- **Found by the QA review, fixed the same day:**
+  - The question stayed open all session, so a later "design my living room,
+    5 by 6 m" was taken for the bed's answer and no room was planned. It is
+    now answered only beside the list it was asked with, by a reply giving
+    just the room's size with its unit, while the bed is still picked.
+  - The reply could ask a question of its own in place of the room's.
+  - "These start with the size made for your bed" was said even when no card
+    was that size; now only when the first card is.
+  - Switched off, the designer still got the new fit instructions; now it
+    gets exactly the old ones, and any size it returns is ignored.
+  - Smaller: a piece of a room being designed no longer asks, and a piece in
+    a piece no longer marks every card as chosen.
+  - Still open: a typed "I love the first bed, what goes with it?" does not ask
+    the room's size. (The "Mattresses" chip under a bed now comes in the bed's
+    size - see 28.)
+
+**Reported:** by the user (2026-10-10).
+
+## 28. A mattress search asks which room it is for and which style
+
+**Status:** Fixed (2026-10-10)
+
+**What happened:** "hey i am looking for matteress" got the opening "which
+room is it for, and what style are you drawn to?", with room chips (Living
+room, Bedroom, Office, Dining room, Other) and style chips (Minimalist,
+Scandinavian). Neither question helps anyone choose a mattress.
+
+**Cause:** the questions come from code and reviewed data; only the wording is
+the model's.
+- **No mattress questions:** `briefs_v1.yaml` has no family for mattresses,
+  so they get `opening_default: [room, colour, style]` - the fallback meant
+  for a category new to the store.
+- **Colour dropped, style kept:** store 50's 7 mattresses are all White, so
+  the colour question has one answer and is dropped (`product_brief._question`).
+  All 7 are also "Minimalist, Scandinavian", but that is two values, so style
+  is kept - though every mattress matches either answer, so it narrows
+  nothing. The check counts values, not whether an answer tells the products
+  apart.
+- **Room chips are one fixed list** for every type, though
+  `room_pieces_v1.yaml` already places mattresses only in the bedroom.
+- **The writer had no choice:** it picks two of the questions code offers
+  (10.5), and the offer was exactly room and style.
+
+**Proposed fix:**
+- Ask a mattress's size, the one thing that decides it. Store 50's mattresses
+  are 120, 140, 150, 160, 180, 195 and 200 cm wide, one of each, so the chips
+  can come from those real widths.
+- With a bed already in their picks, take the size from it (the designer
+  already reads it, 10.11) and ask nothing.
+- Drop a question every product answers the same way (style here).
+- Skip "which room?" for a type the room registry places in one room only.
+- With nothing useful left to ask, show the mattresses.
+
+**Fix:**
+- A reviewed list of kinds not chosen by their look (`briefs_v1.yaml`,
+  `not_by_look`: mattresses). They get no opening and are shown at once; no
+  taste question follows their results; Narrow down offers the budget only.
+  The reason is what a mattress is, not what this store's data happens to
+  hold.
+- With a bed among their picks, their own mattress search - typed, or the
+  "Mattresses" chip beneath the bed - puts the size the designer read off the
+  bed first (kept with the pick as `inside_sizes`), and the reply says so only
+  when the first card is that size.
+- Not done: asking the bed's size before showing mattresses. With store 50's
+  seven mattresses, one per width, showing them is the better answer.
+
+**Reported:** by the user (2026-10-10).

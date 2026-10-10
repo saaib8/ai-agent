@@ -135,6 +135,9 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # Whether a sofa search also shows sofa sets and sectionals. A flag:
         # the types come from the reviewed seating data above.
         "mixed_types",
+        # Whether a bed picked asks the room's size. A flag: the kinds come
+        # from the reviewed card data above.
+        "fit_after_pick",
     ]
 
 

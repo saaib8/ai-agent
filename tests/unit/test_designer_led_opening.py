@@ -68,7 +68,11 @@ def _kinds(built: Any) -> list[BriefQuestionKind]:
 def test_each_family_lists_its_opening_and_a_new_type_gets_the_default() -> None:
     briefs = load_briefs(taxonomy=TAXONOMY)
 
-    assert briefs.for_opening("seating", "sofa").opening[:3] == (ROOM, PEOPLE, SPACE)
+    sofas = briefs.for_opening("seating", "sofa")
+    # The room first; how wide the spot is waits until products are shown.
+    assert sofas.opening[:3] == (ROOM, PEOPLE, BriefQuestionKind.TYPE)
+    assert SPACE not in sofas.opening
+    assert sofas.must_ask == (ROOM,)
     vase = briefs.for_opening("decor", "vase")
     assert vase.opening == (ROOM, BriefQuestionKind.COLOUR, BriefQuestionKind.STYLE)
     assert [room.label for room in briefs.rooms] == [
@@ -119,7 +123,8 @@ async def test_the_opening_offers_its_open_questions_and_never_the_budget() -> N
     _, built = await _opening()
 
     assert built is not None
-    assert _kinds(built)[:3] == [ROOM, PEOPLE, SPACE]
+    assert _kinds(built)[:3] == [ROOM, PEOPLE, BriefQuestionKind.TYPE]
+    assert SPACE not in _kinds(built)
     assert BriefQuestionKind.BUDGET not in _kinds(built)
     assert built.pending.opening is True
 
@@ -294,13 +299,16 @@ def test_a_choice_where_nothing_was_offered_is_ignored_not_refused() -> None:
     assert _validate((ROOM,), choose=0) is None
 
 
-async def test_the_screen_asks_the_chosen_questions_or_space_and_the_first_on_a_fallback() -> None:
+async def test_the_screen_asks_the_chosen_questions_or_the_room_first_on_a_fallback() -> None:
     _, built = await _opening()
 
-    assert opening_asked(built.card, built.pending, (SPACE, ROOM)) == (SPACE, ROOM)
-    assert opening_asked(built.card, built.pending, ()) == (ROOM, SPACE)
-    # Space is always asked where it is offered.
-    assert opening_asked(built.card, built.pending, (ROOM, PEOPLE)) == (ROOM, SPACE)
+    assert opening_asked(built.card, built.pending, (PEOPLE, ROOM)) == (PEOPLE, ROOM)
+    assert opening_asked(built.card, built.pending, ()) == (ROOM, PEOPLE)
+    # A sofa's opening always asks the room where it is offered.
+    assert opening_asked(built.card, built.pending, (PEOPLE, BriefQuestionKind.TYPE)) == (
+        ROOM,
+        PEOPLE,
+    )
     assert opening_asked(built.card, None, (ROOM,)) == ()
 
 
@@ -411,3 +419,69 @@ async def test_a_typed_head_count_without_an_opening_is_untouched() -> None:
     card = built.pending.model_copy(update={"opening": False})
 
     assert builder.typed_head_count(typed, card, 4) == typed
+
+
+@pytest.mark.parametrize(
+    ("always", "refusal"),
+    [("[space]", "what the opening lacks"), ("[room, colour, style]", "at most 2")],
+    ids=["not-in-the-opening", "more-than-two"],
+)
+def test_what_every_opening_asks_is_among_its_questions(
+    tmp_path: Path, always: str, refusal: str
+) -> None:
+    source = tmp_path / "briefs.yaml"
+    source.write_text(
+        f"""
+version: v1
+opening_default: [room, colour]
+rooms:
+  - {{key: a, label: Living room, room: living room}}
+  - {{key: b, label: Bedroom, room: bedroom}}
+briefs:
+  rugs:
+    for: [carpet]
+    ask: [budget, colour, style]
+    opening: [room, colour, style]
+    always: {always}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TaxonomyConfigurationError, match=refusal):
+        load_briefs(path=source, taxonomy=TAXONOMY)
+
+
+# ── a kind not chosen by its look ───────────────────────────────────────────
+
+
+def test_a_mattress_is_shown_at_once_and_never_asked_about_its_look() -> None:
+    """Under the bedding, its colour and style decide nothing."""
+    briefs = load_briefs(taxonomy=TAXONOMY)
+
+    assert briefs.for_opening("bedding", "mattresses") is None
+    assert not briefs.by_look("mattresses")
+    assert briefs.by_look("vase")
+    assert briefs.for_narrowing("bedding", "mattresses").ask == (BriefQuestionKind.BUDGET,)
+
+
+def test_a_kind_not_chosen_by_its_look_has_no_card(tmp_path: Path) -> None:
+    """A card would ask about exactly what it is not chosen by."""
+    source = tmp_path / "briefs.yaml"
+    source.write_text(
+        """
+version: v1
+opening_default: [room, colour, style]
+not_by_look: [carpet]
+rooms:
+  - {key: a, label: Living room, room: living room}
+  - {key: b, label: Other}
+briefs:
+  rugs:
+    for: [carpet]
+    ask: [budget, colour]
+arabic: {Living room: غرفة المعيشة, Other: غير ذلك}
+"""
+    )
+
+    with pytest.raises(TaxonomyConfigurationError):
+        load_briefs(source, taxonomy=TAXONOMY)

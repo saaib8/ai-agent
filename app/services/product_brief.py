@@ -89,7 +89,6 @@ from app.services.chip_wording import (
 )
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.briefs import (
-    ALWAYS_ASKED,
     OPENING_QUESTIONS,
     Brief,
     BriefQuestionKind,
@@ -189,9 +188,13 @@ class ProductBriefBuilder:
         request = resolved.request
         briefs = state.product_brief
         if opening:
-            brief = self._briefs.for_opening(
+            opening_brief = self._briefs.for_opening(
                 request.commerce_category, request.commerce_subcategory
             )
+            if opening_brief is None:
+                # A kind not chosen by its look: shown at once, nothing asked.
+                return None
+            brief = opening_brief
             candidates = tuple(
                 kind
                 for kind in brief.opening
@@ -389,6 +392,7 @@ class ProductBriefBuilder:
             feels=feels,
             rooms=rooms,
             people=people,
+            must_ask=brief.must_ask if opening else None,
             opening=opening,
             # Only what it showed ticked: a typed "under 3,000" no band names
             # stays unless they choose a band to replace it.
@@ -473,6 +477,14 @@ class ProductBriefBuilder:
         store-wide - a room spans categories - and capped."""
         facts = await self._repository.facet_counts(context)
         return self._approved(AttributeFamily.COLOR, facts.colors)[:limit]
+
+    def checks_room_on_pick(self, subcategory: str | None) -> bool:
+        """Whether a pick of this kind is checked against the room (a bed)."""
+        return self._briefs.checks_room_on_pick(subcategory)
+
+    def by_look(self, subcategory: str | None) -> bool:
+        """Whether this kind is chosen by its look - a mattress is not."""
+        return self._briefs.by_look(subcategory)
 
     def arabic_names(self, family: AttributeFamily, values: tuple[str, ...]) -> tuple[str, ...]:
         """Approved values as they read in Arabic, in the same order - the
@@ -1253,7 +1265,7 @@ def opening_asked(
     if pending is None or not pending.opening:
         return ()
     offered = tuple(question.kind for question in card.questions)
-    always = [kind for kind in ALWAYS_ASKED if kind in offered]
+    always = [kind for kind in pending.always_asked if kind in offered]
     if chosen and set(chosen) <= set(offered) and set(always) <= set(chosen):
         return tuple(chosen)
     others = [kind for kind in offered if kind not in always]

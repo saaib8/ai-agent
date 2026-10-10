@@ -63,15 +63,18 @@ from app.schemas.agent_decision import (
 )
 from app.schemas.agent_state import (
     MAX_EXPLORED,
+    MAX_INSIDE_SIZES,
     MAX_ROOM_ANCHORS,
     MAX_SEMANTIC_INTENT_CHARS,
     ActiveSearchState,
     AgentStateV1,
     BundleItemState,
     BundleItemStatus,
+    InsideSize,
     OfferedCombination,
     OfferedCombinationLine,
     ProductInteractionState,
+    RoomCheck,
     RoomProjectState,
     SavedMeasurements,
     SeatingOfferState,
@@ -270,7 +273,7 @@ from app.services.agent_view import project_state
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.catalog_capability import CatalogCapabilityService
-from app.services.chip_wording import ORDINALS, Chip, chip
+from app.services.chip_wording import ORDINALS, SPACE_ANY, SPACE_UPTO, Chip, chip
 from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.cross_sell import CompanionSearchBuilder, has_pairings
@@ -282,7 +285,7 @@ from app.services.design_revision import (
     project_current_plan,
     unprovable_against_exclusions,
 )
-from app.services.fit import fit_checks, knows_room_size, spaces_of
+from app.services.fit import awaiting_room_check, fit_checks, knows_room_size, spaces_of
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
@@ -290,7 +293,7 @@ from app.services.next_step import already_asks, asks_for_product_type, next_ste
 from app.services.numeric_guard import refinement_figures, stated_figures
 from app.services.product_brief import ProductBriefBuilder, without_facet
 from app.services.product_interaction import build_liked, build_picks, interaction_update
-from app.services.product_size import floor_sides
+from app.services.product_size import floor_sides, made_to_fit
 from app.services.proposal_mapping import MappedProposals, map_proposals
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
@@ -488,6 +491,9 @@ class _Primary:
     taste_answered: TasteAnsweredView | None = None
     """What a taste answer this turn told us."""
     space_fit: SpaceFitView | None = None
+    answered_card: bool = False
+    """The message answered the questions on screen in words - not a decline,
+    whatever the decision's `skip_questions` says."""
     """What the designer would aim for in the space they gave."""
     room_carried: RoomCarriedView | None = None
     """What a room took from shopping this turn."""
@@ -705,6 +711,56 @@ def _ordered_by_pick(state: AgentStateV1) -> AgentStateV1:
     return state.model_copy(
         update={"active_search": search.model_copy(update={"ordered_by_pick": True})}
     )
+
+
+def _remembering_inside(
+    state: AgentStateV1, pick: ProductCandidate, needs: Sequence[DesignCategoryNeed]
+) -> AgentStateV1:
+    """The designer's reading of what goes inside this pick - the mattress width
+    a bed takes - kept, so their own later search for it comes in that size."""
+    pick_kind = pick.commerce.subcategory
+    read = tuple(
+        InsideSize(
+            product_id=pick.product_id,
+            pick_kind=pick_kind,
+            kind=need.commerce_subcategory,
+            width_cm=need.direction.fits_inside_cm,
+        )
+        for need in needs
+        if pick_kind is not None
+        and need.commerce_subcategory is not None
+        and need.direction is not None
+        and need.direction.fits_inside_cm is not None
+    )
+    if not read:
+        return state
+    replaced = {(size.product_id, size.kind) for size in read}
+    kept = tuple(
+        size for size in state.inside_sizes if (size.product_id, size.kind) not in replaced
+    )
+    return state.model_copy(update={"inside_sizes": (*kept, *read)[-MAX_INSIDE_SIZES:]})
+
+
+def _sized_for(composed: ComposedSearch, inside: InsideSize | None) -> ComposedSearch:
+    """The search with the pieces in that size first - an order, never a
+    filter, kept with the search so paging leans the same way."""
+    if inside is None:
+        return composed
+    fit = Decimal(inside.width_cm)
+    return composed.model_copy(
+        update={
+            "candidate": composed.candidate.model_copy(
+                update={"lean": _with_fit(composed.candidate.lean, fit)}
+            ),
+            "resolved": composed.resolved.model_copy(
+                update={"lean": _with_fit(composed.resolved.lean, fit)}
+            ),
+        }
+    )
+
+
+def _with_fit(lean: RankingLean | None, fit: Decimal) -> RankingLean:
+    return (lean or RankingLean()).model_copy(update={"fit_side_cm": fit})
 
 
 def _in_room(state: AgentStateV1, product_id: int) -> bool:
@@ -1113,7 +1169,11 @@ class CustomerTurnCoordinator:
         designer_fit: bool = False,
         size: SizeSettings | None = None,
         mixed_types: bool = False,
+        fit_after_pick: bool = False,
     ) -> None:
+        self._fit_after_pick = fit_after_pick
+        """Whether a bed picked asks the room's size, a mattress after it comes
+        in the bed's size, and a fit between two pieces never asks the room."""
         self._mixed_types = mixed_types
         """Whether a customer's search for a type also shows the types reviewed
         to stand beside it - sofa sets and sectionals beside sofas."""
@@ -1204,6 +1264,7 @@ class CustomerTurnCoordinator:
             result = self._with_language(result, started, stored, turn.context.store_id)
         result = await self._with_narrow_down(result, turn)
         result = await self._with_taste_question(result, turn)
+        result = self._with_room_check(result)
         if result.next_step is not None:
             return result
         capabilities = None
@@ -1221,6 +1282,90 @@ class CustomerTurnCoordinator:
             rooms=self._rooms,
         )
         return result.model_copy(update={"next_step": step}) if step is not None else result
+
+    def _answers_room_check(
+        self, decision: CustomerAgentDecision, state: AgentStateV1
+    ) -> CustomerAgentDecision:
+        """Their room's length and width, given in reply to a bed's room check,
+        is its answer: the designer judges that bed in that room even where the
+        decision read the reply as a plain answer - the question and its typed
+        answer never part (CLAUDE.md 10.11, 17.1).
+
+        Only a reply that does nothing else. A new search, a room to design or
+        a question about one piece is theirs to have, with the room's size
+        recorded beside it; a size without its unit is asked about first; and a
+        fit question already decided needs no rewriting - the bed it waits for
+        is the piece it judges."""
+        check = awaiting_room_check(state) if self._fit_after_pick else None
+        if (
+            check is None
+            or decision.action is not AgentAction.ANSWER
+            or decision.interaction is not None
+            or decision.reference is not None
+            or not _gives_room_size(decision)
+        ):
+            return decision
+        kind = customer_words_or_none(check.kind) or "piece"
+        return decision.model_copy(
+            update={
+                "action": AgentAction.DESIGN_HANDOFF,
+                "design_scope": DesignScope.ADVICE,
+                "fit_question": True,
+                "fit_with_piece": False,
+                "reference": None,
+                "design_question": (
+                    f"Will the {kind} I picked fit comfortably in my room, "
+                    "with enough space to walk around it?"
+                ),
+            }
+        )
+
+    def _with_room_check(self, result: CustomerTurnResult) -> CustomerTurnResult:
+        """A bed just picked, and their room's size unknown: the turn closes
+        on its length and width, asked once a session, so the designer can
+        judge the space around it when they answer (CLAUDE.md 10.11).
+
+        In place of the generic step after a pick - never beside a question the
+        turn already asks, and never for a piece of a room being designed,
+        whose questions are the room's own."""
+        state = result.state
+        focus = result.focus
+        picked = state.product_interaction.focused_product_id
+        room = state.room_project
+        if (
+            not (self._fit_after_pick and self._designer_fit)
+            or self._briefs is None
+            or result.next_step is not None
+            or focus is None
+            or picked is None
+            or state.room_check is not None
+            or _in_room(state, picked)
+            or knows_room_size(room.geometry if room else None)
+            # The other kinds that go with it are chips beside the pick, not
+            # a question: the room's size takes their place this once.
+            or already_asks(result.model_copy(update={"companions": ()}))
+            or not self._briefs.checks_room_on_pick(focus.commerce.subcategory)
+        ):
+            return result
+        kind = focus.commerce.subcategory
+        assert kind is not None
+        check = RoomCheck(
+            product_id=picked,
+            kind=kind,
+            list_revision=state.product_interaction.presented_search_revision,
+        )
+        return result.model_copy(
+            update={
+                "state": state.model_copy(update={"room_check": check}),
+                "next_step": NextStep(kind=NextStepKind.ROOM_SIZE),
+                "companions": (),
+                # The reply's one question: none of its own, which would take
+                # the room's place and leave it asked but never shown.
+                "grounding": result.grounding.model_copy(
+                    update={"follow_up_policy": FollowUpPolicy.NONE}
+                ),
+            }
+        )
 
     async def _with_taste_question(
         self, result: CustomerTurnResult, turn: CustomerTurnInput
@@ -1249,12 +1394,19 @@ class CustomerTurnCoordinator:
             or not search.products
             or active is None
             or active.ordered_by_pick
+            # A mattress is not chosen by its look: nothing to ask about it.
+            or (
+                self._briefs is not None
+                and not self._briefs.by_look(active.request.commerce_subcategory)
+            )
             or result.focus is not None
             or result.companions
             or result.seating_solution is not None
             or result.swap_context is not None
             or grounding.design_handoff_requested
-            or result.decision.skip_questions
+            # "Just show me" declines them; answering the opening in words
+            # does not, so typing and tapping its answers match (17.1).
+            or (result.decision.skip_questions and not result.opening_answered)
             or seats_asked
             or result.taste_answered is not None
             or already_asks(result)
@@ -1320,6 +1472,13 @@ class CustomerTurnCoordinator:
                 )
             elif option.key == NEITHER:
                 chips.append(chip(Chip.TASTE_NEITHER, language, search_action=action))
+            elif pending.kind is TasteQuestionKind.SPACE:
+                words = (
+                    SPACE_ANY[language]
+                    if option.space_cm is None
+                    else SPACE_UPTO[language].format(width=option.space_cm)
+                )
+                chips.append(ReplyChoice(label=words, value=words, search_action=action))
             else:
                 family = AttributeFamily.COLOR if option.colour else AttributeFamily.STYLE
                 value = option.colour or option.styles[0]
@@ -1400,6 +1559,13 @@ class CustomerTurnCoordinator:
             update={
                 "said_avoid_colours": preferences.avoid_colours,
                 "said_avoid_styles": preferences.avoid_styles,
+                # How wide the spot is: fitted by the designer on the run,
+                # ordering what fits first (CLAUDE.md 10.10).
+                **(
+                    {"space_cm": meaning.space_cm, "space_fitted": False, "size_target_cm": None}
+                    if meaning.space_cm is not None
+                    else {}
+                ),
             }
         )
         shown = pre_turn.product_interaction.presented_product_ids
@@ -1423,6 +1589,7 @@ class CustomerTurnCoordinator:
                 liked=tuple(dict.fromkeys((*meaning.styles, *colours))),
                 avoided=(*meaning.avoid_colours, *meaning.avoid_styles),
                 neither=bool(meaning.leave_out),
+                space=meaning.space_cm is not None,
             ),
         )
 
@@ -1610,6 +1777,7 @@ class CustomerTurnCoordinator:
             ),
             problems=problems,
         )
+        decision = self._answers_room_check(decision, pre_turn)
 
         proposals = self._with_room_pieces(
             decision, map_proposals(decision.state_proposal, decision.commerce_proposal), pre_turn
@@ -1657,6 +1825,7 @@ class CustomerTurnCoordinator:
             direction=primary.direction,
             taste_answered=primary.taste_answered,
             space_fit=primary.space_fit,
+            opening_answered=primary.answered_card,
             room_question=primary.room_question,
             room_carried=primary.room_carried,
             room_seats=self._room_seats(primary.bundle_outcome),
@@ -1999,6 +2168,7 @@ class CustomerTurnCoordinator:
         except _HANDLED_DESIGN_FAILURES:
             logger.warning("cross_sell_design_unavailable", store_id=turn.context.store_id)
             return None
+        state = _remembering_inside(state, anchor, plan.needs)
         # One kind, and only what they asked for: a need naming a whole
         # category would show any kind in it - their pick's own among them -
         # and a seat count would be a requirement nobody stated, kept on the
@@ -2044,6 +2214,7 @@ class CustomerTurnCoordinator:
             expressed=frozenset(preference.family for preference in expressed),
             avoid_colours=state.customer_preferences.avoid_colours,
             avoid_styles=state.customer_preferences.avoid_styles,
+            fits_inside=self._fit_after_pick,
         )
 
     def _taste(
@@ -2256,12 +2427,14 @@ class CustomerTurnCoordinator:
             customer_defaults=state.customer_preferences.semantic_preferences,
             revision=_current_revision(state),
         )
-        return await self._run_search(
-            composed,
+        inside = self._inside_their_pick(state, companion.commerce_subcategory)
+        primary = await self._run_search(
+            _sized_for(composed, inside),
             state,
             turn.context,
             recover_seating=False,
         )
+        return self._said_sized(primary, inside)
 
     async def _apply_search_action(
         self,
@@ -4701,7 +4874,16 @@ class CustomerTurnCoordinator:
         room = state.room_project
         geometry = room.geometry if room else None
         fit = decision.fit_question and self._designer_fit
-        if fit and not knows_room_size(geometry):
+        # One piece in or on another - a mattress in a bed frame - is judged
+        # from the two pieces' listed sizes: the room has nothing to add.
+        piece_fit = fit and decision.fit_with_piece and self._fit_after_pick
+        # A pick's room check still open: a fit question about no piece in
+        # particular is about that pick, and any fit judged now answers it.
+        awaiting = (
+            awaiting_room_check(state) if fit and not piece_fit and self._fit_after_pick else None
+        )
+        checking = awaiting if decision.reference is None else None
+        if fit and not piece_fit and not knows_room_size(geometry):
             # Whether it fits their room needs the room: one question first.
             # Nothing failed, so this is a question and not a handoff that
             # came to nothing.
@@ -4713,7 +4895,14 @@ class CustomerTurnCoordinator:
                     reason=BlockingClarificationReason.MISSING_ROOM_SIZE
                 ),
             )
-        about = await self._advice_pieces(decision, state, turn, every_card=fit)
+        about = await self._advice_pieces(
+            decision,
+            state,
+            turn,
+            every_card=fit,
+            only=checking.product_id if checking is not None else None,
+            with_picks=piece_fit,
+        )
         if fit and about.unresolved is not None:
             # Whether *that one* fits cannot be answered about no piece.
             clarification, failure = _reference_outcome(
@@ -4731,14 +4920,26 @@ class CustomerTurnCoordinator:
             anchors=project_anchors(
                 list(pieces),
                 dimensions=self._dimensions,
+                # What they chose: the piece they point at - or, for a piece
+                # in a piece, their picks, never every card beside them.
                 locked_product_ids=(
-                    [p.product_id for p in pieces] if decision.reference is not None else []
+                    [
+                        p.product_id
+                        for p in pieces
+                        if p.product_id in state.product_interaction.selected_product_ids
+                    ]
+                    if piece_fit
+                    else [p.product_id for p in pieces]
+                    if decision.reference is not None
+                    else []
                 ),
                 quantities={p.product_id: 1 for p in pieces},
             )
             if pieces
             else (),
-            fit_checks=fit_checks(pieces, spaces_of(state), about.cards) if fit else (),
+            fit_checks=(
+                fit_checks(pieces, spaces_of(state), about.cards) if fit and not piece_fit else ()
+            ),
         )
         try:
             plan = await self._design.plan(request)
@@ -4761,6 +4962,11 @@ class CustomerTurnCoordinator:
                 proposals_applied=True,
                 failure=TurnFailure(code=TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE),
             )
+        if awaiting is not None:
+            # Judged: the next fit question is about whatever they point at.
+            state = state.model_copy(
+                update={"room_check": awaiting.model_copy(update={"answered": True})}
+            )
         return _Primary(
             state=state,
             design_handoff=True,
@@ -4779,6 +4985,8 @@ class CustomerTurnCoordinator:
         turn: CustomerTurnInput,
         *,
         every_card: bool = False,
+        only: int | None = None,
+        with_picks: bool = False,
     ) -> _AdvicePieces:
         """The pieces the question is about, read fresh from the catalog.
 
@@ -4796,12 +5004,37 @@ class CustomerTurnCoordinator:
         general form of the question is still answerable, and refusing it over
         a pointing word would be worse than answering it broadly.
         """
-        if decision.reference is not None:
+        if only is not None:
+            # The pick whose room check this answers, wherever it is now.
+            found = await self._hydration.hydrate_ids((only,), turn.context)
+            return _AdvicePieces(pieces=tuple(found), cards=(None,) * len(found))
+        if decision.reference is not None and not with_picks:
             outcome = await self._references.resolve(decision.reference, state, turn.context)
             if isinstance(outcome, ReferenceUnresolved):
                 return _AdvicePieces(unresolved=outcome.reason)
             found = await self._hydration.hydrate_ids((outcome.product_id,), turn.context)
             return _AdvicePieces(pieces=tuple(found), cards=(None,) * len(found))
+        if with_picks:
+            # A piece in another: what is on screen, and what they picked.
+            shown = _on_screen(state.product_interaction)[:MAX_FIT_PIECES]
+            picked = tuple(
+                i for i in state.product_interaction.selected_product_ids if i not in shown
+            )
+            hydrated = {
+                p.product_id: p
+                for p in await self._hydration.hydrate_ids((*shown, *picked), turn.context)
+            }
+            kept = [
+                (card, hydrated[i])
+                for card, i in (
+                    *enumerate(shown, start=1),
+                    *((None, i) for i in picked),
+                )
+                if i in hydrated
+            ]
+            return _AdvicePieces(
+                pieces=tuple(p for _, p in kept), cards=tuple(card for card, _ in kept)
+            )
         if every_card:
             shown = _on_screen(state.product_interaction)[:MAX_FIT_PIECES]
             hydrated = {
@@ -4887,6 +5120,7 @@ class CustomerTurnCoordinator:
             logger.info("complement_no_need", store_id=turn.context.store_id)
             return _Primary(state=state, design_handoff=True, proposals_applied=True)
 
+        state = _remembering_inside(state, product, plan.needs)
         return await self._first_viable_complement(
             plan.needs, request, state, turn, await self._direction_context(product, state, turn)
         )
@@ -4925,6 +5159,17 @@ class CustomerTurnCoordinator:
             resolved = self._design_discovery.resolve_need(need, request)
             if direction is not None and need.direction is not None:
                 resolved = _directed(resolved, need.direction, direction)
+                logger.info(
+                    "complement_direction",
+                    store_id=turn.context.store_id,
+                    kind=need.commerce_subcategory,
+                    colours=len(need.direction.colours),
+                    styles=len(need.direction.styles),
+                    size_ratio=need.direction.size_ratio is not None,
+                    fits_inside_cm=need.direction.fits_inside_cm,
+                    fit_side_applied=resolved.lean is not None
+                    and resolved.lean.fit_side_cm is not None,
+                )
             composed = ComposedSearch(
                 candidate=ActiveSearchState(
                     request=resolved.request,
@@ -4951,12 +5196,20 @@ class CustomerTurnCoordinator:
                         store_id=turn.context.store_id,
                         attempts=position,
                     )
+                fit_cm = resolved.lean.fit_side_cm if resolved.lean is not None else None
+                first = floor_sides(attempt.search.products[0].dimensions, self._size)
                 return replace(
                     attempt,
                     design_handoff=True,
                     proposals_applied=True,
                     direction=(
-                        DirectionView.of(need, resolved.lean, self._size)
+                        DirectionView.of(
+                            need,
+                            resolved.lean,
+                            self._size,
+                            first_fits=fit_cm is not None
+                            and made_to_fit(first.short_cm if first else None, fit_cm, self._size),
+                        )
                         if direction is not None and need.direction is not None
                         else None
                     ),
@@ -5514,7 +5767,10 @@ class CustomerTurnCoordinator:
             # A new search replaces the card on screen; its answers would now
             # refine a request nobody is making.
             working = record_brief(working, None)
-        primary = await self._seed_and_execute(interpretation, decision, working, turn)
+        primary = replace(
+            await self._seed_and_execute(interpretation, decision, working, turn),
+            answered_card=answering,
+        )
         if answering or combining or self._designer_led_brief:
             return primary
         return await self._offer_narrowing(interpretation, primary, turn, language)
@@ -5855,8 +6111,41 @@ class CustomerTurnCoordinator:
             ),
             revision=_current_revision(working),
         )
-        return await self._run_search(
-            composed, working, turn.context, save_sizes=True, mixed=True
+        inside = self._inside_their_pick(working, resolved.request.commerce_subcategory)
+        primary = await self._run_search(
+            _sized_for(composed, inside), working, turn.context, save_sizes=True, mixed=True
+        )
+        return self._said_sized(primary, inside)
+
+    def _inside_their_pick(self, state: AgentStateV1, kind: str | None) -> InsideSize | None:
+        """The size this kind takes inside one of their picks - a mattress for
+        the bed they picked - as the designer read it: the newest still picked
+        (CLAUDE.md 10.11)."""
+        if not self._fit_after_pick or kind is None:
+            return None
+        picked = set(state.product_interaction.selected_product_ids)
+        return next(
+            (
+                size
+                for size in reversed(state.inside_sizes)
+                if size.kind == kind and size.product_id in picked
+            ),
+            None,
+        )
+
+    def _said_sized(self, primary: _Primary, inside: InsideSize | None) -> _Primary:
+        """Told to the reply only when the first card is in that size: the
+        order is otherwise no claim it can make."""
+        search = primary.search
+        if inside is None or search is None or not search.products:
+            return primary
+        first = floor_sides(search.products[0].dimensions, self._size)
+        if not made_to_fit(
+            first.short_cm if first else None, Decimal(inside.width_cm), self._size
+        ):
+            return primary
+        return replace(
+            primary, search=search.model_copy(update={"sized_for_pick": inside.pick_kind})
         )
 
     def _measurable_by(self, subcategory: str | None, request: ProductSearchRequest) -> bool:
@@ -7015,6 +7304,8 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
+        room_check=state.room_check,
+        inside_sizes=state.inside_sizes,
     )
 
 
@@ -7070,6 +7361,8 @@ def _with_chosen_combination(
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
+        room_check=state.room_check,
+        inside_sizes=state.inside_sizes,
     )
     logger.info("seating_combination_chosen", choice=choice, pieces=len(chosen.lines))
     return with_picks
@@ -7300,6 +7593,9 @@ class _DirectionContext:
     avoid_colours: tuple[str, ...] = ()
     avoid_styles: tuple[str, ...] = ()
     """What the customer said they would rather avoid (phase 5)."""
+    fits_inside: bool = False
+    """Whether a size the designer reads off the pick - a mattress for this
+    bed - orders the cards."""
 
 
 def _directed(
@@ -7333,6 +7629,11 @@ def _directed(
         size_target_cm=(
             (context.anchor_long_cm * Decimal(str(ratio))).quantize(Decimal("1"))
             if context.anchor_long_cm is not None and ratio is not None
+            else None
+        ),
+        fit_side_cm=(
+            Decimal(direction.fits_inside_cm)
+            if context.fits_inside and direction.fits_inside_cm is not None
             else None
         ),
     )
@@ -7395,6 +7696,7 @@ _TASTE_STEP: dict[TasteQuestionKind, NextStepKind] = {
     TasteQuestionKind.WHICH: NextStepKind.TASTE_WHICH,
     TasteQuestionKind.STYLE: NextStepKind.TASTE_STYLE,
     TasteQuestionKind.AVOID: NextStepKind.TASTE_AVOID,
+    TasteQuestionKind.SPACE: NextStepKind.TASTE_SPACE,
 }
 
 
@@ -7617,6 +7919,22 @@ def _kept_to_one_type(outcome: CompositionOutcome) -> CompositionOutcome:
             "resolved": _one_type(outcome.resolved),
         }
     )
+
+
+def _gives_room_size(decision: CustomerAgentDecision) -> bool:
+    """Whether this turn stated the room's length and width, each with its
+    unit - "5 by 4" alone is a question about the unit, never a size."""
+    proposal = decision.state_proposal
+    geometry = proposal.room_geometry if proposal is not None else None
+    if geometry is None:
+        return False
+    sides = {RoomMeasurementRole.ROOM_LENGTH, RoomMeasurementRole.ROOM_WIDTH}
+    given = {
+        measurement.role
+        for measurement in geometry.measurements
+        if measurement.role in sides and measurement.unit
+    }
+    return given == sides
 
 
 def _search_despite(unresolved: UnresolvedStrictRequirement) -> ResolvedSearch:

@@ -122,6 +122,8 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         "direction",
         "taste_answered",
         "space_fit",
+        # The message answered the opening in words: not a decline.
+        "opening_answered",
         "room_carried",
         "still_on_screen",
         "narrowed",

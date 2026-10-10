@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, Literal
 
-from app.schemas.agent_state import AgentStateV1
+from app.schemas.agent_state import AgentStateV1, RoomCheck
 from app.schemas.design import FitVerdict, PieceFitCheck
 from app.schemas.geometry import RoomGeometry, RoomMeasurementRole
 from app.schemas.product import ProductCandidate
@@ -33,6 +33,23 @@ class Space:
     kind: Literal["wall", "doorway"]
     centimetres: Decimal
     label: str | None = None
+
+
+def awaiting_room_check(state: AgentStateV1) -> RoomCheck | None:
+    """The room's size asked for a pick, while a reply can still answer it:
+    not yet judged, the pick still theirs, and the list it was asked beside
+    still on screen - once another list replaces it, nothing answers it, as
+    with a taste question (CLAUDE.md 10.9, 10.11)."""
+    check = state.room_check
+    interaction = state.product_interaction
+    if (
+        check is None
+        or check.answered
+        or check.product_id not in interaction.selected_product_ids
+        or check.list_revision != interaction.presented_search_revision
+    ):
+        return None
+    return check
 
 
 def knows_room_size(geometry: RoomGeometry | None) -> bool:

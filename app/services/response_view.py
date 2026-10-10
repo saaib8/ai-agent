@@ -55,7 +55,8 @@ from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import MAX_COMPANION_CHIPS
 from app.services.screen_view import screen_from_presentation
 from app.taxonomy.attributes import AttributeFamily
-from app.taxonomy.briefs import ALWAYS_ASKED, OPENING_QUESTIONS
+from app.taxonomy.briefs import OPENING_QUESTIONS
+from app.taxonomy.words import customer_words_or_none
 
 
 def route_response(result: CustomerTurnResult) -> ResponseRoute:
@@ -750,7 +751,11 @@ def _brief_view(result: CustomerTurnResult) -> ProductBriefGroundingView | None:
         looking_for=_brief_subject(result),
         asks_about=asks_about,
         choose=min(OPENING_QUESTIONS, len(brief.questions)) if opening else 0,
-        must_ask=tuple(kind for kind in ALWAYS_ASKED if kind in asks_about) if opening else (),
+        must_ask=(
+            tuple(kind for kind in pending.always_asked if kind in asks_about)
+            if opening and pending is not None
+            else ()
+        ),
         narrowing=brief.mode is BriefMode.NARROW,
     )
 
@@ -823,7 +828,7 @@ def _taste_question(result: CustomerTurnResult | None) -> TasteQuestionGrounding
         options=tuple(
             (o.colour or ", ".join(o.styles)).replace("_", " ")
             for o in pending.options
-            if o.position is None and o.key != "neither"
+            if o.position is None and o.key != "neither" and (o.colour or o.styles)
         ),
     )
 
@@ -908,6 +913,7 @@ def _search(
         earlier_sizes_applied=search.earlier_sizes_applied,
         would_find_without=search.set_aside,
         type_mix=_type_mix_view(search.type_mix),
+        sized_for_their_pick=customer_words_or_none(search.sized_for_pick),
         best_match_first=results and best_match_first(result),
         # Folded beneath the results to narrow them: the turn's question, so
         # the reply asks none of its own.

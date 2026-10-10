@@ -219,7 +219,6 @@ export function AssistantBubble({
             likes={actsOnCards ? likes : undefined}
             onMoreLikeThis={actsOnCards ? onMoreLikeThis : undefined}
             compare={isResultList ? compare : undefined}
-            bestMatch={isResultList && !!presentation?.best_match}
             busy={busy}
           />
         )}

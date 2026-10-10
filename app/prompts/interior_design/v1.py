@@ -16,6 +16,12 @@ from app.taxonomy.registry import CommerceTaxonomy
 
 VERSION = "interior_design/v5"
 
+FIT_AFTER_PICK_SUFFIX = "+fit-pick.1"
+"""Added to the version where a pick is checked against the room and what
+goes inside a pick comes in its size (CLAUDE.md 10.11): judging a piece in a
+room from the room's size, a piece in a piece, and `fits_inside_cm`. Off, the
+instructions carry none of them."""
+
 _INSTRUCTIONS = """\
 ROLE
 You are an experienced interior designer advising a furniture retailer's
@@ -56,9 +62,9 @@ for a side table or a lamp, what else the room must hold, how it gets in
 through the door. Say plainly, for each piece asked about, whether you would
 put it there, and why - calling it by its card (the second one) when it has
 one, in plain words about their room, never about checks or anchors. A size
-not listed means you cannot say; never assume one.
+not listed means you cannot say; never assume one.{room_fit}
 
-room_plan — decide what kinds of thing this room needs. Give needs, and
+{piece_in_piece}room_plan — decide what kinds of thing this room needs. Give needs, and
 guidance where it explains the plan.
 
 complementary_recommendation — one piece has been chosen, and the question is
@@ -124,7 +130,7 @@ floor.
   than the anchor is 1.2 - the proportion of the anchor's longer floor side.
   A proportion only, never a size; leave it out when size does not matter for
   this pairing.
-A value not in stocked_looks for that kind will be ignored. A room's
+{fits_inside}A value not in stocked_looks for that kind will be ignored. A room's
 preferences, when given, are the customer's own: lean with them, never
 against them.
 
@@ -289,6 +295,37 @@ you decided, no greeting, no question.
 """
 
 
-def build_instructions(taxonomy: CommerceTaxonomy) -> str:
-    """The design instructions, with the approved vocabulary rendered in."""
-    return _INSTRUCTIONS.format(taxonomy=render_taxonomy(taxonomy))
+_ROOM_FIT = """ With the room's length and
+width and the piece's listed size, judge it - the space left on each side and
+at the foot - rather than asking for its position."""
+
+_PIECE_IN_PIECE = """\
+When the question is whether one piece fits inside another - a mattress in a
+frame - no room is needed: judge it from the two pieces' listed sizes. A frame
+is usually 10 to 25 cm wider than the mattress it takes, so a frame 200 cm wide
+takes a 180 cm mattress. Say which mattress width the frame takes and which
+card matches it, as your reading of the listed outer size, to confirm with the
+frame's own mattress size where the shop lists it.
+
+"""
+
+_FITS_INSIDE = """\
+- fits_inside_cm: whenever the piece goes inside the first anchor - a mattress
+  in the frame it lies in - always give the width in centimetres it must have
+  to fit, from the anchor's listed overall width: a frame is usually 10 to 25
+  cm wider than its mattress, so a frame 200 cm wide takes 180, one 175 cm
+  wide takes 160, one 145 cm wide takes 120. Choose the standard width that
+  fits (90, 120, 140, 150, 160, 180, 200). Leave it out for anything that
+  stands beside the anchor or on top of it.
+"""
+
+
+def build_instructions(taxonomy: CommerceTaxonomy, *, fit_after_pick: bool = False) -> str:
+    """The design instructions, with the approved vocabulary rendered in, and
+    the fit-after-pick guidance only where that setting is on."""
+    return _INSTRUCTIONS.format(
+        taxonomy=render_taxonomy(taxonomy),
+        room_fit=_ROOM_FIT if fit_after_pick else "",
+        piece_in_piece=_PIECE_IN_PIECE if fit_after_pick else "",
+        fits_inside=_FITS_INSIDE if fit_after_pick else "",
+    )

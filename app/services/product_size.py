@@ -45,6 +45,13 @@ def sides_of(first: Decimal, second: Decimal, size: SizeSettings) -> FloorSides 
     return FloorSides(long_cm=max(first, second), short_cm=min(first, second))
 
 
+def made_to_fit(short_cm: Decimal | None, fit_cm: Decimal, size: SizeSettings) -> bool:
+    """Whether a piece's shorter floor side is the width that goes in the pick
+    - a 180 mattress for a frame that takes 180 - within `fit_share`. One rule
+    for the order and for what the reply may say of it."""
+    return short_cm is not None and abs(short_cm - fit_cm) <= fit_cm * size.fit_share
+
+
 def size_distance(long_cm: Decimal | None, target_cm: Decimal | None) -> Decimal | None:
     """How far a product's longer side is from the size asked for, as a share
     of it - None when there is no target or no usable size, which ranks after

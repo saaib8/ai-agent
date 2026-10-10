@@ -207,6 +207,10 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "Which of these two feels more like you?": "أيّ هاتين القطعتين أقرب إلى ذوقك؟",
         "Which style feels right to you?": "أيّ طراز تشعر أنه الأنسب لك؟",
         "Is there anything you'd rather avoid?": "هل هناك ما تفضّل تجنّبه؟",
+        "How wide is the spot where it will go?": "ما عرض المكان الذي ستوضع فيه؟",
+        "What is your room's length and width, so I can check there's space around it?": (
+            "كم طول غرفتك وعرضها، حتى أتأكد أن حول القطعة مساحة كافية؟"
+        ),
         "Would you like to swap any piece, or add a finishing touch?": (
             "هل تودّ تبديل أي قطعة، أم إضافة لمسة أخيرة؟"
         ),

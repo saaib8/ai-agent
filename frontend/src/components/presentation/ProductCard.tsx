@@ -50,7 +50,6 @@ export function ProductCard({
   onExclude,
   select,
   compare,
-  bestMatch = false,
   like,
   onMoreLikeThis,
   busy = false,
@@ -64,8 +63,6 @@ export function ProductCard({
   select?: CardSelect
   /** Present on search results: check it to compare with a similar one. */
   compare?: CardCompare
-  /** The closest to what they described: their own words ordered the list. */
-  bestMatch?: boolean
   /** Present when the card can be liked. */
   like?: CardLike
   /** Present when a similarity search can start from this card. */
@@ -77,7 +74,6 @@ export function ProductCard({
   const { commerce } = product
   const price = money(product.price_amount, product.price_unit)
   const dims = dimensionsLine(product.dimensions)
-  const exact = product.relaxation_depth === 0
   const widened = product.relaxation_depth != null && product.relaxation_depth > 0
   const kind = commerce.subcategory ?? commerce.category
 
@@ -113,11 +109,6 @@ export function ProductCard({
             <span className="rounded-full bg-ink/75 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
               #{product.presented_ordinal}
             </span>
-            {bestMatch && (
-              <span className="rounded-full bg-clay px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                Best match
-              </span>
-            )}
           </div>
         )}
         {like && !pick && (
@@ -132,11 +123,6 @@ export function ProductCard({
           >
             <HeartIcon size={16} filled={like.liked} />
           </button>
-        )}
-        {exact && (
-          <span className="absolute right-2 top-2 rounded-full bg-sage px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-            exact
-          </span>
         )}
         {widened && (
           <span className="absolute right-2 top-2 rounded-full bg-amber px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">

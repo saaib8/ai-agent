@@ -592,11 +592,19 @@ class RankingLean(BaseModel):
     designer's proportion - of the picked piece's real measurements, or of the
     space it must fit."""
 
+    fit_side_cm: Decimal | None = Field(default=None, gt=0, exclude_if=lambda v: v is None)
+    """The shorter floor side a piece that goes in the pick should have - a
+    mattress for a bed frame - as the designer read it off the pick. The
+    pieces in that size come first; nothing is hidden."""
+
     def for_another_kind(self) -> RankingLean:
         """This lean carried to another kind of piece: the space they gave
         still holds, but what suits it is worked out again for the new kind -
-        a width that suits a sofa says nothing about a sofa set."""
-        return self.model_copy(update={"size_target_cm": None, "space_fitted": False})
+        a width that suits a sofa says nothing about a sofa set, nor a
+        mattress's size about anything else."""
+        return self.model_copy(
+            update={"size_target_cm": None, "space_fitted": False, "fit_side_cm": None}
+        )
 
 
 class ResolvedSearch(BaseModel):

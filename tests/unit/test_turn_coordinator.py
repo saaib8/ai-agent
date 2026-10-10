@@ -460,6 +460,7 @@ def _coordinator(
     room_handoff: bool = False,
     designer_fit: bool = False,
     mixed_types: bool = False,
+    fit_after_pick: bool = False,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -509,6 +510,7 @@ def _coordinator(
         room_handoff=room_handoff,
         designer_fit=designer_fit,
         mixed_types=mixed_types,
+        fit_after_pick=fit_after_pick,
     )
     return coordinator, parts
 

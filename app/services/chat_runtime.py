@@ -561,7 +561,12 @@ def _as_asked(result: CustomerTurnResult, response: CustomerResponse | None) -> 
 
 
 _TASTE_STEPS = frozenset(
-    {NextStepKind.TASTE_WHICH, NextStepKind.TASTE_STYLE, NextStepKind.TASTE_AVOID}
+    {
+        NextStepKind.TASTE_WHICH,
+        NextStepKind.TASTE_STYLE,
+        NextStepKind.TASTE_AVOID,
+        NextStepKind.TASTE_SPACE,
+    }
 )
 """A taste question's chips carry the answer's key: never replaced by chips
 the reply wrote, which a tap would send back as words."""

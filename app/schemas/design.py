@@ -439,6 +439,12 @@ class DesignDirection(BaseModel):
     first anchor's - "about two-thirds of the sofa" is 0.66. A proportion, so
     the designer never states a size; code turns it into a figure from the
     anchor's real measurements, and only where they exist."""
+    fits_inside_cm: int | None = Field(default=None, ge=40, le=250)
+    """For a piece that goes inside the first anchor - a mattress in a bed
+    frame - the width it must have, in centimetres: the size the anchor takes,
+    read off its listed size and its name (king, queen, single). The cards in
+    that size come first; nothing is hidden, and it is said as the designer's
+    reading, never as a fact of the catalog."""
 
     @property
     def is_empty(self) -> bool:
@@ -448,6 +454,7 @@ class DesignDirection(BaseModel):
             or self.avoid_colours
             or self.avoid_styles
             or self.size_ratio is not None
+            or self.fits_inside_cm is not None
         )
 
 

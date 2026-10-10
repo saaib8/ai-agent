@@ -358,6 +358,10 @@ class SearchExecutionGrounding(BaseModel):
     """What a search covering several types found of each, for the reply.
     None for a search of one type with nothing left out."""
 
+    sized_for_pick: str | None = None
+    """The type of their pick these cards go inside - a bed - when the first
+    card is in the size it takes, as the designer read it off the pick."""
+
     @property
     def stale_dropped_count(self) -> int:
         """Selected products the catalog could no longer supply.

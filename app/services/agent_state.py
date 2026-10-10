@@ -84,6 +84,8 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
+        room_check=state.room_check,
+        inside_sizes=state.inside_sizes,
     )
 
 
@@ -158,6 +160,8 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
+        room_check=state.room_check,
+        inside_sizes=state.inside_sizes,
     )
 
 
@@ -191,6 +195,8 @@ def record_brief(
         ),
         reply_language=state.reply_language,
         taste=state.taste,
+        room_check=state.room_check,
+        inside_sizes=state.inside_sizes,
     )
 
 
@@ -256,6 +262,8 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
+        room_check=state.room_check,
+        inside_sizes=state.inside_sizes,
     )
 
 

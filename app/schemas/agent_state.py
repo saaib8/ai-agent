@@ -281,6 +281,42 @@ class PresentedList(BaseModel):
     product_ids: tuple[int, ...] = Field(min_length=1)
 
 
+class RoomCheck(BaseModel):
+    """A pick's fit in the room, asked about once: whether the room's size has
+    been asked for it, and whether its answer has been checked."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    kind: str = Field(min_length=1)
+    """The pick's reviewed type - a bed."""
+    answered: bool = False
+    """The fit was judged once the room's size came: the next fit question is
+    about whatever they point at, not this pick."""
+    list_revision: int | None = None
+    """The list on screen when it was asked: only a reply beside that list
+    answers it."""
+
+
+MAX_INSIDE_SIZES = 10
+"""As many as the picks tray holds."""
+
+
+class InsideSize(BaseModel):
+    """What goes inside one pick, in the size it takes - a 180 cm mattress for
+    the bed they picked - as the designer read it off the pick (CLAUDE.md
+    10.11). Kept so their own later search for it comes in that size."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    pick_kind: str = Field(min_length=1)
+    """The pick's type - a bed."""
+    kind: str = Field(min_length=1)
+    """The type that goes inside it - mattresses."""
+    width_cm: int = Field(ge=40, le=250)
+
+
 class ProductInteractionState(BaseModel):
     """Which products the conversation has referred to.
 
@@ -874,6 +910,16 @@ class AgentStateV1(BaseModel):
     )
     """Taste questions asked after products, and the one on screen (phase 5).
     Defaulted and left out while unused, so every saved session still reads."""
+
+    room_check: RoomCheck | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The room's size asked for a pick that is checked against the room - a
+    bed - once a session. Defaulted and left out while unused."""
+
+    inside_sizes: tuple[InsideSize, ...] = Field(
+        default=(), max_length=MAX_INSIDE_SIZES, exclude_if=lambda v: not v
+    )
+    """What goes inside their picks, in the size each takes, newest last.
+    Defaulted and left out while unused."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

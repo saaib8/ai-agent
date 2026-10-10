@@ -17,6 +17,7 @@ from app.schemas.agent_decision import AgentAction, CustomerAgentDecision, Follo
 from app.schemas.agent_state import ActiveSearchState, AgentStateV1, ProductInteractionState
 from app.schemas.agent_turn import CustomerTurnInput
 from app.schemas.catalog_overview import CatalogOverview, SubcategoryShelf
+from app.schemas.discovery import DimensionConstraint, DimensionConstraintKind
 from app.schemas.grounding import (
     SearchExecutionGrounding,
     SearchOutcome,
@@ -25,7 +26,12 @@ from app.schemas.grounding import (
 from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStepKind
 from app.schemas.product import CommerceClassification, ProductCandidate
-from app.schemas.query import RankingLean
+from app.schemas.query import (
+    ConstraintSemantics,
+    ConstraintStrength,
+    DimensionConstraintSemantics,
+    RankingLean,
+)
 from app.schemas.relaxation import StopReason
 from app.schemas.resolution import ProductSearchExecutionResult
 from app.schemas.search_action import TasteAnswerAction
@@ -35,6 +41,7 @@ from app.services.product_brief import without_facet
 from app.services.taste import learned_taste
 from app.services.taste_question import NEITHER, answer, choose_question, on_screen
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.dimensions import DimensionRole
 
 from tests.unit.test_cross_sell_shows_products import _liking
 from tests.unit.test_product_brief import _builder
@@ -131,8 +138,15 @@ def _engine(decision: CustomerAgentDecision | None = None, *, on: bool = True) -
     )
 
 
+SPACE_SETTLED = TasteState(asked=(TasteQuestionKind.SPACE,))
+"""How wide the spot is comes first after a sofa's results; these tests are
+about the questions after it, so it has been asked already."""
+
+
 def _fresh(**interaction: Any) -> AgentStateV1:
-    return AgentStateV1(product_interaction=ProductInteractionState(**interaction))
+    return AgentStateV1(
+        product_interaction=ProductInteractionState(**interaction), taste=SPACE_SETTLED
+    )
 
 
 def _turn(state: AgentStateV1, message: str = "show me sofas", **action: Any) -> CustomerTurnInput:
@@ -211,8 +225,10 @@ async def test_more_like_this_is_remembered_as_a_taste_signal() -> None:
 
 
 def _search(**lean: Any) -> ActiveSearchState:
+    """A sofa search whose space is known - a 300 cm wall - so the questions
+    after it are what is chosen."""
     return ActiveSearchState(
-        request=SOFAS, revision=1, lean=RankingLean(learned=True, **lean) if lean else None
+        request=SOFAS, revision=1, lean=RankingLean(learned=True, space_cm=300, **lean)
     )
 
 
@@ -314,7 +330,7 @@ async def test_results_close_on_a_taste_question_in_place_of_the_old_follow_up()
     assert result.next_step is not None and result.next_step.kind is NextStepKind.TASTE_WHICH
     actions = [c.search_action for c in result.next_step.chips]
     assert all(isinstance(a, TasteAnswerAction) for a in actions)
-    assert result.state.taste.asked == (TasteQuestionKind.WHICH,)
+    assert result.state.taste.asked == (TasteQuestionKind.SPACE, TasteQuestionKind.WHICH)
     assert result.grounding.follow_up_policy.value == "none"
 
 
@@ -563,3 +579,131 @@ def test_the_avoid_question_never_offers_what_they_required() -> None:
 
     assert pending is not None and pending.kind is TasteQuestionKind.AVOID
     assert "Beige" not in {o.colour for o in pending.options}
+
+
+# ── how wide the spot is: after products, not before ────────────────────────
+
+WIDTH_UNDER_220 = DimensionConstraint(
+    role=DimensionRole.OVERALL_WIDTH,
+    kind=DimensionConstraintKind.MAX,
+    max_cm=Decimal("220"),
+    source_value="220",
+    source_unit="cm",
+)
+
+
+def _no_space_yet() -> ActiveSearchState:
+    return ActiveSearchState(request=SOFAS, revision=1)
+
+
+def test_how_wide_the_spot_is_comes_first_after_a_sofas_results() -> None:
+    pending = choose_question(
+        _cards(), _no_space_yet(), (), STYLES, TasteState(), list_revision=1
+    )
+
+    assert pending is not None and pending.kind is TasteQuestionKind.SPACE
+    assert [o.key for o in pending.options] == [
+        "space:250",
+        "space:300",
+        "space:400",
+        "space:500",
+        "space:any",
+    ]
+
+
+@pytest.mark.parametrize(
+    "search",
+    [
+        ActiveSearchState(request=SOFAS, revision=1, lean=RankingLean(space_cm=300)),
+        ActiveSearchState(
+            request=SOFAS.model_copy(update={"dimensions": (WIDTH_UNDER_220,)}),
+            semantics=ConstraintSemantics(
+                dimensions=(
+                    DimensionConstraintSemantics(
+                        role=DimensionRole.OVERALL_WIDTH, strength=ConstraintStrength.LOCKED
+                    ),
+                )
+            ),
+            revision=1,
+        ),
+        ActiveSearchState(
+            request=SOFAS.model_copy(update={"commerce_subcategory": "bed"}), revision=1
+        ),
+    ],
+    ids=["a-wall-they-gave", "a-width-for-the-piece", "a-kind-no-space-fits"],
+)
+def test_the_space_is_never_asked_when_known_or_meaningless(search: ActiveSearchState) -> None:
+    pending = choose_question(_cards(), search, (), STYLES, TasteState(), list_revision=1)
+
+    assert pending is None or pending.kind is not TasteQuestionKind.SPACE
+
+
+def test_the_space_is_asked_once_a_session() -> None:
+    asked = TasteState(asked=(TasteQuestionKind.SPACE,))
+
+    pending = choose_question(_cards(), _no_space_yet(), (), STYLES, asked, list_revision=1)
+
+    assert pending is not None and pending.kind is TasteQuestionKind.WHICH
+
+
+def test_a_width_answer_is_the_space_and_not_sure_is_nothing() -> None:
+    pending = choose_question(
+        _cards(), _no_space_yet(), (), STYLES, TasteState(), list_revision=1
+    )
+    assert pending is not None
+
+    meaning = answer(pending, "space:300")
+    unsure = answer(pending, "space:any")
+
+    assert meaning is not None and meaning.space_cm == 300
+    assert unsure is not None and unsure.space_cm is None
+
+
+async def test_a_tapped_width_orders_the_cards_to_fit_it() -> None:
+    coordinator, parts = _engine()
+    asked = await coordinator.run(_turn(AgentStateV1()))
+    pending = asked.state.taste.pending
+    assert pending is not None and pending.kind is TasteQuestionKind.SPACE
+    assert asked.next_step is not None and asked.next_step.kind is NextStepKind.TASTE_SPACE
+    labels = [c.label for c in asked.next_step.chips]
+    assert labels[:2] == ["About 250 cm", "About 300 cm"] and labels[-1] == "Not sure"
+
+    answered = await coordinator.run(
+        _turn(
+            asked.state,
+            "About 300 cm",
+            search_action=TasteAnswerAction(question=pending.question, answer="space:300"),
+        )
+    )
+
+    lean = parts["pipeline"].calls[-1].lean
+    assert lean is not None and lean.space_cm == 300
+    assert answered.taste_answered is not None and answered.taste_answered.space
+    assert answered.state.product_interaction.selected_product_ids == ()
+
+
+async def test_a_mattress_is_never_asked_about_its_look() -> None:
+    """Under the bedding its colour and style decide nothing: shown at once,
+    and no taste question after."""
+    from app.schemas.query import ConstraintSemantics, ResolvedSearch
+
+    from tests.unit.test_product_brief import _builder
+
+    mattresses = SOFAS.model_copy(
+        update={"commerce_category": "bedding", "commerce_subcategory": "mattresses"}
+    )
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.SEARCH),
+        interpretation=ResolvedSearch(request=mattresses, semantics=ConstraintSemantics()),
+        pipeline=LookingPipeline(),  # type: ignore[arg-type]
+        capabilities=StyledShelves(),
+        hydration=CardHydration(),
+        designer_taste=True,
+    )
+    coordinator._briefs = _builder()[0]
+
+    result = await coordinator.run(_turn(_fresh(), "show me mattresses"))
+
+    assert result.grounding.search is not None and result.grounding.search.products
+    assert result.state.taste.pending is None
+    assert result.next_step is None or not result.next_step.kind.startswith("taste_")

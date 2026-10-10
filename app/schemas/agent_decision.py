@@ -915,6 +915,13 @@ class CustomerAgentDecision(BaseModel):
     country style"). Any action: it changes only the words they read
     (docs/arabic-replies-plan.md)."""
 
+    fit_with_piece: SkipJsonSchema[bool] = False
+    """With fit_question: whether one piece fits in or on another - "will this
+    mattress fit my bed?" - not whether it fits their room, a wall or a door.
+    The two pieces' listed sizes answer it; the room's size is never asked for
+    it. Left out of the model's response schema unless that is on
+    (`with_fit_after_pick`)."""
+
     only_asked_type: SkipJsonSchema[bool] = False
     """They want the type they named and nothing beside it - "just sofas",
     "only regular sofas", "a simple sofa, not a set". On a search or a
@@ -1339,6 +1346,17 @@ def with_reply_language(schema: type[CustomerAgentDecision]) -> type[CustomerAge
     )
 
 
+def with_fit_after_pick(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """`schema` with `fit_with_piece` shown to the model. Transport only, like
+    the language fields: `to_plain_decision` turns the result back."""
+    return create_model(
+        f"{schema.__name__}WithPieceFit",
+        __base__=schema,
+        __doc__=schema.__doc__,
+        fit_with_piece=(bool, False),
+    )
+
+
 def with_mixed_types(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
     """`schema` with `only_asked_type` shown to the model, where a sofa search
     also shows sofa sets and sectionals. Transport only, like the language
@@ -1393,6 +1411,7 @@ __all__ = [
     "SoleSelectedProduct",
     "build_constrained_decision",
     "to_plain_decision",
+    "with_fit_after_pick",
     "with_mixed_types",
     "with_reply_language",
 ]

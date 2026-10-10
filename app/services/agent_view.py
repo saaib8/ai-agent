@@ -52,8 +52,9 @@ from app.schemas.query import ConstraintSemantics, SemanticPreference
 from app.schemas.screen import PresentedCardView
 from app.schemas.taste import TasteOption, TasteQuestionKind
 from app.services.bundle_cards import group_bundle_cards
+from app.services.fit import awaiting_room_check
 from app.services.taste_question import on_screen
-from app.taxonomy.words import customer_words
+from app.taxonomy.words import customer_words, customer_words_or_none
 
 
 def project_state(
@@ -81,6 +82,11 @@ def project_state(
         question_card=_question_card(state),
         taste_question=_taste_question(state),
         shopping_room=state.customer_preferences.room,
+        room_check_for=(
+            customer_words_or_none(check.kind)
+            if (check := awaiting_room_check(state)) is not None
+            else None
+        ),
     )
 
 
@@ -88,6 +94,7 @@ _TASTE_ASKS = {
     TasteQuestionKind.WHICH: "which of two cards on screen feels more like them",
     TasteQuestionKind.STYLE: "which style feels right",
     TasteQuestionKind.AVOID: "anything they would rather avoid",
+    TasteQuestionKind.SPACE: "how wide the spot it will go in is",
 }
 
 
@@ -101,6 +108,8 @@ def _taste_question(state: AgentStateV1) -> TasteQuestionView | None:
             return f"card {option.position} on screen"
         if option.key == "neither":
             return "neither card"
+        if pending.kind is TasteQuestionKind.SPACE:
+            return f"about {option.space_cm} cm" if option.space_cm else "not sure"
         return option.colour or ", ".join(option.styles)
 
     return TasteQuestionView(

@@ -18,8 +18,8 @@ from collections.abc import Sequence
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.rooms import RoomPiece, RoomPieces
 
-VERSION = "customer_decision/v1.20"
-LANGUAGE_VERSION = "customer_decision/v1.20+reply-language.9"
+VERSION = "customer_decision/v1.21"
+LANGUAGE_VERSION = "customer_decision/v1.21+reply-language.9"
 """The same prompt with the LANGUAGE section, used where Arabic replies are on
 (docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
 
@@ -27,6 +27,10 @@ MIXED_TYPES_SUFFIX = "+mixed-types.2"
 """Added to the version where a sofa search also shows sofa sets and sectionals
 and the SOFAS, SETS AND SECTIONALS section explains `only_asked_type`. Off, the
 prompt carries neither."""
+
+FIT_AFTER_PICK_SUFFIX = "+fit-pick.1"
+"""Added where a bed picked asks the room's size and the PIECE IN A PIECE
+section explains `fit_with_piece`. Off, the prompt carries neither."""
 
 INSTRUCTIONS = """\
 ROLE
@@ -174,16 +178,18 @@ piece they want, not a head count: never head_count.
 A TASTE QUESTION ON SCREEN
 When the state's taste_question is set, you have just asked them softly about
 their taste - which of two cards feels more like them, which style feels
-right, or anything they would rather avoid. A reply that answers it - "the
-first one feels more me", naming one of the styles offered, "nothing too
-dark", "neither" - sets
+right, anything they would rather avoid, or how wide the spot it will go in
+is. A reply that answers it - "the first one feels more me", naming one of the
+styles offered, "nothing too dark", "neither", "about 300 cm" when that width
+is offered - sets
 taste_answer to the key of the option it names, and nothing else: it is never
 a pick, never a selection and never a new search. Only a key listed in
 taste_question.options can be chosen. Taking, adding, choosing, selecting or
 liking a card - "I'll take the second one", "add the first", "I like the
 third one" - is a pick as always, never a taste_answer: only words about how
-a card feels to them, or naming an offered style or something to avoid,
-answer it. If they ignore it and say something else, just do that.
+a card feels to them, or naming an offered style, width or something to
+avoid, answer it. A width no option offers ("my wall is 280 cm") is the space,
+as always. If they ignore it and say something else, just do that.
 
 WILL IT FIT
 Whether a piece fits - their room, a wall, through a door: "will the second
@@ -969,6 +975,20 @@ Arabizi, and neither is one Arabic word inside an English sentence.
 """
 
 
+_FIT_AFTER_PICK_SECTION = """\
+A PIECE IN A PIECE, AND THE ROOM'S SIZE FOR A PICK
+fit_with_piece: with fit_question, true when they ask whether one piece fits
+in or on another - "will this mattress fit my bed?", "which of these fits the
+frame I picked?" - and not whether it fits their room, a wall or a doorway.
+The pieces' own sizes answer it; never ask for the room's size for it.
+When the state's room_check_for is set, you have just asked how long and wide
+their room is, to check the piece they picked. A reply giving them - "5 by 4
+metres", "it's 4x3.5 m" - records them as room_geometry, and hands off design
+advice with fit_question true.
+
+"""
+
+
 _MIXED_TYPES_SECTION = """\
 SOFAS, SETS AND SECTIONALS
 A search for sofas also shows sofa sets and sectional sofas beside the sofas.
@@ -991,6 +1011,7 @@ def build_instructions(
     *,
     reply_language: bool = False,
     mixed_types: bool = False,
+    fit_after_pick: bool = False,
 ) -> str:
     """The decision instructions, with the colour and style vocabulary and the
     room registry when given, the LANGUAGE section where Arabic replies are
@@ -1006,6 +1027,8 @@ def build_instructions(
     sections = _LANGUAGE_SECTION if reply_language else ""
     if mixed_types:
         sections += _MIXED_TYPES_SECTION
+    if fit_after_pick:
+        sections += _FIT_AFTER_PICK_SECTION
     instructions = INSTRUCTIONS
     if reply_language:
         # The LANGUAGE section says which language each field is written in.

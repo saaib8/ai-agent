@@ -253,6 +253,7 @@ def customer_agent_decision_service(
         app_resources.rooms,
         reply_language=app_resources.settings.customer_agent.arabic_replies,
         mixed_types=app_resources.settings.customer_agent.mixed_types,
+        fit_after_pick=app_resources.settings.customer_agent.fit_after_pick,
     )
 
 
@@ -343,6 +344,7 @@ def customer_turn_coordinator(
         designer_fit=settings.customer_agent.designer_fit,
         size=settings.size,
         mixed_types=settings.customer_agent.mixed_types,
+        fit_after_pick=settings.customer_agent.fit_after_pick,
     )
 
 
@@ -360,7 +362,11 @@ def optional_interior_design_agent(
     client = app_resources.design_llm
     if client is None:
         return None
-    return InteriorDesignAgent(client, app_resources.taxonomy)
+    return InteriorDesignAgent(
+        client,
+        app_resources.taxonomy,
+        fit_after_pick=app_resources.settings.customer_agent.fit_after_pick,
+    )
 
 
 def interior_design_agent(app_resources: ResourcesDep) -> InteriorDesignAgent:
