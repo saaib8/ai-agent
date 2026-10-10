@@ -15,6 +15,9 @@ import type {
   RoomPhotoResponse,
   VisualizeRequest,
 } from './types'
+import { shrinkPhoto } from '../lib/shrinkPhoto'
+
+const TOO_LARGE_MESSAGE = 'That photo is too large to upload. Please try a smaller one.'
 
 // A discriminated result so callers handle failure explicitly rather than
 // catching. The backend never leaks stack traces — an error is always a typed
@@ -70,7 +73,7 @@ export async function postFinderPhoto(
   const form = new FormData()
   form.append('session_id', fields.sessionId)
   form.append('store_id', String(fields.storeId))
-  form.append('image', fields.file)
+  form.append('image', await shrinkPhoto(fields.file))
   const root = normaliseBase(base)
   // No Content-Type header: the browser sets the multipart boundary itself.
   return send<FinderPhotoResponse>(
@@ -98,7 +101,7 @@ export async function postRoomPhoto(
   const form = new FormData()
   form.append('session_id', fields.sessionId)
   form.append('store_id', String(fields.storeId))
-  form.append('image', fields.file)
+  form.append('image', await shrinkPhoto(fields.file))
   const root = normaliseBase(base)
   return send<RoomPhotoResponse>(
     root,
@@ -240,7 +243,10 @@ async function send<T>(
   const error =
     payload && typeof payload === 'object' && 'error' in payload
       ? (payload as { error: ErrorBody }).error
-      : { code: `http_${res.status}`, message: res.statusText || 'Request failed', trace_id: null }
+      : res.status === 413
+        ? // A proxy in front of the API refused the upload's size before it arrived.
+          { code: 'http_413', message: TOO_LARGE_MESSAGE, trace_id: null }
+        : { code: `http_${res.status}`, message: res.statusText || 'Request failed', trace_id: null }
 
   return { ok: false, status: res.status, error }
 }

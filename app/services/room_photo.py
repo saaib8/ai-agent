@@ -90,6 +90,7 @@ class RoomPhotoService:
             max_bytes=settings.room_photo_max_bytes,
             min_side=settings.room_photo_min_side,
             max_side=settings.room_photo_max_side,
+            upscale_to=settings.room_photo_upscale_to,
         )
         await self._check(prepared.jpeg, context)
         frame = Frame(width=prepared.width, height=prepared.height)

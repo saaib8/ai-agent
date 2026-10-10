@@ -350,8 +350,11 @@ class FurnitureFinderSettings(BaseModel):
     which of them are still sellable here. Larger than `result_limit` so that
     stale or inactive vectors do not leave the customer with a short list."""
 
-    max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
-    min_image_side: int = Field(default=300, gt=0)
+    max_upload_bytes: int = Field(default=40 * 1024 * 1024, gt=0)
+    """A memory ceiling, not a rule about photos: the console shrinks a photo
+    before sending it, so a customer never meets it."""
+    min_image_side: int | None = Field(default=None, gt=0)
+    """None accepts a photo of any size."""
     detection_max_side: int = Field(default=1600, gt=0)
     """Uploads are downscaled to this before detection, and every coordinate
     the detector returns is in that downscaled image's pixel space - which is
@@ -424,11 +427,18 @@ class VisualizationSettings(BaseModel):
     """Gemini's temperature when it edits the customer's photo. Low, because
     the room must come back as itself, not a reinterpretation of it."""
 
-    room_photo_max_bytes: int = Field(default=15 * 1024 * 1024, gt=0)
-    room_photo_min_side: int = Field(default=480, gt=0)
+    room_photo_max_bytes: int = Field(default=40 * 1024 * 1024, gt=0)
+    """A memory ceiling, not a rule about photos: the console shrinks a photo
+    before sending it, so a customer never meets it."""
+    room_photo_min_side: int | None = Field(default=None, gt=0)
+    """None accepts a room photo of any size; a small one is scaled up
+    (`room_photo_upscale_to`) instead of refused."""
     room_photo_max_side: int = Field(default=2048, gt=0)
     """Longer sides are scaled down before anything is sent: the image models
     work at about 2K, so more pixels would only cost upload time."""
+    room_photo_upscale_to: int = Field(default=1024, gt=0)
+    """A smaller room photo is scaled up until its longer side reaches this, so
+    the emptied room and every render placed in it come back at a usable size."""
 
     @property
     def room_photos_enabled(self) -> bool:
