@@ -42,12 +42,23 @@ class PreparedPhoto:
     height: int
 
 
-def prepare_upload(data: bytes, *, max_bytes: int, min_side: int, max_side: int) -> PreparedPhoto:
+def prepare_upload(
+    data: bytes,
+    *,
+    max_bytes: int,
+    min_side: int | None,
+    max_side: int,
+    upscale_to: int | None = None,
+) -> PreparedPhoto:
     """A customer upload as an upright RGB JPEG no larger than `max_side`.
 
     Orientation is applied from EXIF first: a portrait phone photo is stored
     sideways with a rotation flag, and detecting on the raw pixels would draw
     every outline on a picture the customer never saw.
+
+    `min_side` None accepts a photo of any size. `upscale_to` scales a smaller
+    one up until its longer side reaches it, so work done on it - an image
+    model's edit - comes back at a usable size rather than postage-stamp small.
     """
     if not data:
         raise ImageRejectedError(public_message="The uploaded file is empty.")
@@ -76,7 +87,7 @@ def prepare_upload(data: bytes, *, max_bytes: int, min_side: int, max_side: int)
         # ours to show, so the public one is fixed.
         raise ImageRejectedError(error_type=type(exc).__name__) from exc
 
-    if min(rgb.size) < min_side:
+    if min_side is not None and min(rgb.size) < min_side:
         raise ImageRejectedError(
             public_message=(
                 f"That photo is too small. Please use one at least {min_side} pixels on each side."
@@ -86,6 +97,12 @@ def prepare_upload(data: bytes, *, max_bytes: int, min_side: int, max_side: int)
         )
     if max(rgb.size) > max_side:
         rgb.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    elif upscale_to is not None and max(rgb.size) < upscale_to:
+        scale = min(upscale_to, max_side) / max(rgb.size)
+        rgb = rgb.resize(
+            (max(1, round(rgb.width * scale)), max(1, round(rgb.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
     return PreparedPhoto(jpeg=_jpeg(rgb, _UPLOAD_QUALITY), width=rgb.width, height=rgb.height)
 
 
