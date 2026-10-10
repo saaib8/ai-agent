@@ -6,6 +6,7 @@
   "description": "FAANG-grade test & demo console for the ZORY AI Commerce Agent (POST /v1/chat).",
   "scripts": {
     "dev": "vite",
+    "test": "node --test tests/*.test.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"

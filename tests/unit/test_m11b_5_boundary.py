@@ -115,6 +115,30 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         "briefs",
         # Whether a session may be answered in Arabic. A flag, not a service.
         "arabic_replies",
+        # Checked cards compare only within reviewed families. Registry data,
+        # with no catalog access or model calls.
+        "compare_groups",
+        # Whether a pick is answered with products that go with it. A flag,
+        # not a service: the design specialist and the pipeline are above.
+        "cross_sell_shows_products",
+        # Whether a new search opens with two writer-chosen questions. A flag.
+        "designer_led_opening",
+        # Whether results carry removable chips and a pre-filled Narrow down.
+        "designer_led_brief",
+        "designer_led_buttons",
+        "designer_direction",
+        "designer_taste",
+        "designer_space_fit",
+        "designer_space_question",
+        "room_handoff",
+        "designer_fit",
+        "size",
+        # Whether a sofa search also shows sofa sets and sectionals. A flag:
+        # the types come from the reviewed seating data above.
+        "mixed_types",
+        # Whether a bed picked asks the room's size. A flag: the kinds come
+        # from the reviewed card data above.
+        "fit_after_pick",
     ]
 
 

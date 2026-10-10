@@ -14,7 +14,7 @@ from __future__ import annotations
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 
-VERSION = "query_understanding/v1"
+VERSION = "query_understanding/v1.4"
 
 _INSTRUCTIONS = """\
 You interpret a furniture shopper's message into a structured product search.
@@ -48,6 +48,12 @@ exactly; work out what kind of product they mean from what they said and the \
 context they gave, including where the item will go and what it is for.
 - Leave commerce_subcategory null when the customer named only a general kind \
 of product. A category on its own is a valid, useful search.
+- Naming a listed type is not naming a general kind. When the customer's word \
+is one of the listed types - singular or plural, and however the request is \
+phrased ("again", "back to", "just show me") - set that type. A general kind is \
+a word that covers several listed types at once, as a category's own name \
+does. That other listed types are related to the one they named does not make \
+the named type general.
 - Some categories list a subcategory bearing the category's own name, for stock \
 that fits none of that category's specific types. When someone asks for that \
 kind of product in broad terms, give the category and leave the subcategory \
@@ -135,9 +141,17 @@ or how long. If they gave a number without saying which, leave that field null \
 rather than picking the likeliest.
 - Record the unit exactly as they gave it, and leave it null if they gave none. \
 Never assume one.
+- Say which floor side of the piece each measurement is: longer for its long \
+side, shorter for its short side, null for height. A piece that stands along \
+a wall is measured along it by its width, its long side. A piece you lie on \
+or eat around is longer than it is wide: its length is the long side and its \
+width the short side. Depth is always the short side.
 - Use a maximum for under or no more than, a minimum for at least, a range for \
 between two numbers, and a target for around or about. A target is a figure to \
 sit near, not a ceiling: do not turn around into under.
+- The size of the space it must fit - the wall, the gap, the spot it goes in, \
+"my wall is about 250 cm" - goes in space_width, never in dimensions: it is \
+the space, not a size of the piece.
 - Two sides given together, as in A by B, belong in the paired field rather \
 than as two separate measurements.
 - Words like compact, small, roomy or low-profile are not measurements. They \

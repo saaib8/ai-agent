@@ -51,6 +51,9 @@ class EligibleProduct(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     product_id: int
+    subcategory: str | None = None
+    """Its reviewed commerce type, so a search covering several types can take
+    them in turn and count how many of the type asked for there are."""
     price_amount: Decimal
     main_color: str | None = None
     styles: tuple[str, ...] = ()
@@ -61,6 +64,12 @@ class EligibleProduct(BaseModel):
     seating_capacity: int | None = None
     """The recorded seat count, or ``None`` when the catalog has none - never
     filled in here. A seating combination groups a type's products by it."""
+
+    long_side_cm: Decimal | None = None
+    short_side_cm: Decimal | None = None
+    """The longer and shorter floor side in centimetres, whichever column each
+    was stored in; ``None`` unless both are present in a known unit. Ranking
+    reads them for a size role; they are never shown or stated."""
 
 
 class CommerceClassification(BaseModel):

@@ -15,16 +15,55 @@
 #         is settled by a tap rather than guessed (CLAUDE.md 14.5).
 #   noun  what the card's button shows ("Show me sofas"), when the kind is
 #         being asked; otherwise the searched kind is named instead.
-#   ask   the questions, in card order: type, budget, colour, feel, style.
+#   ask   the questions, in card order: type, budget, space, colour, feel,
+#         style.
 #   type  the kinds of piece, each a subcategory from `for`, optionally with a
 #         seat count - 2/3-seaters are capacity on `sofa`, not types
 #         (CLAUDE.md 7). A kind the store does not stock is not offered.
+#   space how wide the wall or spot is where the piece goes, as reviewed
+#         widths of the spot (app/services/product_brief.py SPACE_WIDTHS).
+#         Offered only where OVERALL_WIDTH maps to the stored `length` axis.
+#         It orders - what suits the space first, wider pieces last - and
+#         filters nothing (CLAUDE.md 10.10); "not sure" adds nothing.
 #   feel  words that rank and never filter: a fabric, a finish, a detail. The
 #         catalog has no material field (CLAUDE.md 5), so a feel only orders
 #         the cards by how well their descriptions match it; nothing is hidden
 #         and the reply never claims a piece is made of it.
+#   opening
+#         what may be asked before a new search's first products, most useful
+#         first: room, people, type, space, feel, colour, style - never
+#         budget. The reply writer chooses two of those still open
+#         (docs/designer-led-shopping-plan.md).
+#
+#   opening_default
+#         the opening for a type no card covers, so a category new to the
+#         store is still asked about: room, colour and style only.
+#   narrow_default
+#         what Narrow down offers beside results of a type no card covers:
+#         budget, colour and style only.
+#   not_by_look
+#         kinds whose look decides nothing: no opening, and never asked about
+#         colour or style.
+#   rooms the answers to "which room is it for?". `room` is how it is
+#         remembered; "Other" remembers nothing - their own words name it.
 
 version: v1
+
+opening_default: [room, colour, style]
+narrow_default: [budget, colour, style]
+
+# Kinds chosen by size and comfort, never by their look: a mattress lies under
+# the bedding, so its colour and style decide nothing. They are shown at once,
+# with no questions before them, and never asked about colour or style - not
+# after the results, not in Narrow down. A kind here has no card of its own.
+not_by_look: [mattresses]
+
+rooms:
+  - {key: living-room, label: Living room, room: living room}
+  - {key: bedroom, label: Bedroom, room: bedroom}
+  - {key: office, label: Office, room: office}
+  - {key: dining-room, label: Dining room, room: dining room}
+  - {key: other, label: Other}
 
 feels:
   fabric: &fabric
@@ -39,7 +78,10 @@ briefs:
   sofas:
     for: [sofa, sectional-sofa, sofa-set, sofa-bed]
     noun: sofas
-    ask: [type, budget, colour, feel, style]
+    ask: [type, budget, space, colour, feel, style]
+    # The room first; how wide the spot is waits until products are shown.
+    opening: [room, people, type, feel, colour, style]
+    always: [room]
     type:
       - {label: 2-seater, subcategory: sofa, seats: 2}
       - {label: 3-seater, subcategory: sofa, seats: 3}
@@ -53,6 +95,7 @@ briefs:
     for: [chair, single-seater-sofa, lounge-chair, recliner, chaise-lounge]
     noun: chairs
     ask: [type, budget, colour, feel, style]
+    opening: [room, type, feel, colour, style]
     type:
       - {label: Accent chair, subcategory: chair}
       - {label: Armchair, subcategory: single-seater-sofa}
@@ -64,6 +107,7 @@ briefs:
   dining-chairs:
     for: [dining-chair]
     ask: [budget, colour, feel, style]
+    opening: [feel, colour, style]
     feel:
       label: Seat feel
       options:
@@ -75,6 +119,10 @@ briefs:
   beds:
     for: [bed]
     ask: [budget, colour, feel, style]
+    opening: [feel, colour, style]
+    # Picked, it is checked against the room: its size is asked once, then
+    # the designer judges the walking space around it.
+    room_check_on_pick: true
     feel:
       label: Headboard & extras
       options:
@@ -87,7 +135,8 @@ briefs:
     for: [center-table, service-table, tv-table, console, nightstand, dining-table]
     for_category: [tables]
     noun: tables
-    ask: [type, budget, colour, feel, style]
+    ask: [type, budget, space, colour, feel, style]
+    opening: [type, room, space, feel, colour, style]
     type:
       - {label: Coffee table, subcategory: center-table}
       - {label: Side table, subcategory: service-table}
@@ -105,7 +154,8 @@ briefs:
 
   wardrobes:
     for: [wardrobe, dresser, dressing-table]
-    ask: [budget, colour, feel, style]
+    ask: [budget, space, colour, feel, style]
+    opening: [room, space, feel, colour, style]
     feel:
       label: Finish
       options:
@@ -118,6 +168,7 @@ briefs:
     for: [carpet]
     noun: rugs
     ask: [budget, colour, feel, style]
+    opening: [room, feel, colour, style]
     feel:
       label: Material feel
       options:
@@ -131,6 +182,7 @@ briefs:
     for_category: [lighting]
     noun: lights
     ask: [type, budget, colour, feel, style]
+    opening: [type, room, feel, colour, style]
     type:
       - {label: Table lamp, subcategory: table-lamp}
       - {label: Floor lamp, subcategory: floor-lamp}
@@ -149,6 +201,11 @@ briefs:
 # Display only - the keys a tap sends back are unchanged. Every label has
 # exactly one entry. Reviewed by a native speaker before production.
 arabic:
+  Living room: غرفة المعيشة
+  Bedroom: غرفة النوم
+  Office: المكتب
+  Dining room: غرفة الطعام
+  Other: غير ذلك
   sofas: الكنب
   chairs: الكراسي
   tables: الطاولات

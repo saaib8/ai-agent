@@ -91,8 +91,11 @@ def _customer_state(
         return None, None, None
 
     customer = (
-        CustomerPreferenceUpdate(semantic_preferences=_preferences(proposal.customer_preferences))
-        if proposal.customer_preferences is not None
+        CustomerPreferenceUpdate(
+            semantic_preferences=_preferences(proposal.customer_preferences),
+            room=proposal.shopping_room,
+        )
+        if proposal.customer_preferences is not None or proposal.shopping_room is not None
         else None
     )
 

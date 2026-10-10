@@ -1,14 +1,21 @@
 import { useState } from 'react'
 import type { BriefAnswerAction, BriefQuestion, ProductBrief } from '../api/types'
+import { briefWords } from '../lib/briefWords'
+import type { ReplyLanguage } from '../lib/turnWords'
 import { SlidersIcon, SparkIcon } from './icons'
 
 interface BriefCardProps {
   brief: ProductBrief
+  language: ReplyLanguage
   /** Only the latest turn's card can be answered; older ones stay as a record. */
   active: boolean
+  /** Narrow down they asked for is the turn's question, so it starts open with
+   *  its questions showing; beside results it starts folded. */
+  opened?: boolean
   busy: boolean
-  /** The answers as the keys the card offered, and words for the chat thread. */
-  onSubmit: (answer: BriefAnswerAction, summary: string) => void
+  /** The answers as the keys the card offered, and words for the chat thread -
+   *  or, when they typed something more, no answer and all of it as words. */
+  onSubmit: (answer: BriefAnswerAction | null, summary: string) => void
 }
 
 type Picked = Record<string, string[]>
@@ -22,9 +29,16 @@ type Picked = Record<string, string[]>
  * about, so sending an empty card shows what they first asked for. Beside
  * results it starts folded, as a way to narrow them down.
  */
-export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
-  const [open, setOpen] = useState(brief.mode === 'ask')
-  const [picked, setPicked] = useState<Picked>({})
+export function BriefCard({ brief, language, active, opened, busy, onSubmit }: BriefCardProps) {
+  const words = briefWords(language)
+  const [open, setOpen] = useState(brief.mode === 'ask' || !!opened)
+  // Narrow down opens showing what the search on screen already uses.
+  const [picked, setPicked] = useState<Picked>(() =>
+    Object.fromEntries(
+      brief.questions.flatMap((q) => (q.selected?.length ? [[q.kind, q.selected]] : [])),
+    ),
+  )
+  const [extra, setExtra] = useState('')
   const [sent, setSent] = useState(false)
   const disabled = !active || busy || sent
 
@@ -51,17 +65,26 @@ export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
   const submit = () => {
     const first = (kind: string) => (picked[kind] ?? [])[0] ?? null
     setSent(true)
+    const typed = extra.trim()
+    if (typed) {
+      // Words only the agent can read: the taps go with them, as words.
+      onSubmit(null, [...summaryParts, typed].join(' · '))
+      return
+    }
     onSubmit(
       {
         kind: 'brief',
         card: brief.card,
         piece: first('type'),
+        room: first('room'),
+        people: first('people'),
         budget: first('budget'),
+        space: first('space'),
         colours: picked.colour ?? [],
         styles: picked.style ?? [],
         feel: first('feel'),
       },
-      anything ? summaryParts.join(' · ') : `Just ${brief.submit_label.toLowerCase()}`,
+      anything ? summaryParts.join(' · ') : brief.skip_label,
     )
   }
 
@@ -73,7 +96,7 @@ export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
         className="inline-flex w-fit items-center gap-2 rounded-full border border-clay/30 bg-surface px-3.5 py-1.5 text-sm font-medium text-clay shadow-card transition hover:border-clay hover:bg-clay hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
         <SlidersIcon size={15} />
-        Narrow down
+        {words.narrowDown}
       </button>
     )
   }
@@ -83,12 +106,12 @@ export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
       {brief.mode === 'ask' ? (
         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-clay">
           <SparkIcon size={14} />
-          A few quick taps - skip any
+          {words.quickTaps}
         </div>
       ) : (
         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-clay">
           <SlidersIcon size={14} />
-          Narrow these down
+          {words.narrowTheseDown}
         </div>
       )}
       {brief.questions.map((question) => {
@@ -98,7 +121,7 @@ export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
             <div className="text-xs font-medium text-muted">
               {question.label}
               {question.max_choices > 1 && (
-                <span className="font-normal"> · up to {question.max_choices}</span>
+                <span className="font-normal"> · {words.upTo(question.max_choices)}</span>
               )}
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -125,13 +148,24 @@ export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
           </div>
         )
       })}
+      {brief.mode === 'narrow' && (
+        <input
+          value={extra}
+          onChange={(event) => setExtra(event.target.value)}
+          onKeyDown={(event) => event.key === 'Enter' && !disabled && submit()}
+          disabled={disabled}
+          maxLength={200}
+          placeholder={words.anythingElse}
+          className="w-full rounded-xl border border-line bg-canvas/60 px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-clay/50 focus:outline-none disabled:opacity-60"
+        />
+      )}
       <div className="flex flex-wrap items-center gap-2 pt-0.5">
         <button
           onClick={submit}
           disabled={disabled}
           className="rounded-full bg-ink px-4 py-1.5 text-sm font-medium text-white transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {anything ? brief.submit_label : `Just ${brief.submit_label.toLowerCase()}`}
+          {anything || extra.trim() ? brief.submit_label : brief.skip_label}
         </button>
         {brief.mode === 'narrow' && !sent && (
           <button
@@ -139,7 +173,7 @@ export function BriefCard({ brief, active, busy, onSubmit }: BriefCardProps) {
             disabled={disabled}
             className="rounded-full px-3 py-1.5 text-sm font-medium text-muted transition hover:text-ink disabled:opacity-50"
           >
-            Cancel
+            {words.cancel}
           </button>
         )}
       </div>

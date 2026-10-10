@@ -26,7 +26,6 @@ There is no winner. No score, no recommendation, no "better value".
 from __future__ import annotations
 
 from collections.abc import Sequence
-from decimal import Decimal
 
 from app.core.config import CustomerAgentSettings
 from app.core.logging import get_logger
@@ -39,7 +38,6 @@ from app.schemas.comparison import (
     ComparisonStatus,
     ProductComparisonResult,
 )
-from app.schemas.dimensions import NormalisedDimensions
 from app.schemas.product import ProductCandidate
 from app.schemas.resolution import (
     ComparisonFailureReason,
@@ -49,7 +47,8 @@ from app.schemas.resolution import (
 from app.schemas.retailer import RetailerContext
 from app.services.discovery import to_candidate
 from app.services.grounding_builder import to_grounded_product
-from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, SourceAxis
+from app.services.product_size import measurement
+from app.taxonomy.dimensions import DimensionRole, DimensionSemantics
 
 logger = get_logger(__name__)
 
@@ -58,12 +57,6 @@ _DIMENSION_FIELDS: dict[ComparisonField, DimensionRole] = {
     ComparisonField.OVERALL_WIDTH: DimensionRole.OVERALL_WIDTH,
     ComparisonField.DEPTH: DimensionRole.DEPTH,
     ComparisonField.HEIGHT: DimensionRole.HEIGHT,
-}
-
-_AXIS_VALUES: dict[SourceAxis, str] = {
-    SourceAxis.LENGTH: "length_cm",
-    SourceAxis.WIDTH: "width_cm",
-    SourceAxis.HEIGHT: "height_cm",
 }
 
 _UNKNOWN = ComparisonCell(known=False)
@@ -149,12 +142,11 @@ class ProductComparisonService:
         A role it does not map is unknown rather than approximated by whichever
         column happens to hold a number.
         """
-        axis = self._dimension_semantics.source_axis(
-            product.commerce.subcategory, role
-        )
-        if axis is None:
+        by = self._dimension_semantics.shown_by(product.commerce.subcategory).get(role)
+        if by is None:
             return _UNKNOWN
-        return _centimetres(product.dimensions, axis)
+        value = measurement(product.dimensions, by)
+        return _optional(None if value is None else f"{value} cm")
 
 
 def _count_refusal(
@@ -200,13 +192,6 @@ def _catalog_value(
             return _optional(", ".join(sorted(product.styles)) or None)
         case _:
             return _UNKNOWN
-
-
-def _centimetres(dimensions: NormalisedDimensions, axis: SourceAxis) -> ComparisonCell:
-    if not dimensions.is_usable:
-        return _UNKNOWN
-    value: Decimal | None = getattr(dimensions, _AXIS_VALUES[axis])
-    return _optional(None if value is None else f"{value} cm")
 
 
 def _known(value: str) -> ComparisonCell:

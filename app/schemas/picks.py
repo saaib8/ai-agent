@@ -18,9 +18,9 @@ state (CLAUDE.md 20.2).
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 
@@ -48,8 +48,51 @@ class DeselectPickAction(BaseModel):
     pick: int = Field(ge=1)
 
 
+class LikeCardAction(BaseModel):
+    """♡ on a card: add the product at this position in a result list to
+    their liked list. Silent - nothing else changes."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["like"] = "like"
+    ordinal: int = Field(ge=1)
+    list_revision: int | None = Field(default=None, ge=1)
+
+
+class UnlikeAction(BaseModel):
+    """Take a like back: ♡ again on its card, named by the card - which a
+    queued tap still means after the list renumbers - or ✕ in the tray, by
+    its position in the liked list."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["unlike"] = "unlike"
+    liked: int | None = Field(default=None, ge=1)
+    ordinal: int | None = Field(default=None, ge=1)
+    list_revision: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _one_way_to_name_it(self) -> Self:
+        by_card = self.ordinal is not None and self.list_revision is not None
+        if (self.liked is not None) == by_card or (
+            not by_card and (self.ordinal is not None or self.list_revision is not None)
+        ):
+            raise ValueError("name a like by its position, or by its card - one of the two")
+        return self
+
+
+class SelectLikedAction(BaseModel):
+    """Select from the liked list: the like at this position becomes a pick,
+    exactly as a tick on its card would."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["select_liked"] = "select_liked"
+    liked: int = Field(ge=1)
+
+
 PickActionRequest = Annotated[
-    SelectPickAction | DeselectPickAction,
+    SelectPickAction | DeselectPickAction | LikeCardAction | UnlikeAction | SelectLikedAction,
     Field(discriminator="kind"),
 ]
 
@@ -105,14 +148,38 @@ class PickView(BaseModel):
     """The product the conversation is about, when it is this pick."""
 
 
+class LikedView(BaseModel):
+    """One liked product, as the tray draws it. Read fresh from the catalog."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    liked: int = Field(ge=1)
+    """Its position in the liked list - the number the tray's actions use,
+    kept when a like the catalog no longer returns is left out."""
+
+    name_english: str
+    image_url: str
+    price_amount: Decimal
+    price_unit: str
+    kind: str | None = None
+    positions: tuple[PickPosition, ...] = ()
+    """Every card showing this product on the result lists still on screen -
+    how the client draws its ♡ filled."""
+
+    picked: bool = False
+    """It is among their picks as well."""
+
+
 class PicksResponse(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     session_id: str
     session_revision: int = Field(ge=1)
     picks: tuple[PickView, ...] = ()
+    liked: tuple[LikedView, ...] | None = None
+    """Their liked list; None when the buttons are switched off."""
     goes_with: int | None = Field(default=None, ge=1)
-    """The pick to show companions for now: set when this tick picked the
-    first product of its kind and the store sells something that goes with
-    it. The client then asks for them - a second sofa picked to compare stays
-    silent."""
+    """The pick this tick added, for the client to open as a turn of the
+    conversation ("I like the ..."): its card, and what goes with it when
+    anything does. Set on every new pick; None on an untick, a tick that
+    changed nothing, or a pick that could not be read back."""

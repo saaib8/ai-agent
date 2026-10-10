@@ -25,19 +25,21 @@ from __future__ import annotations
 
 from decimal import Decimal
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.config import SizeSettings
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_decision import BlockingClarificationReason, FollowUpGoal
 from app.schemas.agent_state import SwapBudgetOfferStage
 from app.schemas.bundle import BundleStatus, BundleUnavailableReason, UnmetReason
 from app.schemas.comparison import MIN_COMPARED_PRODUCTS, ComparisonField
 from app.schemas.conversation import ConversationContext
-from app.schemas.design import DesignGuidance, DesignPriority
+from app.schemas.design import DesignCategoryNeed, DesignGuidance, DesignPriority
 from app.schemas.grounding import TurnFailureCode
 from app.schemas.next_step import NextStepKind
+from app.schemas.query import RankingLean
 from app.schemas.relaxation import RelaxableField, SetAsideOption
 from app.schemas.resolution import (
     DeterministicClarification,
@@ -46,14 +48,14 @@ from app.schemas.resolution import (
     SearchRequirementClarificationReason,
 )
 from app.schemas.room_opener import RoomQuestionKind
-from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.screen import CustomerVisibleScreenView, PresentedCardView
 from app.schemas.seating_solution import (
     SeatingShape,
     SeatingShapeOption,
     SeatingSolutionOutcome,
 )
 from app.taxonomy.attributes import AttributeFamily
-from app.taxonomy.briefs import BriefQuestionKind
+from app.taxonomy.briefs import OPENING_QUESTIONS, BriefQuestionKind
 from app.taxonomy.dimensions import DimensionRole
 
 
@@ -188,6 +190,12 @@ class DeterministicResponseKind(StrEnum):
     model asked to explain it would start guessing at remedies.
     """
 
+    FINISHING_TOUCH_OFFER = "finishing_touch_offer"
+    """A finishing touch asked for with no piece named: which one is the
+    question, and the pieces the room could still take are its chips. Fixed
+    wording: nothing was planned or priced, so there is nothing for a model to
+    describe, and one given this would be inventing a piece."""
+
 
 class DeterministicResponse(BaseModel):
     """A branch that answers without reaching a model. Application-only."""
@@ -283,6 +291,10 @@ class BundleGroundingView(BaseModel):
     missing_pieces: tuple[MissingPieceView, ...] = ()
     """Each missing piece by name, with its reason - so the reply says "the rug
     didn't fit the budget", never "1 needed piece couldn't be included"."""
+
+    added_pieces: tuple[str, ...] = ()
+    """The pieces this turn added to the room at their request, in words - so
+    the reply says it added the vase, never that it would choose something."""
 
     seating_for: int | None = Field(default=None, ge=1)
     """How many people the room's seating seats, when that is exactly the
@@ -425,6 +437,140 @@ class ProductBriefGroundingView(BaseModel):
 
     asks_about: tuple[BriefQuestionKind, ...] = Field(min_length=1)
 
+    choose: int = Field(default=0, ge=0, le=OPENING_QUESTIONS)
+    """How many of `asks_about` the reply asks, choosing the most useful for
+    this customer - an opening. Zero for a card, which shows every question."""
+
+    narrowing: bool = False
+    """Narrow down for the results already on screen, opened because they
+    asked to narrow them - not a new search's questions."""
+
+    must_ask: tuple[BriefQuestionKind, ...] = ()
+    """Of those, the ones an opening always asks: how much space the piece
+    has, wherever it is offered - the size it must fit decides more than any
+    other answer."""
+
+
+class DirectionView(BaseModel):
+    """The designer's direction for the suggested kind, as the reply may use
+    it to say why these cards: words and approved values only, no figure."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    colours: tuple[str, ...] = ()
+    styles: tuple[str, ...] = ()
+    character: str | None = None
+    avoid: tuple[str, ...] = ()
+    size: Literal["smaller", "similar", "larger"] | None = None
+    """Beside the pick, when a size proportion was used to order the cards."""
+    sized_for_the_pick: bool = False
+    """The first card is in the size that goes in the pick - a mattress for
+    this bed, as the designer read it off the bed. Never when no card is: the
+    ordering is then no claim the reply can make."""
+
+    @classmethod
+    def of(
+        cls,
+        need: DesignCategoryNeed,
+        lean: RankingLean | None,
+        size: SizeSettings,
+        *,
+        first_fits: bool = False,
+    ) -> DirectionView:
+        direction = need.direction
+        assert direction is not None
+        ratio = Decimal(str(direction.size_ratio)) if direction.size_ratio is not None else None
+        sized = lean is not None and lean.size_target_cm is not None and ratio is not None
+        return cls(
+            colours=direction.colours,
+            styles=direction.styles,
+            character=need.semantic_intent,
+            avoid=(*direction.avoid_colours, *direction.avoid_styles),
+            size=(
+                None
+                if not sized or ratio is None
+                else "smaller"
+                if ratio < size.similar_low
+                else "larger"
+                if ratio > size.similar_high
+                else "similar"
+            ),
+            sized_for_the_pick=first_fits and lean is not None and lean.fit_side_cm is not None,
+        )
+
+
+class TasteQuestionGroundingView(BaseModel):
+    """The soft taste question this reply closes on (phase 5): the two cards
+    by position, or the styles or values offered - words and positions only."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["which", "style", "avoid", "space"]
+    positions: tuple[int, ...] = ()
+    options: tuple[str, ...] = ()
+
+
+class RoomCarriedView(BaseModel):
+    """What a room took from shopping this turn, so the reply can say it once
+    instead of asking: the head count, the colours and styles they said, the
+    wall they gave."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    seats: int | None = Field(default=None, ge=1)
+    colours: tuple[str, ...] = ()
+    styles: tuple[str, ...] = ()
+    wall: Decimal | None = Field(default=None, gt=0)
+    """The wall they gave, in centimetres."""
+
+
+class SpaceFitView(BaseModel):
+    """The space they gave, the width the designer would aim for in it, and
+    why - worked out this turn."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    space_cm: Decimal = Field(gt=0)
+    ideal_cm: Decimal = Field(gt=0)
+    reason: str = Field(min_length=1)
+
+
+class TasteAnsweredView(BaseModel):
+    """What they just told us of their taste, and what the cards now lean to."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    liked: tuple[str, ...] = ()
+    avoided: tuple[str, ...] = ()
+    neither: bool = False
+    space: bool = False
+    """They said how wide the spot is: the cards now fit it first."""
+
+
+class ChosenSeatingPieceView(BaseModel):
+    """One kind of piece in the combination they chose, and how many."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str = Field(min_length=1)
+    quantity: int = Field(ge=1)
+    seats_each: int = Field(ge=1)
+
+
+class ChosenSeatingView(BaseModel):
+    """The seating combination they chose this turn - its pieces, how many of
+    each, and the seats they add up to, all counted by the application.
+
+    Their picks list each product once, so without this a choice of two of
+    the same sofa reads as one sofa and half the seats (CLAUDE.md 27.1).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pieces: tuple[ChosenSeatingPieceView, ...] = Field(min_length=1)
+    total_seats: int = Field(ge=1)
+    target_seats: int | None = Field(default=None, ge=1)
+
 
 class SeatingSolutionGroundingView(BaseModel):
     """What a composed seating combination looks like to the response model.
@@ -507,6 +653,33 @@ class SeatingSolutionGroundingView(BaseModel):
 _SEARCH_KINDS = frozenset({ResponseOutcomeKind.SEARCH_RESULTS, ResponseOutcomeKind.ZERO_RESULTS})
 """The two outcomes an executed search produces, either of which may carry
 search provenance. A detail, a comparison or a room ran no search."""
+
+
+class TypeMixView(BaseModel):
+    """A search for one kind that also showed the kinds beside it - sofa sets
+    and sectional sofas beside sofas - or would have, but for a size.
+
+    Counts and kind words, never products: the reply says how many of the kind
+    they asked for really meet their request, and names only kinds on screen.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    asked_kind: str
+    shown_beside: tuple[str, ...] = ()
+    """The kinds searched with it, which may or may not be on screen."""
+
+    asked_kind_matches: int | None = Field(default=None, ge=0)
+    """How many products of the asked kind meet their request - and seat the
+    head count, when they gave one. Fewer than the cards on screen means the
+    rest are other kinds, there because this kind ran short."""
+
+    on_screen: tuple[str, ...] = ()
+    """The kinds the cards on screen are, in the order they first appear. No
+    counts: how many cards of each are on screen says nothing about the shop."""
+    left_out_for_size: tuple[str, ...] = ()
+    """Kinds left out because they gave a size: these kinds' listed sizes
+    cannot be checked, so only the asked kind is shown."""
 
 
 class ResponseGroundingView(BaseModel):
@@ -602,6 +775,15 @@ class ResponseGroundingView(BaseModel):
     have failed.
     """
 
+    shopping_room: str | None = None
+    """The room they said the piece is for, in their words or as they tapped
+    it. Theirs to hear acknowledged; no card was filtered by it."""
+
+    seats_for: int | None = None
+    """How many they said usually sit there, when that ordered these cards:
+    pieces reviewed to seat that many come first. Not a promise that every
+    card does - `screen` shows which ones."""
+
     picked_kind: str | None = None
     """The kind of pick they just chose - "bed" - whose card is shown above
     the kinds that go with it.
@@ -670,6 +852,9 @@ class ResponseGroundingView(BaseModel):
     was_relaxed: bool = False
     relaxed_fields: tuple[RelaxableField, ...] = ()
     dropped_roles: tuple[DimensionRole, ...] = ()
+    unanswerable_sizes: tuple[DimensionRole, ...] = ()
+    """Measurements they asked for this turn that this kind's listings cannot
+    answer reliably: not applied, to be said plainly."""
     """Which axes moved or were lost - never by how much.
 
     The figures are real and the customer should hear them, but a widened
@@ -688,6 +873,16 @@ class ResponseGroundingView(BaseModel):
     set aside alone, would find. Counts and a field name - never a product or
     a bound - so the reply can offer a real next step without inventing one."""
 
+    type_mix: TypeMixView | None = None
+    """The kinds a search showed beside the one asked for, or left out for a
+    size: say it as it is - "I have only one sofa that seats 5; these sofa
+    sets seat you all" - and call each card by its own kind."""
+
+    sized_for_their_pick: str | None = None
+    """Their own results for what goes inside a piece they picked - a bed -
+    and the first card is in the size it takes, as the designer read it off
+    the pick: the ones in that size come first."""
+
     compared_count: int = Field(default=0, ge=0)
     comparison_differs_on: tuple[ComparisonField, ...] = ()
     """Which fields differ. Never a cell, so "they differ mainly on width" is
@@ -698,6 +893,36 @@ class ResponseGroundingView(BaseModel):
 
     seating: SeatingSolutionGroundingView | None = None
     """The composed combination, for `SEATING_COMBINATION` and nothing else."""
+
+    chosen_seating: ChosenSeatingView | None = None
+    """The combination they chose this turn: it seats everyone it was built
+    for, and the reply never calls it incomplete."""
+
+    taste_question: TasteQuestionGroundingView | None = None
+    """A soft taste question to close on - the application's, worded by you."""
+
+    taste_answered: TasteAnsweredView | None = None
+    space_fit: SpaceFitView | None = None
+    """What the designer would aim for in the space they gave, when it was
+    worked out this turn - the cards are ordered by closeness to it."""
+    room_carried: RoomCarriedView | None = None
+    """What the room took from shopping this turn, said once, never asked."""
+
+    """This turn answered a taste question: acknowledge it in a few words."""
+
+    design_direction: DirectionView | None = None
+    """Why these cards, after a pick: the designer's direction for the kind
+    suggested, which ordered them."""
+
+    narrowed: bool = False
+    """They just changed what the search uses on Narrow down: the cards are
+    the search as it is now, and what it used before is gone."""
+
+    selection_liked: bool = False
+    """The cards shown are their liked list, not their picks."""
+    liked_also_picked: int = Field(default=0, ge=0)
+    """Of the liked cards shown, how many are among their picks as well -
+    the only figure the reply may give for that."""
 
     next_step: NextStepKind | None = None
     """The one next step to end on, when the turn asks nothing of its own:
@@ -739,6 +964,11 @@ class ResponseGroundingView(BaseModel):
     Empty on a turn that shows nothing, which reads correctly: an answer with
     no cards beside it should not talk about cards.
     """
+
+    still_on_screen: tuple[PresentedCardView, ...] = ()
+    """The cards from before this turn, still in front of the customer when
+    this turn showed none of its own - what "which one do you recommend?" is
+    about. Read fresh from the catalog, never remembered."""
 
     clarification_reason: (
         BlockingClarificationReason | SearchRequirementClarificationReason | None
@@ -936,6 +1166,9 @@ class ResponseViolationKind(StrEnum):
     UNSUPPORTED_NUMBER = "unsupported_number"
     UNKNOWN_GROUNDING_REF = "unknown_grounding_ref"
     FOLLOW_UP_NOT_ALLOWED = "follow_up_not_allowed"
+    OPENING_NOT_OFFERED = "opening_not_offered"
+    """The questions it asked are not the opening's to ask: not offered, not
+    as many as it had to choose, or asked where nothing was to be chosen."""
 
 
 class ResponseViolation(BaseModel):

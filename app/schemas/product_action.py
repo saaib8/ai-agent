@@ -1,4 +1,4 @@
-"""Screen-driven, deterministic actions on the customer's picks.
+"""Screen-driven, deterministic actions on products and the customer's picks.
 
 **Transport, and application-only.** Like `search_action` and `bundle_action`,
 these are things the customer did on the screen - tapped "Ask about this" on a
@@ -7,7 +7,8 @@ interpreted, so no decision model is consulted and none can mis-route them
 (CLAUDE.md 3.6).
 
 They carry no product id. A pick is named by its position in the customer's
-picks, and the server resolves it against verified state (CLAUDE.md 20.2). A
+picks; a checked card by its result-list revision and position. The server
+resolves both against verified state (CLAUDE.md 20.2). A
 companion is named by product type, and only a type the reviewed pairings
 offer beside the product in focus is accepted - a chip is never a way to run an
 arbitrary search.
@@ -19,6 +20,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.card_comparison import CardRef
 from app.schemas.comparison import MAX_COMPARED_PRODUCTS, MIN_COMPARED_PRODUCTS
 
 
@@ -58,6 +60,23 @@ class ComparePicksAction(BaseModel):
         return self
 
 
+class CompareCardsAction(BaseModel):
+    """Compare checked result cards as a conversation turn, without picking them."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["compare_cards"] = "compare_cards"
+    cards: tuple[CardRef, ...] = Field(
+        min_length=MIN_COMPARED_PRODUCTS, max_length=MAX_COMPARED_PRODUCTS
+    )
+
+    @model_validator(mode="after")
+    def _different_cards(self) -> Self:
+        if len(set(self.cards)) != len(self.cards):
+            raise ValueError("a comparison needs different cards")
+        return self
+
+
 class CompanionAction(BaseModel):
     """Products of one type that go with the product in focus.
 
@@ -89,8 +108,33 @@ class CompanionOffer(BaseModel):
     pairings. Display only."""
 
 
+class MoreLikeThisAction(BaseModel):
+    """More like this card: a similarity search from it - its kind, leaning
+    towards its colour and style - on any list still on screen, exactly as a
+    typed "more like the second one" (docs/designer-led-shopping-plan.md,
+    phase 3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["more_like_this"] = "more_like_this"
+    card: CardRef | None = None
+    liked: int | None = Field(default=None, ge=1)
+    """Or a product in their liked list, by its position there - the liked
+    cards are their own list, not a result list."""
+
+    @model_validator(mode="after")
+    def _one_product(self) -> MoreLikeThisAction:
+        if (self.card is None) == (self.liked is None):
+            raise ValueError("more like this names a card or a liked product")
+        return self
+
+
 ProductActionRequest = Annotated[
-    GoesWithPickAction | ComparePicksAction | CompanionAction,
+    GoesWithPickAction
+    | ComparePicksAction
+    | CompareCardsAction
+    | CompanionAction
+    | MoreLikeThisAction,
     Field(discriminator="kind"),
 ]
-"""Any action on the picks, told apart by `kind`."""
+"""Any screen-driven product action, told apart by `kind`."""

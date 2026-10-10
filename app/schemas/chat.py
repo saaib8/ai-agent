@@ -29,9 +29,9 @@ from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
-from app.schemas.picks import PickView
+from app.schemas.picks import LikedView, PickView
 from app.schemas.product_action import ProductActionRequest
-from app.schemas.product_brief import ProductBrief
+from app.schemas.product_brief import BriefChip, ProductBrief
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.visualization import RoomRenderPresentation
@@ -195,8 +195,11 @@ class ChatPresentation(BaseModel):
     one" is resolved against this sequence next turn.
     """
 
-    product_source: Literal["search", "selection", "detail"] | None = None
+    product_source: Literal["search", "selection", "liked", "detail"] | None = None
     """Which of those `products` is.
+
+    "liked" is their liked list (♡): each card can be selected, unliked or
+    asked more like of, named by its place in the liked list.
 
     Only search results are the list "the second one" counts into. The
     customer's own picks and a single product are shown as cards too, but a
@@ -222,6 +225,13 @@ class ChatPresentation(BaseModel):
     """A card of questions for a product search: first, before anything is
     searched, or folded beside results to narrow them (CLAUDE.md 10.4)."""
 
+    narrow_down: ProductBrief | None = None
+    """Every option for the results on screen, opened showing what the
+    search uses."""
+
+    brief_chips: tuple[BriefChip, ...] = ()
+    """What the search on screen is using, each removable with ✕."""
+
     focus: GroundedProduct | None = None
     """The pick the customer asked about, shown above what goes with it.
 
@@ -244,6 +254,10 @@ class ChatPresentation(BaseModel):
     render with nothing new to build. Empty when the closest combination was
     over budget - then the reply owns the shortfall and there is nothing to draw.
     """
+
+    chosen_seating: GroundedBundlePresentation | None = None
+    """The seating combination they just chose, drawn as one package with how
+    many of each piece - their picks show each product once."""
 
     choices: tuple[ReplyChoice, ...] = ()
     """Answers to the question just asked, when the application knows them -
@@ -273,6 +287,7 @@ class ChatPresentation(BaseModel):
             and self.room is None
             and self.render is None
             and not self.seating_bundles
+            and self.chosen_seating is None
             and not self.choices
             and self.piece_picker is None
             and self.brief is None
@@ -301,6 +316,10 @@ class ChatResponse(BaseModel):
     response does not report picks at all (a photo pick, a render), which
     means *unchanged*, not *empty*.
     """
+
+    liked: tuple[LikedView, ...] | None = None
+    """Their liked list after this turn, in the order they liked them. None
+    means unchanged, or the buttons are switched off."""
 
     reply_language: ReplyLanguage | None = None
     """The language this reply is in, so a client can set the page direction.

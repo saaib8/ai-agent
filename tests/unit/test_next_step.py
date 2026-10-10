@@ -13,13 +13,21 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
+from app.schemas.agent_decision import (
+    AgentAction,
+    BlockingClarification,
+    BlockingClarificationReason,
+    CustomerAgentDecision,
+)
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_turn import CustomerResponse, CustomerTurnResult, TurnGrounding
 from app.schemas.bundle import BundleStatus, RoomBundle, TotalUnavailableReason
 from app.schemas.next_step import ANY_NEXT_STEP, QUESTIONS, NextStep, NextStepKind
 from app.schemas.picks import PickView
 from app.schemas.product_action import CompanionOffer, ComparePicksAction, GoesWithPickAction
+from app.schemas.resolution import DeterministicClarification
+from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
+from app.schemas.text_choice import TextReplyChoice
 from app.services.chat_runtime import ChatRuntime
 from app.services.next_step import next_step
 from app.services.numeric_guard import picks_counts, picks_figures
@@ -135,6 +143,79 @@ def test_a_turn_that_asks_its_own_question_gets_no_second_one() -> None:
     assert next_step(_result(picks=(_pick(1, "sofa"),), companions=companions), COMPLEMENTS) is None
 
 
+@pytest.mark.parametrize("reason", list(BlockingClarificationReason))
+@pytest.mark.parametrize("deterministic", [False, True])
+def test_only_the_product_type_question_gets_piece_choices(
+    reason: BlockingClarificationReason,
+    deterministic: bool,
+) -> None:
+    result = _result(
+        grounding=(
+            TurnGrounding(deterministic_clarification=DeterministicClarification(reason=reason))
+            if deterministic
+            else TurnGrounding(
+                clarification=BlockingClarification(reason=reason, question="Which?")
+            )
+        )
+    )
+    capabilities = RetailerCatalogCapabilities(
+        capabilities=(
+            RetailerCatalogCapability(
+                commerce_category="tables",
+                commerce_subcategory="center-table",
+                active_product_count=3,
+            ),
+        )
+    )
+    step = next_step(result, COMPLEMENTS, capabilities=capabilities)
+
+    if reason is BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE:
+        assert step is not None and step.kind is NextStepKind.CHOOSE_PIECE
+        assert step.chips[0].label == "Center table"
+        assert step.chips[0].value == "Show me center tables"
+        reply = CustomerResponse(message="Which?")
+        assert _ends_on_a_question(reply, result.model_copy(update={"next_step": step})) == reply
+    else:
+        assert step is None
+
+
+def test_piece_suggestions_are_bounded_varied_and_independent_of_catalog_order() -> None:
+    result = _result(
+        grounding=TurnGrounding(
+            clarification=BlockingClarification(
+                reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE, question="Which type?"
+            )
+        )
+    )
+    items = tuple(
+        RetailerCatalogCapability(
+            commerce_category=category, commerce_subcategory=subcategory, active_product_count=count
+        )
+        for category, subcategory, count in (
+            ("seating", "sofa", 100),
+            ("seating", "chair", 90),
+            ("seating", "recliner", 80),
+            ("seating", "sofa-set", 70),
+            ("seating", "stool", 60),
+            ("seating", "lounge-chair", 50),
+            ("bedroom", "bed", 10),
+            ("tables", None, 5),
+        )
+    )
+    step = next_step(
+        result, COMPLEMENTS, capabilities=RetailerCatalogCapabilities(capabilities=items)
+    )
+    reversed_step = next_step(
+        result,
+        COMPLEMENTS,
+        capabilities=RetailerCatalogCapabilities(capabilities=tuple(reversed(items))),
+    )
+    assert step is not None and step == reversed_step
+    assert len(step.chips) == 6
+    assert [choice.label for choice in step.chips[:3]] == ["Sofa", "Bed", "Tables"]
+    assert next_step(result, COMPLEMENTS, capabilities=RetailerCatalogCapabilities()) is None
+
+
 # ── the guarantee ───────────────────────────────────────────────────────────
 
 
@@ -151,7 +232,10 @@ def test_a_reply_without_a_question_gets_the_next_steps_question() -> None:
 
 
 def test_a_reply_that_already_asks_is_left_as_it_is() -> None:
-    reply = CustomerResponse(message="Shall I compare them side by side?")
+    reply = CustomerResponse(
+        message="Shall I compare them side by side?",
+        choices=(TextReplyChoice(label="Yes", value="Yes, compare them"),),
+    )
 
     assert _ends_on_a_question(reply, _result(next_step=NextStep(kind=NextStepKind.START))) == reply
 

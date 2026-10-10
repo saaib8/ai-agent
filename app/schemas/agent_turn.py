@@ -40,14 +40,27 @@ from app.schemas.grounding import (
 )
 from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep
-from app.schemas.picks import PickView
+from app.schemas.picks import LikedView, PickView
 from app.schemas.product_action import CompanionOffer, ProductActionRequest
-from app.schemas.product_brief import ProductBrief
+from app.schemas.product_brief import BriefChip, ProductBrief
 from app.schemas.resolution import DeterministicClarification
+from app.schemas.response import (
+    DirectionView,
+    RoomCarriedView,
+    SpaceFitView,
+    TasteAnsweredView,
+)
 from app.schemas.retailer import RetailerContext
-from app.schemas.room_opener import RoomQuestion
+from app.schemas.room_opener import RoomCardChoice, RoomPieceOffer, RoomQuestion
+from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import SearchActionRequest
-from app.schemas.seating_solution import SeatingSolution
+from app.schemas.seating_solution import SeatingBundle, SeatingSolution
+from app.schemas.text_choice import (
+    TextReplyChoice,
+    require_a_question,
+    validate_text_choices,
+)
+from app.taxonomy.briefs import OPENING_QUESTIONS, BriefQuestionKind
 
 MAX_RESPONSE_CHARS = 4000
 
@@ -343,6 +356,29 @@ class CustomerTurnResult(BaseModel):
     `grounding.failure` says why. M12E-3 owns the model-safe projection.
     """
 
+    chosen_seating: SeatingBundle | None = None
+    """The seating combination they chose this turn, with its quantities -
+    their picks carry products, never how many of each (CLAUDE.md 27.1)."""
+
+    direction: DirectionView | None = None
+    """The designer's direction that ordered a suggestion after a pick, for
+    the reply to say why these cards."""
+
+    still_on_screen: tuple[PresentedCardView, ...] = ()
+    """The cards the customer was already looking at, read fresh, when this
+    turn showed no products of its own and left them on screen - so "which
+    one do you recommend?" is answered about them, never with "I don't have
+    them in front of me"."""
+    taste_answered: TasteAnsweredView | None = None
+    space_fit: SpaceFitView | None = None
+    opening_answered: bool = False
+    """The message answered the questions on screen in words: the questions
+    after products still come, as they do after a tapped answer."""
+    """What the designer would aim for in the space they gave, this turn."""
+    room_carried: RoomCarriedView | None = None
+    """What a room took from shopping this turn."""
+    """What a taste answer this turn told us, for the reply to acknowledge."""
+
     seating_solution: SeatingSolution | None = None
     """A seating combination composed when no single product met a seat count.
 
@@ -400,6 +436,10 @@ class CustomerTurnResult(BaseModel):
     changed nothing - which a client takes as unchanged, never as empty.
     """
 
+    liked: tuple[LikedView, ...] | None = None
+    """Their liked list after the turn, read with the picks; None when it was
+    not read or the buttons are switched off."""
+
     focus: GroundedProduct | None = None
     """The pick the customer asked about, drawn above what goes with it.
 
@@ -427,6 +467,35 @@ class CustomerTurnResult(BaseModel):
     searched, or folded beside results to narrow them (CLAUDE.md 10.4).
     Built by the application; the reply only introduces it."""
 
+    narrow_down: ProductBrief | None = None
+    """Beside a list of results: every option, opened showing what the search
+    uses. A tool beside the cards, not the turn's question - the reply and its
+    next step are unchanged by it."""
+
+    brief_chips: tuple[BriefChip, ...] = ()
+    """What the search on screen is using, each removable."""
+
+    narrowed: bool = False
+    """This turn's search is their answer to Narrow down: what it uses now
+    replaces what it used, and the reply describes it as it is now."""
+
+    finishing_pieces: tuple[RoomPieceOffer, ...] = ()
+    """The pieces a finished room could still take, offered as chips when the
+    customer asked for a finishing touch without naming one - with "you choose"
+    beside them. Asking which is the turn's question; nothing is planned until
+    they tap one."""
+
+    pieces_added: tuple[str, ...] = ()
+    """The piece a tapped finishing touch added to the room, as the room names
+    it - so the reply names the piece the designer chose for "you choose"
+    rather than guessing it from the words of the tap. Empty when the budget
+    left it out."""
+
+    room_cards: tuple[RoomCardChoice, ...] = ()
+    """The room's pieces as chips, when the turn asks "which piece?" beside a
+    room and gave no answers of its own - each showing that piece's
+    alternatives, exactly as its Swap button does."""
+
 
 class CustomerResponse(BaseModel):
     """What the response model returns: prose, and which products it meant.
@@ -444,6 +513,30 @@ class CustomerResponse(BaseModel):
     follow_up_question: str | None = Field(default=None, max_length=300)
     """At most one, and only when the policy allowed it. Validating it against
     the policy needs the grounding, so that check lives with the caller."""
+    choices: tuple[TextReplyChoice, ...] = Field(default=(), max_length=6)
+    """Answers authored with the question, never inferred by the client."""
+    asked: tuple[BriefQuestionKind, ...] = Field(
+        default=(), max_length=OPENING_QUESTIONS, exclude=True
+    )
+    """The opening's questions this reply asks, when the summary offers an
+    opening to choose from; their chips are drawn beneath it. Empty otherwise.
+    Internal: the chips it chose are the card, so it is never serialised."""
+
+    _distinct_choices = field_validator("choices")(validate_text_choices)
+
+    @field_validator("asked")
+    @classmethod
+    def _each_asked_once(
+        cls, value: tuple[BriefQuestionKind, ...]
+    ) -> tuple[BriefQuestionKind, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("an opening asks each question once")
+        return value
+
+    @model_validator(mode="after")
+    def _choices_answer_a_question(self) -> Self:
+        require_a_question(self.choices, self.message, self.follow_up_question)
+        return self
 
     @field_validator("referenced_grounding_refs")
     @classmethod

@@ -61,6 +61,13 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "You haven't picked anything out yet, so there's nothing to show you "
         "here."
     ),
+    TurnFailureCode.CARD_NOT_ON_SCREEN: (
+        "That card isn't on screen any more - try it from the latest results."
+    ),
+    TurnFailureCode.NOTHING_LIKED: (
+        "You haven't liked anything yet - tap the heart on a card to keep the "
+        "pieces whose look you like."
+    ),
     TurnFailureCode.REQUEST_NOT_UNDERSTOOD: (
         "Sorry, I didn't quite catch that. Try saying it a little differently - "
         "for example, the kind of piece you're after, or what you'd like to "
@@ -150,6 +157,12 @@ complementary piece was told the room feature did not exist.
 So it claims nothing at all: not about the design, not about a selection, not
 about what the capability can or cannot do. Something did not come back, and
 that is the whole message."""
+
+FINISHING_TOUCH_OFFER_WORDING = (
+    "Happy to add one. Pick a piece below, or shall I choose one for you?"
+)
+"""Which finishing touch, with the pieces as chips beside it and "you choose"
+among them. No product, no figure: nothing has been planned yet."""
 
 SIDE_NOTICE_WORDING: dict[SideEffectNotice, str] = {
     SideEffectNotice.SELECTION_NOT_UPDATED: "I wasn't able to save that selection.",
@@ -261,6 +274,7 @@ DETERMINISTIC_FALLBACK: dict[DeterministicResponseKind, str] = {
     DeterministicResponseKind.BUNDLE_UNAVAILABLE: (
         "I wasn't able to work the room package out just now."
     ),
+    DeterministicResponseKind.FINISHING_TOUCH_OFFER: FINISHING_TOUCH_OFFER_WORDING,
 }
 """For a deterministic branch whose own wording could not be produced - a
 clarification with no question on it, for instance."""

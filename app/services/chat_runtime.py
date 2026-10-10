@@ -46,20 +46,32 @@ from app.schemas.conversation import (
 )
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
-from app.schemas.picks import PickView
+from app.schemas.next_step import NextStepKind
+from app.schemas.picks import LikedView, PickView
+from app.schemas.product_brief import ProductBrief
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import companion_choices
+from app.services.next_step import asks_its_own_question
+from app.services.product_brief import opening_asked, record_asked
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first, offers_what_goes_with
 from app.services.room_presentation import (
+    finishing_choices,
     piece_picker,
     room_answer_choices,
+    room_card_choices,
     swap_offer_choices,
 )
-from app.services.seating_presentation import present_seating_solution, seating_choices
+from app.services.seating_presentation import (
+    present_chosen_seating,
+    present_seating_solution,
+    seating_choices,
+)
 from app.services.turn_coordinator import CustomerTurnCoordinator
+from app.taxonomy.briefs import BriefQuestionKind
 
 logger = get_logger(__name__)
 
@@ -149,21 +161,23 @@ class ChatRuntime:
         return await self._responses.generate(turn, result)
 
     @staticmethod
-    def presentation(result: CustomerTurnResult) -> ChatPresentation | None:
+    def presentation(
+        result: CustomerTurnResult, response: CustomerResponse | None = None
+    ) -> ChatPresentation | None:
         """What the client draws, built from verified facts only.
 
         Assembled from the turn's own grounding and the room the optimiser
-        chose. The response model contributes nothing here: it cites handles,
-        and the application renders the cards those handles name, so a price in
-        the text and a price on a card cannot disagree (CLAUDE.md 20.4).
+        chose. The response model may contribute validated text answers to its
+        own question; it never creates product facts or executable actions.
         """
         grounding = result.grounding
         products: tuple[GroundedProduct, ...] = ()
-        source: Literal["search", "selection", "detail"] | None = None
+        source: Literal["search", "selection", "liked", "detail"] | None = None
         if grounding.search is not None:
             products, source = grounding.search.products, "search"
         elif grounding.selection is not None:
-            products, source = grounding.selection.products, "selection"
+            products = grounding.selection.products
+            source = "liked" if grounding.selection.liked else "selection"
         elif grounding.product_detail is not None:
             products, source = (grounding.product_detail,), "detail"
 
@@ -184,14 +198,43 @@ class ChatRuntime:
             choices = room_answer_choices(result.room_question, language)
         elif result.seating_solution is not None:
             choices = seating_choices(result.seating_solution, language)
+        elif result.finishing_pieces:
+            choices = finishing_choices(result.finishing_pieces, language)
+        elif result.room_cards:
+            choices = room_card_choices(result.room_cards, language)
         else:
             choices = companion_choices(
                 result.companions, offering=offers_what_goes_with(result), language=language
             )
+        authored = response.choices if response is not None else ()
+        model_choices = tuple(ReplyChoice(label=c.label, value=c.value) for c in authored)
         if not choices and result.next_step is not None:
-            # A reply never ends on a dead end: the next step's chips answer the
-            # question it closes on (CLAUDE.md 10.2).
-            choices = result.next_step.chips
+            # The chips answer the question the reply closes on (CLAUDE.md
+            # 10.2): the reply's own, when it asked one and supplied its
+            # answers. A question of its own without answers is almost always
+            # the step's question reworded ("Which do you prefer?"), so the
+            # step's chips answer it - never a dead end.
+            own = response is not None and asks_its_own_question(
+                response, result.next_step, language
+            )
+            choices = (
+                model_choices
+                if own
+                and model_choices
+                and result.next_step.kind not in _TASTE_STEPS
+                and result.next_step.kind not in _ACTION_STEPS
+                else result.next_step.chips
+            )
+        elif not choices and not (
+            result.room_question
+            or result.product_brief
+            or result.swap_offer
+            or result.seating_solution
+            or result.companions
+        ):
+            # No application control is on screen: the reply's question - its
+            # own, or the clarification it carries - with the answers supplied.
+            choices = model_choices
         results = source == "search" and bool(products)
         built = ChatPresentation(
             products=products,
@@ -202,11 +245,20 @@ class ChatRuntime:
                 result.state.product_interaction.presented_search_revision if results else None
             ),
             best_match=results and best_match_first(result),
-            brief=result.product_brief,
-            focus=result.focus,
+            brief=_as_asked(result, response),
+            narrow_down=result.narrow_down,
+            brief_chips=result.brief_chips,
+            # A chosen combination is drawn whole; its main piece alone above
+            # it would read as the only thing they chose.
+            focus=result.focus if result.chosen_seating is None else None,
             comparison=grounding.comparison,
             room=build_bundle_presentation(result),
             seating_bundles=seating_bundles,
+            chosen_seating=(
+                present_chosen_seating(result.chosen_seating)
+                if result.chosen_seating is not None
+                else None
+            ),
             choices=choices,
             piece_picker=(
                 piece_picker(result.room_question, language)
@@ -266,7 +318,7 @@ class ChatRuntime:
         words against a room that has since changed (M13 18, 33).
         """
         envelope = loaded.envelope.advanced(
-            state=result.state,
+            state=record_asked(result.state, _opening(result, response)),
             conversation=self.next_conversation(loaded, request, response),
         )
         committed = await self._sessions.save_if_revision(
@@ -292,6 +344,7 @@ class ChatRuntime:
         presentation: ChatPresentation | None,
         picks: tuple[PickView, ...] | None = None,
         reply_language: ReplyLanguage | None = None,
+        liked: tuple[LikedView, ...] | None = None,
     ) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
@@ -299,6 +352,7 @@ class ChatRuntime:
             response=response,
             presentation=presentation,
             picks=picks,
+            liked=liked,
             reply_language=reply_language,
         )
 
@@ -316,12 +370,18 @@ class ChatRuntime:
         turn = self.turn_input(request, context, loaded)
         result = await self.run_turn(turn)
         response = await self.render(turn, result)
-        presentation = self.presentation(result)
+        presentation = self.presentation(result, response)
 
         revision = await self.persist(request, loaded, result, response)
         self._log(request, loaded, revision, presentation, started)
         return self.public_response(
-            request, revision, response, presentation, result.picks, result.reply_language
+            request,
+            revision,
+            response,
+            presentation,
+            result.picks,
+            result.reply_language,
+            result.liked,
         )
 
     @staticmethod
@@ -483,3 +543,44 @@ def trim_history(
     if kept and kept[0].role is ConversationRole.ASSISTANT:
         kept = kept[1:]
     return kept
+
+
+def _opening(
+    result: CustomerTurnResult, response: CustomerResponse | None
+) -> tuple[BriefQuestionKind, ...]:
+    """The questions the opening on screen asks, if one is."""
+    if result.product_brief is None:
+        return ()
+    return opening_asked(
+        result.product_brief,
+        result.state.product_brief.pending,
+        response.asked if response is not None else (),
+    )
+
+
+def _as_asked(result: CustomerTurnResult, response: CustomerResponse | None) -> ProductBrief | None:
+    """The card to draw: an opening shows only the questions its reply asks."""
+    card = result.product_brief
+    asked = _opening(result, response)
+    if card is None or not asked:
+        return card
+    return card.model_copy(
+        update={"questions": tuple(q for q in card.questions if q.kind in asked)}
+    )
+
+
+_TASTE_STEPS = frozenset(
+    {
+        NextStepKind.TASTE_WHICH,
+        NextStepKind.TASTE_STYLE,
+        NextStepKind.TASTE_AVOID,
+        NextStepKind.TASTE_SPACE,
+    }
+)
+"""A taste question's chips carry the answer's key: never replaced by chips
+the reply wrote, which a tap would send back as words."""
+
+_ACTION_STEPS = frozenset({NextStepKind.AFTER_ROOM})
+"""A next step whose chips carry an action - a room's "Add a finishing touch"
+opens its finishing touches directly - so chips the reply wrote, which a tap
+would send back as words for a model to route, never replace them."""

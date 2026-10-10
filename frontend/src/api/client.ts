@@ -3,8 +3,6 @@ import type {
   CatalogPage,
   CatalogQuery,
   CatalogVisualizeRequest,
-  CardComparisonRequest,
-  CardComparisonResponse,
   ChatRequest,
   CompareGroupsResponse,
   ChatResponse,
@@ -25,7 +23,7 @@ import type {
 
 export type ChatResult =
   | { ok: true; data: ChatResponse }
-  | { ok: false; status: number | 'network'; error: ErrorBody }
+  | { ok: false; status: number | 'network' | 'aborted'; error: ErrorBody }
 
 export type HealthResult =
   | { ok: true; data: HealthResponse }
@@ -45,20 +43,29 @@ const NETWORK_ERROR = (base: string): ErrorBody => ({
   trace_id: null,
 })
 
-export async function postChat(base: string, body: ChatRequest): Promise<ChatResult> {
-  return postJson<ChatResponse>(base, '/v1/chat', body, isChatResponse)
+// The customer stopped the request (AbortController). Not an error to surface -
+// callers treat 'aborted' as "nothing happened" and quietly return to idle.
+const ABORTED_ERROR: ErrorBody = { code: 'aborted', message: 'Stopped.', trace_id: null }
+
+export async function postChat(
+  base: string,
+  body: ChatRequest,
+  signal?: AbortSignal,
+): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/chat', body, isChatResponse, signal)
 }
 
 // ── Furniture Finder ─────────────────────────────────────────────────────────
 
 export type PhotoResult =
   | { ok: true; data: FinderPhotoResponse }
-  | { ok: false; status: number | 'network'; error: ErrorBody }
+  | { ok: false; status: number | 'network' | 'aborted'; error: ErrorBody }
 
 /** Upload a photo; the answer lists the objects in it the catalog can match. */
 export async function postFinderPhoto(
   base: string,
   fields: { sessionId: string; storeId: number; file: File },
+  signal?: AbortSignal,
 ): Promise<PhotoResult> {
   const form = new FormData()
   form.append('session_id', fields.sessionId)
@@ -68,14 +75,18 @@ export async function postFinderPhoto(
   // No Content-Type header: the browser sets the multipart boundary itself.
   return send<FinderPhotoResponse>(
     root,
-    () => fetch(`${root}/v1/furniture-finder/photos`, { method: 'POST', body: form }),
+    () => fetch(`${root}/v1/furniture-finder/photos`, { method: 'POST', body: form, signal }),
     (payload) => typeof payload === 'object' && payload !== null && 'image_id' in payload,
   )
 }
 
 /** Pick one object. The answer is a chat turn, exactly like postChat's. */
-export async function postFinderPick(base: string, body: FinderPickRequest): Promise<ChatResult> {
-  return postJson<ChatResponse>(base, '/v1/furniture-finder/picks', body, isChatResponse)
+export async function postFinderPick(
+  base: string,
+  body: FinderPickRequest,
+  signal?: AbortSignal,
+): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/furniture-finder/picks', body, isChatResponse, signal)
 }
 
 /** Upload a photo of the customer's room: checked to be a room, emptied, and
@@ -97,15 +108,19 @@ export async function postRoomPhoto(
 }
 
 /** Render the session's room package. The answer is a chat turn with a render. */
-export async function postVisualize(base: string, body: VisualizeRequest): Promise<ChatResult> {
-  return postJson<ChatResponse>(base, '/v1/visualizations', body, isChatResponse)
+export async function postVisualize(
+  base: string,
+  body: VisualizeRequest,
+  signal?: AbortSignal,
+): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/visualizations', body, isChatResponse, signal)
 }
 
 // ── Browse Catalogue ─────────────────────────────────────────────────────────
 
 export type Fetched<T> =
   | { ok: true; data: T }
-  | { ok: false; status: number | 'network'; error: ErrorBody }
+  | { ok: false; status: number | 'network' | 'aborted'; error: ErrorBody }
 
 /** The store's filter values with counts, and what a room render allows. */
 export async function getCatalogFacets(base: string, storeId: number): Promise<Fetched<CatalogFacets>> {
@@ -134,8 +149,9 @@ export async function getCatalogProducts(
 export async function postCatalogVisualize(
   base: string,
   body: CatalogVisualizeRequest,
+  signal?: AbortSignal,
 ): Promise<ChatResult> {
-  return postJson<ChatResponse>(base, '/v1/catalog/visualizations', body, isChatResponse)
+  return postJson<ChatResponse>(base, '/v1/catalog/visualizations', body, isChatResponse, signal)
 }
 
 // ── Picks ────────────────────────────────────────────────────────────────────
@@ -144,15 +160,6 @@ export async function postCatalogVisualize(
 export async function postPicks(base: string, body: PicksRequest): Promise<Fetched<PicksResponse>> {
   return postJson<PicksResponse>(base, '/v1/picks', body, (p) =>
     typeof p === 'object' && p !== null && 'picks' in p,
-  )
-}
-
-export async function postComparison(
-  base: string,
-  body: CardComparisonRequest,
-): Promise<Fetched<CardComparisonResponse>> {
-  return postJson<CardComparisonResponse>(base, '/v1/comparisons', body, (p) =>
-    typeof p === 'object' && p !== null && 'comparison' in p,
   )
 }
 
@@ -181,7 +188,7 @@ function getJson<T>(
 
 type Result<T> =
   | { ok: true; data: T }
-  | { ok: false; status: number | 'network'; error: ErrorBody }
+  | { ok: false; status: number | 'network' | 'aborted'; error: ErrorBody }
 
 function isChatResponse(payload: unknown): boolean {
   return typeof payload === 'object' && payload !== null && 'response' in payload
@@ -192,6 +199,7 @@ function postJson<T>(
   path: string,
   body: unknown,
   accept: (payload: unknown) => boolean,
+  signal?: AbortSignal,
 ): Promise<Result<T>> {
   const root = normaliseBase(base)
   return send<T>(
@@ -201,6 +209,7 @@ function postJson<T>(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
       }),
     accept,
   )
@@ -214,7 +223,11 @@ async function send<T>(
   let res: Response
   try {
     res = await request()
-  } catch {
+  } catch (err) {
+    // The customer stopped it: not a failure to show, a request to forget.
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return { ok: false, status: 'aborted', error: ABORTED_ERROR }
+    }
     return { ok: false, status: 'network', error: NETWORK_ERROR(root) }
   }
 

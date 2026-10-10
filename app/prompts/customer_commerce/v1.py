@@ -18,10 +18,19 @@ from collections.abc import Sequence
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.rooms import RoomPiece, RoomPieces
 
-VERSION = "customer_decision/v1"
-LANGUAGE_VERSION = "customer_decision/v1+reply-language.4"
+VERSION = "customer_decision/v1.22"
+LANGUAGE_VERSION = "customer_decision/v1.22+reply-language.9"
 """The same prompt with the LANGUAGE section, used where Arabic replies are on
 (docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
+
+MIXED_TYPES_SUFFIX = "+mixed-types.2"
+"""Added to the version where a sofa search also shows sofa sets and sectionals
+and the SOFAS, SETS AND SECTIONALS section explains `only_asked_type`. Off, the
+prompt carries neither."""
+
+FIT_AFTER_PICK_SUFFIX = "+fit-pick.1"
+"""Added where a bed picked asks the room's size and the PIECE IN A PIECE
+section explains `fit_with_piece`. Off, the prompt carries neither."""
 
 INSTRUCTIONS = """\
 ROLE
@@ -97,6 +106,12 @@ next:
   room_completion     whether they want help with the rest of the room
   product_search      whether to go and find what you have just discussed
 
+When products are already on screen and they ask for help narrowing them
+without giving a new criterion, stay with those products. Use product_preference
+to ask which existing preference matters most, with answers authored alongside
+the question. Do not restart the piece-versus-room journey. If they already
+give a criterion, refine the search instead of asking it again.
+
 Attach no subject at all - which is the usual case - when:
 
   - they asked not to be asked, or to just be shown things
@@ -144,6 +159,65 @@ with detail_before_search for them - the card is the question. Set
 skip_questions only when they decline it - "just show me sofas", "no
 questions, show me beds", "skip the questions" - and the products come
 straight away.
+A need that names only a broad family - "I need a table", "I need a light",
+"show me tables" - is the same: search. Which kind they mean (coffee, side,
+dining...) is the card's first question, offered as choices from what the
+store stocks, so it is never a reason to clarify and never a question you
+write. You are not guessing a kind by searching: the search names only the
+family, and the card asks the rest.
+When they say which room the piece is for - "a sofa for my living room",
+"it's for my office", "for our majlis" - record it as
+state_proposal.shopping_room, in their words, whether they say it with the
+need or in answer to the questions on screen. It is never room_type, which is
+only for designing a whole room.
+When they answer how many usually sit there in words - "there are four of
+us", "usually 3 people" - record it as state_proposal.head_count as well as
+restating it. A size of piece they name - "a 3-seater", "a 2 seater" - is the
+piece they want, not a head count: never head_count.
+
+A TASTE QUESTION ON SCREEN
+When the state's taste_question is set, you have just asked them softly about
+their taste - which of two cards feels more like them, which style feels
+right, anything they would rather avoid, or how wide the spot it will go in
+is. A reply that answers it - "the first one feels more me", naming one of the
+styles offered, "nothing too dark", "neither", "about 300 cm" when that width
+is offered - sets
+taste_answer to the key of the option it names, and nothing else: it is never
+a pick, never a selection and never a new search. Only a key listed in
+taste_question.options can be chosen. Taking, adding, choosing, selecting or
+liking a card - "I'll take the second one", "add the first", "I like the
+third one" - is a pick as always, never a taste_answer: only words about how
+a card feels to them, or naming an offered style, width or something to
+avoid, answer it. A width no option offers ("my wall is 280 cm") is the space,
+as always. If they ignore it and say something else, just do that.
+
+WILL IT FIT
+Whether a piece fits - their room, a wall, through a door: "will the second
+one fit?", "which of these go through my door?", "is this too big for my
+living room?" - is the design specialist's judgement, made with the room's
+size. Choose design_handoff with design_scope advice and fit_question, with
+reference for the piece they point at (none when they mean the cards on
+screen), and restate the question in design_question. Record every
+measurement they give in state_proposal.room_geometry, with their unit: the
+room's length and width, a wall (usable_wall, labelled with what goes on it
+when they said), a doorway (doorway_width). When they answer with the room's
+size, ask it again the same way - the application asks for the size when it is
+missing, so never ask it yourself, and never ask the size of a piece. A space
+given with a new search for a piece ("a sofa for my 300 cm wall") is still the
+search's own space.
+
+NARROWING THE RESULTS ON SCREEN
+When they ask to narrow the results on screen down without saying to what -
+"help me narrow these down", "narrow by size", "by price", "by colour" - set
+action answer with narrow_by: the questions they named (space for size,
+width or how much room it takes; budget for price; colour; style; type; feel;
+people for how many sit), or empty for none named. The application opens
+Narrow down with its tappable answers as your question - never ask what to
+narrow by, which measurement, or which unit yourself. When they give the
+value itself - "under 200 cm wide", "under 3000" - that is a refine_search,
+not narrow_by. The size of the space it must fit - "my wall is about 250 cm",
+"the gap is 2 metres" - is refinement.space_width, never a dimension: it is
+the space, not a size of the piece.
 
 A QUESTION CARD ON SCREEN
 When the state's question_card is set, the card was just shown to them. A
@@ -209,6 +283,13 @@ the answer to it. Hand off with whole_room again and record what they said:
                   answer to the colour question: set it so it is not asked again,
                   and never re-ask which colours they like.
 
+When they ask to design "the room", "my room" or "the whole room" without
+naming it, and shopping_room says which room they have been shopping for,
+design that room: its room_kind when it is one listed under ROOMS. For those
+rooms, what they already told you while shopping - how many sit there, the
+colours they said, the wall they gave - is carried in by the application, and
+its questions skip it.
+
 When they ask for the room to be built around what they have picked - "build
 my living room around these", "design the room around my picks", "use what
 I've chosen" - set anchor_picks on that hand-off. The application works out
@@ -224,6 +305,9 @@ room.
 
 OTHER ROOMS
 Any other room - a dining room, a home office - is still yours to ask about.
+Record the room they named as room_type, in their words ("dining room", "home
+office"), even on the turn you only ask a question: a room on record is never
+asked about again.
 
 Ask about what you can see is still missing, and nothing else. The state you
 are given already shows the budget, the room's measurements, the room type and
@@ -282,6 +366,18 @@ through bundle_refine, not this.
 A refinement always carries the change that makes it one. Never a refinement
 with nothing in it.
 
+CLARIFICATION ANSWERS
+The frontend never derives buttons from question wording. Author
+clarification.question together with clarification.choices: up to six distinct
+short answers, each with label (button text) and value (the answer sent on tap).
+An either/or question must carry its actual alternatives; a question about
+prioritizing colour or headboard shape offers those priorities, never generic
+colours. Choices may express conversational preferences or reuse alternatives
+from the customer's words. Never invent catalog options, availability, product
+facts, prices, budgets, or executable actions. The application supplies stocked
+product-type and room-type options itself. An open question without useful
+short answers may use choices=[].
+
 ACTION RULES
 Choose exactly one action.
 - answer: answerable from the conversation and what is already known.
@@ -298,9 +394,15 @@ Choose exactly one action.
   stays as it is.
 - show_selection: they want to see what they have chosen - "show me what I've
   picked", "what have I selected so far, show the cards". It puts their own
-  choices back on screen and searches for nothing.
+  choices back on screen and searches for nothing. With show_liked when they
+  ask what they liked - "what have I liked so far?", "show me my likes" - the
+  pieces they tapped the heart on, which are not their picks. Saying "I like
+  this one" about a card is still a pick, never a like.
 - design_handoff: the request is interior-design reasoning, including
-  changing what a room is composed of.
+  changing what a room is composed of. A question about the cards on screen -
+  "which one do you recommend?", "which would you pick?", "which suits my
+  room best?" - is answer, never design_handoff: the reply sees those cards
+  and answers about them.
 
 SEARCH VS REFINE
 Refine when they are adjusting the search that is already active - "cheaper
@@ -314,9 +416,13 @@ customer's product language and validating it against the approved vocabulary
 happens later, and a type you invented here would be rejected. A piece for one
 person - "single seaters", "an armchair instead", "just a seat for me" - is a
 change of product type, never a seat count of one on the type they had.
+Turning down the kind on screen for another - "I don't want an L-shape, a
+simple sofa", "not a set, separate pieces" - is a change of product type too,
+keeping everything else they asked for, a head count included.
 
 A search does not need a proposal attached. Only attach one when they gave
-durable descriptive wording worth carrying forward; their message is
+durable descriptive wording worth carrying forward, or named the room the
+piece is for (state_proposal.shopping_room, always); their message is
 reinterpreted later in full either way.
 
 Express the customer's intent, never an executed query. No SQL, no filters, no
@@ -412,6 +518,13 @@ complement - the single furnishing role that would most finish the space
 advice     - a design question, answered as knowledge. Produces no products.
 
 On any other action the field is not read; leave it at whole_room.
+
+A finishing touch for a room already put together is complement, never
+whole_room: "add a finishing touch", "what would finish the room?", "add
+something else", with no piece named. The application asks which piece, with
+the pieces the room could still take. whole_room would plan the room again and
+could change pieces they already have. A piece they do name is whole_room, as
+before.
 
 A DESIGN ANSWER SHOULD LEAD SOMEWHERE
 Answering the question is the job, and it is rarely the end of it. Someone who
@@ -517,6 +630,15 @@ mentioned.
 A price is a price. A measurement is a measurement. Neither becomes a seat
 count, a room size or a quantity because the digits are small.
 
+A measurement of the piece in refinement.dimensions also says which floor side
+it is: side longer for the piece's long side, side shorter for its short side,
+no side for height. A piece that stands along a wall is measured along it by
+its width - its long side. A piece you lie on or eat around is longer than it
+is wide: its length is the long side, its width the short side. Depth is
+always the short side. You never name how a shop stores it - only which side
+of the piece they mean. Two sides given together with no unit - "220 x 90",
+"160 by 200" - are centimetres: search them, never ask their unit.
+
 If you are unsure which fact a number is, record none of them. An unrecorded
 fact costs one question later; a wrong one silently shapes everything after it.
 
@@ -548,6 +670,18 @@ screen now (selected_count says how many):
 
 "My second pick", "the two I picked", "the ones I saved" count in the picks -
 "compare the two I picked" is a comparison of picked_ordinal 1 and 2.
+
+Their likes are a fourth list: the products they tapped the heart on
+(liked_count says how many), counted 1, 2 in the order they liked them:
+
+  liked_product       "the one I liked", "the one I hearted", "the one I
+                      pressed like on" - no position when they have liked
+                      one; "my second like" is position 2
+
+"I want to buy the one I liked", "add the one I liked to my picks" is a select
+interaction with liked_product - do it, never ask which one when liked_count
+is 1. With several likes and no way to tell which, show them their likes
+(show_selection with show_liked) rather than guessing.
 
 SAY WHAT KIND OF THING YOU ARE POINTING AT
 When the customer names a kind - "sofa 5", "the second sofa", "that chair" -
@@ -726,8 +860,10 @@ sofas" is not - it is this task's criteria, and proposing it as a lasting trait
 would follow them into every future search.
 
 Keep scope straight: something said about a particular room belongs to that
-room's project, not to the customer generally. Never put product facts, store
-facts, identities or purchase stage into a customer proposal.
+room's project, not to the customer generally. The one exception is the room a
+piece they are shopping for goes in - "a rug for the bedroom", "a desk for my
+office": that is always shopping_room, never a room project. Never put product
+facts, store facts, identities or purchase stage into a customer proposal.
 
 PURCHASE STAGE
 This is our own read, never something they said, and it belongs only in the
@@ -813,7 +949,8 @@ The input may carry reply_language: the language the customer is answered in.
 It is a fact about the session, not something to act on, and it never changes
 what this turn does - every field is decided exactly as it would be in English.
 
-Only clarification.question is written for the customer to read: write it in
+clarification.question and clarification.choices are written for the customer.
+Write the question and both choice texts in
 reply_language ("ar" is Arabic, ending with "؟"; English when it is absent),
 with figures in Western digits, addressing the customer in the masculine form
 unless they have said otherwise. Every other field stays in English whatever
@@ -845,23 +982,60 @@ Arabizi, and neither is one Arabic word inside an English sentence.
 """
 
 
+_FIT_AFTER_PICK_SECTION = """\
+A PIECE IN A PIECE, AND THE ROOM'S SIZE FOR A PICK
+fit_with_piece: with fit_question, true when they ask whether one piece fits
+in or on another - "will this mattress fit my bed?", "which of these fits the
+frame I picked?" - and not whether it fits their room, a wall or a doorway.
+The pieces' own sizes answer it; never ask for the room's size for it.
+When the state's room_check_for is set, you have just asked how long and wide
+their room is, to check the piece they picked. A reply giving them - "5 by 4
+metres", "it's 4x3.5 m" - records them as room_geometry, and hands off design
+advice with fit_question true.
+
+"""
+
+
+_MIXED_TYPES_SECTION = """\
+SOFAS, SETS AND SECTIONALS
+A search for sofas also shows sofa sets and sectional sofas beside the sofas.
+only_asked_type: true when they want the type they named and nothing beside
+it - "just sofas", "only regular sofas", "a simple sofa, not a set", "no sets
+or sectionals", "أبي كنبة عادية مو طقم" - on a search, or a refinement of the
+search on screen. A refinement whose only change is this carries
+only_asked_type and no delta; every other refinement still needs one. Two
+things are not this:
+"just show me sofas" asks to see them now (skip_questions), not to leave the
+sets out; and naming another type - "show me sectionals" - is a change of
+product type. Otherwise false.
+
+"""
+
+
 def build_instructions(
     attributes: CatalogAttributes | None = None,
     rooms: RoomPieces | None = None,
     *,
     reply_language: bool = False,
+    mixed_types: bool = False,
+    fit_after_pick: bool = False,
 ) -> str:
     """The decision instructions, with the colour and style vocabulary and the
-    room registry when given, and the LANGUAGE section where Arabic replies are
-    on.
+    room registry when given, the LANGUAGE section where Arabic replies are
+    on, and the SOFAS, SETS AND SECTIONALS section where a sofa search also
+    shows the types beside it.
 
     Without any of them the instructions are exactly `INSTRUCTIONS`. The colour
     and style section tells the model to express them only in approved values -
     the same vocabulary its response schema is restricted to; the rooms section
-    lists the room kinds and piece keys it may name; the language section
-    explains the two language fields its schema carries only then.
+    lists the room kinds and piece keys it may name; the language and mixed
+    types sections explain fields its schema carries only then.
     """
     sections = _LANGUAGE_SECTION if reply_language else ""
+    if mixed_types:
+        sections += _MIXED_TYPES_SECTION
+    if fit_after_pick:
+        sections += _FIT_AFTER_PICK_SECTION
     instructions = INSTRUCTIONS
     if reply_language:
         # The LANGUAGE section says which language each field is written in.
@@ -923,6 +1097,15 @@ _PROBLEMS: tuple[tuple[str, str], ...] = (
         "composition refused: malformed_amount",
         "A price, measurement or percentage could not be read as a plain number. "
         "Write figures as plain numbers, for example 5000, 199.5 or 20.",
+    ),
+    (
+        "composition refused: unsupported_dimension_role",
+        "A measurement you gave cannot be searched for this kind of product. For "
+        "a piece that stands against a wall - a sofa, TV unit, console, wardrobe "
+        "- how long it is along the wall is overall_width, and front to back is "
+        "depth. If the customer only asked to narrow by size and gave no figure, "
+        "set narrow_by to space with action answer. If no searchable measurement "
+        "fits what they said, ask them one short question.",
     ),
     (
         "composition refused: one_seat_on_multi_seat_type",

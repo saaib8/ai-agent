@@ -1,17 +1,20 @@
 import { useEffect, useRef } from 'react'
 import type {
   BriefAnswerAction,
+  BriefChip,
+  BundleAction,
   CatalogSelection,
   FinderObject,
   GroundedBundlePresentation,
   GroundedProduct,
+  LikedView,
   PickView,
   ProductAction,
   RenderView,
   RoomRenderPresentation,
+  SearchAction,
 } from '../api/types'
 import type { Activity, Turn } from '../hooks/useChat'
-import { deriveQuickReplies } from '../lib/quickReplies'
 import { CompareBar } from './CompareBar'
 import { Composer } from './Composer'
 import { EmptyState } from './EmptyState'
@@ -25,11 +28,17 @@ import { TypingIndicator } from './TypingIndicator'
 interface ChatPanelProps {
   turns: Turn[]
   sending: boolean
+  /** A reply is typing out progressively (after validation); Stop freezes it. */
+  revealing: boolean
+  revealedLen: number
+  revealTurnId: string | null
   activity: Activity
   storeId: number
   draft: string
   onDraftChange: (value: string) => void
   onSend: (text: string) => void
+  /** Abort the in-flight reply; the send button is a Stop button while sending. */
+  onStop: () => void
   onPhoto: (file: File) => void
   onPickObject: (photoTurnId: string, imageId: string, object: FinderObject) => void
   /** The role being swapped, when a swap is in progress; drives the picker. */
@@ -61,6 +70,15 @@ interface ChatPanelProps {
   onRemovePick: (pick: PickView) => void
   /** Show what goes with a pick. */
   onGoesWith: (pick: PickView) => void
+  /** Their liked list; null while unknown or when the buttons are off. */
+  liked: LikedView[] | null
+  /** ♡ taps not yet saved, by `list_revision:ordinal`. */
+  pendingLikes: Map<string, 'like' | 'unlike'>
+  onToggleLike: (product: GroundedProduct, listRevision: number) => void
+  onMoreLikeThis: (product: GroundedProduct, listRevision: number) => void
+  onUnlike: (liked: LikedView) => void
+  onSelectLiked: (liked: LikedView) => void
+  onMoreLikeThisLiked: (liked: LikedView) => void
   /** Cards checked for comparison, how to check one, and comparing them. */
   comparing: CheckedCard[]
   /** How many products one comparison may cover. */
@@ -71,9 +89,16 @@ interface ChatPanelProps {
   onUncheckCompare: (card: CheckedCard) => void
   onClearCompare: () => void
   /** A tapped chip: its words, and the action it runs when it carries one. */
-  onChoice: (value: string, action?: ProductAction | null) => void
+  onChoice: (
+    value: string,
+    action?: ProductAction | null,
+    bundle?: BundleAction | null,
+    search?: SearchAction | null,
+  ) => void
   /** Answers tapped on a card of questions. */
-  onBriefSubmit: (answer: BriefAnswerAction, summary: string) => void
+  onBriefSubmit: (answer: BriefAnswerAction | null, summary: string) => void
+  onDropChip: (chip: BriefChip) => void
+  onCombination: (op: 'choose' | 'dismiss' | 'more', position: number | null) => void
 }
 
 /** The latest result list and the six before it - as many as the server
@@ -83,11 +108,15 @@ const TICKABLE_LISTS = 7
 export function ChatPanel({
   turns,
   sending,
+  revealing,
+  revealedLen,
+  revealTurnId,
   activity,
   storeId,
   draft,
   onDraftChange,
   onSend,
+  onStop,
   onPhoto,
   onPickObject,
   swapRole,
@@ -108,6 +137,13 @@ export function ChatPanel({
   onTogglePick,
   onRemovePick,
   onGoesWith,
+  liked,
+  pendingLikes,
+  onToggleLike,
+  onMoreLikeThis,
+  onUnlike,
+  onSelectLiked,
+  onMoreLikeThisLiked,
   comparing,
   compareMax,
   familyOf,
@@ -117,35 +153,45 @@ export function ChatPanel({
   onClearCompare,
   onChoice,
   onBriefSubmit,
+  onDropChip,
+  onCombination,
 }: ChatPanelProps) {
   const endRef = useRef<HTMLDivElement>(null)
 
+  // Again when a reply finishes typing: its cards are drawn only then.
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [turns, sending])
+  }, [turns, sending, revealing])
 
   const last = turns[turns.length - 1]
-  // The backend's own choices win: they are built from real options, where the
-  // derived chips are only a guess from the question's wording.
+  // The backend owns the question and its answers. Prose never creates controls.
   const backendChoices = last?.kind === 'assistant' ? last.data.presentation?.choices ?? [] : []
-  // A card of questions or a piece picker is the turn's question: nothing is
-  // guessed from the reply's words beside it.
   const quickReplies =
-    !sending && last?.kind === 'assistant'
-      ? backendChoices.length > 0 ||
-        last.data.presentation?.piece_picker ||
-        last.data.presentation?.brief
-        ? backendChoices
-        : deriveQuickReplies(last.data.response.message, last.data.response.follow_up_question)
-      : []
+    !sending && last?.kind === 'assistant' ? backendChoices : []
 
   // The picker only lives on the most recent assistant turn: older product
   // grids are history and must not sprout "Use this" buttons.
   const lastAssistantId = [...turns].reverse().find((t) => t.kind === 'assistant')?.id
+  // What a list's search uses stays beside it until another list replaces it:
+  // a turn that shows nothing new (a stale ✕, nothing more to page) leaves it.
+  // Narrow down opened as a turn's question replaces the folded one, whose
+  // answers would no longer be read.
+  const briefTurnId = [...turns]
+    .reverse()
+    .filter((t) => t.kind === 'assistant')
+    .find((t) => {
+      const shown = t.data.presentation
+      return (
+        !!shown?.products?.length ||
+        !!shown?.brief_chips?.length ||
+        !!shown?.narrow_down ||
+        shown?.brief?.mode === 'narrow'
+      )
+    })?.id
 
   // A tick and a reply both write the session, so neither starts while the
   // other is in flight.
-  const busy = sending || picking
+  const busy = sending || picking || revealing
 
   // A tick names the result list its card is on. The server remembers the
   // latest list and a few before it, so a sofa can still be picked after the
@@ -202,6 +248,69 @@ export function ChatPanel({
           onToggle: (product: GroundedProduct) => onTogglePick(product, listRevision),
         }
       : undefined
+
+  // ♡ and More like this live on the same result lists as ticks, when the
+  // server reports a liked list at all.
+  const likesFor = (listRevision: number | null | undefined) =>
+    liked !== null && listRevision != null && tickable.has(listRevision)
+      ? {
+          // What the server holds, as the queued taps will leave it.
+          likedOrdinals: new Set(
+            [
+              ...liked.flatMap((l) =>
+                (l.positions ?? [])
+                  .filter((position) => position.list_revision === listRevision)
+                  .map((position) => position.ordinal),
+              ),
+              ...[...pendingLikes].flatMap(([key, kind]) => {
+                const [revision, ordinal] = key.split(':').map(Number)
+                return revision === listRevision && kind === 'like' ? [ordinal] : []
+              }),
+            ].filter((ordinal) => pendingLikes.get(`${listRevision}:${ordinal}`) !== 'unlike'),
+          ),
+          onToggle: (product: GroundedProduct) => onToggleLike(product, listRevision),
+        }
+      : undefined
+  const moreLikeThisFor = (listRevision: number | null | undefined) =>
+    liked !== null && listRevision != null && tickable.has(listRevision)
+      ? (product: GroundedProduct) => onMoreLikeThis(product, listRevision)
+      : undefined
+
+  // Their liked list drawn as cards: each card is found in the liked list
+  // as the server reports it now, and acts by its place there.
+  const sameProduct = (a: GroundedProduct, b: { name_english: string; image_url: string }) =>
+    a.name_english === b.name_english && a.image_url === b.image_url
+  const likedOf = (product: GroundedProduct) => (liked ?? []).find((l) => sameProduct(product, l))
+  const pickOf = (product: GroundedProduct) => picks.find((p) => sameProduct(product, p))
+  const ordinalsWhere = (products: GroundedProduct[], test: (p: GroundedProduct) => boolean) =>
+    new Set(
+      products.flatMap((p) => (p.presented_ordinal != null && test(p) ? [p.presented_ordinal] : [])),
+    )
+  const likedCards = (products: GroundedProduct[]) =>
+    liked === null
+      ? {}
+      : {
+          selection: {
+            pickedOrdinals: ordinalsWhere(products, (p) => !!pickOf(p)),
+            onToggle: (product: GroundedProduct) => {
+              const pick = pickOf(product)
+              const like = likedOf(product)
+              if (pick) onRemovePick(pick)
+              else if (like) onSelectLiked(like)
+            },
+          },
+          likes: {
+            likedOrdinals: ordinalsWhere(products, (p) => !!likedOf(p)),
+            onToggle: (product: GroundedProduct) => {
+              const like = likedOf(product)
+              if (like) onUnlike(like)
+            },
+          },
+          onMoreLikeThis: (product: GroundedProduct) => {
+            const like = likedOf(product)
+            if (like) onMoreLikeThisLiked(like)
+          },
+        }
 
   // The room package on screen now: the latest turn that showed one. Only it
   // offers Visualize, and a render is outdated once its pieces differ from it.
@@ -267,6 +376,8 @@ export function ChatPanel({
                     key={turn.id}
                     data={turn.data}
                     busy={busy}
+                    revealedLen={turn.id === revealTurnId ? revealedLen : undefined}
+                    revealing={turn.id === revealTurnId && revealing}
                     onSwapStart={onSwapStart}
                     pick={
                       turn.id === lastAssistantId && swapRole
@@ -280,7 +391,15 @@ export function ChatPanel({
                     }
                     selection={selectionFor(turn.data.presentation?.list_revision)}
                     compare={compareFor(turn.data.presentation?.list_revision)}
+                    likes={likesFor(turn.data.presentation?.list_revision)}
+                    onMoreLikeThis={moreLikeThisFor(turn.data.presentation?.list_revision)}
+                    {...(turn.data.presentation?.product_source === 'liked'
+                      ? likedCards(turn.data.presentation.products)
+                      : {})}
                     onBriefSubmit={onBriefSubmit}
+                    onDropChip={onDropChip}
+                    onCombination={turn.id === lastAssistantId ? onCombination : undefined}
+                    showBrief={turn.id === briefTurnId}
                     quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
                     onQuickReply={onChoice}
                     latest={turn.id === lastAssistantId}
@@ -330,6 +449,7 @@ export function ChatPanel({
 
       <CompareBar
         checked={comparing}
+        busy={busy}
         onCompare={onCompare}
         onUncheck={onUncheckCompare}
         onClear={onClearCompare}
@@ -345,9 +465,11 @@ export function ChatPanel({
         value={draft}
         onChange={onDraftChange}
         onSend={() => onSend(draft)}
+        onStop={onStop}
         onPhoto={onPhoto}
         onOpenCatalog={onOpenCatalog}
         disabled={busy}
+        sending={sending || revealing}
       />
     </div>
   )

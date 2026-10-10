@@ -56,11 +56,11 @@ from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
 from app.schemas.agent_state import AgentStateV1, RoomProjectState
-from app.schemas.agent_turn import CustomerResponse
 from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
 from app.schemas.chat import ChatPresentation, ChatResponse
 from app.schemas.dimensions import DimensionStatus
 from app.schemas.geometry import RoomMeasurementRole
+from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.retailer import RetailerContext
 from app.schemas.room_photo import RoomPhoto
@@ -74,17 +74,19 @@ from app.schemas.visualization import (
 )
 from app.services.chat_runtime import commit_exchange, load_for_turn
 from app.services.discovery import to_candidate
+from app.services.media_wording import (
+    ARABIC_ROOMS,
+    VIEW_PHRASES,
+    render_reply,
+    room_photo_reply,
+)
+from app.services.reply_language import session_language
 from app.services.room_photo import fit_exactly, load_room_photo
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 
 logger = get_logger(__name__)
 
-_VIEW_PHRASES = {
-    RenderView.CORNER: "seen from the corner",
-    RenderView.EYE_LEVEL: "at eye level",
-    RenderView.ISOMETRIC: "from above",
-    RenderView.TOP_DOWN: "from directly overhead",
-}
+_VIEW_PHRASES = VIEW_PHRASES[ReplyLanguage.EN]
 
 _PHOTO_VIEW_LABEL = "Your room"
 """What a render in the customer's own photo is called where a view would be."""
@@ -317,7 +319,10 @@ class VisualizationTurnRuntime:
         sessions: SessionStore,
         settings: SessionSettings,
         room_photos: RoomPhotoStore,
+        *,
+        arabic_replies: bool = False,
     ) -> None:
+        self._arabic_replies = arabic_replies
         self._visualizer = visualizer
         self._sessions = sessions
         self._settings = settings
@@ -337,6 +342,7 @@ class VisualizationTurnRuntime:
             expected_revision=request.expected_session_revision,
         )
         state = loaded.envelope.state
+        language = session_language(state.reply_language, enabled=self._arabic_replies)
         photo = (
             await load_room_photo(
                 self._room_photos,
@@ -349,15 +355,18 @@ class VisualizationTurnRuntime:
         )
         render = await self._visualizer.render(state, request.view, context, photo)
         room_label = _room_label(state.room_project)
+        if language is ReplyLanguage.AR:
+            room_kind = state.room_project.room_kind if state.room_project else None
+            room_key = room_kind or room_label.replace(" ", "_")
+            room_label = ARABIC_ROOMS.get(room_key, "الغرفة")
         if photo is not None:
-            message = f"Here's your {room_label} package, placed in your own room."
+            response = room_photo_reply(room_label, language)
             customer_said = "[Asked to see the room package placed in a photo of their own room]"
         else:
-            message = f"Here's your {room_label}, {_VIEW_PHRASES[request.view]}."
+            response = render_reply(room_label, request.view, language)
             customer_said = (
                 f"[Asked to see the room package visualised, {render.view_label.lower()} view]"
             )
-        response = CustomerResponse(message=message)
         revision = await commit_exchange(
             self._sessions,
             self._settings,
@@ -373,6 +382,7 @@ class VisualizationTurnRuntime:
             session_revision=revision,
             response=response,
             presentation=ChatPresentation(render=render),
+            reply_language=language if self._arabic_replies else None,
         )
 
 
@@ -392,7 +402,10 @@ class CatalogVisualizationRuntime:
         catalog_settings: CatalogSettings,
         attributes: CatalogAttributes,
         room_photos: RoomPhotoStore,
+        *,
+        arabic_replies: bool = False,
     ) -> None:
+        self._arabic_replies = arabic_replies
         self._visualizer = visualizer
         self._sessions = sessions
         self._session_settings = session_settings
@@ -431,26 +444,31 @@ class CatalogVisualizationRuntime:
         )
 
         units = sum(item.quantity for item in render.items)
+        language = session_language(
+            loaded.envelope.state.reply_language, enabled=self._arabic_replies
+        )
+        dropped = len(request.items) - len(render.items)
         if spec is None:
-            message = "Here are the pieces you picked, placed in your own room."
+            # Their own room: the photo is the room, so none is named.
+            response = room_photo_reply(None, language, dropped=dropped)
             customer_said = (
                 f"[Visualised {units} pieces picked from the catalogue in a photo of "
                 "their own room]"
             )
         else:
             room_words = f"{_style_words(spec.style)} {room_type_label(spec.room_type).lower()}"
-            message = f"Here's your {room_words}, {_VIEW_PHRASES[request.view]}."
+            reply_room = room_words
+            if language is ReplyLanguage.AR:
+                reply_room = ARABIC_ROOMS[spec.room_type]
+                style = self._attributes.arabic(AttributeFamily.STYLE, spec.style)
+                if style:
+                    reply_room += f" بطراز {style}"
+            response = render_reply(reply_room, request.view, language, dropped=dropped)
             customer_said = (
                 f"[Visualised {units} pieces picked from the catalogue in a "
                 f"{spec.length_m:g} x {spec.width_m:g} m {room_words}, "
                 f"{render.view_label.lower()} view]"
             )
-        dropped = len(request.items) - len(render.items)
-        if dropped == 1:
-            message += " 1 piece you picked is no longer available, so I left it out."
-        elif dropped:
-            message += f" {dropped} pieces you picked are no longer available, so I left them out."
-        response = CustomerResponse(message=message)
         revision = await commit_exchange(
             self._sessions,
             self._session_settings,
@@ -466,6 +484,7 @@ class CatalogVisualizationRuntime:
             session_revision=revision,
             response=response,
             presentation=ChatPresentation(render=render),
+            reply_language=language if self._arabic_replies else None,
         )
 
     def _checked_room(self, room: RenderRoomSpec) -> RenderRoomSpec:

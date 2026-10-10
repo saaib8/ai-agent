@@ -165,6 +165,7 @@ def test_a_complement_is_its_own_task() -> None:
         "general_advice",
         "room_plan",
         "complementary_recommendation",
+        "space_fit",
     }
 
 

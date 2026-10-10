@@ -1,12 +1,16 @@
 import type {
   BriefAnswerAction,
+  BriefChip,
   BundleAction,
+  SearchAction,
   ChatResponse,
+  GroundedProduct,
   ProductAction,
   RenderView,
 } from '../api/types'
 import type { RejectedRef } from '../hooks/useChat'
-import type { QuickReply } from '../lib/quickReplies'
+import type { ReplyChoice } from '../api/types'
+import { BriefBar } from './BriefBar'
 import { BriefCard } from './BriefCard'
 import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
@@ -14,6 +18,7 @@ import { FocusCard } from './presentation/FocusCard'
 import { ProductGrid } from './presentation/ProductGrid'
 import type {
   GridCompare,
+  GridLikes,
   GridSelection,
   SearchRefineControls,
 } from './presentation/ProductGrid'
@@ -22,6 +27,7 @@ import { RoomRender } from './presentation/RoomRender'
 import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
+import { turnWords } from '../lib/turnWords'
 
 export function UserBubble({
   text,
@@ -97,9 +103,13 @@ interface AssistantBubbleProps {
   selection?: GridSelection
   /** Present on the search results on screen: check cards to compare. */
   compare?: GridCompare
+  /** Present on the search results on screen when cards can be liked. */
+  likes?: GridLikes
+  /** Present on the search results on screen: a similarity search from a card. */
+  onMoreLikeThis?: (product: GroundedProduct) => void
   /** Tappable answers for the follow-up question, on the latest turn only. */
-  quickReplies?: QuickReply[]
-  onQuickReply?: (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => void
+  quickReplies?: ReplyChoice[]
+  onQuickReply?: (value: string, action?: ProductAction | null, bundle?: BundleAction | null, search?: SearchAction | null) => void
   /** Present on the current room package only: render it from a view. */
   onVisualize?: (view: RenderView, viewLabel: string) => void
   /** Present on the current room package only: place it in the customer's
@@ -116,7 +126,17 @@ interface AssistantBubbleProps {
   /** The most recent assistant turn: only it offers interactive pickers. */
   latest?: boolean
   /** Answers tapped on a card of questions, sent as a search. */
-  onBriefSubmit?: (answer: BriefAnswerAction, summary: string) => void
+  onBriefSubmit?: (answer: BriefAnswerAction | null, summary: string) => void
+  /** ✕ on one of the chips naming what the search on screen uses. */
+  onDropChip?: (chip: BriefChip) => void
+  /** This turn's list is still the one on screen: its chips and Narrow down stay. */
+  showBrief?: boolean
+  /** Choose, turn down or see more of the seating combinations - latest turn only. */
+  onCombination?: (op: 'choose' | 'dismiss' | 'more', position: number | null) => void
+  /** While this turn's reply types out: how many characters to show so far. */
+  revealedLen?: number
+  /** This turn's reply is still typing out; its products and chips wait for it. */
+  revealing?: boolean
 }
 
 export function AssistantBubble({
@@ -126,6 +146,8 @@ export function AssistantBubble({
   pick,
   refine,
   selection,
+  likes,
+  onMoreLikeThis,
   compare,
   quickReplies,
   onQuickReply,
@@ -137,12 +159,21 @@ export function AssistantBubble({
   renderOutdated = false,
   latest,
   onBriefSubmit,
+  onDropChip,
+  onCombination,
+  showBrief,
+  revealedLen,
+  revealing,
 }: AssistantBubbleProps) {
   const { response, presentation } = data
+  // While this turn is typing out, show only the revealed prefix of the reply.
+  const shownMessage =
+    revealedLen != null ? response.message.slice(0, revealedLen) : response.message
   const hasProducts = !!presentation?.products?.length
   // Only search results are the list a tick or "Not this one" counts into.
   // Picks shown back, or a single product, would act on the list behind them.
   const isResultList = presentation?.product_source === 'search'
+  const actsOnCards = isResultList || presentation?.product_source === 'liked'
   const focus = presentation?.focus ?? null
   // Chips that run an action - the companions of a product - belong under the
   // cards they extend; plain answers to a question stay beside the question.
@@ -158,19 +189,37 @@ export function AssistantBubble({
   const hasRoom = !!presentation?.room
   const render = presentation?.render ?? null
   const seatingBundles = presentation?.seating_bundles ?? []
+  const language = data.reply_language === 'ar' ? 'ar' : 'en'
+  const words = turnWords(language)
   const brief = presentation?.brief ?? null
+  // "Help me narrow these down" is the turn's question: the card opens with its
+  // questions showing and stays as a record, like a card of questions. Beside
+  // results it is folded, and only beside the latest list.
+  const askedToNarrow = brief?.mode === 'narrow' && !hasProducts
   const briefCard = brief && onBriefSubmit && (
-    <BriefCard brief={brief} active={!!latest} busy={!!busy} onSubmit={onBriefSubmit} />
+    <BriefCard
+      brief={brief}
+      language={language}
+      active={!!latest}
+      opened={askedToNarrow}
+      busy={!!busy}
+      onSubmit={onBriefSubmit}
+    />
   )
+  const narrowDown = presentation?.narrow_down ?? null
+  const chips = presentation?.brief_chips ?? []
 
   return (
     <div className="flex animate-rise gap-3">
       <ZoryAvatar />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-2.5 text-[15px] leading-relaxed text-ink shadow-card">
-          {response.message}
+          {shownMessage}
+          {revealing && <span className="ml-0.5 animate-pulse text-clay">▍</span>}
         </div>
 
+        {!revealing && (
+          <>
         {response.follow_up_question && (
           <div className="flex max-w-[85%] items-start gap-2.5 rounded-xl border border-clay/15 bg-clay-soft/40 px-3.5 py-2.5">
             <HelpIcon size={16} className="mt-0.5 shrink-0 text-clay" />
@@ -194,13 +243,31 @@ export function AssistantBubble({
             products={presentation!.products}
             pick={pick}
             refine={isResultList ? refine : undefined}
-            selection={isResultList ? selection : undefined}
+            selection={actsOnCards ? selection : undefined}
+            likes={actsOnCards ? likes : undefined}
+            onMoreLikeThis={actsOnCards ? onMoreLikeThis : undefined}
             compare={isResultList ? compare : undefined}
-            bestMatch={isResultList && !!presentation?.best_match}
             busy={busy}
           />
         )}
-        {brief?.mode === 'narrow' && latest && briefCard}
+        {brief?.mode === 'narrow' && (latest || askedToNarrow) && briefCard}
+        {showBrief && (chips.length > 0 || narrowDown) && (
+          <div className="flex flex-col gap-2">
+            {chips.length > 0 && onDropChip && (
+              <BriefBar chips={chips} language={language} busy={!!busy} onDrop={onDropChip} />
+            )}
+            {narrowDown && onBriefSubmit && (
+              <BriefCard
+                key={narrowDown.card}
+                brief={narrowDown}
+                language={language}
+                active
+                busy={!!busy}
+                onSubmit={onBriefSubmit}
+              />
+            )}
+          </div>
+        )}
         {actionReplies.length > 0 && onQuickReply && (
           <QuickReplies
             replies={actionReplies}
@@ -209,7 +276,12 @@ export function AssistantBubble({
             label={offering ? 'Goes well with it' : 'Also goes well with it'}
           />
         )}
-        {hasComparison && <ComparisonTable comparison={presentation!.comparison!} />}
+        {hasComparison && (
+          <ComparisonTable
+            comparison={presentation!.comparison!}
+            language={data.reply_language === 'ar' ? 'ar' : 'en'}
+          />
+        )}
         {hasRoom && (
           <RoomBundle
             room={presentation!.room!}
@@ -230,22 +302,54 @@ export function AssistantBubble({
           />
         )}
 
+        {presentation?.chosen_seating && (
+          <RoomBundle room={presentation.chosen_seating} label={words.yourSeating} hideStatus />
+        )}
         {seatingBundles.length > 0 && (
           <div className="flex flex-col gap-2.5">
             {seatingBundles.map((bundle, index) => (
               <RoomBundle
                 key={index}
                 room={bundle}
-                label={
-                  seatingBundles.length > 1 ? `Seating option ${index + 1}` : 'Seating combination'
-                }
+                label={words.seatingOption(index + 1)}
                 hideStatus
+                actions={
+                  onCombination && (
+                    <>
+                      <button
+                        onClick={() => onCombination('choose', index + 1)}
+                        disabled={!!busy}
+                        className="rounded-full bg-ink px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {words.chooseLabel}
+                      </button>
+                      <button
+                        onClick={() => onCombination('dismiss', index + 1)}
+                        disabled={!!busy}
+                        className="rounded-full px-3 py-1.5 text-sm font-medium text-muted transition hover:text-ink disabled:opacity-50"
+                      >
+                        {words.notThisLabel}
+                      </button>
+                    </>
+                  )
+                }
               />
             ))}
+            {onCombination && (
+              <button
+                onClick={() => onCombination('more', null)}
+                disabled={!!busy}
+                className="w-fit rounded-full border border-clay/30 bg-surface px-3.5 py-1.5 text-sm font-medium text-clay shadow-card transition hover:border-clay hover:bg-clay hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {words.moreLabel}
+              </button>
+            )}
           </div>
         )}
 
         <RawJson value={data} />
+          </>
+        )}
       </div>
     </div>
   )

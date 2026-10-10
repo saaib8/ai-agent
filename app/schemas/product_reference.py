@@ -86,11 +86,24 @@ class FocusedProduct(BaseModel):
 
 
 class SoleSelectedProduct(BaseModel):
-    """"the one I liked" - resolvable only when exactly one is selected."""
+    """"the one I picked" - resolvable only when exactly one is selected."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: Literal["sole_selected_product"] = "sole_selected_product"
+
+
+class LikedProduct(BaseModel):
+    """"the one I liked", "the one I hearted", "my second like" - a product
+    in their liked list (♡), which is a list of its own, apart from the picks.
+
+    Without a position it means their only like, and is a question when they
+    have liked several."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["liked_product"] = "liked_product"
+    position: int | None = Field(default=None, ge=1)
 
 
 class PresentedAttributeMatch(BaseModel):
@@ -136,6 +149,7 @@ ProductReferenceSelector = Annotated[
     | PickedOrdinal
     | FocusedProduct
     | SoleSelectedProduct
+    | LikedProduct
     | PresentedAttributeMatch
     | PresentedExtremum,
     BeforeValidator(_must_declare_its_kind),

@@ -640,6 +640,7 @@ def _validated(
     agent._taxonomy = __import__(
         "app.taxonomy.registry", fromlist=["load_taxonomy"]
     ).load_taxonomy()
+    agent._fit_after_pick = False
     return agent._complementary(InteriorDesignResult(needs=tuple(needs)), request)
 
 

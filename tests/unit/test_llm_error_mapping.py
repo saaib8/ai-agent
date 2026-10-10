@@ -170,6 +170,55 @@ async def test_a_rejected_request_is_never_retried_by_us() -> None:
     assert attempts == 1
 
 
+def _filtered() -> APIStatusError:
+    request = httpx.Request("POST", "https://api.openai.test/v1/responses")
+    response = httpx.Response(status_code=400, request=request, text=PROVIDER_DETAIL)
+    return BadRequestError(
+        PROVIDER_DETAIL, response=response, body={"code": "content_filter"}
+    )
+
+
+async def test_a_content_filter_block_is_tried_once_more() -> None:
+    """The classifier scores the same prompt either side of its threshold."""
+
+    class _Response:
+        output_parsed: ClassVar[dict[str, Any]] = {"value": "ok"}
+
+    attempts = 0
+
+    async def _parse(**_: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise _filtered()
+        return _Response()
+
+    client = _client()
+    client._client.responses.parse = _parse  # type: ignore[method-assign]
+
+    result = await client.parse(instructions="i", user_input="u", schema=_Shape)
+
+    assert attempts == 2 and result.value == "ok"
+
+
+async def test_blocked_twice_is_unusable_output_never_a_server_fault() -> None:
+    """Every caller answers unusable output gracefully (CLAUDE.md 21.1); a
+    request we got wrong would reach the customer as an error."""
+    attempts = 0
+
+    async def _parse(**_: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        raise _filtered()
+
+    client = _client()
+    client._client.responses.parse = _parse  # type: ignore[method-assign]
+    with pytest.raises(LLMResponseInvalidError):
+        await client.parse(instructions="i", user_input="u", schema=_Shape)
+
+    assert attempts == 2
+
+
 # ── response failures keep their existing behaviour ─────────────────────────
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from app.core.config import SizeSettings
 from app.repositories.products import CatalogOverviewRow
 from app.schemas.retailer import RetailerContext
 from app.services.catalog_capability import CatalogCapabilityService
@@ -26,7 +27,9 @@ class FakeRepository:
         self.rows = rows
         self.calls: list[RetailerContext] = []
 
-    async def catalog_overview(self, context: RetailerContext) -> tuple[CatalogOverviewRow, ...]:
+    async def catalog_overview(
+        self, context: RetailerContext, *, size: SizeSettings | None = None
+    ) -> tuple[CatalogOverviewRow, ...]:
         self.calls.append(context)
         return self.rows
 

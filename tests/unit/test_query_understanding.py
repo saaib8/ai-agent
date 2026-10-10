@@ -390,7 +390,10 @@ def test_a_custom_registry_changes_the_prompt() -> None:
 
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "custom.yaml"
-        path.write_text("version: v9\ncategories:\n  outdoor: [parasol, hammock]\n")
+        path.write_text(
+            "version: v9\ncategories:\n  outdoor: [parasol, hammock]\n"
+            "arabic: {outdoor: خارجي, parasol: مظلة, hammock: أرجوحة}\n"
+        )
         assert "parasol" in render_taxonomy(load(path))
 
 

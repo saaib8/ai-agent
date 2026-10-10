@@ -25,7 +25,7 @@ from app.schemas.discovery import (
     ProductSort,
 )
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.dimensions import DimensionRole, UnsupportedDimensionReason
+from app.taxonomy.dimensions import DimensionRole, FloorSide, UnsupportedDimensionReason
 from app.taxonomy.registry import CommerceTaxonomy
 
 
@@ -209,6 +209,14 @@ class DimensionInterpretation(BaseModel):
             "never said which measurement."
         ),
     )
+    side: FloorSide | None = Field(
+        default=None,
+        description=(
+            "Which floor side of the piece that measurement is: longer for "
+            "its long side, shorter for its short side (any depth), null for "
+            "height."
+        ),
+    )
     kind: DimensionConstraintKind = Field(
         description=(
             "max for 'under' or 'no more than', min for 'at least', range for "
@@ -236,6 +244,22 @@ class DimensionInterpretation(BaseModel):
         description=(
             "locked for a plain requirement, preferred if they softened it, "
             "approximate if they said the figure itself was loose."
+        ),
+    )
+
+
+class SpaceInterpretation(BaseModel):
+    """How wide the wall or spot is where the piece will go - the space it
+    must fit, not a size of the piece."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str = Field(description="The width of the space as a plain decimal string, no unit.")
+    unit: str | None = Field(
+        default=None,
+        description=(
+            "The unit they used: cm, mm, m, in, ft. Null if they gave a bare "
+            "number with no unit - never assume one."
         ),
     )
 
@@ -400,8 +424,16 @@ class CommerceInterpretation(BaseModel):
     planar_dimensions: PlanarDimensionInterpretation | None = Field(
         default=None,
         description=(
-            "Two sides given together as 'A x B', typical of rugs. Null "
-            "otherwise."
+            "Two sides given together as 'A x B' - '160 x 200', '220 by 90' - "
+            "for any piece. Null otherwise."
+        ),
+    )
+    space_width: SpaceInterpretation | None = Field(
+        default=None,
+        description=(
+            "How wide the wall, gap or spot is where the piece will go - 'my "
+            "wall is about 400 cm', 'the space is 3 m'. Never a measurement "
+            "of the piece itself, and never also in dimensions. Null otherwise."
         ),
     )
     unsupported_requirements: list[RequirementFamily] = Field(
@@ -517,6 +549,64 @@ class ClarificationRequired(BaseModel):
     reason: ClarificationReason
 
 
+class RankingLean(BaseModel):
+    """A designer's direction beyond colour and style leanings: what to push
+    down, and the size to sit near. Orders products, never filters them; the
+    customer's own words always come first (docs/designer-led-shopping-plan.md,
+    4.2)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    learned: bool = False
+    """Taste learned from likes, picks and More like this has been worked out
+    for this search - so a ✕ on a suggested chip stays removed (phase 5)."""
+    learned_for: str | None = None
+    """The kind of piece it was worked out for: a colour learned for sofas
+    never leans sectionals, so a change of kind works it out again."""
+    learned_colours: tuple[str, ...] = ()
+    learned_styles: tuple[str, ...] = ()
+    """What they liked, picked or asked more like of: ranked after what they
+    said and before the designer - colour only from pieces of this kind,
+    style from any."""
+    said_avoid_colours: tuple[str, ...] = ()
+    said_avoid_styles: tuple[str, ...] = ()
+    """What they said they would rather avoid: pushed down right after what
+    they said they like, ahead of anything learned or suggested - never
+    hidden."""
+    colours: tuple[str, ...] = ()
+    styles: tuple[str, ...] = ()
+    """The designer's colours and styles: ranked after the customer's own
+    preferences, never sharing their tier - a customer's White leads a
+    designer's Modern however many pieces are Modern."""
+    avoid_colours: tuple[str, ...] = ()
+    avoid_styles: tuple[str, ...] = ()
+    space_cm: Decimal | None = Field(default=None, gt=0)
+    """How wide the wall or spot is that the piece must fit, as the customer
+    gave it. The fit itself is a filter on the request (overall width at most
+    this); what suits the space orders, through `size_target_cm`."""
+    space_fitted: bool = False
+    """The designer has been asked what suits `space_cm` - answered or not -
+    so paging and refinements do not ask again."""
+    size_target_cm: Decimal | None = Field(default=None, gt=0)
+    """The longer floor side to sit near, worked out by code from a
+    designer's proportion - of the picked piece's real measurements, or of the
+    space it must fit."""
+
+    fit_side_cm: Decimal | None = Field(default=None, gt=0, exclude_if=lambda v: v is None)
+    """The shorter floor side a piece that goes in the pick should have - a
+    mattress for a bed frame - as the designer read it off the pick. The
+    pieces in that size come first; nothing is hidden."""
+
+    def for_another_kind(self) -> RankingLean:
+        """This lean carried to another kind of piece: the space they gave
+        still holds, but what suits it is worked out again for the new kind -
+        a width that suits a sofa says nothing about a sofa set, nor a
+        mattress's size about anything else."""
+        return self.model_copy(
+            update={"size_target_cm": None, "space_fitted": False, "fit_side_cm": None}
+        )
+
+
 class ResolvedSearch(BaseModel):
     """The message became a request M6 discovery can execute as-is.
 
@@ -532,6 +622,15 @@ class ResolvedSearch(BaseModel):
     semantics: ConstraintSemantics = ConstraintSemantics()
     semantic_preferences: tuple[SemanticPreference, ...] = ()
     """Colour and style leanings, for semantic ranking. Never filters."""
+
+    seat_preference: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
+    """How many they said usually sit there, as a tap on the opening - it
+    orders, never filters: pieces reviewed to seat that many first, unknown
+    seat counts next, smaller ones last. A seat count they state in words is a
+    requirement instead (`request.seating_capacity`, CLAUDE.md 13.1)."""
+
+    lean: RankingLean | None = Field(default=None, exclude_if=lambda v: v is None)
+    """A designer's direction for a suggested piece - see `RankingLean`."""
 
     semantic_text: str | None = None
     """Descriptive wording left after the structured constraints were taken out.

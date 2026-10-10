@@ -64,7 +64,12 @@ class ReferenceFailureReason(StrEnum):
     NO_SELECTED_PRODUCT = "no_selected_product"
 
     SEVERAL_SELECTED_PRODUCTS = "several_selected_products"
-    """"The one I liked" when several are selected. Ambiguous, not empty."""
+    """"The one I picked" when several are selected. Ambiguous, not empty."""
+
+    NO_LIKED_PRODUCT = "no_liked_product"
+    SEVERAL_LIKED_PRODUCTS = "several_liked_products"
+    """"The one I liked" when several are liked. Ambiguous, not empty."""
+    LIKED_ORDINAL_OUT_OF_RANGE = "liked_ordinal_out_of_range"
 
     NO_ATTRIBUTE_MATCH = "no_attribute_match"
     SEVERAL_ATTRIBUTE_MATCHES = "several_attribute_matches"

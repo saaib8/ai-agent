@@ -572,7 +572,8 @@ def test_the_agent_holds_only_a_client_and_the_vocabulary() -> None:
         if name != "self"
     ]
 
-    assert parameters == ["client", "taxonomy"]
+    # And which of its instructions are switched on: a setting, never a store.
+    assert parameters == ["client", "taxonomy", "fit_after_pick"]
 
 
 def test_there_is_exactly_one_provider_call_site() -> None:

@@ -93,3 +93,18 @@ class RoomQuestion(BaseModel):
         if self.colours and self.kind is not RoomQuestionKind.COLOUR:
             raise ValueError("colours are offered only for a colour question")
         return self
+
+
+class RoomCardChoice(BaseModel):
+    """One piece of a finished room, as a chip answering "which piece?".
+
+    `ordinal` is its place among the room's cards - the number its Swap button
+    sends - and `label` its name: the room registry's where it has one, its
+    type otherwise. Display and position only; no product id crosses here.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ordinal: int = Field(ge=1)
+    label: str = Field(min_length=1, max_length=60)
+    label_ar: str | None = Field(default=None, min_length=1, max_length=60)

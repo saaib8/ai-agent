@@ -124,11 +124,16 @@ def test_an_unclassified_colour_stays_absent() -> None:
 def test_eligible_product_carries_only_what_ranking_orders_on() -> None:
     assert set(EligibleProduct.model_fields) == {
         "product_id",
+        # A search covering several types takes them in turn.
+        "subcategory",
         "price_amount",
         "main_color",
         "styles",
         # A seating combination groups a type's products by recorded seats.
         "seating_capacity",
+        # A designer's size role orders by the floor sides.
+        "long_side_cm",
+        "short_side_cm",
     }
 
 

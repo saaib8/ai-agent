@@ -44,6 +44,15 @@ StructuredT = TypeVar("StructuredT", bound=BaseModel)
 # request cannot help.
 _TRANSIENT_CLIENT_STATUSES = frozenset({408, 409, 429})
 
+_FILTER_ATTEMPTS = 2
+"""A content-filter block is tried once more before it is given up on."""
+
+
+def _content_filtered(exc: APIStatusError) -> bool:
+    """Whether the provider blocked the prompt with its content classifier
+    (Azure's `content_filter`), rather than rejecting the request itself."""
+    return exc.status_code == 400 and getattr(exc, "code", None) == "content_filter"
+
 
 class StructuredLLMClient(Protocol):
     """Turns instructions plus one untrusted user message into a typed object."""
@@ -124,6 +133,31 @@ class OpenAIStructuredClient:
         )
         return await self._request(instructions, [{"role": "user", "content": content}], schema)
 
+    async def _parse_unfiltered(
+        self,
+        instructions: str,
+        messages: list[dict[str, Any]],
+        schema: type[StructuredT],
+    ) -> Any:
+        """One parse, tried again once when the provider's content classifier
+        blocks it: its scores sit near the threshold for the same prompt, so a
+        second attempt usually passes."""
+        attempt = 1
+        while True:
+            try:
+                return await self._client.responses.parse(
+                    model=self._model,
+                    instructions=instructions,
+                    input=messages,  # type: ignore[arg-type]
+                    text_format=schema,
+                    **self._extra,
+                )
+            except APIStatusError as exc:
+                if attempt == _FILTER_ATTEMPTS or not _content_filtered(exc):
+                    raise
+                logger.warning("llm_content_filtered_retrying", attempt=attempt)
+                attempt += 1
+
     async def _request(
         self,
         instructions: str,
@@ -131,13 +165,7 @@ class OpenAIStructuredClient:
         schema: type[StructuredT],
     ) -> StructuredT:
         try:
-            response = await self._client.responses.parse(
-                model=self._model,
-                instructions=instructions,
-                input=messages,  # type: ignore[arg-type]
-                text_format=schema,
-                **self._extra,
-            )
+            response = await self._parse_unfiltered(instructions, messages, schema)
         except ValidationError as exc:
             # The provider honoured the JSON Schema and the answer still does
             # not satisfy the model: a cross-field validator rejected it. The
@@ -161,6 +189,13 @@ class OpenAIStructuredClient:
                     error_type=type(exc).__name__,
                 )
                 raise LLMUnavailableError(provider="openai", status_code=status) from exc
+            if _content_filtered(exc):
+                # Blocked twice by the provider's content classifier. Ours is a
+                # furniture conversation, so this is a false positive: handled
+                # as unusable output, which every caller answers gracefully
+                # (CLAUDE.md 21.1), never as a request we got wrong.
+                logger.warning("llm_content_filtered", attempts=_FILTER_ATTEMPTS)
+                raise LLMResponseInvalidError(reason="content_filter") from exc
             # The provider is healthy and rejected what we sent.
             logger.error(
                 "llm_request_rejected",

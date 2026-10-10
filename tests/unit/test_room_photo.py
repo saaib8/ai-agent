@@ -429,3 +429,34 @@ async def test_unconfigured_room_photos_are_refused_plainly() -> None:
 
     assert reply.status_code >= 500
     assert "not configured" in reply.json()["error"]["message"]
+
+
+# ── the reply beside a render in their own room ─────────────────────────────
+
+
+def test_a_render_in_their_own_room_names_no_view() -> None:
+    from app.schemas.language import ReplyLanguage
+    from app.services.media_wording import room_photo_reply
+
+    package = room_photo_reply("living room", ReplyLanguage.EN)
+    picked = room_photo_reply(None, ReplyLanguage.EN, dropped=2)
+
+    assert package.message == "Here's your living room package, placed in your own room."
+    assert picked.message == (
+        "Here are the pieces you picked, placed in your own room."
+        " 2 pieces you picked are no longer available, so I left them out."
+    )
+
+
+def test_a_render_in_their_own_room_is_said_in_arabic() -> None:
+    import re
+
+    from app.schemas.language import ReplyLanguage
+    from app.services.media_wording import room_photo_reply
+
+    for reply in (
+        room_photo_reply("غرفة المعيشة", ReplyLanguage.AR),
+        room_photo_reply(None, ReplyLanguage.AR, dropped=1),
+    ):
+        assert "غرفتك" in reply.message
+        assert not re.search(r"[A-Za-z]", reply.message)

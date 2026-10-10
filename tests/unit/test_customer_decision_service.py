@@ -617,7 +617,7 @@ def test_the_prompt_does_not_render_the_approved_vocabulary() -> None:
 
 
 def test_the_prompt_is_versioned() -> None:
-    assert VERSION == "customer_decision/v1"
+    assert VERSION == "customer_decision/v1.22"
 
 
 def test_the_prompt_asks_for_no_arabic_behaviour() -> None:

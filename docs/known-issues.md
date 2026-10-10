@@ -1558,3 +1558,392 @@ minutes). On a Redis failure, fall back to the database query rather than
 failing the turn. Measure the query time on store 60 first to size the TTL.
 
 **Reported:** found while reviewing multi-store readiness (2026-10-06).
+
+## 19. "Show me sofas again" after another kind shows the whole seating category
+
+**Status:** Fixed (2026-10-08). Cause: query understanding sometimes read a
+named type ("sofas") as a general kind, under its rule "leave the subcategory
+null when the customer named only a general kind". In direct calls it dropped
+the type about 1 time in 18. The prompt (`query_understanding/v1.1`) now says
+that naming a listed type, however phrased, sets it. After the change, 72 of 72
+direct calls were correct, and general words ("seating", "tables") still stay
+general. Eval case `sofas_again_keeps_the_type`.
+
+The original report follows.
+
+It was there before the cross-sell change, but that change made it easier to
+hit.
+
+**What happens:** "just show me sofas" → "just show me coffee tables" →
+"show me sofas again, just show me" returns office chairs and chairs as "a
+broad seating selection". The sofa subcategory is dropped, and only the
+category is searched. "back to the sofas" works.
+
+**Why it matters more now:** every pick replaces the search in progress with
+the suggested kind (centre tables beside a sofa, CLAUDE.md 10.4). So "show me
+sofas again" right after a pick is now a common path.
+
+**What CLAUDE.md says:**
+- 14.5 says a kind must not be guessed;
+- 13.5 says a return to a type brings that type back;
+- 10.4 says results for a whole category are never described as narrowed to
+  one kind.
+
+**Suggested fix:** find where the decision or query-understanding step loses
+`commerce_subcategory` on "X again". It could be the decision's restatement or
+the refinement composer treating it as a change within the category. Add an
+eval case for it.
+
+**Reported:** found by the QA review of the cross-sell feature (2026-10-08).
+
+## 20. "I need a table" sometimes gets a typed question instead of the card
+
+**Status:** Fixed (2026-10-08).
+
+**What happened:** about 1 run in 8, "I need a table" got a plain typed
+question ("What type of table are you looking for?") with no options to tap,
+instead of the question card whose first question offers the kinds (coffee,
+side, dining, TV...). CLAUDE.md 10.4 says a need naming only a category gets
+its category's card, with the kind asked first.
+
+**Cause:** the decision model sometimes chose to ask the question itself rather
+than hand off the search. It fell back on its general rule "ask rather than
+guess", because nothing said that a broad family ("a table", "a light") is a
+search too. Query understanding never ran on those turns.
+
+**Fix:** the decision prompt (`customer_decision/v1.3`) now says so under "A
+NEW SEARCH FOR A KIND OF PRODUCT". A need naming only a broad family is a
+search. The kind is the card's first question, so it is never a reason to ask,
+and searching the family alone is not guessing a kind.
+
+**Checked:** before the fix, 2 of 16 runs failed. After it, 32 of 32 passed
+across `card_table_asks_kind_first`, `answer_card_table_dining`,
+`card_light_asks_kind_first` and `show_me_tables_whole_category`.
+
+**Reported:** found in the eval run for known issue 19 (2026-10-08).
+
+## 21. "Not an L-shape, a simple sofa" for 7 people kept showing sofa sets
+
+**Status:** Fixed (2026-10-08).
+
+**What happened:** session `web-78eb3a1cc8f3`. The customer asked for a sofa
+for 7 and was shown 7-seater corner sofa sets. They said "I don't want l shape
+sofa rather a simple sofa". The reply said a simple sofa can't seat 7 and an
+arrangement is needed, but offered no shape chips. "Yeah let's see those
+options" then showed the same sofa sets again.
+
+**Cause:** three faults combined.
+1. The decision model did not read turning down the kind on screen as a change
+   of product type, so the search stayed on sofa sets.
+2. Even when it switched to sofas, the "another type seats them in one piece"
+   step (CLAUDE.md 27.1) offered sofa sets again.
+3. The combination planner answered "a single piece suffices", because sofa
+   sets seat 7. So the arrangement question was never asked, and the reply
+   offered to set the seat count aside instead.
+
+**Fix:**
+- The decision prompt (`customer_decision/v1.6`) now says that turning down
+  the kind on screen ("not an L-shape, a simple sofa") changes the product type
+  and keeps the head count.
+- A multi-seat type the customer moves away from on a type change is
+  remembered for that seat count (`SeatingOfferState.avoid_type`). It is never
+  offered back, never used as a piece, and never counts as the single piece
+  that makes combining unnecessary. The same seat count, including
+  "show me more", keeps avoiding it.
+
+**Checked:** replaying the conversation live, the third turn offers "Sofa +
+armchairs · from 2,920 SAR" and "Separate sofas · from 3,230 SAR". Choosing
+the first shows sofa + armchair combinations, and "show me more" shows three
+new ones, none with a sofa set.
+
+**Reported:** by the user (2026-10-08).
+
+## 22. A chosen seating combination read as "one sofa, the second still to solve"
+
+**Status:** Fixed (2026-10-08).
+
+**What happened:** session `web-ae5aacf5ccf3`. For 8 people with separate
+sofas, the customer chose option 2: two of the same 4-seater sofa. The reply
+said "its 4 seats give us a strong starting point... with the second sofa
+still to solve". It showed nothing to go with it, only a chip asking whether
+to find what goes with their picks. Separately, the combination cards had no
+buttons: no way to choose one, turn one down or see more except by typing.
+
+**Cause:**
+- **Wrong reply:** the combination was saved correctly, with a quantity of 2,
+  but the reply writer was never told about it. It saw only the picks list,
+  which holds each product once: one 4-seater against a head count of 8.
+- **No products to go with it:** showing what goes with a pick ran only when
+  the decision model called the turn an answer. Choosing a combination is
+  labelled "show selection", so nothing was shown, and the generic next-step
+  question filled the gap.
+
+**Fix:**
+- **Choosing has its own path** (`_choose_combination`), typed or tapped. It
+  saves the choice and builds the combination from the catalog with its
+  quantities and seats.
+- **The reply is told what was chosen** (`chosen_seating`: pieces, how many,
+  total seats, the head count), and its writer rule (`customer_response/v1.7`)
+  says a chosen combination is complete.
+- **The screen** draws the combination as "Your seating", then products that
+  go with its largest piece.
+- **New screen action** (`combination`: choose / dismiss / more), wired to
+  Choose, Not this one and Show more options buttons on the combination cards.
+
+**Checked:** 15 new unit tests in `tests/unit/test_seating_choice.py`. Live,
+"i like option 2" got "Two of those 4-seaters will seat all 8 of you", the
+chosen sofas, and centre tables beside them. The tapped buttons show new
+arrangements, replace only the dismissed one, and choose with the same result.
+Ten seating eval cases, four of them new, passed 20 of 20 runs.
+
+**Reported:** by the user (2026-10-08).
+
+## 23. "We are a family of two" showed 3- and 4-seaters, the first labelled best match
+
+**What happened:** asked for a sofa, the customer answered the opening with "it
+is for my bedroom and we are family of two". The cards were a 3-seater, then
+two 4-seaters. The first carried a "Best match" badge, and the reply called it
+"the closest overall match". Store 50 has 69 active 2-seater sofas, and none
+was shown.
+
+**Cause:**
+- **Seat ordering:** a head count given in reply to the opening only orders
+  results (`seat_preference`). The ordering treats every piece that seats *at
+  least* that many as an equally good fit (`semantic_ranking._preference_match`,
+  `capacity >= people`). For two people, 2-, 3-, 4- and 5-seaters all tie, and
+  similarity to "bedroom" decides between them.
+- **Best match label:** `response_view.best_match_first` checks only that
+  semantic ranking ran, the sort is the default and the first card needed no
+  widening. It never checks the first card against the head count, so a
+  3-seater for two was badged and described as the best match.
+
+**Fix:**
+- **Seat ordering** (`semantic_ranking._preference_match`) now puts the closest
+  seat count first: exactly the head count, then the fewest extra seats, then
+  unknown seat counts, then too few. CLAUDE.md 10.5 already said "pieces
+  reviewed to seat that many first".
+- **Best match** (`best_match_first`) needs the first card to seat exactly the
+  head count, when one was given.
+
+**Checked:** the user's conversation replayed live 3 times: five 2-seaters
+each time, with "Best match" on a 2-seater. 60 seat and opening eval cases
+passed 60/60. 5,537 unit tests pass.
+
+**Reported:** by the user (2026-10-09).
+
+## 24. "The one I liked" was not understood, and liked cards had no buttons
+
+**What happened (session web-e1e05121fa65):**
+- "actually i like the one that i liked" got "Which one do you mean?", though
+  only one product was liked.
+- "the one i pressed like button on i want to buy that one" showed the liked
+  product and said to select it, but did not add it to the picks.
+- The liked cards had no Select, ♡ or More like this.
+- The liked list also sat in a row above the message box, which is not wanted.
+
+**Cause:**
+- The model had no way to point at a liked product. The only "the one I liked"
+  reference meant the single *pick* (`SoleSelectedProduct`, older than the ♡
+  button), and there were no picks.
+- Liked cards were drawn as a plain list. Only search results got card buttons.
+
+**Fix:**
+- **New reference `liked_product`:** the liked list by position, or the only
+  like. Decision prompt `customer_decision/v1.11` and a `liked_count` in the
+  state view.
+- **Liked cards are `product_source` `liked`:** each has Select
+  (`select_liked`), ♡ (`unlike`) and More like this (`more_like_this` with
+  `liked`).
+- **The tray shows picks only.**
+
+**Checked:**
+- Unit tests for the reference, the liked cards and More like this from a like.
+- 3 new eval cases passed 6/6 live.
+- In the browser, the liked cards carry all three buttons, Select adds the pick
+  and shows what goes with it, and there is no liked row above the message box.
+
+**Reported:** by the user (2026-10-09).
+
+## 25. Narrowing by size asked three questions, then failed with a 422
+
+**What happened (session web-cc9c20fbbeb5):**
+- "Help me narrow these down" was answered with "What would you most like to
+  narrow by?".
+- "Narrow by size" was answered with "Which aspect of size?".
+- "Length along the wall" asked for a maximum and a unit, and the next turn
+  failed with HTTP 422.
+- More broadly, a sofa's opening almost never asked how wide the space was.
+
+**Cause:**
+- **No route to Narrow down:** the model had no way to open the Narrow down
+  card, so it wrote its own questions.
+- **The 422:** "length along the wall" became the sofa's *length*, which sofas
+  are not searched by (their along-wall size is their overall width).
+  Refinements never checked the measurement against the size registry, so
+  search refused it and the turn failed.
+- **The opening:** the writer chose two of seven questions and almost always
+  picked the room and the head count.
+
+**Fix:**
+- **Narrowing:** a new `narrow_by` field opens Narrow down, limited to the
+  questions named.
+- **The 422:** refinements refuse a measurement the kind cannot be searched by
+  (`UNSUPPORTED_DIMENSION_ROLE`), and the model is corrected once.
+- **The opening:** the space question is always asked where it is offered
+  (`ALWAYS_ASKED`), simply.
+- **A wall size** is the space the piece must fit, and the designer chooses
+  the width that suits it (CLAUDE.md 10.10).
+
+**Reported:** by the user (2026-10-09).
+
+## 26. "Which one do you recommend?" said it could not see the cards
+
+**What happened (session web-7cfe277471b8):** with centre tables on screen,
+"which one do you recommend?" was answered with "I don't have the centre-table
+options in front of me now".
+
+**Cause:**
+- **Wrong route:** the question went to the design specialist, which never
+  sees the cards.
+- **The writer could not see them either:** it only sees a turn's own cards,
+  and this turn showed none.
+
+**Fix:**
+- **Routing:** a question about the cards on screen is answered directly.
+- **What the writer sees:** a turn that shows no cards of its own is given the
+  ones still on screen (`still_on_screen`, read fresh). It names them in words
+  and picks one, with at most one alternative.
+
+**Reported:** by the user (2026-10-09).
+
+## 27. A bed picked never asked the room's size, mattresses ignored the bed's size, and "will this mattress fit my bed?" asked for the room
+
+**Status:** Fixed (2026-10-10), behind `customer_agent.fit_after_pick`.
+
+**What happened:** after picking a bed, the agent suggested mattresses in no
+particular size and never checked the bed against the room. Asked whether a
+mattress fits the bed, it asked for the room's length and width, then said the
+room's size could not confirm the mattress - and closed on a generic question.
+
+**Cause:**
+- **No check at the pick:** the room's size was asked only when the customer
+  asked "will it fit?" themselves.
+- **No size link:** the catalog records no mattress size for a bed, and the
+  designer's direction had no way to say one, so mattresses were ordered by
+  colour and style only.
+- **One rule for every fit:** "will it fit?" always asked for the room's size
+  first (`fit_needs_room_size`), even for a mattress in a frame, where the room
+  has nothing to add.
+
+**Fix:**
+- **At the pick:** a bed (reviewed: `briefs_v1.yaml`, `room_check_on_pick`)
+  picked with the room's size unknown closes on its length and width, once a
+  session; the size typed next is that question's answer, and the designer
+  judges that bed in that room.
+- **In the bed's size:** the designer reads the mattress width off the bed's
+  listed size (`fits_inside_cm`), and mattresses in that width come first -
+  the designer's reading, never a guarantee.
+- **Piece in a piece:** "will this mattress fit my bed?" (`fit_with_piece`)
+  never asks for the room; the designer judges it from the two pieces.
+- **Found on the way:** the decision's response schema name, stacked from its
+  optional parts, reached 75 characters; the provider refuses more than 64, so
+  every turn failed. It is now capped (`_within_name_limit`), with a test for
+  every combination of settings.
+- **Found by the QA review, fixed the same day:**
+  - The question stayed open all session, so a later "design my living room,
+    5 by 6 m" was taken for the bed's answer and no room was planned. It is
+    now answered only beside the list it was asked with, by a reply giving
+    just the room's size with its unit, while the bed is still picked.
+  - The reply could ask a question of its own in place of the room's.
+  - "These start with the size made for your bed" was said even when no card
+    was that size; now only when the first card is.
+  - Switched off, the designer still got the new fit instructions; now it
+    gets exactly the old ones, and any size it returns is ignored.
+  - Smaller: a piece of a room being designed no longer asks, and a piece in
+    a piece no longer marks every card as chosen.
+  - Still open: a typed "I love the first bed, what goes with it?" does not ask
+    the room's size. (The "Mattresses" chip under a bed now comes in the bed's
+    size - see 28.)
+
+**Reported:** by the user (2026-10-10).
+
+## 28. A mattress search asks which room it is for and which style
+
+**Status:** Fixed (2026-10-10)
+
+**What happened:** "hey i am looking for matteress" got the opening "which
+room is it for, and what style are you drawn to?", with room chips (Living
+room, Bedroom, Office, Dining room, Other) and style chips (Minimalist,
+Scandinavian). Neither question helps anyone choose a mattress.
+
+**Cause:** the questions come from code and reviewed data; only the wording is
+the model's.
+- **No mattress questions:** `briefs_v1.yaml` has no family for mattresses,
+  so they get `opening_default: [room, colour, style]` - the fallback meant
+  for a category new to the store.
+- **Colour dropped, style kept:** store 50's 7 mattresses are all White, so
+  the colour question has one answer and is dropped (`product_brief._question`).
+  All 7 are also "Minimalist, Scandinavian", but that is two values, so style
+  is kept - though every mattress matches either answer, so it narrows
+  nothing. The check counts values, not whether an answer tells the products
+  apart.
+- **Room chips are one fixed list** for every type, though
+  `room_pieces_v1.yaml` already places mattresses only in the bedroom.
+- **The writer had no choice:** it picks two of the questions code offers
+  (10.5), and the offer was exactly room and style.
+
+**Proposed fix:**
+- Ask a mattress's size, the one thing that decides it. Store 50's mattresses
+  are 120, 140, 150, 160, 180, 195 and 200 cm wide, one of each, so the chips
+  can come from those real widths.
+- With a bed already in their picks, take the size from it (the designer
+  already reads it, 10.11) and ask nothing.
+- Drop a question every product answers the same way (style here).
+- Skip "which room?" for a type the room registry places in one room only.
+- With nothing useful left to ask, show the mattresses.
+
+**Fix:**
+- A reviewed list of kinds not chosen by their look (`briefs_v1.yaml`,
+  `not_by_look`: mattresses). They get no opening and are shown at once; no
+  taste question follows their results; Narrow down offers the budget only.
+  The reason is what a mattress is, not what this store's data happens to
+  hold.
+- With a bed among their picks, their own mattress search - typed, or the
+  "Mattresses" chip beneath the bed - puts the size the designer read off the
+  bed first (kept with the pick as `inside_sizes`), and the reply says so only
+  when the first card is that size.
+- Not done: asking the bed's size before showing mattresses. With store 50's
+  seven mattresses, one per width, showing them is the better answer.
+
+**Reported:** by the user (2026-10-10).
+
+
+## 29. A room planned again undoes a piece the customer swapped in
+
+**Status:** Open (found live 2026-10-10, testing on `bug-fixes`). Noted for
+the owner of the whole-room flow; not changed.
+
+**Seen:** a living room with a rug of 980 SAR. The customer swapped it through
+the rug's Swap button for one of 620 SAR ("Use option 5 for the carpet"). Their
+next message, "I'd like to add a finishing touch", was read by the decision
+model as `design_handoff` with `design_scope: whole_room`, and the room was
+planned again: the 980 SAR rug came back, and the reply did not say so.
+
+**Cause:** a swap commits the chosen product as an ordinary suggested line, not
+a locked one (`_apply_swap` → `_reoptimise`). A whole-room re-plan
+(`_whole_room`, a revision) and every `_reoptimise` choose each unlocked role
+again from scratch (by design: "Every role, not just the one that changed"),
+so a piece the customer picked themselves is treated like one we suggested.
+The same happens to any unlocked piece: in the same session a vase added
+through a re-plan also replaced the sofa (since fixed for finishing touches,
+which now pin every piece - CLAUDE.md 10.3).
+
+**Proposed fix (for the owner to decide):**
+- Treat a product the customer chose through Swap as theirs: lock it, or
+  record it so later re-plans keep it (as `forced_product_id` does for a
+  finishing touch) until they swap it again.
+- Or, when a re-plan changes a piece they did not ask about, say so in the
+  reply ("I switched the rug back to …") - the room summary would need to carry
+  what changed.
+
+**Reported:** found while testing the finishing-touch fix (2026-10-10).

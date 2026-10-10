@@ -26,7 +26,9 @@ from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.language import ReplyLanguage
 from app.schemas.product_action import ProductActionRequest
 from app.schemas.reply_choice import ReplyChoice
+from app.schemas.search_action import SearchActionRequest
 from app.taxonomy.briefs import BriefQuestionKind
+from app.taxonomy.dimensions import DimensionRole
 
 EN, AR = ReplyLanguage.EN, ReplyLanguage.AR
 
@@ -38,6 +40,11 @@ class ChipText:
 
 
 class Chip(StrEnum):
+    # A taste question after products (phase 5).
+    TASTE_CARD = "taste_card"
+    TASTE_NEITHER = "taste_neither"
+    TASTE_STYLE = "taste_style"
+    TASTE_AVOID = "taste_avoid"
     # The next step a reply ends on (app/services/next_step.py).
     WHAT_GOES_WITH_PICK = "what_goes_with_pick"
     ROOM_AROUND_PICKS = "room_around_picks"
@@ -51,8 +58,8 @@ class Chip(StrEnum):
     FINISHING_TOUCH = "finishing_touch"
     SHOW_MORE = "show_more"
     NARROW_DOWN = "narrow_down"
-    FIND_A_PIECE = "find_a_piece"
-    DESIGN_A_ROOM = "design_a_room"
+    PRODUCT_TYPE = "product_type"
+    ROOM_TYPE = "room_type"
     # A room's questions and its over-budget swap (app/services/room_presentation.py).
     CHOOSE_FOR_ME = "choose_for_me"
     STRETCH_YES = "stretch_yes"
@@ -74,13 +81,42 @@ class Chip(StrEnum):
     # What goes with a pick (app/services/cross_sell.py).
     COMPANION = "companion"
     NO_THANKS = "no_thanks"
+    # A finishing touch for a finished room (app/services/room_presentation.py).
+    ADD_PIECE = "add_piece"
+    YOU_CHOOSE_PIECE = "you_choose_piece"
+    # Which piece of a finished room (app/services/room_presentation.py).
+    ROOM_CARD = "room_card"
 
 
 CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
     {
+        Chip.TASTE_CARD: {
+            EN: ChipText("The {ordinal}", "The {ordinal} one feels more like me"),
+            AR: ChipText("{ordinal}", "{ordinal} أقرب إلى ذوقي"),
+        },
+        Chip.TASTE_NEITHER: {
+            EN: ChipText("Neither", "Neither of those feels like me"),
+            AR: ChipText("ولا واحدة", "لا هذه ولا تلك تشبه ذوقي"),
+        },
+        Chip.TASTE_STYLE: {
+            EN: ChipText("{style}", "I like {style}"),
+            AR: ChipText("{style}", "يعجبني طراز {style}"),
+        },
+        Chip.TASTE_AVOID: {
+            EN: ChipText("{value}", "I'd rather avoid {value}"),
+            AR: ChipText("{value}", "أفضّل تجنّب {value}"),
+        },
+        Chip.PRODUCT_TYPE: {
+            EN: ChipText("{label}", "Show me {kind}"),
+            AR: ChipText("{label}", "أرني {kind}"),
+        },
+        Chip.ROOM_TYPE: {
+            EN: ChipText("{room}", "I'd like to design a {room_lower}"),
+            AR: ChipText("{room}", "أودّ تصميم {room}"),
+        },
         Chip.WHAT_GOES_WITH_PICK: {
             EN: ChipText("What goes with the {kind}", "What goes with the {kind}?"),
-            # No Arabic product-type names exist yet, so the pick is not named.
+            # The pick is not named: picks carry their type in English words.
             AR: ChipText("ما يناسب اختيارك", "ما الذي يناسب اختياري؟"),
         },
         Chip.ROOM_AROUND_PICKS: {
@@ -126,14 +162,6 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
         Chip.NARROW_DOWN: {
             EN: ChipText("Narrow them down", "Help me narrow these down"),
             AR: ChipText("ضيّق الخيارات", "ساعدني في تضييق هذه الخيارات"),
-        },
-        Chip.FIND_A_PIECE: {
-            EN: ChipText("Find a piece", "I'm looking for a piece of furniture"),
-            AR: ChipText("ابحث عن قطعة", "أبحث عن قطعة أثاث"),
-        },
-        Chip.DESIGN_A_ROOM: {
-            EN: ChipText("Design a room", "I'd like to design a room"),
-            AR: ChipText("صمّم غرفة", "أودّ تصميم غرفة"),
         },
         Chip.CHOOSE_FOR_ME: {
             EN: ChipText("Choose for me", "Choose the pieces for me"),
@@ -217,6 +245,18 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
             EN: ChipText("No thanks", "No thanks"),
             AR: ChipText("لا، شكرًا", "لا، شكرًا"),
         },
+        Chip.ADD_PIECE: {
+            EN: ChipText("{label}", "{label}, please"),
+            AR: ChipText("{label}", "{label} من فضلك"),
+        },
+        Chip.YOU_CHOOSE_PIECE: {
+            EN: ChipText("You choose", "You choose one for me"),
+            AR: ChipText("اختر أنت", "اختر لي واحدة"),
+        },
+        Chip.ROOM_CARD: {
+            EN: ChipText("{label}", "Show me other {piece} options"),
+            AR: ChipText("{label}", "أرني خيارات أخرى لـ{label}"),
+        },
     }
 )
 
@@ -227,6 +267,7 @@ def chip(
     *,
     product_action: ProductActionRequest | None = None,
     bundle_action: BundleActionRequest | None = None,
+    search_action: SearchActionRequest | None = None,
     **figures: Any,
 ) -> ReplyChoice:
     """One chip, worded in `language`, performing the same action in either."""
@@ -236,7 +277,17 @@ def chip(
         value=text.value.format(**figures),
         product_action=product_action,
         bundle_action=bundle_action,
+        search_action=search_action,
     )
+
+
+ORDINALS: Mapping[ReplyLanguage, tuple[str, ...]] = MappingProxyType(
+    {
+        EN: ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"),
+        AR: ("الأولى", "الثانية", "الثالثة", "الرابعة", "الخامسة", "السادسة", "السابعة", "الثامنة"),
+    }
+)
+"""A card's place on screen, as a taste chip names it - words, never digits."""
 
 
 def currency_word(currency: str, language: ReplyLanguage) -> str:
@@ -252,7 +303,10 @@ def currency_word(currency: str, language: ReplyLanguage) -> str:
 CARD_QUESTIONS: Mapping[BriefQuestionKind, Mapping[ReplyLanguage, str]] = MappingProxyType(
     {
         BriefQuestionKind.TYPE: {EN: "What kind?", AR: "أي نوع؟"},
+        BriefQuestionKind.ROOM: {EN: "Which room is it for?", AR: "لأي غرفة؟"},
+        BriefQuestionKind.PEOPLE: {EN: "How many usually sit there?", AR: "كم شخصًا يجلس عادةً؟"},
         BriefQuestionKind.BUDGET: {EN: "Budget", AR: "الميزانية"},
+        BriefQuestionKind.SPACE: {EN: "How wide a space?", AR: "ما عرض المساحة؟"},
         BriefQuestionKind.COLOUR: {EN: "Colours you like", AR: "الألوان التي تعجبك"},
         BriefQuestionKind.STYLE: {EN: "Style", AR: "الطراز"},
     }
@@ -260,14 +314,97 @@ CARD_QUESTIONS: Mapping[BriefQuestionKind, Mapping[ReplyLanguage, str]] = Mappin
 """The card's own question titles. The feel's title is reviewed data, per
 product family."""
 
+SPACE_UPTO: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "About {width} cm", AR: "حوالي {width} سم"}
+)
+SPACE_ANY: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Not sure", AR: "لست متأكدًا"}
+)
+"""The space question's answers: how wide the wall or spot is, plus "not
+sure", which adds nothing. The space orders; it never filters."""
+
+SEATS_AT_LEAST: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Seats {people}+", AR: "{people} مقاعد أو أكثر"}
+)
+SEATS_EXACTLY: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Seats {people}", AR: "{people} مقاعد"}
+)
+SEATS_FOR: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "For {people}", AR: "لـ {people} أشخاص"}
+)
+SPACE_FOR: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "For a {cm} cm space", AR: "لمساحة {cm} سم"}
+)
+"""The space the piece goes in: it orders, so it is said as what it is for."""
+SIZE_BOUND: Mapping[ReplyLanguage, Mapping[str, str]] = MappingProxyType(
+    {
+        EN: MappingProxyType(
+            {
+                "max": "Up to {cm} cm {role}",
+                "min": "At least {cm} cm {role}",
+                "target": "Around {cm} cm {role}",
+                "range": "{low}-{high} cm {role}",
+            }
+        ),
+        AR: MappingProxyType(
+            {
+                "max": "{role} حتى {cm} سم",
+                "min": "{role} {cm} سم على الأقل",
+                "target": "{role} حوالي {cm} سم",
+                "range": "{role} {low}-{high} سم",
+            }
+        ),
+    }
+)
+SIZE_ROLE: Mapping[ReplyLanguage, Mapping[DimensionRole, str]] = MappingProxyType(
+    {
+        EN: MappingProxyType(
+            {
+                DimensionRole.OVERALL_WIDTH: "wide",
+                DimensionRole.LENGTH: "long",
+                DimensionRole.DEPTH: "deep",
+                DimensionRole.HEIGHT: "high",
+            }
+        ),
+        AR: MappingProxyType(
+            {
+                DimensionRole.OVERALL_WIDTH: "العرض",
+                DimensionRole.LENGTH: "الطول",
+                DimensionRole.DEPTH: "العمق",
+                DimensionRole.HEIGHT: "الارتفاع",
+            }
+        ),
+    }
+)
+SUGGESTED: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "{value} · suggested", AR: "{value} · مقترح"}
+)
+"""A value learned from what they liked or picked, not one they said."""
+
+SIZE_PAIR: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "{first} x {second} cm", AR: "{first} x {second} سم"}
+)
+"""Chips naming what the search on screen uses, each removable: a size is
+named by its own figures, never as "your size"."""
+
+PEOPLE_OR_MORE: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "{people}+", AR: "{people} أو أكثر"}
+)
+"""The head-count question's last chip: that many or more."""
+
 CARD_SUBMIT: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Show me {noun}", AR: "أرني {noun}"}
 )
+CARD_SKIP: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "Just show me {noun}", AR: "أرني {noun} مباشرة"}
+)
+"""The button with nothing tapped: show them straight away."""
+
 CARD_SUBMIT_ANY: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Show me {noun}", AR: "أرني النتائج"}
 )
-"""When the card names the searched kind rather than its family's noun: no
-Arabic product-type names exist yet, so the Arabic button names none."""
+"""When the card names the searched kind but the registry has no Arabic name
+for it: the Arabic button then names none rather than an English word."""
 
 BUDGET_UNDER: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Under {amount} {currency}", AR: "أقل من {amount} {currency}"}

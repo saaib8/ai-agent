@@ -39,6 +39,7 @@ from app.schemas.picks import PickView
 from app.schemas.refinement import PriceRefinementOp, SearchRefinementDelta
 from app.schemas.response import (
     BundleGroundingView,
+    ChosenSeatingView,
     SeatingSolutionGroundingView,
     SwapOfferGroundingView,
 )
@@ -152,6 +153,14 @@ def seating_counts(seating: SeatingSolutionGroundingView) -> tuple[int, ...]:
     offered = (len(seating.shape_options),) if seating.shape_options else ()
     facts = tuple(n for n in (seating.not_size_limited, seating.fully_wished) if n)
     return (seating.target_seats, seating.bundle_count, *offered, *facts)
+
+
+def chosen_seating_counts(chosen: ChosenSeatingView) -> tuple[int, ...]:
+    """The counts the combination they chose licenses: how many of each piece,
+    the seats each and in all, and the head count it was built for."""
+    pieces = tuple(n for piece in chosen.pieces for n in (piece.quantity, piece.seats_each))
+    target = (chosen.target_seats,) if chosen.target_seats else ()
+    return (chosen.total_seats, *target, *pieces)
 
 
 def seating_figures(seating: SeatingSolutionGroundingView) -> tuple[Decimal, ...]:

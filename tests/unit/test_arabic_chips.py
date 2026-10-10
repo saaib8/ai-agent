@@ -16,7 +16,13 @@ from pathlib import Path
 import pytest
 from app.core.exceptions import TaxonomyConfigurationError
 from app.prompts.customer_commerce import v1 as decision_prompt
-from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
+from app.schemas.agent_decision import (
+    AgentAction,
+    BlockingClarification,
+    BlockingClarificationReason,
+    CustomerAgentDecision,
+    FollowUpPolicy,
+)
 from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage
 from app.schemas.agent_turn import (
     CustomerTurnInput,
@@ -25,8 +31,10 @@ from app.schemas.agent_turn import (
     TurnGrounding,
 )
 from app.schemas.language import ReplyLanguage
+from app.schemas.next_step import NextStepKind
 from app.schemas.product_action import CompanionAction, CompanionOffer
 from app.schemas.product_brief import BriefMode
+from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
 from app.schemas.room_opener import RoomPieceOffer, RoomQuestion, RoomQuestionKind
 from app.schemas.seating_solution import (
     SeatingShape,
@@ -91,24 +99,125 @@ def _result(reply_language: ReplyLanguage | None) -> CustomerTurnResult:
     )
 
 
-def test_the_next_step_chips_are_english_exactly_as_before() -> None:
-    step = next_step(_result(None), None)
+@pytest.mark.parametrize("language", [None, AR])
+def test_a_greeting_ends_on_an_open_question_with_no_chips(language: ReplyLanguage | None) -> None:
+    """ "A piece, or a whole room?" is theirs to answer in their own words."""
+    step = next_step(_result(language), None)
 
     assert step is not None
-    assert [(c.label, c.value) for c in step.chips] == [
-        ("Find a piece", "I'm looking for a piece of furniture"),
-        ("Design a room", "I'd like to design a room"),
-    ]
+    assert step.kind is NextStepKind.START
+    assert step.chips == ()
 
 
-def test_the_next_step_chips_are_arabic_in_an_arabic_turn() -> None:
-    step = next_step(_result(AR), None)
+def test_arabic_piece_choices_cover_every_approved_catalog_type() -> None:
+    result = _result(AR).model_copy(
+        update={
+            "grounding": TurnGrounding(
+                clarification=BlockingClarification(
+                    reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
+                    question="ما نوع الأثاث الذي تبحث عنه؟",
+                )
+            )
+        }
+    )
+    keys = TAXONOMY.categories | set().union(
+        *(TAXONOMY.subcategories(category) for category in TAXONOMY.categories)
+    )
+    for key in keys:
+        category = (
+            key
+            if TAXONOMY.is_category(key)
+            else next(
+                category for category in TAXONOMY.categories if TAXONOMY.is_pair(category, key)
+            )
+        )
+        capability = RetailerCatalogCapability(
+            commerce_category=category,
+            commerce_subcategory=None if TAXONOMY.is_category(key) else key,
+            active_product_count=1,
+        )
+        step = next_step(
+            result,
+            None,
+            capabilities=RetailerCatalogCapabilities(capabilities=(capability,)),
+            taxonomy=TAXONOMY,
+        )
+        assert step is not None and len(step.chips) == 1, key
+        assert not LATIN.search(step.chips[0].label + step.chips[0].value), key
+        assert step.chips[0].label == TAXONOMY.arabic(key)
+
+
+@pytest.mark.parametrize("language", [AR, EN])
+def test_the_room_type_question_has_supported_localized_choices(language: ReplyLanguage) -> None:
+    result = _result(language).model_copy(
+        update={
+            "grounding": TurnGrounding(
+                clarification=BlockingClarification(
+                    reason=BlockingClarificationReason.MISSING_ROOM_REQUIREMENTS,
+                    question="أي غرفة تودّ تصميمها؟",
+                )
+            )
+        }
+    )
+    step = next_step(result, None, rooms=ROOMS)
 
     assert step is not None
-    assert [(c.label, c.value) for c in step.chips] == [
-        ("ابحث عن قطعة", "أبحث عن قطعة أثاث"),
-        ("صمّم غرفة", "أودّ تصميم غرفة"),
-    ]
+    expected = ["غرفة المعيشة", "غرفة النوم"] if language is AR else ["Living room", "Bedroom"]
+    assert [choice.label for choice in step.chips] == expected
+    if language is AR:
+        assert all(not LATIN.search(choice.value) for choice in step.chips)
+
+
+@pytest.mark.parametrize("message", ["أودّ تصميم غرفة", "أبحث عن قطعة أثاث"])
+async def test_arabic_entry_messages_produce_arabic_options_in_the_chat(message: str) -> None:
+    from app.services.chat_runtime import ChatRuntime
+
+    from tests.unit.test_turn_coordinator import _coordinator
+
+    reason = (
+        BlockingClarificationReason.MISSING_ROOM_REQUIREMENTS
+        if "غرفة" in message
+        else BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE
+    )
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.CLARIFY,
+            follow_up_policy=FollowUpPolicy.NONE,
+            clarification=BlockingClarification(reason=reason, question="ماذا تفضّل؟"),
+        ),
+        rooms=ROOMS,
+        arabic_replies=True,
+    )
+    result = await coordinator.run(
+        CustomerTurnInput(message=message, state=AgentStateV1(), context=CONTEXT)
+    )
+    presentation = ChatRuntime.presentation(result)
+    assert result.reply_language is AR
+    assert presentation is not None and presentation.choices
+    assert all(not LATIN.search(choice.label + choice.value) for choice in presentation.choices)
+
+
+async def test_narrow_product_brief_nouns_are_also_arabic() -> None:
+    from dataclasses import replace
+
+    from app.schemas.discovery import ProductSearchRequest
+    from app.schemas.query import ResolvedSearch
+
+    from tests.unit.test_product_brief import SOFA_FACTS
+
+    builder, _ = _builder(replace(SOFA_FACTS, kinds=(("bed", None, 20),)))
+    built = await builder.build(
+        ResolvedSearch(
+            request=ProductSearchRequest(commerce_category="bedroom", commerce_subcategory="bed")
+        ),
+        AgentStateV1(),
+        CONTEXT,
+        mode=BriefMode.ASK,
+        language=AR,
+    )
+    assert built is not None
+    assert built.card.noun == "سرير"
+    assert not LATIN.search(built.card.submit_label)
 
 
 # ── a room's questions ──────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ from app.services.dimension_policy import (
     V1_DIMENSION_RELAXATION_POLICY,
     DimensionRelaxationPolicy,
 )
+from app.taxonomy.dimensions import FloorSide
 
 # Widening is offered to explicitly approximate constraints before merely
 # preferred ones: the customer who said "around 5000" invited the change more
@@ -208,9 +209,10 @@ class RelaxationPlanner:
         widened = list(running)
         changes: list[AppliedRelaxation] = []
         for index, original in enumerate(request.dimensions):
-            if not self._dimension_policy.is_relaxable(
+            if original.side is FloorSide.SHORTER or not self._dimension_policy.is_relaxable(
                 request.commerce_subcategory, original.role
             ):
+                # The allowlist widens an along-wall width - the long side.
                 continue
             if not self._may_relax(
                 semantics.strength_for_dimension(original.role), strength
@@ -258,6 +260,7 @@ class RelaxationPlanner:
         # the real validator enforces that a kind holds exactly its own values.
         constraint = DimensionConstraint(
             role=original.role,
+            side=original.side,
             kind=executable,
             min_cm=low,
             max_cm=high,

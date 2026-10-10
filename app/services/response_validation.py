@@ -18,7 +18,7 @@ Pure and deterministic. No model, no repository, no network.
 from __future__ import annotations
 
 from app.schemas.agent_turn import CustomerResponse
-from app.schemas.response import ResponseViolation, ResponseViolationKind
+from app.schemas.response import ProductBriefGroundingView, ResponseViolation, ResponseViolationKind
 from app.services.numeric_guard import ResponseNumericAllowance, check_numeric_policy
 
 
@@ -28,6 +28,7 @@ def validate_response(
     valid_grounding_refs: frozenset[int],
     follow_up_allowed: bool,
     allowance: ResponseNumericAllowance,
+    brief: ProductBriefGroundingView | None = None,
 ) -> ResponseViolation | None:
     """The first reason this response must not be returned, or None.
 
@@ -47,6 +48,11 @@ def validate_response(
             kind=ResponseViolationKind.FOLLOW_UP_NOT_ALLOWED,
             field="follow_up_question",
         )
+
+    if not _asks_the_opening(response, brief):
+        # Its chips are drawn for the questions it names, so naming the wrong
+        # ones would put answers under questions nobody asked.
+        return ResponseViolation(kind=ResponseViolationKind.OPENING_NOT_OFFERED, field="asked")
 
     for ref in response.referenced_grounding_refs:
         if ref not in valid_grounding_refs:
@@ -70,4 +76,30 @@ def validate_response(
             detail=numeric.value,
             field=numeric.field,
         )
+    for choice in response.choices:
+        numeric = check_numeric_policy(
+            message=choice.label, follow_up_question=choice.value, allowance=allowance
+        )
+        if numeric is not None:
+            return ResponseViolation(
+                kind=ResponseViolationKind.UNSUPPORTED_NUMBER,
+                detail=numeric.value,
+                field="choices",
+            )
     return None
+
+
+def _asks_the_opening(response: CustomerResponse, brief: ProductBriefGroundingView | None) -> bool:
+    """Exactly as many of the offered questions as it had to choose. Where
+    nothing was offered, `asked` draws nothing and is read by nothing, so a
+    choice made anyway is ignored rather than costing the reply."""
+    choose = brief.choose if brief is not None else 0
+    if not choose:
+        return True
+    offered = set(brief.asks_about) if brief is not None else set()
+    always = set(brief.must_ask) if brief is not None else set()
+    return (
+        len(response.asked) == min(choose, len(offered))
+        and set(response.asked) <= offered
+        and always <= set(response.asked)
+    )

@@ -210,12 +210,54 @@ class DiscoverySettings(BaseModel):
 
     default_candidate_limit: int = Field(default=50, ge=1)
     max_candidate_limit: int = Field(default=200, ge=1)
+    pair_tolerance_share: Decimal = Field(default=Decimal("0.05"), ge=0, lt=Decimal("0.5"))
+    """How close each side of a piece must be to a pair they give - "a bed
+    160 x 200", "a desk 120 x 60" - read by side. Rugs, whose sizes are
+    standard, are matched exactly."""
+    size_by_side: bool = True
+    """A size they ask for is read as the piece's longer or shorter floor side
+    - the larger or smaller of its two floor measurements, whatever column a
+    merchant put each in - so any store's column habits give the same answer.
+    Off, each measurement reads the column reviewed for store 50, as before."""
 
     @model_validator(mode="after")
     def _default_within_maximum(self) -> DiscoverySettings:
         if self.default_candidate_limit > self.max_candidate_limit:
             raise ValueError("discovery default_candidate_limit cannot exceed max_candidate_limit")
         return self
+
+
+class SizeSettings(BaseModel):
+    """How product sizes are read when no convention is known (the shape rule).
+
+    A merchant may store a sofa's width in `length` or in `width`, so sizes are
+    read convention-free: the longer floor side and the shorter. For a kind the
+    store's own data shows to be long and shallow - one floor side at least
+    `elongation_ratio` times the other in `long_and_shallow_share` of the
+    pieces measured, over at least `min_measured` of them - the longer side is
+    the width and the shorter the depth, in any store
+    (docs/designer-led-shopping-plan.md, 4.2a).
+    """
+
+    elongation_ratio: Decimal = Field(default=Decimal("1.3"), gt=1)
+    long_and_shallow_share: Decimal = Field(default=Decimal("0.95"), gt=0, le=1)
+    min_measured: int = Field(default=8, ge=1)
+    min_side_cm: Decimal = Field(default=Decimal("5"), gt=0)
+    max_side_cm: Decimal = Field(default=Decimal("1200"), gt=0)
+    """A floor side outside this range is a data slip - a value in metres
+    recorded as centimetres, a height in a floor column - and is not read."""
+    near_share: Decimal = Field(default=Decimal("0.25"), gt=0)
+    close_share: Decimal = Field(default=Decimal("0.5"), gt=0)
+    """A size within `near_share` of the one asked for ranks first, within
+    `close_share` next - bands, so similarity still orders inside each."""
+    similar_low: Decimal = Field(default=Decimal("0.85"), gt=0)
+    similar_high: Decimal = Field(default=Decimal("1.15"), gt=0)
+    """A size proportion between these is "similar" to the pick in words;
+    below is "smaller", above "larger"."""
+    fit_share: Decimal = Field(default=Decimal("0.03"), gt=0, lt=1)
+    """A piece that goes in the pick - a mattress in a bed - is in the pick's
+    size when its shorter floor side is within this share of the size the
+    designer read off the pick: 180 matches 183, never 160."""
 
 
 class PineconeSettings(BaseModel):
@@ -514,9 +556,93 @@ class CustomerAgentSettings(BaseModel):
     Off means English replies, exactly as before. Defaulted on in local and
     stage by `Settings`; an explicit value always wins."""
 
+    cross_sell_shows_products: bool = True
+    """After a pick, show products that go with it at once - one kind, chosen
+    by the design specialist from what the store stocks and ranked by the
+    colours and styles the customer has expressed. Off, a pick is offered the
+    kinds that go with it as chips and nothing is searched until they tap
+    one, exactly as before (CLAUDE.md 10.4)."""
+
+    designer_led_opening: bool = True
+    """Open a new product search with two soft questions the reply writer
+    chooses from those still open, instead of the card of every question
+    (docs/designer-led-shopping-plan.md, phase 1). Off brings the card back,
+    exactly as it was - a way back, not a second experience."""
+
+    designer_led_brief: bool = True
+    """Beside every list of results, what the search is using as removable
+    chips, and Narrow down opened pre-filled with every option
+    (docs/designer-led-shopping-plan.md, phase 2). Off brings back the folded
+    card offered once per family, exactly as it was."""
+
+    designer_direction: bool = True
+    """After a pick, the designer names one direction for the suggested kind -
+    colours and styles the store stocks for it, what to avoid, a size
+    proportion - in the room they named; the cards are ordered by it and the
+    reply explains its best one or two (docs/designer-led-shopping-plan.md,
+    phase 4). Off, a suggestion leans only on the customer's taste and the
+    pick's style, exactly as before."""
+
+    designer_taste: bool = True
+    """Taste after products: what they liked, picked or asked more like of
+    leans later searches quietly, and a soft taste question - which of two
+    feels more like them, which of the store's styles, anything to avoid - is
+    asked only about what nothing has told us yet, in place of the old
+    colour-or-style follow-up (docs/designer-led-shopping-plan.md, phase 5).
+    Off is the behaviour before it, exactly."""
+
+    designer_room_handoff: bool = True
+    """A room starts from what shopping learned: the head count given for
+    seating, the colours and styles they said, the wall they gave - so only
+    what is new, such as the budget, is asked (docs/designer-led-shopping-
+    plan.md, phase 6). Off, a room asks everything as before."""
+    designer_fit: bool = True
+    """Will it fit: the pieces in view are checked in code against every wall
+    and doorway the customer gave - a wall against the piece's longer side, a
+    doorway against the smaller of its depth and height - and the reply answers
+    "will it fit?" from that, never from a guess (docs/designer-led-shopping-
+    plan.md, phase 7). Off, no check is made."""
+    designer_space_fit: bool = True
+    """When they say how wide the wall or spot is, the designer decides what
+    width suits it - a sofa at about two-thirds of its wall - and the cards are
+    ordered by closeness to that width; everything that fits stays in view.
+    Off, the space only limits the width, as before."""
+
+    designer_space_question: bool = False
+    """Whether customers are asked how wide the space is: "How wide is the spot
+    where it will go?" after products (CLAUDE.md 10.9), and "How wide a space?"
+    on the cards - the opening and Narrow down (10.5, 10.6). Off by default:
+    neither is asked, and the next taste question is asked instead. A space
+    they give in words ("my wall is 300 cm") is still used exactly as before."""
+
+    designer_led_buttons: bool = True
+    """Three buttons on every card: Select as before, ♡ Like - a silent liked
+    list, kept apart from the picks - and More like this, a similarity search
+    from any card (docs/designer-led-shopping-plan.md, phase 3). Off, a like
+    or More like this is refused and no liked list is reported."""
+
+    fit_after_pick: bool = True
+    """A pick checked against the room (reviewed: a bed) asks the room's size
+    once and has the designer judge the space around it; a piece that goes in
+    the pick - a mattress for a bed - is shown in the size the designer reads
+    off the pick, first; and a fit between two pieces never asks for the room.
+    Off, a pick asks nothing and "will it fit?" asks the room as before."""
+
+    mixed_types: bool = True
+    """A customer's search for a type also shows the types reviewed to stand
+    beside it (`seating_v1.yaml`, `shown_with`) - sofa sets and sectional
+    sofas mixed into a page of sofas - and the reply says plainly when the
+    type they asked for has fewer matches than the page; "just sofas" keeps
+    to the one type, and so does a size, which those types' listings cannot
+    answer. Off, a sofa search shows sofas only, exactly as before."""
+
     max_picks: int = Field(default=10, ge=2, le=50)
     """How many products the picks tray keeps. A shortlist, not a second
     catalogue: past this a tick asks them to remove one first."""
+
+    max_likes: int = Field(default=20, ge=2, le=50)
+    """How many products the liked list keeps. Past this the oldest like is
+    let go: a like is a taste signal, not a commitment to keep."""
 
     decision_model: str | None = Field(default=None, min_length=1)
     """The model that decides what a customer turn should do.
@@ -562,6 +688,11 @@ class InteriorDesignSettings(BaseModel):
     """
 
     model: str | None = Field(default=None, min_length=1)
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    """The specialist's own effort, for a model that accepts one. Unset, it
+    spends what `llm.reasoning_effort` does. Kept apart because a design
+    direction is a short structured answer, and every customer waits on it
+    after a selection."""
 
 
 class ObservabilitySettings(BaseModel):
@@ -601,6 +732,7 @@ class Settings(BaseSettings):
     customer_agent: CustomerAgentSettings = CustomerAgentSettings()
     interior_design: InteriorDesignSettings = InteriorDesignSettings()
     discovery: DiscoverySettings = DiscoverySettings()
+    size: SizeSettings = SizeSettings()
     relaxation: RelaxationSettings = RelaxationSettings()
     # Optional on purpose: semantic ranking is an enhancement, so the service
     # starts and serves deterministic results with no Pinecone configured at

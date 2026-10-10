@@ -63,19 +63,6 @@ export interface CardRef {
   ordinal: number
 }
 
-export interface CardComparisonRequest {
-  session_id: string
-  store_id: number
-  /** Two or more, as many as they checked. */
-  cards: CardRef[]
-}
-
-export interface CardComparisonResponse {
-  comparison: ProductComparisonResult
-  /** The assistant's short take on what differs. */
-  message: string
-}
-
 /** Grouped types and the family they compare within. A type absent here
  *  compares only with itself. */
 export interface CompareGroupsResponse {
@@ -124,7 +111,7 @@ export interface ChatPresentation {
   /** Which kind of list `products` is. Only search results are the list that
    *  ticks and "Not this one" count into; picks and a single product are
    *  cards with no position there. */
-  product_source?: 'search' | 'selection' | 'detail' | null
+  product_source?: 'search' | 'selection' | 'liked' | 'detail' | null
   /** Which result list these cards are, for ticks. Set on search results. */
   list_revision?: number | null
   /** The first card is the closest to what they described. */
@@ -132,6 +119,10 @@ export interface ChatPresentation {
   /** A card of questions for a product search: asked first, or folded beside
    *  results to narrow them. */
   brief?: ProductBrief | null
+  /** Every option for the results on screen, opened showing what is used. */
+  narrow_down?: ProductBrief | null
+  /** What the search on screen is using, each removable. */
+  brief_chips?: BriefChip[]
   /** The pick the customer just chose, drawn above what goes with it. */
   focus?: GroundedProduct | null
   comparison: ProductComparisonResult | null
@@ -141,6 +132,8 @@ export interface ChatPresentation {
   /** Composed seating combinations, when no single piece met the seat count.
    *  Each renders as its own package; empty when none fit the budget. */
   seating_bundles: GroundedBundlePresentation[]
+  /** The seating combination the customer just chose, drawn as one package. */
+  chosen_seating?: GroundedBundlePresentation | null
   /** Ready answers to the question just asked, built by the backend from real
    *  options (e.g. the seating shapes in stock, with their from prices). */
   choices?: ReplyChoice[]
@@ -160,7 +153,15 @@ export interface RoomSwapContext {
 
 // ── The card of questions for a product search ───────────────────────────────
 
-export type BriefQuestionKind = 'type' | 'budget' | 'colour' | 'feel' | 'style'
+export type BriefQuestionKind =
+  | 'type'
+  | 'room'
+  | 'people'
+  | 'budget'
+  | 'space'
+  | 'colour'
+  | 'feel'
+  | 'style'
 
 export interface BriefQuestion {
   kind: BriefQuestionKind
@@ -169,6 +170,14 @@ export interface BriefQuestion {
   choices: { key: string; label: string }[]
   /** One for a single answer; more where several may be ticked together. */
   max_choices: number
+  /** Keys already true of the search on screen: Narrow down opens showing them. */
+  selected?: string[]
+}
+
+/** One thing the search on screen is using; ✕ sends its facet back. */
+export interface BriefChip {
+  facet: string
+  label: string
 }
 
 export interface ProductBrief {
@@ -179,6 +188,8 @@ export interface ProductBrief {
   noun: string
   questions: BriefQuestion[]
   submit_label: string
+  /** The same button with nothing tapped, in the reply's language. */
+  skip_label: string
 }
 
 export interface PiecePickerData {
@@ -264,6 +275,7 @@ export interface CustomerResponse {
   message: string
   referenced_grounding_refs: number[]
   follow_up_question: string | null
+  choices?: { label: string; value: string }[]
 }
 
 export interface ChatResponse {
@@ -273,6 +285,8 @@ export interface ChatResponse {
   presentation: ChatPresentation | null
   /** The picks after this turn; absent or null means unchanged. */
   picks?: PickView[] | null
+  /** Their liked list after this turn; null when unchanged or the buttons are off. */
+  liked?: LikedView[] | null
   /** The language this turn was answered in; null where Arabic replies are off. */
   reply_language?: 'en' | 'ar' | null
 }
@@ -305,6 +319,16 @@ export interface SwapAlternativesAction {
 export interface SwapDismissAction {
   kind: 'swap_dismiss'
 }
+/** A finishing touch for a finished room: the registry's piece key, or null for
+ *  "you choose", which lets the designer pick. */
+export interface AddPieceAction {
+  kind: 'add_piece'
+  piece: string | null
+}
+/** A room's "Add a finishing touch" chip: shows the pieces it could still take. */
+export interface FinishingTouchesAction {
+  kind: 'finishing_touches'
+}
 
 export type BundleAction =
   | BundleAlternativesAction
@@ -313,6 +337,8 @@ export type BundleAction =
   | SwapDeclineAction
   | SwapAlternativesAction
   | SwapDismissAction
+  | AddPieceAction
+  | FinishingTouchesAction
 
 export interface MoreOptionsAction {
   kind: 'more_options'
@@ -329,13 +355,44 @@ export interface BriefAnswerAction {
   kind: 'brief'
   card: number
   piece?: string | null
+  room?: string | null
+  people?: string | null
   budget?: string | null
+  /** A chosen along-wall width ceiling: how wide a space the piece must fit. */
+  space?: string | null
   colours?: string[]
   styles?: string[]
   feel?: string | null
 }
 
-export type SearchAction = MoreOptionsAction | ExcludeProductAction | BriefAnswerAction
+/** ✕ on a chip: the search on screen again, without that one thing. */
+export interface DropFacetAction {
+  kind: 'drop'
+  facet: string
+}
+
+/** A tap on the seating combinations on screen: choose one, turn one down,
+ *  or see more. `position` is the combination's place on screen (1-based). */
+export interface CombinationAction {
+  kind: 'combination'
+  op: 'choose' | 'dismiss' | 'more'
+  position?: number | null
+}
+
+/** A tapped answer to the taste question on screen (phase 5). */
+export interface TasteAnswerAction {
+  kind: 'taste'
+  question: number
+  answer: string
+}
+
+export type SearchAction =
+  | MoreOptionsAction
+  | ExcludeProductAction
+  | BriefAnswerAction
+  | DropFacetAction
+  | CombinationAction
+  | TasteAnswerAction
 
 // ── Picks: ticked products, asking about one, comparing two ─────────────────
 
@@ -344,7 +401,10 @@ export type SearchAction = MoreOptionsAction | ExcludeProductAction | BriefAnswe
 export type ProductAction =
   | { kind: 'goes_with'; pick: number }
   | { kind: 'compare'; picks: [number, number] }
+  | { kind: 'compare_cards'; cards: { list_revision: number; ordinal: number }[] }
   | { kind: 'companion'; category: string; subcategory: string }
+  | { kind: 'more_like_this'; card: { list_revision: number; ordinal: number } }
+  | { kind: 'more_like_this'; liked: number }
 
 /** A ready answer to tap; when it carries an action, tapping runs it. */
 export interface ReplyChoice {
@@ -353,6 +413,8 @@ export interface ReplyChoice {
   product_action?: ProductAction | null
   /** A room edit tapping it performs, for the yes/no on an over-budget swap. */
   bundle_action?: BundleAction | null
+  /** An answer to the search's own question - a taste question's key. */
+  search_action?: SearchAction | null
 }
 
 export interface PickView {
@@ -371,9 +433,28 @@ export interface PickView {
   focused: boolean
 }
 
+/** One liked product, as the tray draws it. */
+export interface LikedView {
+  /** Its position in the liked list — the number the tray's actions use. */
+  liked: number
+  name_english: string
+  image_url: string
+  price_amount: string
+  price_unit: string
+  kind: string | null
+  /** Every card showing it on the result lists still on screen. */
+  positions?: { list_revision: number; ordinal: number }[]
+  /** It is among their picks as well. */
+  picked: boolean
+}
+
 export type PickAction =
   | { kind: 'select'; ordinal: number; list_revision?: number | null }
   | { kind: 'deselect'; pick: number }
+  | { kind: 'like'; ordinal: number; list_revision: number }
+  | { kind: 'unlike'; liked: number }
+  | { kind: 'unlike'; ordinal: number; list_revision: number }
+  | { kind: 'select_liked'; liked: number }
 
 export interface PicksRequest {
   session_id: string
@@ -386,6 +467,8 @@ export interface PicksResponse {
   session_id: string
   session_revision: number
   picks: PickView[]
+  /** Their liked list; null when the buttons are switched off. */
+  liked?: LikedView[] | null
   /** Set when this tick picked the first of its kind: show what goes with it. */
   goes_with?: number | null
 }

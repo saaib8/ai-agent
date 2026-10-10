@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
-import { GridIcon, ImageIcon, SendIcon } from './icons'
+import { GridIcon, ImageIcon, SendIcon, StopIcon } from './icons'
 
 export const PHOTO_TYPES = 'image/jpeg,image/png,image/webp'
 
@@ -10,12 +10,24 @@ interface ComposerProps {
   value: string
   onChange: (value: string) => void
   onSend: () => void
+  onStop: () => void
   onPhoto: (file: File) => void
   onOpenCatalog: () => void
   disabled: boolean
+  /** A reply is generating: the send button becomes a Stop button. */
+  sending: boolean
 }
 
-export function Composer({ value, onChange, onSend, onPhoto, onOpenCatalog, disabled }: ComposerProps) {
+export function Composer({
+  value,
+  onChange,
+  onSend,
+  onStop,
+  onPhoto,
+  onOpenCatalog,
+  disabled,
+  sending,
+}: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -27,14 +39,15 @@ export function Composer({ value, onChange, onSend, onPhoto, onOpenCatalog, disa
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [value])
 
+  const canSend = !disabled && value.trim().length > 0
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      onSend()
+      // While generating or typing out, Enter must not slip a message past Stop.
+      if (canSend) onSend()
     }
   }
-
-  const canSend = !disabled && value.trim().length > 0
 
   return (
     <div className="border-t border-line bg-surface px-4 pb-4 pt-3">
@@ -81,14 +94,25 @@ export function Composer({ value, onChange, onSend, onPhoto, onOpenCatalog, disa
               className="max-h-40 w-full resize-none bg-transparent py-3 text-[15px] text-ink placeholder:text-muted/60 focus:outline-none"
             />
           </div>
-          <button
-            onClick={onSend}
-            disabled={!canSend}
-            aria-label="Send message"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-clay text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:bg-line-strong"
-          >
-            <SendIcon size={18} />
-          </button>
+          {sending ? (
+            <button
+              onClick={onStop}
+              aria-label="Stop generating"
+              title="Stop"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-clay text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              <StopIcon size={18} />
+            </button>
+          ) : (
+            <button
+              onClick={onSend}
+              disabled={!canSend}
+              aria-label="Send message"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-clay text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:bg-line-strong"
+            >
+              <SendIcon size={18} />
+            </button>
+          )}
         </div>
         <p className="mt-2 text-center text-[11px] leading-snug text-muted">
           ZORY recommends real products from the retailer&apos;s catalog. Verify details on the

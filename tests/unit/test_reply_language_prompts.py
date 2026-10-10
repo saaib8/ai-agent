@@ -170,10 +170,10 @@ def test_an_arabic_follow_up_counts_as_a_question() -> None:
 # ── the decision model's own question ───────────────────────────────────────
 
 
-def test_the_decision_writes_only_its_question_in_the_sessions_language() -> None:
+def test_the_decision_writes_its_question_and_answers_in_the_sessions_language() -> None:
     on = " ".join(decision_prompt.build_instructions(reply_language=True).split())
 
-    assert "Only clarification.question is written for the customer to read" in on
+    assert "clarification.question and clarification.choices are written for the customer" in on
     assert "Every other field stays in English" in on
     assert "a search always sets search_request, and a design hand-off always sets" in on
     assert "design_question, to what they asked in plain English" in on

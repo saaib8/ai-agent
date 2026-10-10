@@ -35,6 +35,7 @@ built from it - and the presentation limit belongs to exactly one of them.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from decimal import Decimal
 
 from app.core.config import PineconeSettings
@@ -46,6 +47,8 @@ from app.schemas.grounding import (
     RelaxationSummaryItem,
     SearchExecutionGrounding,
     SearchOutcome,
+    TypeMix,
+    TypeOnScreen,
 )
 from app.schemas.query import ConstraintStrength, ResolvedSearch, SemanticPreference
 from app.schemas.relaxation import (
@@ -175,6 +178,7 @@ class ProductSearchPipeline:
             set_aside=searched.set_aside,
             semantic_used=ranked.semantic_used,
             semantic_skip_reason=ranked.skip_reason,
+            type_mix=_type_mix(resolved, searched, grounded),
         )
         logger.info(
             "product_search_pipeline_completed",
@@ -374,6 +378,48 @@ def _summarise(
             role = change.role if isinstance(change, DimensionRelaxationChange) else None
             latest[(change.field, role)] = change
     return tuple(_summary_item(change) for change in latest.values())
+
+
+def _type_mix(
+    resolved: ResolvedSearch,
+    searched: ControlledSearchResult,
+    shown: Sequence[GroundedProduct],
+) -> TypeMix | None:
+    """What a search covering several types found of each, or None.
+
+    "Meets the request exactly" is the customer's own request, unwidened, and -
+    when a head count orders the cards - a recorded seat count of at least
+    that many: an unrecorded one is unverified, never a match (CLAUDE.md 13.5).
+    """
+    request = resolved.request
+    if not request.alongside_subcategories or request.commerce_subcategory is None:
+        return None
+    people = resolved.seat_preference
+    matches = sum(
+        1
+        for candidate in searched.candidates
+        if candidate.relaxation_depth == 0
+        and candidate.product.subcategory == request.commerce_subcategory
+        and (
+            people is None
+            or (
+                candidate.product.seating_capacity is not None
+                and candidate.product.seating_capacity >= people
+            )
+        )
+    )
+    counts: dict[str, int] = {}
+    for product in shown:
+        if product.commerce.subcategory is not None:
+            counts[product.commerce.subcategory] = counts.get(product.commerce.subcategory, 0) + 1
+    return TypeMix(
+        asked_type=request.commerce_subcategory,
+        alongside=request.alongside_subcategories,
+        asked_type_matches=matches,
+        on_screen=tuple(
+            TypeOnScreen(commerce_subcategory=kind, count=count) for kind, count in counts.items()
+        ),
+    )
 
 
 def _ranking_view(resolved: ResolvedSearch, searched: ControlledSearchResult) -> ResolvedSearch:

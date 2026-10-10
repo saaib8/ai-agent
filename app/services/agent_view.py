@@ -44,12 +44,17 @@ from app.schemas.agent_view import (
     QuestionCardView,
     RoomProjectView,
     SeatingOfferView,
+    TasteOptionView,
+    TasteQuestionView,
 )
 from app.schemas.discovery import PriceConstraint
 from app.schemas.query import ConstraintSemantics, SemanticPreference
 from app.schemas.screen import PresentedCardView
+from app.schemas.taste import TasteOption, TasteQuestionKind
 from app.services.bundle_cards import group_bundle_cards
-from app.taxonomy.words import customer_words
+from app.services.fit import awaiting_room_check
+from app.services.taste_question import on_screen
+from app.taxonomy.words import customer_words, customer_words_or_none
 
 
 def project_state(
@@ -75,6 +80,41 @@ def project_state(
         purchase_stage=state.derived_commerce.purchase_stage,
         seating_offer=_seating_offer(state.seating_offer),
         question_card=_question_card(state),
+        taste_question=_taste_question(state),
+        shopping_room=state.customer_preferences.room,
+        room_check_for=(
+            customer_words_or_none(check.kind)
+            if (check := awaiting_room_check(state)) is not None
+            else None
+        ),
+    )
+
+
+_TASTE_ASKS = {
+    TasteQuestionKind.WHICH: "which of two cards on screen feels more like them",
+    TasteQuestionKind.STYLE: "which style feels right",
+    TasteQuestionKind.AVOID: "anything they would rather avoid",
+    TasteQuestionKind.SPACE: "how wide the spot it will go in is",
+}
+
+
+def _taste_question(state: AgentStateV1) -> TasteQuestionView | None:
+    pending = on_screen(state)
+    if pending is None:
+        return None
+
+    def means(option: TasteOption) -> str:
+        if option.position is not None:
+            return f"card {option.position} on screen"
+        if option.key == "neither":
+            return "neither card"
+        if pending.kind is TasteQuestionKind.SPACE:
+            return f"about {option.space_cm} cm" if option.space_cm else "not sure"
+        return option.colour or ", ".join(option.styles)
+
+    return TasteQuestionView(
+        asks=_TASTE_ASKS[pending.kind],
+        options=tuple(TasteOptionView(key=o.key, means=means(o)) for o in pending.options),
     )
 
 
@@ -157,6 +197,7 @@ def _active_search(search: ActiveSearchState | None) -> ActiveSearchView | None:
         dimensions=tuple(
             DimensionView(
                 role=constraint.role,
+                side=constraint.side,
                 kind=constraint.kind,
                 min_cm=constraint.min_cm,
                 max_cm=constraint.max_cm,
@@ -210,6 +251,7 @@ def _presented(
         count=len(interaction.presented_product_ids),
         has_focused_product=interaction.focused_product_id is not None,
         selected_count=len(interaction.selected_product_ids),
+        liked_count=len(interaction.liked_product_ids),
         selected_ordinals=tuple(
             position_of[product_id]
             for product_id in interaction.selected_product_ids

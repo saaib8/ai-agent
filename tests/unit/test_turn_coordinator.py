@@ -453,6 +453,14 @@ def _coordinator(
     rooms: Any = None,
     closest_type: Any = None,
     arabic_replies: bool = False,
+    compare_groups: Any = None,
+    designer_led_buttons: bool = False,
+    designer_taste: bool = False,
+    designer_space_fit: bool = False,
+    room_handoff: bool = False,
+    designer_fit: bool = False,
+    mixed_types: bool = False,
+    fit_after_pick: bool = False,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -495,6 +503,14 @@ def _coordinator(
         seating,
         closest_type,
         arabic_replies=arabic_replies,
+        compare_groups=compare_groups,
+        designer_led_buttons=designer_led_buttons,
+        designer_taste=designer_taste,
+        designer_space_fit=designer_space_fit,
+        room_handoff=room_handoff,
+        designer_fit=designer_fit,
+        mixed_types=mixed_types,
+        fit_after_pick=fit_after_pick,
     )
     return coordinator, parts
 
@@ -792,6 +808,54 @@ async def test_a_model_clarification_is_carried_through_verbatim() -> None:
     assert result.grounding.clarification is question
     assert result.grounding.follow_up_policy is FollowUpPolicy.NONE
     assert parts["pipeline"].calls == []
+
+
+@pytest.mark.parametrize("message", ["I'm looking for a piece of furniture", "a single piece"])
+async def test_piece_type_question_has_stocked_choices(message: str) -> None:
+    from app.services.chat_runtime import ChatRuntime
+
+    question = BlockingClarification(
+        reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
+        question="What type of furniture are you looking for?",
+    )
+    capabilities = FakeCapabilities(pairs=(("seating", "sofa"), ("bedroom", "bed")))
+    coordinator, parts = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.CLARIFY, clarification=question, follow_up_policy=FollowUpPolicy.NONE
+        ),
+        capabilities=capabilities,
+    )
+    state = AgentStateV1()
+
+    result = await coordinator.run(_turn(state, message))
+    presentation = ChatRuntime.presentation(result)
+
+    assert result.grounding.clarification is question
+    assert presentation is not None
+    assert {choice.label for choice in presentation.choices} == {"Bed", "Sofa"}
+    assert {choice.value for choice in presentation.choices} == {"Show me beds", "Show me sofas"}
+    assert capabilities.calls == [CONTEXT]
+    assert result.state == state
+    assert len(parts["decisions"].inputs) == 1
+    assert parts["pipeline"].calls == []
+
+
+async def test_piece_choices_catalog_outage_keeps_the_question() -> None:
+    question = BlockingClarification(
+        reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
+        question="What type of furniture are you looking for?",
+    )
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.CLARIFY, clarification=question, follow_up_policy=FollowUpPolicy.NONE
+        ),
+        capabilities=FakeCapabilities(error=CatalogUnavailableError()),
+    )
+
+    result = await coordinator.run(_turn(AgentStateV1(), "a single piece"))
+
+    assert result.grounding.clarification is question
+    assert result.next_step is None
 
 
 async def test_a_design_handoff_is_a_marker_only() -> None:
@@ -2319,6 +2383,8 @@ def test_every_composition_defect_is_accounted_for() -> None:
         "MALFORMED_AMOUNT",
         # Corrected like an unapproved value: a one-seat piece is its own type.
         "ONE_SEAT_ON_MULTI_SEAT_TYPE",
+        # Corrected too: "length" of a sofa is its overall width.
+        "UNSUPPORTED_DIMENSION_ROLE",
     }
 
 

@@ -99,7 +99,7 @@ def test_the_design_model_is_its_own_setting() -> None:
 def test_the_design_prompt_is_versioned() -> None:
     from app.prompts.interior_design.v1 import VERSION
 
-    assert VERSION == "interior_design/v1"
+    assert VERSION == "interior_design/v5"
 
 
 # ── the authority line ──────────────────────────────────────────────────────
@@ -354,7 +354,7 @@ def test_a_commerce_turn_does_not_require_the_design_capability() -> None:
 def test_the_design_client_is_conditional_and_closed() -> None:
     source = (APP / "core/lifespan.py").read_text()
 
-    assert "if design_model:" in source
+    assert "if design_settings is not None:" in source
     assert "await design_llm.close()" in source
 
 

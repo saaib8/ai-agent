@@ -37,6 +37,8 @@ from app.schemas.screen import (
     ScreenRoomCardView,
     ScreenRoomView,
 )
+from app.services.product_size import measurement
+from app.taxonomy.dimensions import FloorSide
 from app.taxonomy.words import customer_words_or_none
 
 
@@ -59,6 +61,8 @@ def _dimensions(dimensions: NormalisedDimensions) -> ScreenCardDimensions | None
         length_cm=dimensions.length_cm,
         width_cm=dimensions.width_cm,
         height_cm=dimensions.height_cm,
+        longer_side_cm=measurement(dimensions, FloorSide.LONGER),
+        shorter_side_cm=measurement(dimensions, FloorSide.SHORTER),
     )
 
 

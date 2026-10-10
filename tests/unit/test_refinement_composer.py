@@ -617,35 +617,44 @@ def test_a_planar_unit_is_inherited_from_a_planar_pair(
 def test_a_role_unit_cannot_seed_a_planar_pair(
     composer: SearchRefinementComposer,
 ) -> None:
-    """A sofa's width says nothing about a rug's sides."""
-    outcome = composer.refine(
-        _state(subcategory="carpet", dimensions=(_width(),)),
-        SearchRefinementDelta(
-            planar_dimensions=PlanarRefinement(
-                op=SET, first_value="160", second_value="230"
-            )
-        ),
+    """A sofa's width says nothing about a rug's sides: a pair given with no
+    unit is read as centimetres, never in the unit of another measurement."""
+    result = _ok(
+        composer.refine(
+            _state(subcategory="carpet", dimensions=(_width(),)),
+            SearchRefinementDelta(
+                planar_dimensions=PlanarRefinement(
+                    op=SET, first_value="160", second_value="230"
+                )
+            ),
+        )
     )
 
-    assert isinstance(outcome, CompositionNeedsClarification)
-    assert outcome.reason is BlockingClarificationReason.MISSING_DIMENSION_UNIT
+    pair = result.candidate.request.planar_dimensions
+    assert pair is not None and pair.sides == (Decimal("160"), Decimal("230"))
+    assert pair.source_unit == "cm"
 
 
-def test_a_planar_unit_cannot_seed_a_role(
+def test_a_rug_is_never_measured_by_a_single_role(
     composer: SearchRefinementComposer,
 ) -> None:
-    outcome = composer.refine(
-        _rug(),
-        SearchRefinementDelta(
-            dimensions=(
-                DimensionRefinement(
-                    op=SET, role=WIDTH, kind=DimensionConstraintKind.MAX, max_value="210"
-                ),
-            )
-        ),
+    """A rug's sides are a pair: a single width is never applied, and is
+    reported as a size its listings cannot answer, never a failed turn."""
+    result = _ok(
+        composer.refine(
+            _rug(),
+            SearchRefinementDelta(
+                dimensions=(
+                    DimensionRefinement(
+                        op=SET, role=WIDTH, kind=DimensionConstraintKind.MAX, max_value="210"
+                    ),
+                )
+            ),
+        )
     )
 
-    assert isinstance(outcome, CompositionNeedsClarification)
+    assert result.candidate.request.dimensions == ()
+    assert [(d.role, d.asked_now) for d in result.dropped_constraints] == [(WIDTH, True)]
 
 
 def test_a_planar_clear_removes_the_pair_and_its_strength(

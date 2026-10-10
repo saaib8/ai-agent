@@ -151,7 +151,7 @@ def test_a_room_plan_request_is_accepted() -> None:
 
 def test_a_design_result_carries_guidance_and_needs() -> None:
     """No design_preferences: the customer's preferences have one home."""
-    assert set(InteriorDesignResult.model_fields) == {"guidance", "needs"}
+    assert set(InteriorDesignResult.model_fields) == {"guidance", "needs", "space_fit"}
     assert "design_preferences" not in InteriorDesignResult.model_fields
 
 
@@ -225,7 +225,7 @@ def test_the_capability_service_exists_and_owns_no_vocabulary() -> None:
         if name != "self"
     ]
 
-    assert parameters == ["repository", "taxonomy", "seating"]
+    assert parameters == ["repository", "taxonomy", "seating", "size"]
 
 
 def test_capabilities_carry_no_products_or_prices() -> None:
@@ -321,6 +321,7 @@ def test_the_need_carries_exactly_these_fields() -> None:
         "seating_capacity",
         "semantic_intent",
         "quantity",
+        "direction",
     }
 
 

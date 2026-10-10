@@ -15,9 +15,9 @@ consulted, so it can never be mis-routed.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.product_brief import MAX_BRIEF_COLOURS, MAX_BRIEF_STYLES
 
@@ -69,14 +69,72 @@ class BriefAnswerAction(BaseModel):
     piece: str | None = Field(default=None, min_length=1, max_length=64)
     """The kind of piece: a sofa's seat count, an L-shape, a set."""
 
+    room: str | None = Field(default=None, min_length=1, max_length=64)
+    """Which room it is for."""
+    people: str | None = Field(default=None, min_length=1, max_length=64)
+    """How many usually sit there."""
+
     budget: str | None = Field(default=None, min_length=1, max_length=64)
+    space: str | None = Field(default=None, min_length=1, max_length=64)
+    """A chosen width ceiling: how wide a space the piece must fit."""
     colours: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_COLOURS)
     styles: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_STYLES)
     feel: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class DropFacetAction(BaseModel):
+    """✕ on one thing the search on screen is using - their budget, a colour,
+    the seats - and the search run again without it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["drop"] = "drop"
+    facet: str = Field(min_length=1, max_length=80)
+
+
+class CombinationAction(BaseModel):
+    """A tap on the seating combinations on screen: choose one, turn one
+    down, or see more - exactly what "I'll take the second option", "not the
+    second option" and "show me more" do typed (CLAUDE.md 17.1, 27.1).
+
+    `position` is the combination's place on screen, resolved against the
+    combinations the session remembers showing.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["combination"] = "combination"
+    op: Literal["choose", "dismiss", "more"]
+    position: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _names_one_when_it_must(self) -> Self:
+        if (self.op == "more") != (self.position is None):
+            raise ValueError("choose and dismiss name a position; more names none")
+        return self
+
+
+class TasteAnswerAction(BaseModel):
+    """A tapped answer to the taste question on screen - which of two feels
+    more like them, a style, something to avoid (phase 5).
+
+    A key the question offered, read back through the question the session
+    remembers: a client can name an answer, never invent one."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["taste"] = "taste"
+    question: int = Field(ge=1)
+    answer: str = Field(min_length=1, max_length=64)
+
+
 SearchActionRequest = Annotated[
-    MoreOptionsAction | ExcludeProductAction | BriefAnswerAction,
+    MoreOptionsAction
+    | ExcludeProductAction
+    | BriefAnswerAction
+    | DropFacetAction
+    | CombinationAction
+    | TasteAnswerAction,
     Field(discriminator="kind"),
 ]
 """A follow-up on the search, or the answers to its card, told apart by `kind`."""

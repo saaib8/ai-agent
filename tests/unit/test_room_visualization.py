@@ -611,7 +611,10 @@ class FakeRoomPhotos:
 
 
 def a_turn_runtime(
-    store: FakeSessionStore, photos: FakeRoomPhotos | None = None
+    store: FakeSessionStore,
+    photos: FakeRoomPhotos | None = None,
+    *,
+    arabic_replies: bool = False,
 ) -> tuple[VisualizationTurnRuntime, dict[str, Any]]:
     visualizer, parts = a_visualizer()
     return (
@@ -620,6 +623,7 @@ def a_turn_runtime(
             store,  # type: ignore[arg-type]
             SessionSettings(max_history_messages=6),
             photos or FakeRoomPhotos(),  # type: ignore[arg-type]
+            arabic_replies=arabic_replies,
         ),
         parts,
     )

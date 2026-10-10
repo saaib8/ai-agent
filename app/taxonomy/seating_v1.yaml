@@ -46,3 +46,14 @@ combination_extras:
   - chair
   - lounge-chair
   - single-seater-sofa
+
+# Types a customer's search for one type also shows, mixed into the cards: a
+# sofa search shows sofa sets and sectional sofas beside the sofas, so a head
+# count the store seats mostly with sets ("a sofa for 5") finds them. Only
+# without a size - these types' sizes are not searchable (CLAUDE.md 15.1) -
+# and never when the customer asked for the type alone ("just sofas").
+# Confirmed by the user 2026-10-09.
+shown_with:
+  sofa:
+    - sofa-set
+    - sectional-sofa

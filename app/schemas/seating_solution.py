@@ -97,6 +97,15 @@ class SeatingRequirements(BaseModel):
     """The seating type the customer searched for. A multi-seat type that is
     not a usual main piece - a sofa bed - is used only when it is this."""
 
+    avoid_type: str | None = None
+    """A multi-seat type the customer turned down: never a piece, and never
+    the single piece that would make combining unnecessary."""
+
+    single_type: bool = False
+    """They asked for `asked_type` alone - "a simple sofa, not a set" - so no
+    other multi-seat type is a piece, or the single piece that would make
+    combining unnecessary (CLAUDE.md 10.12)."""
+
     sized_type: str | None = None
     """The product type the customer gave their sizes for. A size belongs to
     that type (CLAUDE.md 13.5), so only a piece of it is measured."""

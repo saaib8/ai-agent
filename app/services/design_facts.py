@@ -15,16 +15,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from decimal import Decimal
 
 from app.schemas.design import AnchorDimension, AnchorProduct, FitAssessment, FitVerdict
-from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
+from app.schemas.dimensions import DimensionStatus
 from app.schemas.geometry import RoomGeometry, RoomMeasurementRole
 from app.schemas.product import ProductCandidate
-from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, SourceAxis
-
-_AXIS_FIELD: dict[SourceAxis, str] = {
-    SourceAxis.LENGTH: "length_cm",
-    SourceAxis.WIDTH: "width_cm",
-    SourceAxis.HEIGHT: "height_cm",
-}
+from app.services.product_size import measurement
+from app.taxonomy.dimensions import DimensionRole, DimensionSemantics
 
 _FIT_BASIS: dict[DimensionRole, RoomMeasurementRole] = {
     DimensionRole.HEIGHT: RoomMeasurementRole.CEILING_HEIGHT,
@@ -141,21 +136,11 @@ def _anchor_dimensions(
 
     subcategory = product.commerce.subcategory
     projected: list[AnchorDimension] = []
-    for role in sorted(semantics.supported_roles(subcategory)):
-        axis = semantics.source_axis(subcategory, role)
-        if axis is None:
-            continue
-        value = _read_axis(measurements, axis)
+    for role, by in sorted(semantics.shown_by(subcategory).items()):
+        value = measurement(measurements, by)
         if value is not None and value > 0:
             projected.append(AnchorDimension(role=role, centimetres=value))
     return tuple(projected)
-
-
-def _read_axis(
-    measurements: NormalisedDimensions, axis: SourceAxis
-) -> Decimal | None:
-    value: Decimal | None = getattr(measurements, _AXIS_FIELD[axis])
-    return value
 
 
 def assess_fit(

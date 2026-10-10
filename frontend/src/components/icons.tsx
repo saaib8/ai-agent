@@ -53,6 +53,12 @@ export const SendIcon = (p: IconProps) => (
   </Base>
 )
 
+export const StopIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+  </Base>
+)
+
 export const SofaIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3" />
@@ -91,6 +97,12 @@ export const SwapIcon = (p: IconProps) => (
     <path d="M4 7h13" />
     <path d="m17 20 3-3-3-3" />
     <path d="M20 17H7" />
+  </Base>
+)
+
+export const HeartIcon = ({ filled = false, ...p }: IconProps & { filled?: boolean }) => (
+  <Base {...p} fill={filled ? 'currentColor' : 'none'}>
+    <path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z" />
   </Base>
 )
 

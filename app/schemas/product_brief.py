@@ -24,7 +24,7 @@ from typing import Final, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.query import ResolvedSearch
-from app.taxonomy.briefs import BriefQuestionKind
+from app.taxonomy.briefs import ALWAYS_ASKED, BriefQuestionKind
 
 MAX_BRIEF_COLOURS: Final[int] = 3
 """Colours they may tick together. Alternatives, so a few is plenty."""
@@ -35,6 +35,10 @@ MAX_BRIEF_STYLES: Final[int] = 2
 MAX_BRIEFS_SHOWN: Final[int] = 20
 """A bound on the session's record of cards shown - one per product family,
 and the families are few."""
+
+MAX_OPENING_ASKED: Final[int] = 80
+"""A bound on the session's record of opening questions asked - a few per
+product family."""
 
 
 class BriefMode(StrEnum):
@@ -70,6 +74,9 @@ class BriefQuestionView(BaseModel):
     choices: tuple[BriefChoice, ...] = Field(min_length=2)
     max_choices: int = Field(default=1, ge=1)
     """One for a single answer; more where several may be ticked together."""
+    selected: tuple[str, ...] = ()
+    """The keys already true of the search on screen, so Narrow down opens
+    showing what it is using rather than blank."""
 
     @model_validator(mode="after")
     def _keys_unique(self) -> Self:
@@ -94,6 +101,18 @@ class ProductBrief(BaseModel):
 
     questions: tuple[BriefQuestionView, ...] = Field(min_length=1)
     submit_label: str = Field(min_length=1, max_length=40)
+    skip_label: str = Field(min_length=1, max_length=48)
+    """The same button with nothing tapped, in the reply's language."""
+
+
+class BriefChip(BaseModel):
+    """One thing the search on screen is using, which they can take away."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    facet: str = Field(min_length=1, max_length=80)
+    """What tapping ✕ removes - sent back as a `drop` action."""
+    label: str = Field(min_length=1, max_length=60)
 
 
 # ── what the session remembers ──────────────────────────────────────────────
@@ -134,6 +153,42 @@ class BriefBudgetOption(BaseModel):
         return self
 
 
+class BriefSpaceOption(BaseModel):
+    """What a space key means: the along-wall width a piece may be, in cm.
+
+    A ceiling the customer taps ("my spot is up to 220 cm wide"), so a chosen
+    band becomes a max-width filter. `max_cm` is None for the "any width"
+    escape, which filters nothing.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64)
+    max_cm: Decimal | None = Field(default=None, gt=0)
+
+
+class BriefRoomOption(BaseModel):
+    """What a room key means: the room it remembers, or nothing for "Other"."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64)
+    room: str | None = Field(default=None, min_length=1, max_length=40)
+
+
+class BriefPeopleOption(BaseModel):
+    """What a head-count key means: how many usually sit there."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64)
+    people: int = Field(ge=1)
+    or_more: bool = False
+    combine: bool = False
+    """No single piece in the store seats this many, so the answer is a seat
+    requirement that leads to a combination (CLAUDE.md 27.1), not an order."""
+
+
 class BriefFeelOption(BaseModel):
     """What a feel key means: the words it ranks by."""
 
@@ -159,13 +214,35 @@ class PendingBrief(BaseModel):
     base: ResolvedSearch
     kinds: tuple[BriefKindOption, ...] = ()
     budgets: tuple[BriefBudgetOption, ...] = ()
+    spaces: tuple[BriefSpaceOption, ...] = ()
     colours: tuple[str, ...] = ()
     styles: tuple[str, ...] = ()
     feels: tuple[BriefFeelOption, ...] = ()
+    rooms: tuple[BriefRoomOption, ...] = Field(default=(), exclude_if=lambda v: not v)
+    people: tuple[BriefPeopleOption, ...] = Field(default=(), exclude_if=lambda v: not v)
+    must_ask: tuple[BriefQuestionKind, ...] | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    """What this opening asks whatever the reply prefers - the family's own
+    list; None for an opening saved before families had one (`ALWAYS_ASKED`)."""
+    opening: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The card opens a new search: the reply writer chose which of its
+    questions to show, and only those were asked."""
+    replaces: tuple[BriefQuestionKind, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """The questions Narrow down opened with a value ticked: the answers it
+    sends replace those values, so a chip they untick is taken away."""
+    narrowing: bool = Field(default=False, exclude_if=lambda v: not v)
+    """Narrow down beside results: answered by tapping, never by typing."""
     drop_saved_sizes: bool = False
     """They let go of the sizes saved for this kind in the message the card
     answers - "back to sofas, any size is fine". Kept with the card, so the
     search its answers run does not bring those sizes back."""
+
+    @property
+    def always_asked(self) -> tuple[BriefQuestionKind, ...]:
+        """What the opening asks whatever the reply prefers: its family's list
+        - the room, for sofas - or the default for one saved before."""
+        return ALWAYS_ASKED if self.must_ask is None else self.must_ask
 
 
 class ProductBriefState(BaseModel):
@@ -187,6 +264,12 @@ class ProductBriefState(BaseModel):
 
     pending: PendingBrief | None = None
     """The card on screen, until it is answered or another replaces it."""
+
+    asked: tuple[str, ...] = Field(
+        default=(), max_length=MAX_OPENING_ASKED, exclude_if=lambda v: not v
+    )
+    """Opening questions already asked, as "family:kind" - never asked twice,
+    whether or not they were answered."""
 
     @model_validator(mode="after")
     def _pending_was_counted(self) -> Self:

@@ -349,3 +349,22 @@ def test_blank_azure_values_mean_not_set(monkeypatch: pytest.MonkeyPatch, blank:
 
     assert settings.azure_openai_api_key is None
     assert settings.llm.base_url is None
+
+
+def test_the_design_specialist_is_off_without_its_own_model() -> None:
+    from app.core.lifespan import design_llm_settings
+
+    assert design_llm_settings(build_settings()) is None
+
+
+def test_the_design_specialist_spends_the_shared_effort_unless_it_has_its_own() -> None:
+    from app.core.lifespan import design_llm_settings
+
+    llm = {"api_key": "test-key-not-real", "model": "chat-model", "reasoning_effort": "medium"}
+    shared = design_llm_settings(build_settings(llm=llm, interior_design={"model": "design"}))
+    own = design_llm_settings(
+        build_settings(llm=llm, interior_design={"model": "design", "reasoning_effort": "low"})
+    )
+
+    assert shared is not None and (shared.model, shared.reasoning_effort) == ("design", "medium")
+    assert own is not None and (own.model, own.reasoning_effort) == ("design", "low")

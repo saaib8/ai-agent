@@ -89,6 +89,12 @@ class TurnFailureCode(StrEnum):
     instead of from state (M17 3).
     """
 
+    CARD_NOT_ON_SCREEN = "card_not_on_screen"
+    """A tap named a card on a list the screen no longer holds."""
+
+    NOTHING_LIKED = "nothing_liked"
+    """They asked to see what they liked, and nothing is on their liked list."""
+
     REQUEST_NOT_UNDERSTOOD = "request_not_understood"
     """The turn could not be turned into anything we can act on.
 
@@ -226,6 +232,12 @@ class DroppedConstraint(BaseModel):
 
     `None` when it could have: the size simply belongs to the other type."""
 
+    asked_now: bool = False
+    """Asked for this turn, about this same kind, and not applied because its
+    data cannot answer it - a bed "under 200 cm long", where the stored sides
+    are unreliable. Said plainly; asking again would not help (CLAUDE.md
+    15.1)."""
+
 
 class SelectionGrounding(BaseModel):
     """The products the customer has chosen, put back on screen.
@@ -243,6 +255,10 @@ class SelectionGrounding(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     products: tuple[GroundedProduct, ...] = ()
+    liked: bool = False
+    """Their liked list - the ♡ on cards - rather than their picks."""
+    also_picked: int = Field(default=0, ge=0)
+    """Of a liked list, how many are among their picks as well."""
 
     @model_validator(mode="after")
     def _positions_are_a_list_they_can_count(self) -> Self:
@@ -252,6 +268,42 @@ class SelectionGrounding(BaseModel):
         if positions != list(range(1, len(positions) + 1)):
             raise ValueError("a shown selection is numbered 1..n with no holes")
         return self
+
+
+class TypeOnScreen(BaseModel):
+    """How many cards of one type a search put on screen."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_subcategory: str
+    count: int = Field(ge=1)
+
+
+class TypeMix(BaseModel):
+    """A customer's search that covered more than the type they asked for -
+    sofa sets and sectional sofas beside sofas - or would have, but for a size.
+
+    Counts, never products, so the reply can say "I have only one sofa that
+    seats 5" truthfully and name only the types that really are on screen.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    asked_type: str
+    alongside: tuple[str, ...] = ()
+    """The types searched beside it."""
+
+    asked_type_matches: int | None = Field(default=None, ge=0)
+    """How many products of the asked type meet the request exactly - and
+    seat the head count, when one orders the cards. None when nothing was
+    searched beside it."""
+
+    on_screen: tuple[TypeOnScreen, ...] = ()
+    """The cards shown, counted by type, in the order the types first appear."""
+
+    left_out_for_size: tuple[str, ...] = ()
+    """Types not searched because the customer gave a size, which their
+    listed sizes cannot answer (CLAUDE.md 15.1)."""
 
 
 class SearchExecutionGrounding(BaseModel):
@@ -301,6 +353,14 @@ class SearchExecutionGrounding(BaseModel):
 
     semantic_used: bool = False
     semantic_skip_reason: SemanticSkipReason | None = None
+
+    type_mix: TypeMix | None = None
+    """What a search covering several types found of each, for the reply.
+    None for a search of one type with nothing left out."""
+
+    sized_for_pick: str | None = None
+    """The type of their pick these cards go inside - a bed - when the first
+    card is in the size it takes, as the designer read it off the pick."""
 
     @property
     def stale_dropped_count(self) -> int:

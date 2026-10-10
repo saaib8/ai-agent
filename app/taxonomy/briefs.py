@@ -20,7 +20,7 @@ shape, and reject any subcategory the commerce taxonomy does not approve.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -39,6 +39,10 @@ MAX_CHOICE_LABEL_CHARS: Final[int] = 24
 MAX_FEEL_WORDS_CHARS: Final[int] = 60
 """A few descriptive words for ranking, not a query."""
 
+OPENING_QUESTIONS: Final[int] = 2
+"""Questions asked before the first products of a new search."""
+
+
 MIN_CHOICES: Final[int] = 2
 MAX_CHOICES: Final[int] = 8
 """A question with one answer is not a question; past eight it is a menu."""
@@ -50,8 +54,21 @@ class BriefQuestionKind(StrEnum):
     TYPE = "type"
     """The kind of piece: a subcategory, and a seat count where it matters."""
 
+    ROOM = "room"
+    """Which room the piece is for. Never a filter - no product records a
+    room - but it tells the designer what belongs beside the piece."""
+
+    PEOPLE = "people"
+    """How many usually sit there: a seat count that orders the pieces,
+    for the kinds that seat several."""
+
     BUDGET = "budget"
     """A price band, counted from the store's live prices."""
+
+    SPACE = "space"
+    """How wide a space the piece has to fit, as reviewed cm ceilings. A chosen
+    ceiling filters on the piece's along-wall width (CLAUDE.md 15.1). Offered
+    only for types whose width the dimension registry trusts."""
 
     COLOUR = "colour"
     """Colours they like - a preference that ranks, never a filter (12.4)."""
@@ -61,6 +78,11 @@ class BriefQuestionKind(StrEnum):
 
     STYLE = "style"
     """Styles they like - a preference that ranks, never a filter (12.4)."""
+
+
+ALWAYS_ASKED: Final[tuple[BriefQuestionKind, ...]] = (BriefQuestionKind.SPACE,)
+"""Asked in every opening that offers it: how much space the piece has. The
+size it must fit rules out more than any taste, and nothing else asks it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +102,17 @@ class KindChoice:
         if self.min_seats is not None:
             return f"{self.subcategory}:{self.min_seats}+"
         return self.subcategory
+
+
+@dataclass(frozen=True, slots=True)
+class RoomChoice:
+    """One answer to "which room is it for?"."""
+
+    key: str
+    label: str
+    room: str | None
+    """The room in customer words, as it is remembered; None for "Other",
+    which records nothing - their own words name the room instead."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,17 +136,43 @@ class Brief:
     kinds: tuple[KindChoice, ...] = ()
     feel_label: str | None = None
     feels: tuple[FeelChoice, ...] = ()
+    opening: tuple[BriefQuestionKind, ...] = ()
+    """What may be asked before the first products, most useful first. The
+    reply writer chooses two of those still open (CLAUDE.md 10.4)."""
+    always: tuple[BriefQuestionKind, ...] | None = None
+    """What every opening of this family asks while it is open - the room,
+    for sofas. None keeps the default, `ALWAYS_ASKED`."""
+    room_check_on_pick: bool = False
+    """Picked, a piece of this family is checked against the room: the room's
+    size is asked once, and the designer judges the space around it."""
+
+    @property
+    def must_ask(self) -> tuple[BriefQuestionKind, ...]:
+        """The questions every opening of this family asks, when offered."""
+        return ALWAYS_ASKED if self.always is None else self.always
 
 
 class Briefs:
     """Every product family's card, keyed by the subcategories it covers."""
 
     def __init__(
-        self, version: str, briefs: tuple[Brief, ...], arabic: Mapping[str, str] | None = None
+        self,
+        version: str,
+        briefs: tuple[Brief, ...],
+        arabic: Mapping[str, str] | None = None,
+        *,
+        rooms: tuple[RoomChoice, ...] = (),
+        default_opening: tuple[BriefQuestionKind, ...] = (),
+        default_narrowing: tuple[BriefQuestionKind, ...] = (),
+        not_by_look: frozenset[str] = frozenset(),
     ) -> None:
         self._version = version
+        self._not_by_look = not_by_look
         self._briefs = briefs
         self._arabic: Mapping[str, str] = dict(arabic or {})
+        self._rooms = rooms
+        self._default_opening = default_opening
+        self._default_narrowing = default_narrowing
         self._by_type = {sub: brief for brief in briefs for sub in brief.subcategories}
         self._by_category = {cat: brief for brief in briefs for cat in brief.categories}
 
@@ -131,6 +190,58 @@ class Briefs:
         if subcategory is not None:
             return self._by_type.get(subcategory)
         return self._by_category.get(category)
+
+    def checks_room_on_pick(self, subcategory: str | None) -> bool:
+        """Whether a pick of this kind is checked against the room."""
+        brief = self._by_type.get(subcategory) if subcategory else None
+        return brief is not None and brief.room_check_on_pick
+
+    def by_look(self, subcategory: str | None) -> bool:
+        """Whether this kind is chosen by its look. A mattress is not - it lies
+        under the bedding - so nothing about its colour or style is asked."""
+        return subcategory not in self._not_by_look
+
+    def for_opening(self, category: str, subcategory: str | None) -> Brief | None:
+        """The questions to open a search with: its card's, or for a type no
+        card covers - a category added to the store tomorrow - the default
+        ones, which every product has an answer to. None for a kind not chosen
+        by its look: a mattress is shown at once, with nothing asked first."""
+        if not self.by_look(subcategory):
+            return None
+        brief = self.for_search(category, subcategory)
+        if brief is not None and brief.opening:
+            return brief
+        return Brief(
+            name=brief.name if brief is not None else subcategory or category,
+            subcategories=(subcategory,) if subcategory else (),
+            ask=(),
+            opening=self._default_opening,
+        )
+
+    def for_narrowing(self, category: str, subcategory: str | None) -> Brief:
+        """Every question Narrow down offers beside these results: the card's
+        own, with the head count where its opening asks one, or the default
+        ones for a type no card covers."""
+        brief = self.for_search(category, subcategory)
+        if brief is None:
+            return Brief(
+                name=subcategory or category,
+                subcategories=(subcategory,) if subcategory else (),
+                ask=tuple(
+                    kind
+                    for kind in self._default_narrowing
+                    if self.by_look(subcategory) or kind not in _LOOK
+                ),
+            )
+        if BriefQuestionKind.PEOPLE in brief.opening and BriefQuestionKind.PEOPLE not in brief.ask:
+            after_type = brief.ask.index(BriefQuestionKind.TYPE) + 1 if brief.kinds else 0
+            ask = (*brief.ask[:after_type], BriefQuestionKind.PEOPLE, *brief.ask[after_type:])
+            return replace(brief, ask=ask)
+        return brief
+
+    @property
+    def rooms(self) -> tuple[RoomChoice, ...]:
+        return self._rooms
 
     def for_type(self, subcategory: str | None) -> Brief | None:
         """The card for a product type, or None when it has no card.
@@ -197,6 +308,16 @@ def load_briefs(path: Path | None = None, taxonomy: CommerceTaxonomy | None = No
             )
         claimed_categories.update(brief.categories)
         briefs.append(brief)
+    rooms = _rooms(document.get("rooms"), source.name)
+    default_opening = _opening(document.get("opening_default"), source.name, generic=True)
+    default_narrowing = _ask(document.get("narrow_default"), f"{source.name}: narrow_default")
+    not_by_look = _not_by_look(
+        document.get("not_by_look"), f"{source.name}: not_by_look", taxonomy, claimed
+    )
+    if not set(default_narrowing) <= _GENERIC_NARROWING:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: the default Narrow down may ask only budget, colour and style"
+        )
     labels = {
         label
         for brief in briefs
@@ -207,9 +328,38 @@ def load_briefs(path: Path | None = None, taxonomy: CommerceTaxonomy | None = No
             *(feel.label for feel in brief.feels),
         )
         if label is not None
-    }
+    } | {room.label for room in rooms}
     arabic = parse_arabic_labels(document.get("arabic"), labels, where=source.name)
-    return Briefs(version=version, briefs=tuple(briefs), arabic=arabic)
+    return Briefs(
+        version=version,
+        briefs=tuple(briefs),
+        arabic=arabic,
+        rooms=rooms,
+        default_opening=default_opening,
+        default_narrowing=default_narrowing,
+        not_by_look=not_by_look,
+    )
+
+
+def _not_by_look(
+    raw: Any, where: str, taxonomy: CommerceTaxonomy | None, carded: set[str]
+) -> frozenset[str]:
+    """Kinds whose look decides nothing. None of them may have a card: a card
+    would ask about exactly what they are not chosen by."""
+    if raw is None:
+        return frozenset()
+    if not isinstance(raw, list) or not all(isinstance(s, str) and s for s in raw):
+        raise TaxonomyConfigurationError(detail=f"{where}: must be a list of subcategories")
+    for subcategory in raw:
+        if taxonomy is not None and not taxonomy.is_subcategory(subcategory):
+            raise TaxonomyConfigurationError(
+                detail=f"{where}: {subcategory} is not an approved subcategory"
+            )
+        if subcategory in carded:
+            raise TaxonomyConfigurationError(
+                detail=f"{where}: {subcategory} has a card, which would ask about its look"
+            )
+    return frozenset(raw)
 
 
 def _brief(name: str, raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -> Brief:
@@ -236,6 +386,21 @@ def _brief(name: str, raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -
     noun = raw.get("noun")
     if noun is not None and (not isinstance(noun, str) or not noun.strip() or len(noun) > 30):
         raise TaxonomyConfigurationError(detail=f"{where}: 'noun' must be 1-30 characters")
+    opening = _opening(raw.get("opening"), where)
+    if BriefQuestionKind.TYPE in opening and not kinds:
+        raise TaxonomyConfigurationError(detail=f"{where}: the opening asks a kind it lacks")
+    if BriefQuestionKind.FEEL in opening and not feels:
+        raise TaxonomyConfigurationError(detail=f"{where}: the opening asks a feel it lacks")
+    if BriefQuestionKind.PEOPLE in opening and not any(
+        kind.seats is not None or kind.min_seats is not None for kind in kinds
+    ):
+        # A head count orders pieces by their reviewed seats; a card whose
+        # kinds seat no one has nothing for it to order.
+        raise TaxonomyConfigurationError(detail=f"{where}: the opening asks people of no seats")
+    always = _always(raw.get("always"), opening, where)
+    room_check = raw.get("room_check_on_pick", False)
+    if not isinstance(room_check, bool):
+        raise TaxonomyConfigurationError(detail=f"{where}: 'room_check_on_pick' is true or false")
     return Brief(
         name=name,
         subcategories=subcategories,
@@ -245,7 +410,88 @@ def _brief(name: str, raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -
         kinds=kinds,
         feel_label=feel_label,
         feels=feels,
+        opening=opening,
+        always=always,
+        room_check_on_pick=room_check,
     )
+
+
+def _always(
+    raw: Any, opening: tuple[BriefQuestionKind, ...], where: str
+) -> tuple[BriefQuestionKind, ...] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or len(raw) > OPENING_QUESTIONS:
+        raise TaxonomyConfigurationError(
+            detail=f"{where}: 'always' lists at most {OPENING_QUESTIONS} questions"
+        )
+    try:
+        always = tuple(BriefQuestionKind(kind) for kind in raw)
+    except ValueError as exc:
+        raise TaxonomyConfigurationError(detail=f"{where}: unknown question in 'always'") from exc
+    if not set(always) <= set(opening):
+        raise TaxonomyConfigurationError(detail=f"{where}: 'always' asks what the opening lacks")
+    return always
+
+
+_GENERIC_OPENING: Final[frozenset[BriefQuestionKind]] = frozenset(
+    {BriefQuestionKind.ROOM, BriefQuestionKind.COLOUR, BriefQuestionKind.STYLE}
+)
+"""What any product can be asked with no card of its own: its kinds, feels and
+seats are a card's to list."""
+
+_GENERIC_NARROWING: Final[frozenset[BriefQuestionKind]] = frozenset(
+    {BriefQuestionKind.BUDGET, BriefQuestionKind.COLOUR, BriefQuestionKind.STYLE}
+)
+"""What any product's results can be narrowed by with no card of its own."""
+
+_LOOK: Final[frozenset[BriefQuestionKind]] = frozenset(
+    {BriefQuestionKind.COLOUR, BriefQuestionKind.STYLE}
+)
+"""The questions about a piece's look, never asked of a kind not chosen by it."""
+
+
+def _opening(raw: Any, where: str, *, generic: bool = False) -> tuple[BriefQuestionKind, ...]:
+    if raw is None and not generic:
+        return ()
+    if not isinstance(raw, list) or len(raw) < OPENING_QUESTIONS:
+        raise TaxonomyConfigurationError(
+            detail=f"{where}: an opening needs at least {OPENING_QUESTIONS} questions"
+        )
+    try:
+        opening = tuple(BriefQuestionKind(kind) for kind in raw)
+    except ValueError as exc:
+        raise TaxonomyConfigurationError(detail=f"{where}: unknown question in an opening") from exc
+    if len(opening) != len(set(opening)):
+        raise TaxonomyConfigurationError(detail=f"{where}: an opening repeats a question")
+    if BriefQuestionKind.BUDGET in opening:
+        # Asking money first anchors the price down (CLAUDE.md 10.2).
+        raise TaxonomyConfigurationError(detail=f"{where}: an opening never asks the budget")
+    if generic and not set(opening) <= _GENERIC_OPENING:
+        raise TaxonomyConfigurationError(
+            detail=f"{where}: the default opening may ask only room, colour and style"
+        )
+    return opening
+
+
+def _rooms(raw: Any, where: str) -> tuple[RoomChoice, ...]:
+    if not isinstance(raw, list) or not MIN_CHOICES <= len(raw) <= MAX_CHOICES:
+        raise TaxonomyConfigurationError(
+            detail=f"{where}: 'rooms' needs {MIN_CHOICES}-{MAX_CHOICES} rooms"
+        )
+    rooms: list[RoomChoice] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or not isinstance(entry.get("key"), str):
+            raise TaxonomyConfigurationError(detail=f"{where}: each room needs a key")
+        label = _label(entry.get("label"), where)
+        room = entry.get("room")
+        if room is not None and (not isinstance(room, str) or not room.strip()):
+            raise TaxonomyConfigurationError(detail=f"{where}: {label}: 'room' must be words")
+        rooms.append(RoomChoice(key=entry["key"], label=label, room=room))
+    _unique_labels([room.label for room in rooms], where)
+    if len({room.key for room in rooms}) != len(rooms):
+        raise TaxonomyConfigurationError(detail=f"{where}: 'rooms' repeats a key")
+    return tuple(rooms)
 
 
 def _subcategories(raw: Any, where: str, taxonomy: CommerceTaxonomy | None) -> tuple[str, ...]:

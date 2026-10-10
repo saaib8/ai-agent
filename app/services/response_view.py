@@ -26,11 +26,13 @@ from app.schemas.bundle import BundleStatus, BundleUnavailable, RoomBundle
 from app.schemas.comparison import ComparisonStatus
 from app.schemas.design import DesignPriority
 from app.schemas.discovery import PriceConstraint, ProductSort
-from app.schemas.grounding import GroundedProduct, SearchOutcome, TurnFailureCode
+from app.schemas.grounding import GroundedProduct, SearchOutcome, TurnFailureCode, TypeMix
 from app.schemas.product_brief import BriefMode
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
     BundleGroundingView,
+    ChosenSeatingPieceView,
+    ChosenSeatingView,
     DeterministicResponse,
     DeterministicResponseKind,
     MissingPieceView,
@@ -43,6 +45,8 @@ from app.schemas.response import (
     SeatingSolutionGroundingView,
     SideEffectNotice,
     SwapOfferGroundingView,
+    TasteQuestionGroundingView,
+    TypeMixView,
 )
 from app.schemas.room_opener import RoomQuestion
 from app.schemas.screen import CustomerVisibleScreenView
@@ -51,6 +55,8 @@ from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import MAX_COMPANION_CHIPS
 from app.services.screen_view import screen_from_presentation
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.briefs import OPENING_QUESTIONS
+from app.taxonomy.words import customer_words_or_none
 
 
 def route_response(result: CustomerTurnResult) -> ResponseRoute:
@@ -200,9 +206,10 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
         return _room_question(result, result.room_question)
 
     brief = result.product_brief
-    if brief is not None and brief.mode is BriefMode.ASK:
+    if brief is not None and (brief.mode is BriefMode.ASK or grounding.search is None):
         # The card is the turn: nothing was searched, and the questions are
-        # the application's (CLAUDE.md 10.4).
+        # the application's (CLAUDE.md 10.4) - or Narrow down, opened as the
+        # question because they asked to narrow the results on screen.
         return _view(
             ResponseOutcomeKind.PRODUCT_BRIEF, None, result=result, brief=_brief_view(result)
         )
@@ -256,6 +263,8 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             clarification,
             result=result,
             presented_count=len(grounding.selection.products),
+            selection_liked=grounding.selection.liked,
+            liked_also_picked=grounding.selection.also_picked,
         )
     if result.swap_offer is not None:
         # A dearer swap that broke the budget, held for the customer's yes/no.
@@ -299,6 +308,12 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             kind=DeterministicResponseKind.BUNDLE_UNAVAILABLE,
             bundle_reason=result.bundle_outcome.reason,
         )
+    if result.finishing_pieces:
+        # A finishing touch for a finished room, with no piece named: which
+        # one is the question, and the room's missing pieces are its chips.
+        # Checked before the handoff marker, which would otherwise report that
+        # nothing came of the request.
+        return DeterministicResponse(kind=DeterministicResponseKind.FINISHING_TOUCH_OFFER)
     if grounding.design_handoff_requested and not lapsed:
         # Asked for, and nothing came of it. A clarification beside it is
         # worded on its own, from the route's `required_clarification`.
@@ -331,6 +346,12 @@ def _was_suggested(result: CustomerTurnResult) -> bool:
     the motive apart from the capability, which is exactly the question here -
     so nothing new has to be invented to answer it.
     """
+    if result.focus is not None and result.grounding.search is not None:
+        # Cards beneath the pick they just chose are what goes with it - our
+        # suggestion, whatever motive the turn's decision recorded
+        # (CLAUDE.md 10.4). A kind they tapped is searched without a pick
+        # card above it, and stays their request.
+        return True
     return (
         result.grounding.design_handoff_requested
         and result.decision.commercial_reason in _OUR_IDEA
@@ -438,6 +459,7 @@ def _room_bundle(
                 for entry in bundle.unmet
                 if entry.commerce_category is not None
             ),
+            added_pieces=tuple(_piece_words(None, kind) for kind in result.pieces_added),
             seating_for=(
                 result.room_seats
                 if room is not None
@@ -626,6 +648,7 @@ def _view(
         # presentation payload is built from. Per-branch assembly would be one
         # more place the words and the cards could come apart (CLAUDE.md 2).
         screen=_screen(result),
+        still_on_screen=result.still_on_screen if result else (),
         clarification_reason=clarification.reason if clarification else None,
         reference_reason=clarification.reference_reason if clarification else None,
         relative_price_reason=(clarification.relative_price_reason if clarification else None),
@@ -637,9 +660,18 @@ def _view(
             len(result.state.product_interaction.selected_product_ids) if result else 0
         ),
         selected_kinds=result.selected_kinds if result else (),
+        shopping_room=result.state.customer_preferences.room if result else None,
+        seats_for=_seats_for(result),
         picked_kind=_picked_kind(result),
         selection_changed=_selection_changed(result),
         seating_requirement_known=_seating_known(result),
+        chosen_seating=_chosen_seating(result),
+        design_direction=result.direction if result else None,
+        taste_question=_taste_question(result),
+        taste_answered=result.taste_answered if result else None,
+        space_fit=result.space_fit if result else None,
+        room_carried=result.room_carried if result else None,
+        narrowed=result.narrowed if result else False,
         next_step=(result.next_step.kind if result and result.next_step else None),
         **fields,
     )
@@ -688,8 +720,9 @@ def best_match_first(result: CustomerTurnResult) -> bool:
 
     Only when their own words ordered the cards - their colours, styles or
     the feel they chose ranked them (CLAUDE.md 16.1) - and the first met their
-    request exactly. A price sort is an instruction, not a match, and a card
-    reached by widening their budget is not the best match for it.
+    request exactly. A price sort is an instruction, not a match, a card
+    reached by widening their budget is not the best match for it, and a
+    3-seater is not the best match for two people.
 
     One reader for the reply and the card's label, so the words and the
     screen cannot disagree about which is best.
@@ -698,16 +731,19 @@ def best_match_first(result: CustomerTurnResult) -> bool:
     active = result.state.active_search
     if search is None or not search.products or active is None:
         return False
-    if result.focus is not None or result.companions:
+    if result.focus is not None or result.companions or active.ordered_by_pick:
         # What goes with a pick is ordered by the pick's look, not by
-        # anything they described: nothing there is *their* best match.
+        # anything they described: nothing there is *their* best match - nor
+        # on the next page of it.
         return False
     first = search.products[0]
+    people = active.seat_preference
     return (
         search.semantic_used
         and active.request.sort is ProductSort.DEFAULT
         and len(search.products) > 1
         and first.relaxation_depth == 0
+        and (people is None or first.commerce.seating_capacity == people)
     )
 
 
@@ -715,9 +751,19 @@ def _brief_view(result: CustomerTurnResult) -> ProductBriefGroundingView | None:
     brief = result.product_brief
     if brief is None:
         return None
+    pending = result.state.product_brief.pending
+    opening = pending is not None and pending.opening
+    asks_about = tuple(question.kind for question in brief.questions)
     return ProductBriefGroundingView(
         looking_for=_brief_subject(result),
-        asks_about=tuple(question.kind for question in brief.questions),
+        asks_about=asks_about,
+        choose=min(OPENING_QUESTIONS, len(brief.questions)) if opening else 0,
+        must_ask=(
+            tuple(kind for kind in pending.always_asked if kind in asks_about)
+            if opening and pending is not None
+            else ()
+        ),
+        narrowing=brief.mode is BriefMode.NARROW,
     )
 
 
@@ -727,6 +773,14 @@ def _brief_subject(result: CustomerTurnResult) -> str:
         return "piece"
     request = pending.base.request
     return _words(request.commerce_subcategory or request.commerce_category) or "piece"
+
+
+def _seats_for(result: CustomerTurnResult | None) -> int | None:
+    """The head count that ordered the cards on screen, if one did."""
+    if result is None or result.grounding.search is None:
+        return None
+    search = result.state.active_search
+    return search.seat_preference if search is not None else None
 
 
 def _picked_kind(result: CustomerTurnResult | None) -> str | None:
@@ -749,6 +803,43 @@ def _selection_changed(result: CustomerTurnResult | None) -> bool:
     return result is not None and result.selection_added
 
 
+def _chosen_seating(result: CustomerTurnResult | None) -> ChosenSeatingView | None:
+    """The combination they chose this turn, counted piece by piece."""
+    if result is None or result.chosen_seating is None:
+        return None
+    chosen = result.chosen_seating
+    offer = result.state.seating_offer
+    return ChosenSeatingView(
+        pieces=tuple(
+            ChosenSeatingPieceView(
+                kind=_words(line.commerce_subcategory) or "piece",
+                quantity=line.quantity,
+                seats_each=line.seats_each,
+            )
+            for line in chosen.lines
+        ),
+        total_seats=chosen.total_seats,
+        target_seats=offer.target_seats if offer is not None else None,
+    )
+
+
+def _taste_question(result: CustomerTurnResult | None) -> TasteQuestionGroundingView | None:
+    """The taste question this reply closes on, when its next step is one."""
+    pending = result.state.taste.pending if result else None
+    step = result.next_step if result else None
+    if pending is None or step is None or not step.kind.startswith("taste_"):
+        return None
+    return TasteQuestionGroundingView(
+        kind=pending.kind.value,
+        positions=tuple(o.position for o in pending.options if o.position is not None),
+        options=tuple(
+            (o.colour or ", ".join(o.styles)).replace("_", " ")
+            for o in pending.options
+            if o.position is None and o.key != "neither" and (o.colour or o.styles)
+        ),
+    )
+
+
 def _seating_known(result: CustomerTurnResult | None) -> bool:
     """Whether the customer has already said how many people use the room.
 
@@ -759,7 +850,7 @@ def _seating_known(result: CustomerTurnResult | None) -> bool:
     """
     if result is None:
         return False
-    if result.seating_solution is not None:
+    if result.seating_solution is not None or result.chosen_seating is not None:
         return True
     room = result.state.room_project
     return room is not None and room.regular_seating_count is not None
@@ -814,15 +905,42 @@ def _search(
         wished_style_matches=_wished_matches(result, search.products, AttributeFamily.STYLE),
         dropped_roles=tuple(
             dict.fromkeys(
-                dropped.role for dropped in search.dropped_constraints if dropped.role is not None
+                dropped.role
+                for dropped in search.dropped_constraints
+                if dropped.role is not None and not dropped.asked_now
+            )
+        ),
+        unanswerable_sizes=tuple(
+            dict.fromkeys(
+                dropped.role
+                for dropped in search.dropped_constraints
+                if dropped.role is not None and dropped.asked_now
             )
         ),
         earlier_sizes_applied=search.earlier_sizes_applied,
         would_find_without=search.set_aside,
+        type_mix=_type_mix_view(search.type_mix),
+        sized_for_their_pick=customer_words_or_none(search.sized_for_pick),
         best_match_first=results and best_match_first(result),
         # Folded beneath the results to narrow them: the turn's question, so
         # the reply asks none of its own.
         brief=_brief_view(result) if results else None,
+    )
+
+
+def _type_mix_view(mix: TypeMix | None) -> TypeMixView | None:
+    """The kinds a search showed beside the one asked for, in customer words."""
+    if mix is None:
+        return None
+    return TypeMixView(
+        asked_kind=_words(mix.asked_type) or mix.asked_type,
+        shown_beside=tuple(_words(kind) or kind for kind in mix.alongside),
+        asked_kind_matches=mix.asked_type_matches,
+        on_screen=tuple(
+            _words(shown.commerce_subcategory) or shown.commerce_subcategory
+            for shown in mix.on_screen
+        ),
+        left_out_for_size=tuple(_words(kind) or kind for kind in mix.left_out_for_size),
     )
 
 

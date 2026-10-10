@@ -25,6 +25,7 @@ remedy - that falls back instead.
 
 from __future__ import annotations
 
+import re
 import time
 
 from pydantic import ValidationError
@@ -49,7 +50,7 @@ from app.schemas.agent_turn import (
 )
 from app.schemas.conversation import ConversationRole
 from app.schemas.language import ReplyLanguage
-from app.schemas.next_step import ANY_NEXT_STEP
+from app.schemas.next_step import ANY_NEXT_STEP, NextStepKind
 from app.schemas.response import (
     DeterministicResponse,
     DeterministicResponseKind,
@@ -58,13 +59,18 @@ from app.schemas.response import (
     ResponseOutcomeKind,
     ResponseRoute,
     ResponseViolation,
+    TypeMixView,
 )
+from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.text_choice import TextReplyChoice, closes_on_a_question
 from app.services.arabic_wording import in_language
 from app.services.next_step import already_asks
 from app.services.numeric_guard import (
     build_allowance,
     bundle_counts,
     bundle_stretch_figures,
+    check_numeric_policy,
+    chosen_seating_counts,
     guidance_figures,
     picks_counts,
     picks_figures,
@@ -84,6 +90,7 @@ from app.services.response_wording import (
     DESIGN_HANDOFF_WORDING,
     DETERMINISTIC_FALLBACK,
     FAILURE_WORDING,
+    FINISHING_TOUCH_OFFER_WORDING,
     SIDE_NOTICE_WORDING,
     compose,
     fallback_for,
@@ -104,30 +111,51 @@ def _ends_on_a_question(
     own question is added, and failing that a plain "what next?". Digit-free,
     so nothing added here can trip the number check (CLAUDE.md 10.2).
     """
-    if _asks(response.message) or (
-        response.follow_up_question is not None and _asks(response.follow_up_question)
-    ):
-        return response
     # A turn with its own question - a question card, a room question, cards of
     # what goes with a pick - already leaves them something to answer on screen.
     if already_asks(result):
         return response
+    as_written = response
+    if closes_on_a_question(response.message, response.follow_up_question):
+        if response.choices or result.next_step is None:
+            return response
+        # Its own question with no answers to tap, beside a next step: the
+        # chips shown are the step's, so the question must be too - the
+        # reply's is swapped for it rather than left under answers to
+        # something else ("How many will sit?" over "Show me more").
+        as_written, response = response, response.model_copy(
+            update={
+                "message": _without_closing_question(response.message),
+                "follow_up_question": None,
+            }
+        )
+        if as_written.message.rstrip().endswith(
+            in_language(result.next_step.question, language)
+        ):
+            return as_written
     question = in_language(
         result.next_step.question if result.next_step is not None else ANY_NEXT_STEP, language
     )
-    message = f"{response.message.rstrip()} {question}"
+    message = f"{response.message.rstrip()} {question}".lstrip()
     if len(message) > MAX_RESPONSE_CHARS:
-        return response
+        return as_written
     logger.info(
         "reply_question_added",
         next_step=str(result.next_step.kind) if result.next_step else None,
+        replaced_own_question=response is not as_written,
     )
     return response.model_copy(update={"message": message})
 
 
-def _asks(text: str) -> bool:
-    """A question mark in either script: "?" or the Arabic "؟"."""
-    return "?" in text or "؟" in text
+_CLOSING_QUESTION = re.compile(r"(?<=[.!?\u061f])\s+[^.!?\u061f]*[?\u061f][\"'\u201d\u00bb)]*\s*$")
+
+
+def _without_closing_question(message: str) -> str:
+    """The message without its last sentence, when that sentence asks."""
+    if (match := _CLOSING_QUESTION.search(message)) is not None:
+        return message[: match.start()]
+    # The whole message is one question: nothing of it is left.
+    return "" if closes_on_a_question(message) else message
 
 
 def _asked_once(response: CustomerResponse) -> CustomerResponse:
@@ -246,6 +274,12 @@ class CustomerResponseGenerator:
         route: ResponseRoute,
         language: ReplyLanguage,
     ) -> tuple[CustomerResponse, int, bool]:
+        if result.next_step is not None and result.next_step.kind in (
+            NextStepKind.CHOOSE_PIECE,
+            NextStepKind.CHOOSE_ROOM,
+        ):
+            # The application supplies both this question and its stocked choices.
+            return _say(result.next_step.question, language), 0, False
         primary = route.primary
         if isinstance(primary, DeterministicResponse):
             return await self._deterministic(turn, result, route, primary, language)
@@ -273,8 +307,14 @@ class CustomerResponseGenerator:
                     return _say(DETERMINISTIC_FALLBACK[primary.kind], language), 0, True
                 # The decision model wrote this question and it was validated
                 # in its own phase. Re-wording it could only change what was
-                # asked, so it is carried through untouched and not scanned.
-                return _reply(clarification.question), 0, False
+                # asked, so it is carried through untouched. Its answers are
+                # tappable and become the customer's own words, so each must
+                # carry only figures the customer has stated; one that does not
+                # is left off rather than shown (CLAUDE.md 14).
+                return CustomerResponse(
+                    message=clarification.question,
+                    choices=_sourced_choices(clarification.choices, turn),
+                ), 0, False
 
             case DeterministicResponseKind.HANDLED_FAILURE:
                 assert primary.failure_code is not None
@@ -296,7 +336,13 @@ class CustomerResponseGenerator:
                     language=language,
                 )
                 return (
-                    _reply(compose(in_language(DESIGN_HANDOFF_WORDING, language), question)),
+                    CustomerResponse(
+                        message=compose(
+                            in_language(DESIGN_HANDOFF_WORDING, language), question.message
+                        ),
+                        follow_up_question=question.follow_up_question,
+                        choices=question.choices,
+                    ),
                     calls,
                     used_fallback,
                 )
@@ -323,6 +369,11 @@ class CustomerResponseGenerator:
                 assert primary.bundle_reason is not None
                 return _say(BUNDLE_UNAVAILABLE_WORDING[primary.bundle_reason], language), 0, False
 
+            case DeterministicResponseKind.FINISHING_TOUCH_OFFER:
+                # The pieces are the chips beside it; nothing was planned, so
+                # the question is the whole reply.
+                return _say(FINISHING_TOUCH_OFFER_WORDING, language), 0, False
+
     async def _generated(
         self,
         turn: CustomerTurnInput,
@@ -341,13 +392,18 @@ class CustomerResponseGenerator:
         allowance = build_allowance(
             turn.message,
             said_earlier=_their_own_words(turn),
-            presented_count=view.presented_count,
+            presented_count=max(view.presented_count, len(view.still_on_screen)),
             compared_count=view.compared_count,
             counts=(
                 *_view_counts(view),
                 # What each requirement set aside would find, when nothing met
                 # them all - counted by the application, so sayable.
                 *(option.eligible_count for option in view.would_find_without),
+                # How many of the kind they asked for meet their request, and
+                # how many cards of each kind are on screen.
+                *(_type_mix_counts(view.type_mix, view.presented_count) if view.type_mix else ()),
+                *(chosen_seating_counts(view.chosen_seating) if view.chosen_seating else ()),
+                *((view.liked_also_picked,) if view.liked_also_picked else ()),
                 # How many picks they have, and how many of the newest pick's
                 # kind - the tray shows them, so "your 2 sofa sets" is a count
                 # they can read, not one we invented (CLAUDE.md 10.2).
@@ -358,6 +414,20 @@ class CustomerResponseGenerator:
             # refuses anything that had to be computed (CLAUDE.md 14).
             figures=(
                 *screen_figures(view.screen),
+                *screen_figures(CustomerVisibleScreenView(products=view.still_on_screen)),
+                # The space they gave and the width the designer aims for in
+                # it - worked out by code from the designer's proportion.
+                *((view.space_fit.space_cm, view.space_fit.ideal_cm) if view.space_fit else ()),
+                # What a room kept from shopping: their own head count and wall.
+                *(
+                    v
+                    for v in (
+                        (view.room_carried.seats, view.room_carried.wall)
+                        if view.room_carried
+                        else ()
+                    )
+                    if v is not None
+                ),
                 # The picks tray is on screen too: their prices and the numbers
                 # in their names ("6 Seater") are theirs to read and ours to say.
                 *picks_figures(result.picks),
@@ -393,6 +463,10 @@ class CustomerResponseGenerator:
         )
         if response is None:
             return _say(_fallback(view), language), calls, True
+        # A reply that asks its own question - "shall I show you the cheapest?"
+        # - keeps it: the summary called for it, and its own choices answer it
+        # (`asks_its_own_question`). Only a reply that asks nothing gets the next
+        # step's question and chips appended.
         return response, calls, False
 
     async def _generated_message(
@@ -403,8 +477,8 @@ class CustomerResponseGenerator:
         *,
         follow_up_allowed: bool,
         language: ReplyLanguage,
-    ) -> tuple[str, int, bool]:
-        """Just the words, for a branch that composes them with its own."""
+    ) -> tuple[CustomerResponse, int, bool]:
+        """A question with its answers, for a branch adding an acknowledgement."""
         request = ResponseInput(
             message=turn.message,
             conversation=turn.conversation,
@@ -419,8 +493,8 @@ class CustomerResponseGenerator:
             language=language,
         )
         if response is None:
-            return in_language(_fallback(view), language), calls, True
-        return response.message, calls, False
+            return _say(_fallback(view), language), calls, True
+        return response, calls, False
 
     # ── the call, and the one retry it may earn ─────────────────────────────
 
@@ -447,6 +521,7 @@ class CustomerResponseGenerator:
             valid_grounding_refs=refs,
             follow_up_allowed=request.follow_up_allowed,
             allowance=allowance,
+            brief=request.grounding.brief,
         )
         if violation is None:
             return first, 1
@@ -464,6 +539,7 @@ class CustomerResponseGenerator:
             valid_grounding_refs=refs,
             follow_up_allowed=request.follow_up_allowed,
             allowance=allowance,
+            brief=request.grounding.brief,
         )
         if repeated is None:
             return second, 2
@@ -507,6 +583,7 @@ class CustomerResponseGenerator:
                 message=compose(response.message, notice),
                 referenced_grounding_refs=response.referenced_grounding_refs,
                 follow_up_question=response.follow_up_question,
+                choices=response.choices,
             )
         except ValidationError:
             # Only reachable if the composed message exceeds the contract's
@@ -552,6 +629,17 @@ class CustomerResponseGenerator:
         )
 
 
+def _type_mix_counts(mix: TypeMixView, presented: int) -> tuple[int, ...]:
+    """The one count a search covering several kinds licenses: how many of
+    the asked kind meet the request, when that is fewer than the cards on
+    screen - "I have only one sofa that seats 5". Any other figure about a
+    kind would describe the page, and read as the shop's stock."""
+    matches = mix.asked_kind_matches
+    if matches is None or matches >= presented:
+        return ()
+    return (matches,)
+
+
 def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
     """The counts this outcome licenses in prose, from whichever shape carries them.
 
@@ -578,6 +666,31 @@ def _view_counts(view: ResponseGroundingView) -> tuple[int, ...]:
             if n
         )
     return ()
+
+
+def _sourced_choices(
+    choices: tuple[TextReplyChoice, ...], turn: CustomerTurnInput
+) -> tuple[TextReplyChoice, ...]:
+    """The question's answers, when every figure in them has a source - their
+    own words, or a position among the cards on screen ("the second one").
+    One unsourced answer drops them all: the rest of an either/or would no
+    longer offer the choice the question asks."""
+    if not choices:
+        return choices
+    shown = turn.state.product_interaction
+    allowance = build_allowance(
+        turn.message,
+        said_earlier=_their_own_words(turn),
+        presented_count=len(shown.presented_product_ids),
+        compared_count=len(shown.compared_product_ids),
+    )
+    for choice in choices:
+        if check_numeric_policy(
+            message=choice.label, follow_up_question=choice.value, allowance=allowance
+        ):
+            logger.warning("clarification_choices_unsourced", offered=len(choices))
+            return ()
+    return choices
 
 
 def _reply(message: str) -> CustomerResponse:

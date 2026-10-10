@@ -430,12 +430,12 @@ async def test_a_handled_search_failure_is_worded_without_a_model() -> None:
 
 
 async def test_a_model_clarification_passes_straight_through() -> None:
-    question = "Which kind of table did you mean?"
+    question = "What matters most to you?"
     _, response, client = await _run(
         CustomerAgentDecision(
             action=AgentAction.CLARIFY,
             clarification=BlockingClarification(
-                reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
+                reason=BlockingClarificationReason.UNDEFINED_QUALITY_CRITERION,
                 question=question,
             ),
             follow_up_policy=FollowUpPolicy.NONE,
@@ -447,7 +447,7 @@ async def test_a_model_clarification_passes_straight_through() -> None:
     assert response.follow_up_question is None
 
 
-async def test_a_deterministic_clarification_is_worded_by_the_model() -> None:
+async def test_a_product_type_question_and_its_choices_are_application_owned() -> None:
     from app.schemas.query import ClarificationReason, ClarificationRequired
 
     question = CustomerResponse(message="Which kind of product did you mean?")
@@ -460,8 +460,10 @@ async def test_a_deterministic_clarification_is_worded_by_the_model() -> None:
     route = route_response(result)
     assert isinstance(route.primary, ResponseGroundingView)
     assert route.primary.kind is ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION
-    assert len(client.calls) == 1
-    assert worded(response.message) == question.message
+    assert client.calls == []
+    assert result.next_step is not None
+    assert response.message == result.next_step.question
+    assert result.next_step.chips
     assert result.grounding.deterministic_clarification is not None
 
 

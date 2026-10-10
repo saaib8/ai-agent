@@ -47,11 +47,13 @@ from app.schemas.query import (
     ConstraintSemantics,
     DimensionConstraintSemantics,
     PlanarDimensionSemantics,
+    RankingLean,
     SemanticPreference,
     validate_dimension_correspondence,
 )
 from app.schemas.room_opener import RoomQuestionKind
 from app.schemas.seating_solution import SeatingShape
+from app.schemas.taste import TasteState
 
 AGENT_STATE_VERSION: Literal["agent_state_v5"] = "agent_state_v5"
 """The state contract. Change the shape, change this.
@@ -76,6 +78,9 @@ and inventing one would be maintaining a path nobody has travelled."""
 MAX_SEMANTIC_INTENT_CHARS = 200
 """A quality phrase is a few words. This bound is the only thing standing
 between a durable search property and a smuggled transcript."""
+
+MAX_ROOM_WORDS = 40
+"""A room is named in a few words, never described."""
 
 
 def _no_duplicates(values: tuple[int, ...], field: str) -> tuple[int, ...]:
@@ -139,6 +144,20 @@ class CustomerPreferenceState(BaseModel):
     after a search the customer asked for has run (see
     `app.services.agent_state.remember_measurements`). No agent proposes it."""
 
+    room: str | None = Field(
+        default=None, min_length=1, max_length=MAX_ROOM_WORDS, exclude_if=lambda v: v is None
+    )
+    """The room they are shopping for, as they named it or tapped it ("living
+    room", "majlis"). It is what they said, so it is never asked again; it
+    tells the designer what belongs beside a piece, and filters nothing - no
+    product records a room."""
+
+    avoid_colours: tuple[str, ...] = Field(default=(), exclude_if=lambda v: not v)
+    avoid_styles: tuple[str, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """What they said they would rather avoid, in answer to a taste question:
+    pushed down in every later search, never hidden. Written only by the
+    application from a tapped or typed answer."""
+
     @field_validator("measurements_by_type")
     @classmethod
     def _one_entry_per_type(
@@ -189,6 +208,25 @@ class ActiveSearchState(BaseModel):
     its contents to make a decision.
     """
 
+    ordered_by_pick: bool = False
+    """The cards were chosen to go with a pick - the designer's kind, or a
+    kind tapped beneath the pick - and lean on its look, not on anything the
+    customer described, so none is labelled their best match (CLAUDE.md
+    10.4). Kept through "show me more" and "not this one", which only page the
+    same set; any change of criteria is theirs, and starts unmarked."""
+    from_product: bool = Field(default=False, exclude_if=lambda v: not v)
+    """Seeded from a product's own look and seats - "more like this one" - not
+    from what the customer said, so a room never takes its colours or its seat
+    count as theirs (phase 6)."""
+
+    seat_preference: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
+    """How many usually sit there, as an ordering - see
+    `ResolvedSearch.seat_preference`. Kept through paging and refinements."""
+
+    lean: RankingLean | None = Field(default=None, exclude_if=lambda v: v is None)
+    """A designer's direction for a suggested piece - see `RankingLean`. Kept
+    through paging and refinements, so "show me more" leans the same way."""
+
     revision: int = Field(ge=0)
     """Identifier of the most recently committed search result set.
 
@@ -225,6 +263,12 @@ MAX_EARLIER_LISTS = 6
 """How many result lists before the current one stay tickable. A few
 screens back is where a customer still looks; past that, a list is history."""
 
+MAX_LIKED = 50
+"""The schema's ceiling on the liked list; configuration may keep fewer."""
+
+MAX_EXPLORED = 10
+"""How many More like this taps are remembered as a taste signal - the newest."""
+
 
 class PresentedList(BaseModel):
     """A result list that was on screen before the current one, in order."""
@@ -235,6 +279,42 @@ class PresentedList(BaseModel):
     """The search revision it was committed at - the number its cards carry."""
 
     product_ids: tuple[int, ...] = Field(min_length=1)
+
+
+class RoomCheck(BaseModel):
+    """A pick's fit in the room, asked about once: whether the room's size has
+    been asked for it, and whether its answer has been checked."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    kind: str = Field(min_length=1)
+    """The pick's reviewed type - a bed."""
+    answered: bool = False
+    """The fit was judged once the room's size came: the next fit question is
+    about whatever they point at, not this pick."""
+    list_revision: int | None = None
+    """The list on screen when it was asked: only a reply beside that list
+    answers it."""
+
+
+MAX_INSIDE_SIZES = 10
+"""As many as the picks tray holds."""
+
+
+class InsideSize(BaseModel):
+    """What goes inside one pick, in the size it takes - a 180 cm mattress for
+    the bed they picked - as the designer read it off the pick (CLAUDE.md
+    10.11). Kept so their own later search for it comes in that size."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    pick_kind: str = Field(min_length=1)
+    """The pick's type - a bed."""
+    kind: str = Field(min_length=1)
+    """The type that goes inside it - mattresses."""
+    width_cm: int = Field(ge=40, le=250)
 
 
 class ProductInteractionState(BaseModel):
@@ -251,6 +331,19 @@ class ProductInteractionState(BaseModel):
     presented_search_revision: int | None = None
     focused_product_id: int | None = None
     selected_product_ids: tuple[int, ...] = ()
+
+    liked_product_ids: tuple[int, ...] = Field(
+        default=(), max_length=MAX_LIKED, exclude_if=lambda v: not v
+    )
+    """Products the customer tapped ♡ on, oldest first: a taste signal, kept
+    apart from the picks. Only the screen likes - a typed "I like this one"
+    is a pick (docs/designer-led-shopping-plan.md, phase 3)."""
+
+    explored_product_ids: tuple[int, ...] = Field(
+        default=(), max_length=MAX_EXPLORED, exclude_if=lambda v: not v
+    )
+    """Products they asked for more like, newest last - a quiet taste signal
+    beside likes and picks (phase 5)."""
 
     earlier_lists: tuple[PresentedList, ...] = Field(default=(), max_length=MAX_EARLIER_LISTS)
     """Result lists shown before the current one, oldest first.
@@ -280,8 +373,16 @@ class ProductInteractionState(BaseModel):
     at once would recreate the ambiguity this exists to remove.
     """
 
+    compared_search_revision: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The list on screen when the comparison was made. While it is still the
+    current list, the comparison is the newest thing on their screen."""
+
     @field_validator(
-        "presented_product_ids", "selected_product_ids", "compared_product_ids"
+        "presented_product_ids",
+        "selected_product_ids",
+        "liked_product_ids",
+        "explored_product_ids",
+        "compared_product_ids",
     )
     @classmethod
     def _unique(cls, value: tuple[int, ...]) -> tuple[int, ...]:
@@ -534,6 +635,10 @@ class RoomProjectState(BaseModel):
     questions_done: bool = False
     """They asked to skip the rest - "just design it". No further question."""
 
+    seats_carried: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The head count was carried from shopping, not given for this room - so
+    the seats their picks provide are still confirmed when they ask to build
+    around them (CLAUDE.md 10.3)."""
     anchor_product_ids: tuple[int, ...] = Field(default=(), max_length=MAX_ROOM_ANCHORS)
     """Products the customer asked to build this room around - "around these",
     "around my picks" - saved until the room is built.
@@ -708,6 +813,9 @@ class SeatingOfferState(BaseModel):
     excluded: tuple[OfferedCombination, ...] = Field(default=(), max_length=60)
     """Combinations already shown and paged past, or turned down, for this
     seat count - never shown again, so "show more" always means new ones."""
+    avoid_type: str | None = Field(default=None, max_length=64)
+    """A multi-seat type the customer turned down for this seat count ("not
+    an L-shape, a simple sofa") - never a piece of their combinations."""
 
     @model_validator(mode="after")
     def _choice_was_offered(self) -> Self:
@@ -796,6 +904,22 @@ class AgentStateV1(BaseModel):
     product_brief: ProductBriefState = ProductBriefState()
     """The cards of questions asked before a search (CLAUDE.md 10.4).
     Defaulted, so every saved session still reads."""
+
+    taste: TasteState = Field(
+        default=TasteState(), exclude_if=lambda v: not v.asked and v.pending is None
+    )
+    """Taste questions asked after products, and the one on screen (phase 5).
+    Defaulted and left out while unused, so every saved session still reads."""
+
+    room_check: RoomCheck | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The room's size asked for a pick that is checked against the room - a
+    bed - once a session. Defaulted and left out while unused."""
+
+    inside_sizes: tuple[InsideSize, ...] = Field(
+        default=(), max_length=MAX_INSIDE_SIZES, exclude_if=lambda v: not v
+    )
+    """What goes inside their picks, in the size each takes, newest last.
+    Defaulted and left out while unused."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

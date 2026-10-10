@@ -128,6 +128,7 @@ def test_the_registry_knows_nothing_about_inventory(taxonomy: CommerceTaxonomy) 
     """Vocabulary only: no counts, no store, no availability (CLAUDE.md 9.1)."""
     surface = {name for name in dir(taxonomy) if not name.startswith("_")}
     assert surface == {
+        "arabic",
         "categories", "is_category", "is_pair", "is_subcategory",
         "subcategories", "validate_pair", "version",
     }
@@ -179,7 +180,10 @@ def test_a_missing_registry_file_is_rejected(tmp_path: Path) -> None:
 def test_a_valid_custom_registry_loads(tmp_path: Path) -> None:
     """Adding a category is a one-file change; nothing else enumerates them."""
     path = tmp_path / "custom.yaml"
-    path.write_text("version: v9\ncategories:\n  outdoor: [parasol, hammock]\n")
+    path.write_text(
+        "version: v9\ncategories:\n  outdoor: [parasol, hammock]\n"
+        "arabic: {outdoor: خارجي, parasol: مظلة, hammock: أرجوحة}\n"
+    )
 
     custom = load_taxonomy(path)
 

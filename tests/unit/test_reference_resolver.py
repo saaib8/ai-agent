@@ -105,6 +105,7 @@ def _state(
     revision: int | None = None,
     focused: int | None = None,
     selected: tuple[int, ...] = (),
+    liked: tuple[int, ...] = (),
 ) -> AgentStateV1:
     committed = revision if revision is not None else (1 if presented else None)
     # M10: a presented list implies a committed revision of at least one.
@@ -119,6 +120,7 @@ def _state(
             presented_search_revision=committed,
             focused_product_id=focused,
             selected_product_ids=selected,
+            liked_product_ids=liked,
         ),
     )
 
@@ -253,6 +255,47 @@ async def test_a_stale_selection_is_unavailable() -> None:
     outcome = await _resolve(SoleSelectedProduct(), _state(selected=(11,)), [])
 
     assert _reason(outcome) is ReferenceFailureReason.PRODUCT_UNAVAILABLE
+
+
+# ── LikedProduct ────────────────────────────────────────────────────────────
+
+
+async def test_the_one_they_liked_resolves_without_being_on_screen() -> None:
+    from app.schemas.product_reference import LikedProduct
+
+    outcome = await _resolve(LikedProduct(), _state(liked=(11,)), [_row(11)])
+
+    assert outcome == ResolvedProductReference(product_id=11)
+
+
+async def test_a_like_by_its_place_in_the_liked_list() -> None:
+    from app.schemas.product_reference import LikedProduct
+
+    outcome = await _resolve(
+        LikedProduct(position=2), _state(liked=(11, 22)), [_row(11), _row(22)]
+    )
+
+    assert outcome == ResolvedProductReference(product_id=22)
+
+
+@pytest.mark.parametrize(
+    ("position", "liked", "reason"),
+    [
+        (None, (), ReferenceFailureReason.NO_LIKED_PRODUCT),
+        (None, (11, 22), ReferenceFailureReason.SEVERAL_LIKED_PRODUCTS),
+        (3, (11, 22), ReferenceFailureReason.LIKED_ORDINAL_OUT_OF_RANGE),
+    ],
+)
+async def test_an_unclear_like_is_refused_never_guessed(
+    position: int | None, liked: tuple[int, ...], reason: ReferenceFailureReason
+) -> None:
+    from app.schemas.product_reference import LikedProduct
+
+    outcome = await _resolve(
+        LikedProduct(position=position), _state(liked=liked), [_row(11), _row(22)]
+    )
+
+    assert _reason(outcome) is reason
 
 
 # ── PresentedAttributeMatch ─────────────────────────────────────────────────

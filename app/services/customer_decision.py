@@ -25,11 +25,15 @@ import time
 from collections.abc import Sequence
 from functools import cache
 
+from pydantic import create_model
+
 from app.core.exceptions import LLMResponseInvalidError
 from app.core.logging import get_logger
 from app.integrations.llm import StructuredLLMClient
 from app.prompts.customer_commerce.v1 import (
+    FIT_AFTER_PICK_SUFFIX,
     LANGUAGE_VERSION,
+    MIXED_TYPES_SUFFIX,
     VERSION,
     build_correction,
     build_instructions,
@@ -39,6 +43,8 @@ from app.schemas.agent_decision import (
     CustomerAgentDecision,
     build_constrained_decision,
     to_plain_decision,
+    with_fit_after_pick,
+    with_mixed_types,
     with_reply_language,
 )
 from app.schemas.agent_turn import DecisionInput
@@ -66,6 +72,32 @@ def _language_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentD
     return with_reply_language(schema)
 
 
+@cache
+def _mixed_types_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """The schema with `only_asked_type` shown, built once per schema."""
+    return with_mixed_types(schema)
+
+
+@cache
+def _piece_fit_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """The schema with `fit_with_piece` shown, built once per schema."""
+    return with_fit_after_pick(schema)
+
+
+MAX_SCHEMA_NAME = 64
+"""The provider names a structured response after its class and refuses a
+name longer than this - which the transport layers, stacked, can pass."""
+
+
+@cache
+def _within_name_limit(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """The schema itself, or the same schema under a short name when its
+    stacked one is too long for the provider."""
+    if len(schema.__name__) <= MAX_SCHEMA_NAME:
+        return schema
+    return create_model("CustomerAgentDecisionResponse", __base__=schema, __doc__=schema.__doc__)
+
+
 class CustomerAgentDecisionService:
     """Decides what one customer turn should do. Executes none of it."""
 
@@ -76,6 +108,8 @@ class CustomerAgentDecisionService:
         rooms: RoomPieces | None = None,
         *,
         reply_language: bool = False,
+        mixed_types: bool = False,
+        fit_after_pick: bool = False,
     ) -> None:
         """`attributes` restricts every colour and style the model can write.
 
@@ -85,15 +119,31 @@ class CustomerAgentDecisionService:
 
         `reply_language` is whether Arabic replies are on: only then do the
         instructions explain, and the schema carry, the two language fields.
-        Off, the model is asked exactly what it was asked before.
+        `mixed_types` is whether a sofa search also shows sofa sets and
+        sectionals: only then do they explain, and the schema carry,
+        `only_asked_type`. Off, the model is asked exactly what it was asked
+        before.
         """
         self._client = client
-        self._instructions = build_instructions(attributes, rooms, reply_language=reply_language)
+        self._instructions = build_instructions(
+            attributes,
+            rooms,
+            reply_language=reply_language,
+            mixed_types=mixed_types,
+            fit_after_pick=fit_after_pick,
+        )
         schema: type[CustomerAgentDecision] = (
             _constrained_schema(attributes) if attributes is not None else CustomerAgentDecision
         )
-        self._schema = _language_schema(schema) if reply_language else schema
-        self._version = LANGUAGE_VERSION if reply_language else VERSION
+        if reply_language:
+            schema = _language_schema(schema)
+        if mixed_types:
+            schema = _mixed_types_schema(schema)
+        self._schema = _within_name_limit(_piece_fit_schema(schema) if fit_after_pick else schema)
+        version = LANGUAGE_VERSION if reply_language else VERSION
+        if mixed_types:
+            version += MIXED_TYPES_SUFFIX
+        self._version = version + FIT_AFTER_PICK_SUFFIX if fit_after_pick else version
 
     async def decide(
         self, decision_input: DecisionInput, *, problems: Sequence[str] = ()
@@ -169,7 +219,9 @@ class CustomerAgentDecisionService:
                 str(decision.commercial_reason) if decision.commercial_reason else None
             ),
             follow_up_policy=str(decision.follow_up_policy),
+            follow_up_goal=str(decision.follow_up_goal) if decision.follow_up_goal else None,
             blocking_clarification=decision.clarification is not None,
+            only_asked_type=decision.only_asked_type,
             has_interaction=decision.interaction is not None,
             has_new_search=decision.new_search is not None,
             has_refinement=decision.refinement is not None,

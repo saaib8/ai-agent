@@ -2,20 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { RENDER_VIEWS } from './api/types'
 import type {
   BriefAnswerAction,
+  BriefChip,
   BundleAction,
+  SearchAction,
   CatalogItem,
   CatalogSelection,
   FinderObject,
   GroundedProduct,
+  LikedView,
   PickView,
   ProductAction,
   RenderRoomSpec,
   RenderView,
 } from './api/types'
-import { getCompareGroups, postComparison } from './api/client'
+import { getCompareGroups } from './api/client'
 import { CatalogDialog } from './components/catalog/CatalogDialog'
-import { ComparisonDialog } from './components/ComparisonDialog'
-import type { ComparisonPopup } from './components/ComparisonDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
@@ -44,12 +45,10 @@ export default function App() {
   const [swap, setSwap] = useState<SwapContext | null>(null)
 
   // Comparing: the cards checked (any number up to the server's limit, all of
-  // one family) and the pop-up.
+  // one family). Comparing sends an ordinary conversation turn.
   const [compareGroups, setCompareGroups] = useState<Record<string, string>>({})
   const [compareMax, setCompareMax] = useState(DEFAULT_COMPARE_MAX)
   const [comparing, setComparing] = useState<CheckedCard[]>([])
-  const [comparePopup, setComparePopup] = useState<ComparisonPopup | null>(null)
-  const compareRequest = useRef(0)
   const groupsLoaded = useRef(false)
 
   // Which types compare with which is the server's reviewed data. Read once -
@@ -217,8 +216,8 @@ export default function App() {
         { kind: 'select', ordinal, list_revision: listRevision },
         config.config,
       )
-      // The first pick of its kind: show what goes with it, as a turn of its
-      // own. A second of the same kind - picked to compare - stays silent.
+      // Every new pick comes into the conversation as a turn of its own: its
+      // card, and what goes with it when anything does.
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
@@ -226,6 +225,73 @@ export default function App() {
           product: { kind: 'goes_with', pick: chosen.pick },
         })
       }
+    },
+    [chat, config.config, words],
+  )
+
+  // ♡ is silent and never waits: it is queued and saved once nothing else is
+  // writing the session, so a heart tapped mid-reply is kept, not lost.
+  const handleToggleLike = useCallback(
+    (product: GroundedProduct, listRevision: number) => {
+      const ordinal = product.presented_ordinal
+      if (ordinal == null) return
+      const already = (chat.liked ?? []).find((l) =>
+        (l.positions ?? []).some(
+          (position) => position.list_revision === listRevision && position.ordinal === ordinal,
+        ),
+      )
+      // A tap still queued for this card is taken back by queueing the same tap.
+      const queued = chat.pendingLikes.get(`${listRevision}:${ordinal}`)
+      const kind = queued ?? (already ? 'unlike' : 'like')
+      chat.queueLike({ kind, ordinal, list_revision: listRevision }, config.config)
+    },
+    [chat, config.config],
+  )
+
+  // ✕ in the tray names the like by its place in the list the tray shows, so
+  // it waits for nothing else in flight and is never queued behind a change.
+  const handleUnlike = useCallback(
+    (item: LikedView) => {
+      if (chat.sending || chat.picking || chat.pendingLikes.size > 0) return
+      void chat.changePicks({ kind: 'unlike', liked: item.liked }, config.config)
+    },
+    [chat, config.config],
+  )
+
+  const handleSelectLiked = useCallback(
+    async (item: LikedView) => {
+      if (chat.sending || chat.picking) return
+      const saved = await chat.changePicks({ kind: 'select_liked', liked: item.liked }, config.config)
+      const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
+      if (chosen) {
+        setSwap(null)
+        void chat.send(words.likeProduct(chosen.name_english), config.config, {
+          product: { kind: 'goes_with', pick: chosen.pick },
+        })
+      }
+    },
+    [chat, config.config, words],
+  )
+
+  const handleMoreLikeThis = useCallback(
+    (product: GroundedProduct, listRevision: number) => {
+      const ordinal = product.presented_ordinal
+      if (chat.sending || chat.picking || ordinal == null) return
+      setSwap(null)
+      void chat.send(words.moreLikeThis(product.name_english), config.config, {
+        product: { kind: 'more_like_this', card: { list_revision: listRevision, ordinal } },
+      })
+    },
+    [chat, config.config, words],
+  )
+
+  const handleMoreLikeThisLiked = useCallback(
+    (item: LikedView) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(words.moreLikeThis(item.name_english), config.config, {
+        product: { kind: 'more_like_this', liked: item.liked },
+      })
     },
     [chat, config.config, words],
   )
@@ -249,7 +315,7 @@ export default function App() {
     [chat, config.config, words],
   )
 
-  // ── comparing the checked cards, in a pop-up ─────────────────────────────
+  // ── comparing the checked cards in the conversation ─────────────────────
 
   const familyOf = useCallback(
     (product: GroundedProduct) => compareFamily(product, compareGroups),
@@ -288,29 +354,15 @@ export default function App() {
   )
 
   const handleCompare = useCallback(async () => {
-    if (comparing.length < 2) return
-    const names = comparing.map((card) => card.name)
-    const request = ++compareRequest.current
-    setComparePopup({ status: 'loading', names })
-    const result = await postComparison(config.config.apiBase, {
-      session_id: config.config.sessionId,
-      store_id: config.config.storeId,
-      cards: comparing.map((card) => ({ list_revision: card.listRevision, ordinal: card.ordinal })),
+    if (comparing.length < 2 || chat.sending || chat.picking) return
+    setSwap(null)
+    await chat.send(words.compareProducts(comparing.map((card) => card.name)), config.config, {
+      product: {
+        kind: 'compare_cards',
+        cards: comparing.map((card) => ({ list_revision: card.listRevision, ordinal: card.ordinal })),
+      },
     })
-    if (request !== compareRequest.current) return // closed while loading
-    setComparePopup(
-      result.ok
-        ? { status: 'ready', names, data: result.data }
-        : { status: 'error', names, message: result.error.message },
-    )
-  }, [comparing, config.config])
-
-  // Closing the pop-up keeps the cards checked: one can be swapped for another
-  // and compared again. Clearing is its own action.
-  const handleCloseCompare = useCallback(() => {
-    compareRequest.current += 1
-    setComparePopup(null)
-  }, [])
+  }, [chat, comparing, config.config, words])
 
   const handleUncheckCompare = useCallback((card: CheckedCard) => {
     setComparing((checked) => checked.filter((c) => c !== card))
@@ -319,16 +371,73 @@ export default function App() {
   const handleClearCompare = useCallback(() => setComparing([]), [])
 
   const handleBriefSubmit = useCallback(
-    (answer: BriefAnswerAction, summary: string) => {
+    (answer: BriefAnswerAction | null, summary: string) => {
       if (chat.sending || chat.picking) return
       setSwap(null)
-      void chat.send(summary, config.config, { search: answer })
+      // With words typed in, the whole answer is words for the agent to read.
+      void chat.send(summary, config.config, answer ? { search: answer } : undefined)
     },
     [chat, config.config],
   )
 
+  const handleDropChip = useCallback(
+    (chip: BriefChip) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(words.dropChip(chip.label), config.config, {
+        search: { kind: 'drop', facet: chip.facet },
+      })
+    },
+    [chat, config.config, words],
+  )
+
+  const handleCombination = useCallback(
+    (op: 'choose' | 'dismiss' | 'more', position: number | null) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      const text =
+        op === 'more'
+          ? words.moreCombinations
+          : op === 'choose'
+            ? words.chooseCombination(position ?? 1)
+            : words.notCombination(position ?? 1)
+      void chat.send(text, config.config, {
+        search: { kind: 'combination', op, position },
+      })
+    },
+    [chat, config.config, words],
+  )
+
   const handleChoice = useCallback(
-    (value: string, action?: ProductAction | null, bundle?: BundleAction | null) => {
+    (
+      value: string,
+      action?: ProductAction | null,
+      bundle?: BundleAction | null,
+      search?: SearchAction | null,
+    ) => {
+      if (search) {
+        // A taste question's answer: its key, read back by the server.
+        if (chat.sending || chat.picking) return
+        setSwap(null)
+        void chat.send(value, config.config, { search })
+        return
+      }
+      if (bundle?.kind === 'list_alternatives') {
+        // A room piece's chip answering "which piece?" is that piece's Swap
+        // button: the same request, and swap mode on, so picking an
+        // alternative replaces the piece. Named as the room card names it.
+        const room = [...chat.turns]
+          .reverse()
+          .flatMap((t) =>
+            t.kind === 'assistant' && t.data.presentation?.room ? [t.data.presentation.room] : [],
+          )[0]
+        const item = room?.items.find((i) => i.grounding_ref === bundle.bundle_ordinal)
+        handleSwapStart(
+          bundle.bundle_ordinal,
+          humanise(item?.commerce.subcategory ?? item?.commerce.category ?? 'item'),
+        )
+        return
+      }
       if (bundle) {
         // The yes/no on an over-budget swap: a structured room edit that answers
         // the held offer deterministically, never routed through the model.
@@ -345,7 +454,7 @@ export default function App() {
       setSwap(null)
       void chat.send(value, config.config, { product: action })
     },
-    [chat, config.config, handleSend],
+    [chat, config.config, handleSend, handleSwapStart],
   )
 
   const handleVisualize = useCallback(
@@ -493,9 +602,8 @@ export default function App() {
     setSelection([])
     setRoomPhoto(null)
     setRoomDraft((draft) => ({ ...draft, photoFile: null }))
-    handleCloseCompare()
     handleClearCompare()
-  }, [config, chat, handleCloseCompare, handleClearCompare])
+  }, [config, chat, handleClearCompare])
 
   return (
     <div className="flex h-screen flex-col overflow-hidden text-ink">
@@ -510,11 +618,15 @@ export default function App() {
         <ChatPanel
           turns={chat.turns}
           sending={chat.sending}
+          revealing={chat.revealing}
+          revealedLen={chat.revealedLen}
+          revealTurnId={chat.revealTurnId}
           activity={chat.activity}
           storeId={config.config.storeId}
           draft={draft}
           onDraftChange={setDraft}
           onSend={handleSend}
+          onStop={chat.stop}
           onPhoto={handlePhoto}
           onPickObject={handlePickObject}
           swapRole={swap?.role ?? null}
@@ -535,6 +647,13 @@ export default function App() {
           onTogglePick={handleTogglePick}
           onRemovePick={handleRemovePick}
           onGoesWith={handleGoesWith}
+          liked={chat.liked}
+          pendingLikes={chat.pendingLikes}
+          onToggleLike={handleToggleLike}
+          onMoreLikeThis={handleMoreLikeThis}
+          onUnlike={handleUnlike}
+          onSelectLiked={handleSelectLiked}
+          onMoreLikeThisLiked={handleMoreLikeThisLiked}
           comparing={comparing}
           compareMax={compareMax}
           familyOf={familyOf}
@@ -544,9 +663,10 @@ export default function App() {
           onClearCompare={handleClearCompare}
           onChoice={handleChoice}
           onBriefSubmit={handleBriefSubmit}
+          onDropChip={handleDropChip}
+          onCombination={handleCombination}
         />
       </main>
-      {comparePopup && <ComparisonDialog popup={comparePopup} onClose={handleCloseCompare} />}
       {catalogStep && (
         <CatalogDialog
           apiBase={config.config.apiBase}

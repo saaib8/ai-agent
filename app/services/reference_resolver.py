@@ -36,7 +36,7 @@ from app.schemas.agent_decision import (
 )
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.product import ProductRow
-from app.schemas.product_reference import ComparedOrdinal, PickedOrdinal
+from app.schemas.product_reference import ComparedOrdinal, LikedProduct, PickedOrdinal
 from app.schemas.resolution import (
     ReferenceFailureReason,
     ReferenceOutcome,
@@ -140,6 +140,8 @@ class ProductReferenceResolver:
                 return await self._focused(state, context)
             case SoleSelectedProduct():
                 return await self._sole_selected(state, context)
+            case LikedProduct():
+                return await self._liked(selector, state, context)
             case PresentedAttributeMatch():
                 return await self._by_attribute(selector, state, context)
             case PresentedExtremum():
@@ -230,6 +232,21 @@ class ProductReferenceResolver:
         if len(selected) > 1:
             return _unresolved(ReferenceFailureReason.SEVERAL_SELECTED_PRODUCTS)
         return await self._verify(selected[0], context)
+
+    async def _liked(
+        self, selector: LikedProduct, state: AgentStateV1, context: RetailerContext
+    ) -> ReferenceOutcome:
+        """A product in their liked list, which outlives every search."""
+        liked = state.product_interaction.liked_product_ids
+        if not liked:
+            return _unresolved(ReferenceFailureReason.NO_LIKED_PRODUCT)
+        if selector.position is None:
+            if len(liked) > 1:
+                return _unresolved(ReferenceFailureReason.SEVERAL_LIKED_PRODUCTS)
+            return await self._verify(liked[0], context)
+        if selector.position > len(liked):
+            return _unresolved(ReferenceFailureReason.LIKED_ORDINAL_OUT_OF_RANGE)
+        return await self._verify(liked[selector.position - 1], context)
 
     # ── what they can see ───────────────────────────────────────────────────
 

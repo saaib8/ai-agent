@@ -58,6 +58,11 @@ class CompositionDefect(StrEnum):
     MALFORMED_AMOUNT = "malformed_amount"
     """A number arrived as something that is not one."""
 
+    UNSUPPORTED_DIMENSION_ROLE = "unsupported_dimension_role"
+    """A measurement this kind of product cannot be searched by - "length" for
+    a sofa, whose along-wall length is its overall width. The decision is
+    corrected rather than executed (CLAUDE.md 15.1, 21.1)."""
+
     ONE_SEAT_ON_MULTI_SEAT_TYPE = "one_seat_on_multi_seat_type"
     """A seat count of one on a type that always seats several - "make them
     single seaters" read as a one-seat sofa. A piece for one person is its own
