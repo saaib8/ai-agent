@@ -32,6 +32,7 @@ from app.core.config import SessionSettings
 from app.core.exceptions import SessionConflictError
 from app.core.logging import get_logger
 from app.repositories.sessions import SessionStore
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_turn import (
     CustomerResponse,
@@ -52,6 +53,7 @@ from app.schemas.product_brief import ProductBrief
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
+from app.services.agent_persona import speaker
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import companion_choices
 from app.services.next_step import asks_its_own_question
@@ -345,6 +347,7 @@ class ChatRuntime:
         picks: tuple[PickView, ...] | None = None,
         reply_language: ReplyLanguage | None = None,
         liked: tuple[LikedView, ...] | None = None,
+        agent: AgentPersona = AgentPersona.SARAH,
     ) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
@@ -354,7 +357,13 @@ class ChatRuntime:
             picks=picks,
             liked=liked,
             reply_language=reply_language,
+            agent=agent,
         )
+
+    @staticmethod
+    def agent(turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
+        """Which assistant the reply is shown as - a label decided in code."""
+        return speaker(turn, result)
 
     # ── the whole exchange ──────────────────────────────────────────────────
 
@@ -382,6 +391,7 @@ class ChatRuntime:
             result.picks,
             result.reply_language,
             result.liked,
+            self.agent(turn, result),
         )
 
     @staticmethod
