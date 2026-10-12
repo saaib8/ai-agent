@@ -43,6 +43,7 @@ from app.integrations.image_generation import (
 from app.integrations.product_images import ProductImageFetcher, _is_public
 from app.prompts.visualization.v1 import RenderPiece, RenderRoom, build_prompt
 from app.schemas.acquisition import BundleAcquisition
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import (
     AgentStateV1,
     BundleItemState,
@@ -642,6 +643,7 @@ class TestTurn:
 
         assert reply.session_revision == 2
         assert reply.response.message == "Here's your bedroom, at eye level."
+        assert reply.agent is AgentPersona.SARAH, "room visualisation is Sarah's"
         assert reply.presentation is not None and reply.presentation.render is not None
         saved = sessions.saved[(STORE, SESSION)]
         assert saved.state == state, "a picture is not a fact about the room"

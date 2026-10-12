@@ -33,6 +33,7 @@ from app.orchestration.graph import (
 )
 from app.orchestration.state import ChatGraphState
 from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.retailer import RetailerContext
 from app.services.chat_runtime import ChatRuntime
@@ -239,6 +240,7 @@ async def test_a_run_produces_the_public_reply() -> None:
     assert isinstance(reply, ChatResponse)
     assert reply.session_revision == 1
     assert reply.session_id == "s-1"
+    assert reply.agent is AgentPersona.NORA, "the session's first reply greets as Nora"
 
 
 async def test_a_run_asks_each_model_once() -> None:

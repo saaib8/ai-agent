@@ -23,6 +23,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_turn import CustomerResponse, RoomSwapContext
 from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
@@ -324,3 +325,8 @@ class ChatResponse(BaseModel):
     reply_language: ReplyLanguage | None = None
     """The language this reply is in, so a client can set the page direction.
     None where Arabic replies are off: English, as always."""
+
+    agent: AgentPersona = AgentPersona.SARAH
+    """Which assistant the reply is shown as: Sarah (shopping), Salman (sales)
+    or Nora (interior design). A label only - one assistant answers every turn;
+    decided in code from what the turn did (`app/services/agent_persona.py`)."""

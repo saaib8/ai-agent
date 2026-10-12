@@ -28,6 +28,7 @@ import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
 import { turnWords } from '../lib/turnWords'
+import { agentLook } from '../lib/agents'
 
 export function UserBubble({
   text,
@@ -86,6 +87,19 @@ export function ZoryAvatar() {
   return (
     <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-clay font-display text-sm font-semibold text-white">
       Z
+    </div>
+  )
+}
+
+/** The assistant a reply is shown as: Sarah, Salman or Nora. */
+export function AgentAvatar({ agent }: { agent?: string | null }) {
+  const look = agentLook(agent)
+  return (
+    <div
+      aria-hidden
+      className={`mt-5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-display text-sm font-semibold ${look.avatar}`}
+    >
+      {look.initial}
     </div>
   )
 }
@@ -211,8 +225,9 @@ export function AssistantBubble({
 
   return (
     <div className="flex animate-rise gap-3">
-      <ZoryAvatar />
+      <AgentAvatar agent={data.agent} />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <div className="-mb-2 text-xs font-medium text-muted">{agentLook(data.agent).name}</div>
         <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-2.5 text-[15px] leading-relaxed text-ink shadow-card">
           {shownMessage}
           {revealing && <span className="ml-0.5 animate-pulse text-clay">▍</span>}

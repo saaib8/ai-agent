@@ -2311,6 +2311,23 @@ Once `store_id` is resolved into request context, downstream agents/tools must c
 
 Design the response so structured product/bundle data can coexist with assistant text; do not encode UI as arbitrary LLM-generated HTML.
 
+**Each reply names the assistant it is shown as** (`ChatResponse.agent`):
+`sarah` (shopping - the session's own voice), `salman` (sales) or `nora`
+(interior design). A label only: one assistant answers every turn, with one set
+of prompts and services; nothing routes on it. It is decided in code from what
+the turn did (`app/services/agent_persona.py`), never by a model:
+
+- **Nora** - the session's first reply (it greets and introduces itself as
+  Nora), design answers, and the room being designed: its questions, its
+  package, and a piece swapped for another of its kind.
+- **Salman** - cross-sell (a pick shown with what goes with it, the kinds
+  offered, a companion tapped), an up-sell (`commercial_reason: upsell`), and a
+  room's money side: an over-budget swap and its answers, cheaper pieces, and
+  finishing touches offered or added. Sales outranks design on a turn that is
+  both.
+- **Sarah** - product discovery, Furniture Finder, room visualisation (every
+  render), and everything else.
+
 ---
 
 ## 26. Product Discovery Service Contract

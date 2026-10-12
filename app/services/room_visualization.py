@@ -55,6 +55,7 @@ from app.prompts.visualization.v1 import (
 from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1, RoomProjectState
 from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
 from app.schemas.chat import ChatPresentation, ChatResponse
@@ -383,6 +384,8 @@ class VisualizationTurnRuntime:
             response=response,
             presentation=ChatPresentation(render=render),
             reply_language=language if self._arabic_replies else None,
+            # Room visualisation is Sarah's, like product discovery.
+            agent=AgentPersona.SARAH,
         )
 
 
@@ -485,6 +488,8 @@ class CatalogVisualizationRuntime:
             response=response,
             presentation=ChatPresentation(render=render),
             reply_language=language if self._arabic_replies else None,
+            # Room visualisation is Sarah's, like product discovery.
+            agent=AgentPersona.SARAH,
         )
 
     def _checked_room(self, room: RenderRoomSpec) -> RenderRoomSpec:

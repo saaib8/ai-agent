@@ -1,3 +1,5 @@
+import type { AgentKey } from '../lib/agents'
+
 // TypeScript mirror of the ZORY backend's public wire contract.
 //
 // These types match the customer-safe shapes the service returns — not its
@@ -289,6 +291,8 @@ export interface ChatResponse {
   liked?: LikedView[] | null
   /** The language this turn was answered in; null where Arabic replies are off. */
   reply_language?: 'en' | 'ar' | null
+  /** Which assistant the reply is shown as - a label the server decides. */
+  agent?: AgentKey
 }
 
 export interface BundleAlternativesAction {
