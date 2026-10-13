@@ -12,7 +12,7 @@ immutable :class:`RetailerContext` resolved by application code
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     case,
     func,
+    or_,
     select,
     type_coerce,
 )
@@ -52,6 +53,13 @@ from app.schemas.product import (
 )
 from app.schemas.retailer import RetailerContext
 from app.taxonomy.dimensions import FloorSide, SourceAxis
+from app.taxonomy.name_match import (
+    ARABIC_FOLD_FROM,
+    ARABIC_FOLD_TO,
+    ENGLISH_FOLD_FROM,
+    ENGLISH_FOLD_TO,
+    NameMatch,
+)
 
 _SELECTED_COLUMNS = (
     core_product.c.id,
@@ -903,6 +911,43 @@ class ProductRepository:
             colors=tuple((row[0], int(row[1])) for row in colors.all()),
             styles=tuple((row[0], int(row[1])) for row in styles.all() if row[0]),
         )
+
+    async def name_match_counts(
+        self,
+        subcategories: Sequence[str],
+        matches: Mapping[str, NameMatch],
+        context: RetailerContext,
+    ) -> dict[str, int]:
+        """How many of these types' products are named with each chip's words.
+
+        One read under the store scope, a count per chip. Names are folded
+        exactly as `app/taxonomy/name_match.py` folds them, and each pattern
+        is a bound parameter built from reviewed terms, never from a
+        customer's or a model's words.
+        """
+        if not matches:
+            return {}
+        types = tuple(dict.fromkeys(subcategories))
+        english = func.translate(
+            func.lower(core_product.c.name_english), ENGLISH_FOLD_FROM, ENGLISH_FOLD_TO
+        )
+        arabic = func.translate(core_product.c.name_arabic, ARABIC_FOLD_FROM, ARABIC_FOLD_TO)
+        keys = list(matches)
+        counts = []
+        for index, key in enumerate(keys):
+            match = matches[key]
+            found = [
+                *((english.regexp_match(match.english),) if match.english else ()),
+                *((arabic.regexp_match(match.arabic),) if match.arabic else ()),
+            ]
+            counts.append(func.count().filter(or_(*found)).label(f"m{index}"))
+        result = await self._session.execute(
+            select(*counts).where(
+                *self._scope_clauses(context), core_product.c.commerce_subcategory.in_(types)
+            )
+        )
+        row = result.first()
+        return {key: int(row[index]) if row is not None else 0 for index, key in enumerate(keys)}
 
     async def count_active(self, context: RetailerContext) -> int:
         """How many active products the store has. Backs health and capability checks."""

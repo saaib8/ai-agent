@@ -19,7 +19,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.product_brief import MAX_BRIEF_COLOURS, MAX_BRIEF_STYLES
+from app.schemas.product_brief import MAX_BRIEF_COLOURS, MAX_BRIEF_FEELS, MAX_BRIEF_STYLES
 
 
 class MoreOptionsAction(BaseModel):
@@ -80,6 +80,9 @@ class BriefAnswerAction(BaseModel):
     colours: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_COLOURS)
     styles: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_STYLES)
     feel: str | None = Field(default=None, min_length=1, max_length=64)
+    feels: tuple[str, ...] = Field(default=(), max_length=MAX_BRIEF_FEELS)
+    """On a sub-category's own card, every feel ticked across its questions -
+    a material, a feature, a shape - each ranking, none filtering."""
 
 
 class DropFacetAction(BaseModel):

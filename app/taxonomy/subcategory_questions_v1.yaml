@@ -1,0 +1,1918 @@
+# What to ask before searching for a sub-category, from "ZORY Product Search"
+# (CLAUDE.md 10.4, `customer_agent.subcategory_questions`).
+#
+# "I need a recliner" is answered with one card: this sub-category's own
+# questions, all at once, before any product is shown. The sheet decides what
+# is asked; the catalog decides the chips wherever it has the data:
+#
+#   ask: type     the kind of piece. An option naming a `subcategory` (with a
+#                 seat count where it names one) switches the search to it and
+#                 is offered only where the store stocks it; an option naming
+#                 none only ranks, by its `words` (its English label unless
+#                 given).
+#   ask: people   how many it must seat: the head count of CLAUDE.md 10.5 -
+#                 pieces that seat that many first, a combination for more
+#                 than any one piece seats. Where the store records no seat
+#                 counts for the type, the options only rank ("6 seater").
+#   ask: colour   the catalog's own colours for the type, most products first,
+#                 up to three ticked. Where the sheet asks "which color or
+#                 pattern", its words are this question's `options`, offered
+#                 beside the colours as one question (`options_first: true`
+#                 where the sheet lists them before the colours).
+#   ask: budget   bands cut from the store's real prices. No options here.
+#   ask: detail   a material, a feature, a shape, a size, a pattern, a use:
+#                 words that rank and never filter. The catalog records none
+#                 of these (CLAUDE.md 5), so nothing is hidden and the reply
+#                 never says a piece is made of or has one. `multi: true`
+#                 allows up to three ticks.
+#
+# Each question shows at most eight chips: the most-stocked first where the
+# catalog can count them (types, colours), the order below otherwise. Options
+# that add nothing - "Not sure", "No preference", "All colors", "Other ..." -
+# are left out: every question is optional, and the card can be skipped.
+#
+# An option that only ranks (a detail, or a type naming no `subcategory`) is
+# offered only where the store's product names carry its words
+# (`customer_agent.subcategory_chips_from_names`), the most-named first. Every
+# question is still asked: one whose names back fewer than two of its options
+# is asked with the options below, the backed ones first.
+#
+#   match         the words to look for, any one enough - a store's own way of
+#                 naming the thing ("gas lift" for lift-up storage, "dhurry"
+#                 for flatweave). English letters, digits, spaces and hyphens,
+#                 or Arabic letters; whole words with their plural. Without it,
+#                 the label's own words less the type's nouns, stop words and
+#                 figures ("Bed with storage drawers" looks for "storage
+#                 drawers"). Only real synonyms: a word that names something
+#                 else would offer a chip the store does not sell.
+#
+#   for           the sub-categories a row is asked for, one row each
+#   for_category  categories whose search named no kind - "I need a table" -
+#                 that the row answers; it must ask the type
+#   noun          what the card's button names, when the sub-category's own
+#                 name would not read well
+#
+# Left out on purpose, and asked as before (`briefs_v1.yaml`): lounge-chair,
+# until its options are reviewed. Brand questions are left out until the
+# catalog records a brand. Differences from the sheet, reviewed: the pendant
+# and outdoor lighting answers were swapped back, chandelier's questions
+# reworded, and plate's second question asks the material its answers list.
+#
+# Every question and label has its Arabic beside it, from the sheet's Arabic
+# tab.
+
+version: v1
+
+rows:
+  chair:
+    for: [chair]
+    noun: {en: "chairs", ar: "الكراسي"}
+    questions:
+      - ask: type
+        q: {en: "What type of chair are you looking for?", ar: "أي نوع من الكراسي تبحث عنه؟"}
+        options:
+          - {en: "Office chair", ar: "كرسي مكتب", subcategory: office-chair}
+          - {en: "Dining chair", ar: "كرسي طعام", subcategory: dining-chair}
+          - {en: "Lounge chair", ar: "كرسي استرخاء", subcategory: lounge-chair}
+          - {en: "Armchair", ar: "كرسي بذراعين", match: [armchair, arm chair, armrest, with arms]}
+          - {en: "Armless chair", ar: "كرسي بدون ذراعين"}
+          - {en: "Rocking chair", ar: "كرسي هزاز"}
+          - {en: "Outdoor chair", ar: "كرسي خارجي", subcategory: outdoor-chair}
+          - {en: "Bar / High chair", ar: "كرسي مرتفع", subcategory: stool, words: "bar high chair"}
+          - {en: "Single sofa chair", ar: "كرسي كنب مفرد", subcategory: single-seater-sofa}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  dining-chair:
+    for: [dining-chair]
+    questions:
+      - ask: detail
+        q: {en: "Which type or design of dining chair do you prefer?", ar: "أي نوع أو تصميم كرسي طعام تفضّل؟"}
+        options:
+          - {en: "Fabric upholstered", ar: "مبطن بالقماش", match: [upholstered, fabric]}
+          - {en: "Leather / Faux leather", ar: "جلد / جلد صناعي", match: [leather, pu leather, leatherette]}
+          - {en: "Wooden", ar: "خشبي", match: [wooden, wood]}
+          - {en: "Metal", ar: "معدني", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "With arms", ar: "بذراعين", match: [arms, armrest, armchair]}
+          - {en: "Armless", ar: "بدون ذراعين"}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  office-chair:
+    for: [office-chair]
+    questions:
+      - ask: detail
+        q: {en: "What's the most important feature in an office chair?", ar: "ما أهم ميزة في كرسي المكتب؟"}
+        options:
+          - {en: "Back support", ar: "دعم الظهر", match: [lumbar, back support, ergonomic]}
+          - {en: "Adjustable height and armrests", ar: "قابلية تعديل الارتفاع والمساند", match: [adjustable]}
+          - {en: "Breathable mesh", ar: "شبك للتهوية", match: [mesh]}
+          - {en: "Padded executive chair", ar: "كرسي تنفيذي مبطن", match: [executive, padded]}
+          - {en: "Comfortable", ar: "مريح"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Mesh", ar: "شبك"}
+          - {en: "Fabric", ar: "قماش"}
+          - {en: "Leather / Faux leather", ar: "جلد / جلد صناعي", match: [leather, pu leather, leatherette]}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  recliner:
+    for: [recliner]
+    questions:
+      - ask: detail
+        q: {en: "Which type of recliner do you prefer?", ar: "أي نوع كرسي استرخاء تفضّل؟"}
+        options:
+          - {en: "Manual recliner", ar: "كرسي استرخاء يدوي"}
+          - {en: "Power (electric) recliner", ar: "كرسي استرخاء كهربائي"}
+          - {en: "Swivel recliner", ar: "كرسي دوّار مع إمالة"}
+          - {en: "Rocker recliner", ar: "كرسي هزاز مع إمالة"}
+          - {en: "Space-saving wall-hugger recliner", ar: "كرسي استرخاء جداري موفر للمساحة"}
+          - {en: "Lift recliner", ar: "كرسي استرخاء يساعد على الوقوف (Lift Recliner)"}
+          - {en: "Zero-gravity recliner", ar: "كرسي استرخاء بوضعية انعدام الجاذبية (Zero Gravity)"}
+      - ask: detail
+        q: {en: "Which features matter to you in a recliner?", ar: "أي مميزات تهمك في كرسي الاسترخاء؟"}
+        multi: true
+        options:
+          - {en: "Back recline", ar: "إمالة الظهر"}
+          - {en: "Footrest lift", ar: "رفع مسند القدم"}
+          - {en: "Independent back and foot adjustment", ar: "تعديل الظهر والقدم بشكل مستقل"}
+          - {en: "Near-flat recline for sleeping", ar: "إمالة شبه كاملة للنوم"}
+          - {en: "Massage", ar: "مساج"}
+          - {en: "Heating", ar: "تدفئة"}
+          - {en: "Adjustable headrest", ar: "مسند رأس قابل للتعديل"}
+          - {en: "Lumbar support", ar: "دعم أسفل الظهر"}
+          - {en: "USB / Charging ports", ar: "منافذ USB / شحن"}
+          - {en: "Cup holder", ar: "حامل أكواب"}
+          - {en: "Remote control", ar: "تحكم عن بُعد"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  stool:
+    for: [stool]
+    questions:
+      - ask: detail
+        q: {en: "Where will you use the stool?", ar: "وين بتستخدم المقعد؟"}
+        options:
+          - {en: "Kitchen counter", ar: "كاونتر مطبخ"}
+          - {en: "High bar", ar: "بار مرتفع"}
+          - {en: "Vanity / Dressing table", ar: "تسريحة"}
+          - {en: "Extra seating", ar: "مقعد إضافي"}
+      - ask: detail
+        q: {en: "Which stool shape do you prefer?", ar: "أي شكل مقعد تفضّل؟"}
+        options:
+          - {en: "Backless", ar: "بدون ظهر"}
+          - {en: "With back", ar: "بظهر"}
+          - {en: "With back and arms", ar: "بظهر وذراعين"}
+          - {en: "Round", ar: "دائري"}
+          - {en: "Square", ar: "مربع"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  outdoor-chair:
+    for: [outdoor-chair]
+    questions:
+      - ask: detail
+        q: {en: "Which type of outdoor chair do you prefer?", ar: "أي نوع كرسي خارجي تفضّل؟"}
+        options:
+          - {en: "Wide, comfortable lounge chair", ar: "كرسي استرخاء واسع ومريح"}
+          - {en: "Standard patio chair", ar: "كرسي جلسة عادي"}
+          - {en: "Foldable, portable chair", ar: "كرسي قابل للطي والتنقل"}
+          - {en: "Rocking chair", ar: "كرسي هزاز"}
+          - {en: "Reclining chair", ar: "كرسي استلقاء"}
+          - {en: "Synthetic wicker", ar: "مصنوع من خوص صناعي"}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Plastic", ar: "بلاستيك"}
+      - ask: detail
+        q: {en: "What's the most important feature for you in the chair?", ar: "وش أهم ميزة تهمك في الكرسي؟"}
+        options:
+          - {en: "Heat and sun resistant", ar: "مقاوم للحرارة والشمس"}
+          - {en: "Water and humidity resistant", ar: "مقاوم للماء والرطوبة"}
+          - {en: "Easy to clean and stain-resistant", ar: "سهل التنظيف ومقاوم للبقع"}
+          - {en: "Lightweight and easy to move", ar: "خفيف وسهل النقل"}
+          - {en: "Durable for daily use", ar: "متين ويتحمل الاستخدام اليومي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  single-seater-sofa:
+    for: [single-seater-sofa]
+    questions:
+      - ask: detail
+        q: {en: "Which type of single sofa chair do you prefer?", ar: "أي نوع كرسي كنب مفرد تفضّل؟"}
+        options:
+          - {en: "With arms", ar: "بذراعين", match: [arms, armrest]}
+          - {en: "Armless", ar: "بدون ذراعين"}
+          - {en: "Swivel", ar: "دوّار"}
+          - {en: "Wide and padded", ar: "عريض ومبطن", match: [oversized, wide padded, extra wide]}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "ألوان متعددة"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Button-tufted upholstery", ar: "تنجيد مبطن بأزرار", match: [button tufted, buttoned]}
+          - {en: "Contrast stitching", ar: "خياطة بارزة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  sofa:
+    for: [sofa]
+    noun: {en: "sofas", ar: "الكنب"}
+    questions:
+      - ask: type
+        q: {en: "Which sofa type or shape do you prefer?", ar: "أي نوع أو شكل كنب تفضّل؟"}
+        options:
+          - {en: "Straight sofa", ar: "كنب مستقيم"}
+          - {en: "L-shaped corner sofa", ar: "كنب زاوية L", subcategory: sectional-sofa}
+          - {en: "U-shaped sofa", ar: "كنب شكل U", subcategory: sectional-sofa, words: "U-shaped sofa"}
+          - {en: "Curved / Round sofa", ar: "كنب منحني / دائري"}
+          - {en: "Modular sofa", ar: "كنب وحدات قابلة للتغيير (Modular)"}
+          - {en: "Single-seat sofa", ar: "كنب مفرد", subcategory: single-seater-sofa}
+          - {en: "2-seater sofa", ar: "كنب لشخصين", subcategory: sofa, seats: 2}
+          - {en: "3-seater sofa", ar: "كنب 3 مقاعد", subcategory: sofa, seats: 3}
+          - {en: "Large 4–6 seater sofa", ar: "كنب كبير 4–6 مقاعد", subcategory: sofa, min_seats: 4}
+          - {en: "Separate sofa set", ar: "طقم كنب منفصل", subcategory: sofa-set}
+          - {en: "Low and deep sofa", ar: "كنب منخفض وعميق"}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "متعدد الألوان"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Geometric", ar: "هندسي"}
+      - ask: detail
+        q: {en: "Which material or upholstery type do you prefer?", ar: "أي خامة أو نوع تنجيد تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Linen", ar: "كتان"}
+          - {en: "Cotton", ar: "قطن"}
+          - {en: "Velvet", ar: "مخمل"}
+          - {en: "Chenille", ar: "شنيل"}
+          - {en: "Bouclé", ar: "بوكلية"}
+          - {en: "Genuine leather", ar: "جلد طبيعي", match: [genuine leather, real leather, natural leather, top grain, full grain]}
+          - {en: "Faux leather", ar: "جلد صناعي", match: [faux leather, pu leather, vegan leather, leatherette, synthetic leather]}
+          - {en: "Soft plush fabric", ar: "قماش ناعم ووبري"}
+          - {en: "Stain-resistant fabric", ar: "قماش مقاوم للبقع"}
+          - {en: "Easy-clean fabric", ar: "قماش سهل التنظيف"}
+          - {en: "Water-resistant fabric", ar: "قماش مقاوم للماء"}
+  chaise-lounge:
+    for: [chaise-lounge]
+    questions:
+      - ask: detail
+        q: {en: "Which chaise lounge design do you prefer?", ar: "أي تصميم شيزلونج تفضّل؟"}
+        options:
+          - {en: "Right-arm", ar: "بذراع على اليمين"}
+          - {en: "Left-arm", ar: "بذراع على اليسار"}
+          - {en: "Two arms", ar: "بذراعين"}
+          - {en: "Armless", ar: "بدون ذراعين"}
+          - {en: "High back", ar: "ظهر مرتفع"}
+          - {en: "Low back", ar: "ظهر منخفض"}
+          - {en: "Curved back", ar: "ظهر منحني"}
+          - {en: "Classic design with raised end", ar: "تصميم كلاسيكي بطرف مرتفع"}
+          - {en: "Straight modern design", ar: "تصميم مودرن مستقيم"}
+          - {en: "Round / Curved design", ar: "تصميم دائري / منحني"}
+          - {en: "With storage", ar: "مع مساحة تخزين"}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "ألوان متعددة"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Button-tufted upholstery", ar: "تنجيد مبطن بأزرار", match: [button tufted, buttoned]}
+          - {en: "Contrast stitching", ar: "خياطة بارزة"}
+      - ask: detail
+        q: {en: "Which material or upholstery type do you prefer?", ar: "أي خامة أو نوع تنجيد تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Bouclé", ar: "بوكلية (Bouclé)"}
+          - {en: "Velvet", ar: "مخمل"}
+          - {en: "Linen", ar: "كتان"}
+          - {en: "Cotton", ar: "قطن"}
+          - {en: "Chenille", ar: "شنيل (Chenille)"}
+          - {en: "Genuine leather", ar: "جلد طبيعي", match: [genuine leather, real leather, natural leather, top grain, full grain]}
+          - {en: "Faux leather", ar: "جلد صناعي", match: [faux leather, pu leather, vegan leather, leatherette, synthetic leather]}
+          - {en: "Stain-resistant, easy-clean fabric", ar: "قماش مقاوم للبقع وسهل التنظيف"}
+          - {en: "Soft plush fabric", ar: "قماش ناعم ووبري"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Wood with cushions", ar: "خشب مع وسائد"}
+  sectional-sofa:
+    for: [sectional-sofa]
+    questions:
+      - ask: detail
+        q: {en: "Which sectional sofa shape do you prefer?", ar: "أي شكل كنبة زاوية تفضّل؟"}
+        options:
+          - {en: "Right-facing L", ar: "زاوية L يمين", match: [right facing, right hand]}
+          - {en: "Left-facing L", ar: "زاوية L يسار", match: [left facing, left hand]}
+          - {en: "U-shape", ar: "شكل U", match: [u shape, u shaped]}
+          - {en: "Straight with chaise", ar: "شكل مستقيم مع شيزلونج", match: [chaise]}
+          - {en: "Curved / Semi-circular", ar: "شكل منحني / نصف دائري", match: [curved, semi circular, round]}
+          - {en: "Deep square pit sofa", ar: "جلسة مربعة عميقة (Pit Sofa)"}
+          - {en: "Separate rearrangeable modules", ar: "وحدات منفصلة قابلة لإعادة الترتيب", match: [modular, module]}
+      - ask: people
+        q: {en: "How many seats do you need?", ar: "كم عدد المقاعد التي تحتاجها؟"}
+        options:
+          - {en: "2 seats", ar: "مقعدان", people: 2}
+          - {en: "3 seats", ar: "3 مقاعد", people: 3}
+          - {en: "4 seats", ar: "4 مقاعد", people: 4}
+          - {en: "5 seats", ar: "5 مقاعد", people: 5}
+          - {en: "6 seats", ar: "6 مقاعد", people: 6}
+          - {en: "7 or more seats", ar: "7 مقاعد أو أكثر", people: 7, or_more: true}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "متعدد الألوان"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Geometric", ar: "هندسي"}
+  sofa-bed:
+    for: [sofa-bed]
+    questions:
+      - ask: type
+        q: {en: "Which type of sofa bed do you prefer?", ar: "أي نوع كنبة سرير تفضّل؟"}
+        options:
+          - {en: "Single-person sofa", ar: "كنبة لشخص واحد", match: [sleeper chair, chair bed, single]}
+          - {en: "2-seater sofa", ar: "كنبة لشخصين", subcategory: sofa-bed, seats: 2}
+          - {en: "3-seater sofa", ar: "كنبة 3 مقاعد", subcategory: sofa-bed, seats: 3}
+          - {en: "L-shaped corner sofa that converts to a bed", ar: "كنبة زاوية L تتحول إلى سرير", match: [corner, l shaped, l shape]}
+          - {en: "Sofa with chaise that converts to a bed", ar: "كنبة مع شيزلونج تتحول إلى سرير", match: [chaise]}
+          - {en: "Futon (back folds flat into a bed)", ar: "فوتون (ظهر ينفرد ليصبح سريرًا)", match: [futon, click clack]}
+          - {en: "Sofa with pull-out bed underneath", ar: "كنبة بسرير يُسحب من الأسفل", match: [pull out, trundle]}
+          - {en: "Fold-out sofa", ar: "كنبة قابلة للطي والفتح"}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "متعدد الألوان"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Geometric", ar: "هندسي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  sofa-set:
+    for: [sofa-set]
+    questions:
+      - ask: people
+        q: {en: "How many people does the sofa set need to seat?", ar: "كم شخصًا تحتاج أن يتسع لهم طقم الكنب؟"}
+        options:
+          - {en: "3–4 people", ar: "3–4 أشخاص", people: 4}
+          - {en: "5–6 people", ar: "5–6 أشخاص", people: 6}
+          - {en: "7–8 people", ar: "7–8 أشخاص", people: 8}
+          - {en: "9 or more people", ar: "9 أشخاص أو أكثر", people: 9, or_more: true}
+      - ask: colour
+        q: {en: "Which color do you prefer?", ar: "أي لون تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "متعدد الألوان"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Geometric", ar: "هندسي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  bed:
+    for: [bed]
+    questions:
+      - ask: detail
+        q: {en: "What bed size do you need?", ar: "أي مقاس سرير تحتاج؟"}
+        options:
+          - {en: "Single 90×200", ar: "مفرد 90×200"}
+          - {en: "Double 140×200", ar: "مزدوج 140×200"}
+          - {en: "Queen 160×200", ar: "كوين 160×200"}
+          - {en: "King 180×200", ar: "كينغ 180×200"}
+      - ask: detail
+        q: {en: "Which type of bed do you prefer?", ar: "أي نوع سرير تفضّل؟"}
+        options:
+          - {en: "Standard bed with headboard", ar: "سرير عادي بظهر", match: [headboard]}
+          - {en: "Bed without headboard", ar: "سرير بدون ظهر"}
+          - {en: "Bed with tall headboard", ar: "سرير بظهر مرتفع"}
+          - {en: "Bed with upholstered headboard", ar: "سرير بظهر مبطن", match: [upholstered headboard, upholstered]}
+          - {en: "Low platform bed", ar: "سرير أرضي منخفض (Platform Bed)", match: [platform]}
+          - {en: "Bed with storage drawers", ar: "سرير مع أدراج تخزين", match: [drawer]}
+          - {en: "Bed with lift-up storage (ottoman)", ar: "سرير بصندوق تخزين يُفتح برفع المرتبة", match: [gas lift, lift up, ottoman, hydraulic]}
+          - {en: "Bed with built-in lighting", ar: "سرير مع إضاءة مدمجة", match: [led, lighting, reading light, built in light]}
+          - {en: "Bed with shelves or storage in headboard", ar: "سرير مع رفوف أو تخزين في الظهر", match: [shelf, shelves, storage headboard, bookcase headboard]}
+          - {en: "Four-poster bed", ar: "سرير بأربعة أعمدة", match: [four poster, poster bed]}
+          - {en: "Canopy bed", ar: "سرير بمظلة (Canopy)"}
+          - {en: "Floating bed design", ar: "سرير بتصميم عائم"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  dressing-table:
+    for: [dressing-table]
+    questions:
+      - ask: detail
+        q: {en: "Which type of dressing table do you prefer?", ar: "أي نوع تسريحة تفضّل؟"}
+        options:
+          - {en: "With standard mirror", ar: "مع مرآة عادية"}
+          - {en: "With lighted mirror", ar: "مع مرآة بإضاءة"}
+          - {en: "With tri-fold mirror", ar: "مع مرآة ثلاثية قابلة للطي"}
+          - {en: "With swivel or tilting mirror", ar: "مع مرآة قابلة للدوران أو تعديل الزاوية"}
+          - {en: "Without mirror", ar: "بدون مرآة"}
+          - {en: "With multiple drawers", ar: "مع أدراج متعددة"}
+          - {en: "With side cabinets", ar: "مع خزائن جانبية"}
+          - {en: "With open shelves", ar: "مع رفوف مفتوحة"}
+          - {en: "With hidden storage", ar: "مع مساحة تخزين مخفية"}
+          - {en: "Wall-mounted", ar: "معلقة على الجدار"}
+          - {en: "Freestanding", ar: "قائمة على الأرض"}
+          - {en: "Corner dressing table", ar: "تسريحة زاوية"}
+          - {en: "Small, compact dressing table", ar: "تسريحة صغيرة ومدمجة"}
+          - {en: "Dressing table with chair or pouf", ar: "تسريحة مع كرسي أو بوف"}
+      - ask: detail
+        q: {en: "Which material or finish do you prefer?", ar: "أي خامة أو تشطيب تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble top / Marble alternative", ar: "سطح رخامي / بديل رخام"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  wardrobe:
+    for: [wardrobe]
+    questions:
+      - ask: detail
+        q: {en: "Which type of wardrobe do you prefer?", ar: "أي نوع دولاب تفضّل؟"}
+        options:
+          - {en: "Hinged doors", ar: "أبواب مفصلية", match: [hinged]}
+          - {en: "Sliding doors", ar: "أبواب سحب", match: [sliding]}
+          - {en: "Open (no doors)", ar: "مفتوح بدون أبواب", match: [open wardrobe, open closet, doorless]}
+          - {en: "With mirror", ar: "مع مرآة", match: [mirror, mirrored]}
+      - ask: detail
+        q: {en: "How do you prefer the wardrobe's interior to be organized?", ar: "كيف تفضّل تقسيم الدولاب من الداخل؟"}
+        options:
+          - {en: "Hanging space for clothes", ar: "مساحة لتعليق الملابس", match: [hanging, rail]}
+          - {en: "Shelves for folded clothes", ar: "أرفف للملابس المطوية", match: [shelf, shelves]}
+          - {en: "Internal drawers", ar: "أدراج داخلية", match: [drawer]}
+          - {en: "Hanging and shelves", ar: "تعليق وأرفف"}
+          - {en: "Hanging and drawers", ar: "تعليق وأدراج"}
+          - {en: "Hanging, shelves, and drawers", ar: "تعليق وأرفف وأدراج"}
+          - {en: "Long hanging space", ar: "مساحة تعليق طويلة", match: [long hanging]}
+          - {en: "Shoe and bag shelves", ar: "رفوف للأحذية والحقائب", match: [shoe]}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  dresser:
+    for: [dresser]
+    questions:
+      - ask: detail
+        q: {en: "What type of chest of drawers do you need?", ar: "أي نوع خزانة أدراج تحتاج؟"}
+        options:
+          - {en: "Few drawers", ar: "أدراج قليلة"}
+          - {en: "Multiple drawers", ar: "أدراج متعده"}
+          - {en: "Wide and low", ar: "عريضة ومنخفضة"}
+          - {en: "Tall and narrow", ar: "طويلة وضيقة"}
+          - {en: "Medium size", ar: "متوسطة الحجم"}
+          - {en: "With mirror", ar: "مع مرآة", match: [mirror, mirrored]}
+          - {en: "With open shelves", ar: "مع رفوف مفتوحة"}
+      - ask: detail
+        q: {en: "Which material or finish do you prefer?", ar: "أي خامة أو تشطيب تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble top / Marble alternative", ar: "سطح رخامي / بديل رخام"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  bedspread:
+    for: [bedspread]
+    questions:
+      - ask: detail
+        q: {en: "For which bed size?", ar: "لأي مقاس سرير؟"}
+        options:
+          - {en: "Single", ar: "مفرد"}
+          - {en: "Double", ar: "مزدوج"}
+          - {en: "Queen", ar: "كوين"}
+          - {en: "King", ar: "كينغ"}
+      - ask: detail
+        q: {en: "Which type or material of bedspread do you prefer?", ar: "أي نوع أو خامة مفرش تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Cotton", ar: "قطن"}
+          - {en: "Linen", ar: "كتان"}
+          - {en: "Silk", ar: "حرير"}
+          - {en: "Satin", ar: "ساتان"}
+          - {en: "Velvet", ar: "مخمل"}
+          - {en: "Microfiber", ar: "مايكروفايبر"}
+          - {en: "Quilted", ar: "مبطن"}
+          - {en: "Complete set", ar: "طقم كامل"}
+      - ask: colour
+        q: {en: "Which color or pattern do you prefer?", ar: "أي لون أو نقشة تفضّل؟"}
+        options:
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Botanical / Leafy", ar: "مشجر / نباتي"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Geometric", ar: "هندسي"}
+  pillow:
+    for: [pillow]
+    questions:
+      - ask: detail
+        q: {en: "What type of pillow are you looking for?", ar: "أي نوع مخدة تبحث عنه؟"}
+        options:
+          - {en: "Standard sleeping pillow", ar: "مخدة نوم عادية"}
+          - {en: "Orthopedic neck-support pillow", ar: "مخدة طبية لدعم الرقبة"}
+          - {en: "Decorative pillow", ar: "مخدة ديكور"}
+          - {en: "Long body pillow", ar: "مخدة جسم طويلة"}
+          - {en: "Pregnancy pillow", ar: "مخدة للحامل"}
+          - {en: "Wedge pillow to elevate head or back", ar: "مخدة إسفينية لرفع الرأس أو الظهر"}
+      - ask: detail
+        q: {en: "Which material or filling type do you prefer?", ar: "أي خامة أو نوع حشوة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Cotton", ar: "قطن"}
+          - {en: "Natural feather", ar: "ريش طبيعي"}
+          - {en: "Natural down", ar: "زغب طبيعي"}
+          - {en: "Synthetic fiber / Microfiber", ar: "ألياف صناعية / مايكروفايبر"}
+          - {en: "Memory foam", ar: "ميموري فوم"}
+          - {en: "Latex", ar: "لاتكس"}
+          - {en: "Cooling gel", ar: "جل مبرد"}
+          - {en: "Polyester", ar: "بوليستر"}
+          - {en: "Adjustable filling", ar: "حشوة قابلة للتعديل"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  mattresses:
+    for: [mattresses]
+    questions:
+      - ask: detail
+        q: {en: "What mattress size do you need?", ar: "أي مقاس مرتبة تحتاج؟"}
+        options:
+          - {en: "Single", ar: "مفرد"}
+          - {en: "Double", ar: "مزدوج"}
+          - {en: "Queen", ar: "كوين"}
+          - {en: "King", ar: "كينغ"}
+          - {en: "Custom size", ar: "مقاس مخصص"}
+      - ask: detail
+        q: {en: "Which firmness level do you prefer?", ar: "أي درجة صلابة تفضّل؟"}
+        options:
+          - {en: "Soft", ar: "ناعمة"}
+          - {en: "Medium", ar: "متوسطة"}
+          - {en: "Firm", ar: "صلبة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  mattress-pad:
+    for: [mattress-pad]
+    questions:
+      - ask: detail
+        q: {en: "For which mattress size?", ar: "لأي مقاس مرتبة؟"}
+        options:
+          - {en: "Single 90×200", ar: "مفرد 90×200"}
+          - {en: "Large single 120×200", ar: "مفرد كبير 120×200"}
+          - {en: "Double 140×200", ar: "مزدوج 140×200"}
+          - {en: "Queen 160×200", ar: "كوين 160×200"}
+          - {en: "King 180×200", ar: "كينغ 180×200"}
+          - {en: "Super King 200×200", ar: "سوبر كينغ 200×200"}
+      - ask: detail
+        q: {en: "Which mattress type or specifications do you prefer?", ar: "أي نوع مرتبة أو مواصفات تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Firm orthopedic for body support", ar: "طبية صلبة لدعم الجسم"}
+          - {en: "Medium firmness", ar: "متوسطة الصلابة"}
+          - {en: "Soft and comfortable", ar: "ناعمة ومريحة"}
+          - {en: "Body-contouring memory foam", ar: "ميموري فوم تأخذ شكل الجسم"}
+          - {en: "All-foam, no springs", ar: "إسفنج كامل بدون زنبرك"}
+          - {en: "Bonnell (connected) springs", ar: "زنبرك متصل"}
+          - {en: "Pocket (individual) springs", ar: "زنبرك منفصل"}
+          - {en: "Hybrid foam and springs", ar: "إسفنج مع زنبرك"}
+          - {en: "Latex", ar: "لاتكس"}
+          - {en: "Fiber layers", ar: "بطبقات فايبر"}
+          - {en: "With pillow top", ar: "مع لباد علوي"}
+          - {en: "Without pillow top", ar: "بدون لباد علوي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  comforter:
+    for: [comforter]
+    questions:
+      - ask: detail
+        q: {en: "For which bed size?", ar: "لأي مقاس سرير؟"}
+        options:
+          - {en: "Single", ar: "مفرد"}
+          - {en: "Double", ar: "مزدوج"}
+          - {en: "Queen", ar: "كوين"}
+          - {en: "King", ar: "كينغ"}
+      - ask: detail
+        q: {en: "Which warmth level do you prefer?", ar: "أي مستوى دفء تفضّل؟"}
+        options:
+          - {en: "Lightweight for summer", ar: "خفيف للصيف"}
+          - {en: "Medium, all-season", ar: "متوسط لجميع المواسم"}
+          - {en: "Heavy for winter", ar: "ثقيل للشتاء"}
+      - ask: colour
+        q: {en: "Which color or pattern do you prefer?", ar: "أي لون أو نقشة تفضّل؟"}
+        options:
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Botanical / Leafy", ar: "مشجر / نباتي"}
+          - {en: "Striped", ar: "مخطط"}
+          - {en: "Geometric", ar: "هندسي"}
+  tables:
+    for: []
+    for_category: [tables]
+    noun: {en: "tables", ar: "الطاولات"}
+    questions:
+      - ask: type
+        q: {en: "What type of table are you looking for?", ar: "أي نوع طاولة تبحث عنه؟"}
+        options:
+          - {en: "Center table", ar: "طاولة وسط", subcategory: center-table}
+          - {en: "Side / Service table", ar: "طاولة جانبية / خدمة", subcategory: service-table}
+          - {en: "TV table", ar: "طاولة تلفزيون", subcategory: tv-table}
+          - {en: "Dining table", ar: "طاولة طعام", subcategory: dining-table}
+          - {en: "Desk", ar: "طاولة مكتب", subcategory: office-table}
+          - {en: "Console / Entryway table", ar: "طاولة كونسول / مدخل", subcategory: console}
+          - {en: "Bedside table", ar: "طاولة سرير جانبية", subcategory: nightstand}
+          - {en: "Coffee table", ar: "طاولة قهوة", subcategory: center-table, words: "coffee table"}
+          - {en: "Nesting tables (set)", ar: "طاولة متداخلة (طقم)", match: [nesting, nest]}
+          - {en: "Outdoor table", ar: "طاولة خارجية"}
+          - {en: "Folding table", ar: "طاولة قابلة للطي"}
+      - ask: detail
+        q: {en: "Which table shape or size do you prefer?", ar: "أي شكل أو حجم طاولة تفضّل؟"}
+        options:
+          - {en: "Round", ar: "دائرية"}
+          - {en: "Square", ar: "مربعة"}
+          - {en: "Rectangular", ar: "مستطيلة"}
+          - {en: "Oval", ar: "بيضاوية"}
+          - {en: "Semi-circular", ar: "نصف دائرية"}
+          - {en: "Freeform / Irregular", ar: "شكل حر / غير منتظم"}
+          - {en: "Small and compact", ar: "صغيرة ومدمجة", match: [compact, small, mini]}
+          - {en: "Medium", ar: "متوسطة"}
+          - {en: "Large", ar: "كبيرة"}
+          - {en: "Extendable", ar: "قابلة للتمديد"}
+      - ask: colour
+        q: {en: "Which material or color do you prefer?", ar: "أي خامة أو لون تفضّل؟"}
+        options_first: true
+        options:
+          - {en: "Solid wood", ar: "خشب طبيعي"}
+          - {en: "Engineered wood", ar: "خشب صناعي", match: [engineered wood, mdf]}
+          - {en: "Marble", ar: "رخام"}
+          - {en: "Stone", ar: "حجر"}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Acrylic", ar: "أكريليك"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+  service-table:
+    for: [service-table]
+    questions:
+      - ask: detail
+        q: {en: "Which type of service table do you prefer?", ar: "أي نوع طاولة خدمة تفضّل؟"}
+        options:
+          - {en: "Side table", ar: "جانبية"}
+          - {en: "Set", ar: "طقم"}
+          - {en: "Rolling (on wheels)", ar: "متحركة بعجلات", match: [rolling, wheels, castor, caster, trolley]}
+          - {en: "Folding", ar: "قابلة للطي"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble / Marble look", ar: "رخام / مظهر رخامي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  center-table:
+    for: [center-table]
+    questions:
+      - ask: detail
+        q: {en: "Which center table shape do you prefer?", ar: "أي شكل طاولة وسط تفضّل؟"}
+        options:
+          - {en: "Round", ar: "دائرية"}
+          - {en: "Rectangular", ar: "مستطيلة"}
+          - {en: "Square", ar: "مربعة"}
+          - {en: "Oval", ar: "بيضاوية"}
+          - {en: "Nesting tables", ar: "طاولات متداخلة"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble / Marble look", ar: "رخام / مظهر رخامي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  nightstand:
+    for: [nightstand]
+    questions:
+      - ask: detail
+        q: {en: "Which type of nightstand do you prefer?", ar: "أي نوع كومودينو تفضّل؟"}
+        options:
+          - {en: "With drawers", ar: "بأدراج"}
+          - {en: "With open shelf", ar: "برف مفتوح", match: [open shelf, shelf]}
+          - {en: "With drawers and open shelf", ar: "بأدراج ورف مفتوح"}
+          - {en: "With door and closed cabinet", ar: "بباب وخزانة مغلقة"}
+          - {en: "No storage / Top surface only", ar: "بدون تخزين / سطح فقط"}
+          - {en: "Wall-mounted", ar: "معلق على الجدار"}
+          - {en: "Freestanding", ar: "قائم على الأرض"}
+          - {en: "With tall legs", ar: "بأرجل مرتفعة"}
+          - {en: "Round nightstand", ar: "كومودينو دائري"}
+          - {en: "Nightstand with built-in lighting", ar: "كومودينو مع إضاءة مدمجة", match: [led, lighting, built in light]}
+      - ask: detail
+        q: {en: "Which material or finish do you prefer?", ar: "أي خامة أو تشطيب تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Solid wood", ar: "خشب طبيعي"}
+          - {en: "MDF engineered wood", ar: "خشب صناعي MDF", match: [mdf, engineered wood]}
+          - {en: "Wood veneer", ar: "قشرة خشبية", match: [veneer]}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble / Marble look", ar: "رخام / مظهر رخام"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+          - {en: "Matte finish", ar: "تشطيب مطفي", match: [matte, matt]}
+          - {en: "Glossy finish", ar: "تشطيب لامع", match: [glossy, gloss, lacquered]}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  console:
+    for: [console]
+    questions:
+      - ask: detail
+        q: {en: "What type of console are you looking for?", ar: "أي نوع كونسول تبحث عنه؟"}
+        options:
+          - {en: "For the entryway", ar: "للمدخل", match: [entryway, entry, hallway, foyer]}
+          - {en: "Behind the sofa", ar: "خلف الكنبة", match: [sofa table, behind sofa]}
+          - {en: "With drawers / storage", ar: "مع أدراج / تخزين"}
+          - {en: "With mirror", ar: "مع مرآة", match: [mirror, mirrored]}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble / Marble look", ar: "رخام / مظهر رخامي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  tv-table:
+    for: [tv-table]
+    questions:
+      - ask: detail
+        q: {en: "Roughly what TV size is it for?", ar: "لأي حجم تلفزيون تقريبًا؟"}
+        options:
+          - {en: "Up to 43 inches", ar: "حتى 43 بوصة", match: [32 inch, 40 inch, 43 inch]}
+          - {en: "44–55 inches", ar: "44–55 بوصة", match: [50 inch, 55 inch]}
+          - {en: "56–65 inches", ar: "56–65 بوصة", match: [60 inch, 65 inch]}
+          - {en: "Larger than 65", ar: "أكبر من 65", match: [70 inch, 75 inch, 80 inch, 85 inch]}
+      - ask: detail
+        q: {en: "Which type of TV table do you prefer?", ar: "أي نوع طاولة تلفزيون تفضّل؟"}
+        options:
+          - {en: "Floor-standing", ar: "أرضية", match: [floor standing, stand]}
+          - {en: "Wall-mounted (floating)", ar: "معلقة", match: [wall mounted, floating]}
+          - {en: "With drawers", ar: "مع أدراج"}
+          - {en: "With open shelves", ar: "مع رفوف مفتوحة", match: [open shelf, open shelves, open shelving, shelving]}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  dining-table:
+    for: [dining-table]
+    questions:
+      - ask: people
+        q: {en: "How many people does the table need to seat?", ar: "كم شخص تحتاج الطاولة تتسع له؟"}
+        options:
+          - {en: "2 people", ar: "شخصين", people: 2}
+          - {en: "4 people", ar: "4 أشخاص", people: 4}
+          - {en: "6 people", ar: "6 أشخاص", people: 6}
+          - {en: "8 people", ar: "8 أشخاص", people: 8}
+          - {en: "10 or more people", ar: "10 أشخاص أو أكثر", people: 10, or_more: true}
+      - ask: detail
+        q: {en: "Which dining table shape do you prefer?", ar: "أي شكل طاولة طعام تفضّل؟"}
+        options:
+          - {en: "Rectangular", ar: "مستطيلة"}
+          - {en: "Round", ar: "دائرية"}
+          - {en: "Square", ar: "مربعة"}
+          - {en: "Oval", ar: "بيضاوية"}
+          - {en: "Extendable", ar: "قابلة للتمديد"}
+          - {en: "Folding", ar: "قابلة للطي"}
+      - ask: detail
+        q: {en: "Which table material do you prefer?", ar: "أي خامة تفضّل للطاولة؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Natural marble", ar: "رخام طبيعي"}
+          - {en: "Engineered marble", ar: "رخام صناعي"}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+  dining-set:
+    for: [dining-set]
+    questions:
+      - ask: people
+        q: {en: "How many people does the dining set need to seat?", ar: "كم شخص تحتاج طقم الطعام يتسع له؟"}
+        options:
+          - {en: "2 people", ar: "شخصين", people: 2}
+          - {en: "4 people", ar: "4 أشخاص", people: 4}
+          - {en: "6 people", ar: "6 أشخاص", people: 6}
+          - {en: "8 people", ar: "8 أشخاص", people: 8}
+          - {en: "10 or more people", ar: "10 أشخاص أو أكثر", people: 10, or_more: true}
+      - ask: detail
+        q: {en: "Which type of chairs do you prefer with the set?", ar: "أي نوع كراسي تفضّل مع الطقم؟"}
+        options:
+          - {en: "Fully upholstered chairs", ar: "كراسي مبطنة بالكامل"}
+          - {en: "Upholstered seats only", ar: "مقاعد مبطنة فقط"}
+          - {en: "Wooden chairs", ar: "كراسي خشبية"}
+          - {en: "Metal chairs", ar: "كراسي معدنية"}
+          - {en: "Leather chairs", ar: "كراسي جلد"}
+          - {en: "Chairs with arms", ar: "كراسي بذراعين"}
+          - {en: "Armless chairs", ar: "كراسي بدون ذراعين"}
+          - {en: "Set with a long bench", ar: "طقم مع مقعد طويل (بنش)"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  office-table:
+    for: [office-table]
+    questions:
+      - ask: detail
+        q: {en: "Which type or design of desk do you prefer?", ar: "أي نوع أو تصميم مكتب تفضّل؟"}
+        options:
+          - {en: "Straight desk", ar: "مكتب مستقيم"}
+          - {en: "L-shaped corner desk", ar: "مكتب زاوية L"}
+          - {en: "U-shaped desk", ar: "مكتب على شكل U"}
+          - {en: "Wall-mounted / Floating desk", ar: "مكتب جداري / معلّق"}
+          - {en: "Small, compact desk", ar: "مكتب صغير ومدمج"}
+          - {en: "Large executive desk", ar: "مكتب تنفيذي كبير"}
+          - {en: "Gaming desk", ar: "مكتب ألعاب (Gaming)"}
+          - {en: "Folding desk", ar: "مكتب قابل للطي"}
+          - {en: "Height-adjustable desk", ar: "مكتب قابل لتعديل الارتفاع"}
+      - ask: detail
+        q: {en: "Which features matter to you in a desk?", ar: "أي مميزات تهمك في المكتب؟"}
+        multi: true
+        options:
+          - {en: "Storage drawers", ar: "أدراج للتخزين", match: [drawer]}
+          - {en: "Built-in cabinets / shelves", ar: "خزائن / أرفف مدمجة", match: [cabinet, shelf, shelves, shelving]}
+          - {en: "Electric height adjustment", ar: "تعديل الارتفاع كهربائيًا"}
+          - {en: "Manual height adjustment", ar: "تعديل الارتفاع يدويًا"}
+          - {en: "Cable management", ar: "تنظيم وإخفاء الأسلاك"}
+          - {en: "Space for two or more monitors", ar: "مساحة لشاشتين أو أكثر"}
+          - {en: "Monitor stand", ar: "حامل شاشة"}
+          - {en: "Large work surface", ar: "مساحة عمل واسعة"}
+      - ask: colour
+        q: {en: "Which color or material do you prefer?", ar: "أي لون أو خامة تفضّل؟"}
+        options_first: true
+        options:
+          - {en: "Solid wood", ar: "خشب طبيعي"}
+          - {en: "Engineered wood", ar: "خشب صناعي", match: [engineered wood, mdf]}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Wood and metal", ar: "خشب مع معدن", match: [wood and metal, metal and wood]}
+          - {en: "Light brown", ar: "بني فاتح"}
+          - {en: "Dark brown", ar: "بني غامق"}
+  storage-box:
+    for: [storage-box]
+    questions:
+      - ask: detail
+        q: {en: "What type of storage box do you need?", ar: "أي نوع صندوق تخزين تحتاج؟"}
+        options:
+          - {en: "For clothes", ar: "للملابس"}
+          - {en: "For toys", ar: "للألعاب"}
+          - {en: "For shoes", ar: "للأحذية"}
+          - {en: "For documents", ar: "للمستندات"}
+          - {en: "Multi-purpose", ar: "متعدد الاستخدام"}
+      - ask: detail
+        q: {en: "What size do you need?", ar: "أي حجم تحتاج؟"}
+        options:
+          - {en: "Small", ar: "صغير"}
+          - {en: "Medium", ar: "متوسط"}
+          - {en: "Large", ar: "كبير"}
+          - {en: "With drawers", ar: "بأدراج"}
+          - {en: "With compartments", ar: "مقسم"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  laundry-basket:
+    for: [laundry-basket]
+    questions:
+      - ask: detail
+        q: {en: "Which type of laundry basket do you prefer?", ar: "أي نوع سلة غسيل تفضّل؟"}
+        options:
+          - {en: "With lid", ar: "بغطاء"}
+          - {en: "Without lid", ar: "بدون غطاء"}
+          - {en: "With sorting compartments", ar: "بأقسام للفرز"}
+          - {en: "Collapsible", ar: "قابلة للطي"}
+          - {en: "With wheels", ar: "بعجلات"}
+      - ask: detail
+        q: {en: "What capacity do you need?", ar: "أي سعة تحتاج؟"}
+        options:
+          - {en: "Small", ar: "صغيرة"}
+          - {en: "Medium", ar: "متوسطة"}
+          - {en: "Large / Family size", ar: "كبيرة / عائلية"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  shelve:
+    for: [shelve]
+    questions:
+      - ask: detail
+        q: {en: "What type of shelving are you looking for?", ar: "أي نوع رفوف تبحث عنه؟"}
+        options:
+          - {en: "Wall shelf", ar: "رف جداري"}
+          - {en: "Freestanding shelving unit", ar: "وحدة رفوف أرضية"}
+          - {en: "Corner shelf", ar: "رف زاوية"}
+          - {en: "Heavy-duty storage shelving", ar: "رف للتخزين الثقيل"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Iron", ar: "حديد"}
+          - {en: "Aluminum", ar: "المنيوم"}
+          - {en: "Plastic", ar: "بلاستيك"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Marble", ar: "رخام"}
+          - {en: "Mixed materials", ar: "مختلط الخامات"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  carpet:
+    for: [carpet]
+    questions:
+      - ask: detail
+        q: {en: "What rug shape and size do you need?", ar: "أي شكل ومقاس سجادة تحتاج؟"}
+        options:
+          - {en: "Small rectangular", ar: "مستطيلة صغيرة"}
+          - {en: "Medium rectangular", ar: "مستطيلة متوسطة"}
+          - {en: "Large rectangular", ar: "مستطيلة كبيرة"}
+          - {en: "Round", ar: "دائرية"}
+          - {en: "Oval", ar: "بيضاوية"}
+          - {en: "Square", ar: "مربعة"}
+          - {en: "Long hallway runner", ar: "سجادة ممر طويلة", match: [runner, hallway]}
+          - {en: "Freeform / Irregular shape", ar: "سجادة بشكل حر / غير منتظم"}
+          - {en: "Wall-to-wall majlis rug", ar: "سجادة كاملة للمجلس", match: [majlis, wall to wall]}
+      - ask: detail
+        q: {en: "Which pile type or material do you prefer?", ar: "أي نوع وبر أو خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Long, soft pile (Shaggy)", ar: "وبر طويل وناعم (Shaggy)", match: [shaggy, shag]}
+          - {en: "Short, dense pile", ar: "وبر قصير وكثيف", match: [short pile, low pile]}
+          - {en: "Medium pile", ar: "وبر متوسط"}
+          - {en: "Flatweave (no pile)", ar: "بدون وبر / منسوجة مسطحة", match: [flatweave, flat weave, flatwoven, flat woven, dhurry, dhurrie, kilim]}
+          - {en: "Natural wool", ar: "صوف طبيعي", match: [wool]}
+          - {en: "Cotton", ar: "قطن"}
+          - {en: "Silk", ar: "حرير"}
+          - {en: "Polyester", ar: "بوليستر"}
+          - {en: "Polypropylene", ar: "بولي بروبيلين"}
+          - {en: "Jute / Natural fibers", ar: "جوت / ألياف طبيعية", match: [jute, sisal, seagrass, natural fiber, natural fibre]}
+          - {en: "Faux fur", ar: "فرو صناعي"}
+          - {en: "Easy-clean, stain-resistant material", ar: "خامة سهلة التنظيف ومقاومة للبقع", match: [stain resistant, easy clean, washable]}
+      - ask: colour
+        q: {en: "Which color or pattern do you prefer?", ar: "أي لون أو نقشة تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "ألوان متعددة"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Floral", ar: "مورّدة"}
+          - {en: "Geometric", ar: "هندسية"}
+          - {en: "Striped", ar: "مخططة"}
+          - {en: "Oriental / Persian", ar: "شرقية / فارسية"}
+          - {en: "Traditional / Heritage", ar: "تراثية"}
+          - {en: "Abstract", ar: "تجريدية"}
+          - {en: "3D embossed pattern", ar: "نقش بارز ثلاثي الأبعاد", match: [embossed, 3d]}
+  flower-pot-and-plant:
+    for: [flower-pot-and-plant]
+    questions:
+      - ask: detail
+        q: {en: "Which planter shape or type do you prefer?", ar: "أي شكل أو نوع أصيص تفضّل؟"}
+        options:
+          - {en: "Round", ar: "دائري"}
+          - {en: "Cylindrical", ar: "أسطواني"}
+          - {en: "Square", ar: "مربع"}
+          - {en: "Rectangular", ar: "مستطيل"}
+          - {en: "Conical", ar: "مخروطي"}
+          - {en: "Spherical", ar: "كروي"}
+          - {en: "Tall and slim", ar: "طويل ونحيف"}
+          - {en: "Hanging planter", ar: "أصيص معلق"}
+          - {en: "Wall planter", ar: "أصيص جداري"}
+          - {en: "Planter on a stand", ar: "أصيص على حامل"}
+          - {en: "Long trough planter", ar: "صندوق زراعة طويل"}
+          - {en: "Planter set in different sizes", ar: "طقم أصص بأحجام مختلفة"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Terracotta / Clay", ar: "فخار"}
+          - {en: "Cement / Concrete", ar: "إسمنت / خرسانة"}
+          - {en: "Plastic", ar: "بلاستيك"}
+          - {en: "Fiberglass", ar: "فايبر جلاس"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Natural stone", ar: "حجر طبيعي"}
+      - ask: detail
+        q: {en: "Where will the planter be used?", ar: "مكان استخدام الأصيص؟"}
+        options:
+          - {en: "On a table or shelf", ar: "على طاولة أو رف"}
+          - {en: "On the floor indoors", ar: "على الأرض داخل المنزل"}
+          - {en: "On the balcony", ar: "على الشرفة"}
+          - {en: "Outdoors in the garden", ar: "خارجي في الحديقة"}
+          - {en: "At the entrance", ar: "عند المدخل"}
+          - {en: "Hanging from the ceiling", ar: "معلق من السقف"}
+          - {en: "Mounted on the wall", ar: "مثبت على الجدار"}
+  statue-and-antique:
+    for: [statue-and-antique]
+    questions:
+      - ask: detail
+        q: {en: "What type of decor piece are you looking for?", ar: "أي نوع قطعة ديكور تبحث عنه؟"}
+        options:
+          - {en: "People and faces", ar: "أشخاص ووجوه", match: [face, people, bust, head]}
+          - {en: "Animals and birds", ar: "حيوانات وطيور", match: [animal, bird, monkey, dog, elephant, horse, cat, lion, tiger]}
+          - {en: "Abstract shapes", ar: "أشكال تجريدية", match: [abstract]}
+          - {en: "Natural forms", ar: "أشكال طبيعية"}
+          - {en: "Architectural models", ar: "مجسمات معمارية"}
+          - {en: "Heritage antiques", ar: "تحف تراثية", match: [heritage]}
+          - {en: "Classic antiques", ar: "تحف كلاسيكية", match: [classic antique, vintage]}
+          - {en: "Symbolic figures", ar: "أشكال رمزية"}
+          - {en: "Letters and words", ar: "حروف وكلمات", match: [letter, word]}
+          - {en: "Decorative balls and shapes", ar: "كرات وأشكال ديكورية", match: [ball, sphere, orb]}
+          - {en: "Art sculptures", ar: "منحوتات فنية", match: [sculpture, sculptural]}
+      - ask: detail
+        q: {en: "Which size do you prefer?", ar: "أي حجم تفضّل؟"}
+        options:
+          - {en: "Small, tabletop", ar: "صغير للطاولة"}
+          - {en: "Medium", ar: "متوسط"}
+          - {en: "Large, floor-standing", ar: "كبير للأرض"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  candle:
+    for: [candle]
+    questions:
+      - ask: detail
+        q: {en: "Which type of candles do you prefer?", ar: "أي نوع شموع تفضّل؟"}
+        options:
+          - {en: "Scented", ar: "معطرة"}
+          - {en: "Unscented", ar: "بدون عطر"}
+          - {en: "Jar candle", ar: "في وعاء"}
+          - {en: "Pillar candles", ar: "أعمدة"}
+          - {en: "LED candles", ar: "شموع LED"}
+      - ask: detail
+        q: {en: "Which scent do you prefer?", ar: "أي رائحة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Floral", ar: "زهور"}
+          - {en: "Woody / Oud", ar: "خشبي / عود"}
+          - {en: "Vanilla / Sweet", ar: "فانيلا / حلو"}
+          - {en: "Fresh", ar: "منعش"}
+          - {en: "Unscented", ar: "بدون رائحة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  candlestick:
+    for: [candlestick]
+    questions:
+      - ask: detail
+        q: {en: "Which type of candle holder do you prefer?", ar: "أي نوع حامل شموع تفضّل؟"}
+        options:
+          - {en: "Single candle holder", ar: "حامل لشمعة واحدة"}
+          - {en: "Multi-candle holder", ar: "حامل متعدد", match: [multi candle, candelabra]}
+          - {en: "Candle lantern", ar: "فانوس شموع", match: [lantern]}
+          - {en: "Wall sconce holder", ar: "حامل جداري"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble / Marble look", ar: "رخام / مظهر رخامي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  vase:
+    for: [vase]
+    questions:
+      - ask: detail
+        q: {en: "Which vase shape and size do you prefer?", ar: "أي شكل وحجم مزهرية تفضّل؟"}
+        options:
+          - {en: "Small, tabletop", ar: "صغيرة للطاولة"}
+          - {en: "Medium, tabletop", ar: "متوسطة للطاولة"}
+          - {en: "Large, floor-standing", ar: "كبيرة للأرض"}
+          - {en: "Tall and slim", ar: "طويلة ورفيعة"}
+          - {en: "Round / Spherical", ar: "دائرية / كروية"}
+          - {en: "Wide", ar: "عريضة"}
+          - {en: "With handle(s)", ar: "بيد أو مقابض", match: [handle]}
+          - {en: "Unconventional shape", ar: "شكل غير تقليدي"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Clear glass", ar: "زجاج شفاف"}
+          - {en: "Colored glass", ar: "زجاج ملون"}
+          - {en: "Terracotta", ar: "فخار"}
+          - {en: "Porcelain", ar: "بورسلان"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Marble / Stone", ar: "رخام / حجر"}
+      - ask: colour
+        q: {en: "Which color or design do you prefer?", ar: "أي لون أو تصميم تفضّل؟"}
+        options:
+          - {en: "Multicolor", ar: "ألوان متعددة"}
+          - {en: "Solid", ar: "سادة"}
+          - {en: "Floral", ar: "مورّد"}
+          - {en: "Geometric patterns", ar: "نقوش هندسية"}
+          - {en: "Embossed / Carved", ar: "بارزة / محفورة"}
+          - {en: "Rough texture", ar: "ملمس خشن", match: [textured, rough]}
+          - {en: "Glossy", ar: "لامعة", match: [glossy, gloss, lacquered]}
+          - {en: "Matte", ar: "مطفية"}
+  flower:
+    for: [flower]
+    questions:
+      - ask: detail
+        q: {en: "Do you prefer natural or artificial flowers?", ar: "تفضّل الزهور طبيعية أو صناعية؟"}
+        options:
+          - {en: "Natural", ar: "طبيعية"}
+          - {en: "Artificial", ar: "صناعية"}
+          - {en: "Indoor", ar: "داخلي"}
+          - {en: "Outdoor", ar: "خارجي"}
+      - ask: colour
+        q: {en: "Which flower color or type do you prefer?", ar: "أي لون أو نوع ورد تفضّل؟"}
+        options:
+          - {en: "Damask roses", ar: "ورد جوري"}
+          - {en: "Tulips", ar: "توليب"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  wall-clock:
+    for: [wall-clock]
+    questions:
+      - ask: detail
+        q: {en: "Which type of clock do you prefer?", ar: "أي نوع ساعة تفضّل؟"}
+        options:
+          - {en: "Wall clock", ar: "ساعة جدارية", match: [wall clock, wall]}
+          - {en: "Table / Desk clock", ar: "ساعة طاولة / مكتب"}
+          - {en: "Alarm clock", ar: "ساعة منبّه"}
+          - {en: "Tall floor (grandfather) clock", ar: "ساعة أرضية طويلة"}
+          - {en: "Freestanding decorative clock", ar: "ساعة ديكور قائمة"}
+      - ask: detail
+        q: {en: "Which shape and design do you prefer?", ar: "أي شكل وتصميم تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Round", ar: "دائرية"}
+          - {en: "Square", ar: "مربعة"}
+          - {en: "Rectangular", ar: "مستطيلة"}
+          - {en: "Oval", ar: "بيضاوية"}
+          - {en: "Digital", ar: "رقمية"}
+          - {en: "Analog (with hands)", ar: "بعقارب"}
+          - {en: "Roman numerals", ar: "بأرقام رومانية"}
+          - {en: "No numerals", ar: "بدون أرقام"}
+          - {en: "3D / Raised design", ar: "تصميم مجسّم / بارز"}
+          - {en: "Unconventional shape", ar: "شكل غير تقليدي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  decorative-hanger:
+    for: [decorative-hanger]
+    questions:
+      - ask: detail
+        q: {en: "What type of decorative hanger are you looking for?", ar: "أي نوع علاقة ديكور تبحث عنه؟"}
+        options:
+          - {en: "Clothes hanger / rack", ar: "علاقة ملابس", match: [coat, clothes, rack]}
+          - {en: "Key holder", ar: "علاقة مفاتيح", match: [key]}
+          - {en: "Bag hanger", ar: "علاقة حقائب"}
+          - {en: "Towel hanger", ar: "علاقة مناشف"}
+          - {en: "Hat hanger", ar: "علاقة قبعات"}
+          - {en: "Multi-purpose hanger", ar: "علاقة متعددة الاستخدامات", match: [multi purpose, hooks]}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Solid wood", ar: "خشب طبيعي"}
+          - {en: "Engineered wood", ar: "خشب صناعي", match: [engineered wood, mdf]}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Stainless steel", ar: "ستانلس ستيل"}
+          - {en: "Wrought iron", ar: "حديد مشغول"}
+          - {en: "Brass / Copper", ar: "نحاس"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Acrylic", ar: "أكريليك"}
+          - {en: "Wood and metal", ar: "خشب ومعدن"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  art-canvas:
+    for: [art-canvas]
+    questions:
+      - ask: detail
+        q: {en: "Which type or theme of artwork do you prefer?", ar: "أي نوع أو موضوع لوحة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Nature and landscapes", ar: "طبيعة ومناظر", match: [landscape, nature, mountain, forest, sea]}
+          - {en: "Flowers and plants", ar: "زهور ونباتات", match: [floral, flower, botanical, plant, leaf]}
+          - {en: "People and faces", ar: "أشخاص ووجوه", match: [portrait, face, people, figure]}
+          - {en: "Animals and birds", ar: "حيوانات وطيور", match: [animal, bird, elephant, dog, cat, horse, lion, tiger]}
+          - {en: "Abstract art", ar: "فن تجريدي"}
+          - {en: "Geometric shapes", ar: "أشكال هندسية"}
+          - {en: "Cities and landmarks", ar: "مدن ومعالم", match: [city, cities, landmark, skyline]}
+          - {en: "Arabic and Islamic art", ar: "فن عربي وإسلامي", match: [arabic, islamic, calligraphy]}
+          - {en: "Heritage and cultural art", ar: "فن تراثي وثقافي"}
+          - {en: "Contemporary art", ar: "فن عصري"}
+          - {en: "Classic art", ar: "فن كلاسيكي"}
+          - {en: "3D relief artwork", ar: "لوحات بارزة ثلاثية الأبعاد", match: [relief, 3d]}
+          - {en: "Photography", ar: "تصوير فوتوغرافي", match: [photo, photograph, photography]}
+          - {en: "Fashion", ar: "أزياء وموضة"}
+          - {en: "Kids' artwork", ar: "لوحات أطفال"}
+          - {en: "National / Patriotic", ar: "وطني"}
+      - ask: detail
+        q: {en: "Which size do you prefer?", ar: "أي حجم تفضّل؟"}
+        options:
+          - {en: "Small", ar: "صغير"}
+          - {en: "Medium", ar: "متوسط"}
+          - {en: "Large", ar: "كبير"}
+          - {en: "Set of paintings", ar: "طقم لوحات", match: [set]}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  mirror:
+    for: [mirror]
+    questions:
+      - ask: detail
+        q: {en: "Which type do you prefer?", ar: "أي نوع تفضّل؟"}
+        options:
+          - {en: "Wall mirror", ar: "جدارية"}
+          - {en: "Tall floor mirror leaning on the wall", ar: "أرضية طويلة تستند على الجدار"}
+          - {en: "Freestanding floor mirror with stand", ar: "أرضية بقاعدة مستقلة"}
+          - {en: "Table / Vanity mirror", ar: "طاولة / تسريحة"}
+          - {en: "Swivel or tilting mirror", ar: "مرآة دوّارة أو قابلة للإمالة"}
+          - {en: "Lighted mirror", ar: "مرآة بإضاءة", match: [lighted, led, illuminated]}
+          - {en: "Large decorative mirror", ar: "مرآة ديكورية كبيرة"}
+      - ask: detail
+        q: {en: "Which shape or design do you prefer?", ar: "أي شكل أو تصميم تفضّل؟"}
+        options:
+          - {en: "Round", ar: "دائرية"}
+          - {en: "Oval", ar: "بيضاوية"}
+          - {en: "Rectangular", ar: "مستطيلة"}
+          - {en: "Square", ar: "مربعة"}
+          - {en: "Arched top", ar: "مقوّسة من الأعلى"}
+          - {en: "Wavy", ar: "متموجة"}
+          - {en: "Freeform / Irregular", ar: "شكل حر / غير منتظم"}
+          - {en: "Window-pane style", ar: "مقسّمة مثل النافذة"}
+          - {en: "Multi-piece", ar: "متعددة القطع"}
+      - ask: detail
+        q: {en: "Which details or finish do you prefer?", ar: "أي تفاصيل أو تشطيب تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Clear glass", ar: "زجاج صافي"}
+          - {en: "Smoked / Gray glass", ar: "زجاج دخاني / رمادي"}
+          - {en: "Bronze glass", ar: "زجاج برونزي"}
+          - {en: "Frosted / Antiqued effect", ar: "تأثير ضبابي / معتّق"}
+          - {en: "Lines or ripples", ar: "خطوط أو تعرجات"}
+          - {en: "Beveled edges", ar: "حواف مشطوفة"}
+          - {en: "Frameless", ar: "بدون إطار"}
+          - {en: "Gold frame", ar: "إطار ذهبي"}
+          - {en: "Black frame", ar: "إطار أسود"}
+          - {en: "Wood frame", ar: "إطار خشبي"}
+          - {en: "LED lighting", ar: "إضاءة LED", match: [led]}
+          - {en: "Anti-fog", ar: "مقاومة للضباب"}
+          - {en: "Magnifying", ar: "تكبير"}
+  lighting:
+    for: [lighting]
+    for_category: [lighting]
+    noun: {en: "lights", ar: "الإضاءات"}
+    questions:
+      - ask: type
+        q: {en: "What type of lighting are you looking for?", ar: "أي نوع إضاءة تبحث عنه؟"}
+        options:
+          - {en: "Chandelier", ar: "ثريا", subcategory: chandelier}
+          - {en: "Pendant", ar: "معلقة", subcategory: pendant-lighting}
+          - {en: "Ceiling light", ar: "سقفية"}
+          - {en: "Spotlight", ar: "سبوت لايت"}
+          - {en: "Concealed / LED", ar: "مخفية / LED"}
+          - {en: "Wall light", ar: "جدارية", subcategory: wall-lighting}
+          - {en: "Floor lamp", ar: "أرضية", subcategory: floor-lamp}
+          - {en: "Table lamp", ar: "طاولة", subcategory: table-lamp}
+          - {en: "Desk lamp", ar: "مكتب", subcategory: table-lamp, words: "desk lamp"}
+          - {en: "Reading light", ar: "قراءة", match: [reading]}
+          - {en: "Decorative", ar: "ديكورية"}
+          - {en: "Outdoor", ar: "خارجية", subcategory: outdoor-lighting}
+          - {en: "Track lighting", ar: "مسارات"}
+          - {en: "Mirror lighting", ar: "مرايا"}
+          - {en: "Night light", ar: "ليلية"}
+          - {en: "Smart-controlled lighting", ar: "اضائه بتحكم ذكي"}
+      - ask: detail
+        q: {en: "Which shape or design do you prefer?", ar: "أي شكل أو تصميم تفضّل؟"}
+        options:
+          - {en: "Round", ar: "دائرية"}
+          - {en: "Square", ar: "مربعة"}
+          - {en: "Linear", ar: "خطية"}
+          - {en: "Globe", ar: "كروية"}
+          - {en: "Rings", ar: "حلقات"}
+          - {en: "Cylindrical", ar: "أسطوانية"}
+          - {en: "Multi-arm", ar: "متعددة الأذرع"}
+          - {en: "Hanging / Drop", ar: "متدلية", match: [hanging, drop, pendant]}
+          - {en: "Branches", ar: "أغصان"}
+          - {en: "Geometric", ar: "هندسية"}
+          - {en: "Recessed / Built-in", ar: "مدمجة"}
+          - {en: "Unconventional design", ar: "تصميم غير تقليدي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  table-lamp:
+    for: [table-lamp]
+    questions:
+      - ask: detail
+        q: {en: "Which table lamp shape or design do you prefer?", ar: "أي شكل أو تصميم أباجورة تفضّل؟"}
+        options:
+          - {en: "Classic fabric shade", ar: "بغطاء قماشي كلاسيكي", match: [fabric shade, linen shade, pleated shade]}
+          - {en: "Conical (empire) shade", ar: "بغطاء مخروطي", match: [empire, conical, tapered shade]}
+          - {en: "Drum shade", ar: "بغطاء أسطواني"}
+          - {en: "Globe", ar: "كروية"}
+          - {en: "Dome / Mushroom", ar: "قبة / فطر"}
+          - {en: "With branches or arms", ar: "بفروع أو أذرع"}
+          - {en: "Geometric", ar: "بشكل هندسي"}
+          - {en: "Curved design", ar: "بتصميم منحني"}
+          - {en: "Slim and tall", ar: "بتصميم نحيف وطويل"}
+          - {en: "No shade (exposed bulb)", ar: "بدون غطاء (لمبة مكشوفة)"}
+          - {en: "Simple modern", ar: "مودرن بسيط"}
+          - {en: "Artistic / Decorative design", ar: "تصميم فني / ديكوري", match: [artistic, decorative, sculptural]}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Marble", ar: "رخام"}
+          - {en: "Crystal", ar: "كريستال"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Fabric", ar: "قماش", match: [fabric, linen]}
+          - {en: "Plastic / Acrylic", ar: "بلاستيك / أكريليك", match: [plastic, acrylic, polyresin, resin]}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  floor-lamp:
+    for: [floor-lamp]
+    questions:
+      - ask: detail
+        q: {en: "Which floor lamp shape do you prefer?", ar: "أي شكل مصباح أرضي تفضّل؟"}
+        options:
+          - {en: "Straight vertical", ar: "عمودي مستقيم"}
+          - {en: "Curved arc", ar: "قوسي منحني"}
+          - {en: "Tripod", ar: "ثلاثي الأرجل (ترايبود)"}
+          - {en: "Adjustable arm", ar: "بذراع قابل للتوجيه"}
+          - {en: "Multiple arms or light heads", ar: "بعدة أذرع أو رؤوس إضاءة"}
+          - {en: "Fabric shade", ar: "بغطاء قماشي", match: [fabric shade, linen shade, fabric drum shade, linen drum shade]}
+          - {en: "Globe", ar: "كروي"}
+          - {en: "Dome / Mushroom", ar: "قبة / فطر"}
+          - {en: "Long tube", ar: "أنبوبي طويل"}
+          - {en: "Uplighter (indirect light)", ar: "بإضاءة غير مباشرة للأعلى"}
+          - {en: "With shelf or side table", ar: "مع رف أو طاولة جانبية", match: [shelf, side table, attached table]}
+          - {en: "Geometric / Artistic design", ar: "تصميم هندسي / فني"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Marble", ar: "رخام"}
+          - {en: "Crystal", ar: "كريستال"}
+          - {en: "Fabric", ar: "قماش", match: [fabric, linen]}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Acrylic", ar: "أكريليك"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  wall-lighting:
+    for: [wall-lighting]
+    questions:
+      - ask: detail
+        q: {en: "Which wall light shape or design do you prefer?", ar: "أي شكل أو تصميم إضاءة جدارية تفضّل؟"}
+        options:
+          - {en: "Classic with fabric shade", ar: "كلاسيكي بغطاء قماشي"}
+          - {en: "Globe", ar: "كروي"}
+          - {en: "Cylindrical", ar: "أسطواني"}
+          - {en: "Long vertical tube", ar: "أنبوبي طولي"}
+          - {en: "Half-moon", ar: "نصف دائري"}
+          - {en: "Geometric", ar: "هندسي"}
+          - {en: "Extended arm", ar: "بذراع ممتد"}
+          - {en: "Swing arm", ar: "بذراع متحرك"}
+          - {en: "Linear", ar: "خطي"}
+          - {en: "Concealed lighting", ar: "إضاءة مخفية"}
+          - {en: "Up-and-down", ar: "للأعلى والأسفل"}
+          - {en: "Artistic / Decorative", ar: "فني / ديكوري"}
+      - ask: detail
+        q: {en: "Which material do you prefer for wall lighting?", ar: "أي خامة تفضّل للإضاءة الجدارية؟"}
+        multi: true
+        options:
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Crystal", ar: "كريستال"}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Marble", ar: "رخام"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Fabric", ar: "قماش"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Acrylic", ar: "أكريليك"}
+          - {en: "Gypsum / Plaster", ar: "جبس"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  outdoor-lighting:
+    for: [outdoor-lighting]
+    questions:
+      - ask: detail
+        q: {en: "What type of outdoor lighting are you looking for?", ar: "أي نوع إضاءة خارجية تبحث عنه؟"}
+        options:
+          - {en: "Wall sconce", ar: "أبليك جداري"}
+          - {en: "Tall post light", ar: "عمود طويل"}
+          - {en: "Short pathway light", ar: "إنارة ممرات قصيرة"}
+          - {en: "Garden spotlight", ar: "سبوت حديقة"}
+          - {en: "In-ground light", ar: "أرضية مدمجة"}
+          - {en: "Stair light", ar: "إنارة درج"}
+          - {en: "Hanging", ar: "معلقة"}
+          - {en: "Lantern", ar: "فانوس"}
+          - {en: "String lights", ar: "سلاسل إضاءة"}
+          - {en: "LED strips", ar: "شرائط LED"}
+          - {en: "Floodlight", ar: "كشاف"}
+          - {en: "Plant lighting", ar: "إضاءة للنباتات"}
+      - ask: detail
+        q: {en: "Which material do you prefer for outdoor lighting?", ar: "أي خامة تفضّل للإضاءة الخارجية؟"}
+        multi: true
+        options:
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Crystal", ar: "كريستال"}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Fabric", ar: "قماش"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Marble", ar: "رخام"}
+          - {en: "Acrylic", ar: "أكريليك"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  chandelier:
+    for: [chandelier]
+    questions:
+      - ask: detail
+        q: {en: "Which chandelier shape do you prefer?", ar: "أي شكل ثريا تفضّل؟"}
+        options:
+          - {en: "Circular rings", ar: "حلقات دائرية"}
+          - {en: "Cascading crystal", ar: "كريستال متدلٍ"}
+          - {en: "Multi-arm", ar: "متعددة الأذرع"}
+          - {en: "Linear / Rectangular", ar: "خطية / مستطيلة"}
+          - {en: "Glass globes", ar: "كرات زجاجية"}
+          - {en: "Spiral", ar: "حلزونية"}
+          - {en: "Geometric", ar: "هندسية"}
+          - {en: "Branches and flowers", ar: "أغصان وورود"}
+      - ask: detail
+        q: {en: "What size are you looking for?", ar: "أي حجم تبحث عنه؟"}
+        options:
+          - {en: "Small", ar: "صغيرة"}
+          - {en: "Medium", ar: "متوسطة"}
+          - {en: "Large and luxurious", ar: "كبيرة وفخمة"}
+          - {en: "Long and hanging", ar: "طويلة ومتدلية"}
+          - {en: "Multi-tier", ar: "متعددة المستويات", match: [multi tier, tiered]}
+          - {en: "Short flush-mount", ar: "سقفية قصيرة"}
+          - {en: "Long horizontal", ar: "أفقية طويلة"}
+          - {en: "Unconventional design", ar: "تصميم غير تقليدي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  pendant-lighting:
+    for: [pendant-lighting]
+    questions:
+      - ask: detail
+        q: {en: "Which pendant light shape or design do you prefer?", ar: "أي شكل أو تصميم إضاءة معلقة تفضّل؟"}
+        options:
+          - {en: "Single pendant", ar: "تعليقة مفردة"}
+          - {en: "Cluster of hanging pendants", ar: "مجموعة تعليقات متدلية", match: [cluster]}
+          - {en: "Long linear", ar: "خطية طويلة"}
+          - {en: "Globe", ar: "كروية"}
+          - {en: "Cylindrical", ar: "أسطوانية"}
+          - {en: "Conical", ar: "مخروطية"}
+          - {en: "Dome / Half-globe", ar: "قبة / نصف كروية"}
+          - {en: "Circular rings", ar: "حلقات دائرية"}
+          - {en: "Geometric", ar: "هندسية"}
+          - {en: "Multi-height", ar: "متعددة الارتفاعات"}
+          - {en: "Lantern design", ar: "بتصميم فانوس"}
+          - {en: "Artistic / Sculptural design", ar: "بتصميم فني / منحوت"}
+      - ask: detail
+        q: {en: "Which material do you prefer for pendant lighting?", ar: "أي خامة تفضّل للإضاءة المعلقة؟"}
+        multi: true
+        options:
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Metal", ar: "معدن", match: [metal, iron, steel, brass, aluminium, aluminum]}
+          - {en: "Crystal", ar: "كريستال"}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Rattan / Wicker", ar: "راتان / خوص"}
+          - {en: "Fabric", ar: "قماش", match: [fabric, linen]}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Marble", ar: "رخام"}
+          - {en: "Acrylic", ar: "أكريليك"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  coffee-maker:
+    for: [coffee-maker]
+    questions:
+      - ask: detail
+        q: {en: "What type of coffee machine are you looking for?", ar: "أي نوع ماكينة قهوة تبحث عنه؟"}
+        options:
+          - {en: "Espresso", ar: "إسبريسو"}
+          - {en: "Capsule", ar: "كبسولات"}
+          - {en: "Drip coffee", ar: "قهوة مقطرة"}
+          - {en: "Turkish coffee", ar: "قهوة تركية"}
+          - {en: "Arabic coffee", ar: "قهوة عربية"}
+      - ask: detail
+        q: {en: "Which level of operation do you prefer?", ar: "أي مستوى تشغيل تفضّل؟"}
+        options:
+          - {en: "Fully automatic", ar: "أوتوماتيك بالكامل"}
+          - {en: "Semi-automatic", ar: "شبه أوتوماتيك"}
+          - {en: "Manual", ar: "يدوي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  cooking-appliance:
+    for: [cooking-appliance]
+    questions:
+      - ask: detail
+        q: {en: "What type of cooking appliance do you need?", ar: "أي نوع جهاز طبخ تحتاج؟"}
+        options:
+          - {en: "Air fryer", ar: "قلاية هوائية"}
+          - {en: "Mini oven", ar: "فرن صغير"}
+          - {en: "Electric grill", ar: "شواية كهربائية"}
+          - {en: "Electric pressure cooker", ar: "قدر ضغط كهربائي"}
+          - {en: "Multi-cooker", ar: "جهاز طبخ متعدد الوظائف"}
+      - ask: detail
+        q: {en: "Which control method do you prefer?", ar: "أي طريقة تحكم تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Multi-function", ar: "متعدد الوظائف"}
+          - {en: "Automatic cooking programs", ar: "برامج طبخ تلقائية"}
+          - {en: "Digital controls", ar: "تحكم رقمي"}
+          - {en: "Touchscreen", ar: "شاشة لمس"}
+          - {en: "Timer and auto shut-off", ar: "مؤقت وإيقاف تلقائي"}
+          - {en: "Temperature control", ar: "تحكم بدرجة الحرارة"}
+          - {en: "Fast cooking", ar: "طبخ سريع"}
+          - {en: "Easy cleaning", ar: "تنظيف سهل"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  food-processor:
+    for: [food-processor]
+    questions:
+      - ask: detail
+        q: {en: "Which functions do you need in a food processor?", ar: "ما الوظائف التي تحتاجها في محضّرة الطعام؟"}
+        multi: true
+        options:
+          - {en: "Chopping", ar: "تقطيع"}
+          - {en: "Blending", ar: "خلط"}
+          - {en: "Kneading", ar: "عجن"}
+          - {en: "Mincing", ar: "فرم"}
+          - {en: "Grating", ar: "بشر"}
+          - {en: "Slicing", ar: "تقطيع شرائح"}
+          - {en: "Whisking", ar: "خفق"}
+          - {en: "Grinding", ar: "طحن"}
+          - {en: "Juicing", ar: "عصر"}
+          - {en: "Multi-function / Multi-purpose", ar: "متعددة الوظائفمتعدد الاستخدامات"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  cooking-pot:
+    for: [cooking-pot]
+    questions:
+      - ask: detail
+        q: {en: "What type of pot do you need?", ar: "أي نوع قدر تحتاج؟"}
+        options:
+          - {en: "Regular pot", ar: "قدر عادي"}
+          - {en: "Pressure cooker", ar: "قدر ضغط"}
+          - {en: "Non-stick pot", ar: "قدر غير لاصق"}
+          - {en: "Stainless steel pot", ar: "قدر ستانلس ستيل"}
+          - {en: "Cast iron pot", ar: "قدر حديد زهر"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  serving-utensil-and-tray:
+    for: [serving-utensil-and-tray]
+    questions:
+      - ask: detail
+        q: {en: "What type of serving ware are you looking for?", ar: "أي نوع أدوات تقديم تبحث عنه؟"}
+        options:
+          - {en: "Serving tray", ar: "صينية تقديم", match: [tray]}
+          - {en: "Serving platter", ar: "طبق تقديم", match: [platter]}
+          - {en: "Dessert stand", ar: "حامل حلويات"}
+          - {en: "Serving spoons / utensils", ar: "ملاعق / أدوات تقديم"}
+          - {en: "Serving set", ar: "طقم تقديم"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Stainless steel", ar: "ستانلس ستيل"}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Glass", ar: "زجاج"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  cup:
+    for: [cup]
+    questions:
+      - ask: detail
+        q: {en: "What type of cups are you looking for?", ar: "أي نوع أكواب تبحث عنه؟"}
+        options:
+          - {en: "Arabic coffee", ar: "قهوة عربية"}
+          - {en: "Espresso", ar: "إسبريسو"}
+          - {en: "Tea", ar: "شاي"}
+          - {en: "Water / Juice", ar: "ماء / عصير"}
+          - {en: "Travel mugs", ar: "أكواب سفر"}
+      - ask: detail
+        q: {en: "Which cup material do you prefer?", ar: "أي خامة أكواب تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Clear glass", ar: "زجاج شفاف"}
+          - {en: "Colored glass", ar: "زجاج ملون"}
+          - {en: "Double-wall glass", ar: "زجاج مزدوج الجدار"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Porcelain", ar: "بورسلان"}
+          - {en: "Earthenware / Pottery", ar: "خزف / فخار"}
+          - {en: "Crystal", ar: "كريستال"}
+          - {en: "Stainless steel", ar: "ستانلس ستيل"}
+          - {en: "Plastic", ar: "بلاستيك"}
+          - {en: "Silicone", ar: "سيليكون"}
+          - {en: "Mixed materials", ar: "خامات مختلطة"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  plate:
+    for: [plate]
+    questions:
+      - ask: detail
+        q: {en: "What type of plates are you looking for?", ar: "أي نوع صحون تبحث عنه؟"}
+        options:
+          - {en: "Main dinner plates", ar: "صحون طعام رئيسية"}
+          - {en: "Serving plates", ar: "صحون تقديم"}
+          - {en: "Dessert plates", ar: "صحون حلى"}
+          - {en: "Soup plates", ar: "صحون شوربة"}
+          - {en: "Complete set", ar: "طقم متكامل"}
+      - ask: detail
+        q: {en: "Which material do you prefer?", ar: "أي خامة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Porcelain", ar: "بورسلان"}
+          - {en: "Ceramic", ar: "سيراميك"}
+          - {en: "Stoneware", ar: "خزف حجري"}
+          - {en: "Earthenware", ar: "فخار"}
+          - {en: "Bone china", ar: "بورسلان عظمي"}
+          - {en: "Glass", ar: "زجاج"}
+          - {en: "Opal glass", ar: "زجاج أوبال"}
+          - {en: "Melamine", ar: "ميلامين"}
+          - {en: "Stainless steel", ar: "ستانلس ستيل"}
+          - {en: "Wood", ar: "خشب"}
+          - {en: "Plastic", ar: "بلاستيك"}
+          - {en: "Natural stone", ar: "حجر طبيعي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  weight-bench-flat:
+    for: [weight-bench-flat]
+    questions:
+      - ask: detail
+        q: {en: "Bench type?", ar: "نوع مقعد البنش؟"}
+        options:
+          - {en: "Fixed", ar: "ثابت"}
+          - {en: "Foldable and storable", ar: "قابل للطي والتخزين"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  weight-bench-adjustable:
+    for: [weight-bench-adjustable]
+    questions:
+      - ask: detail
+        q: {en: "Which type of adjustment do you prefer in the bench?", ar: "أي نوع تعديل تفضّل في البنش؟"}
+        options:
+          - {en: "Incline back adjustment", ar: "تعديل الظهر للأعلى (Incline)"}
+          - {en: "Incline / Decline back adjustment", ar: "تعديل الظهر للأعلى والأسفل (Incline / Decline)"}
+          - {en: "Back and seat adjustment", ar: "تعديل الظهر والمقعد"}
+          - {en: "Multi-angle adjustment up to an upright seated position", ar: "تعديل لعدة زوايا وصولًا لوضعية الجلوس المستقيم"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  stationary-bike:
+    for: [stationary-bike]
+    questions:
+      - ask: detail
+        q: {en: "Which type of stationary bike do you prefer?", ar: "أي نوع دراجة ثابتة تفضّل؟"}
+        options:
+          - {en: "Upright bike", ar: "دراجة مستقيمة"}
+          - {en: "Recumbent bike with backrest", ar: "دراجة مستلقية بمسند ظهر"}
+          - {en: "Spin bike", ar: "دراجة سبيننغ"}
+          - {en: "Foldable stationary bike", ar: "دراجة ثابتة قابلة للطي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  treadmill:
+    for: [treadmill]
+    questions:
+      - ask: detail
+        q: {en: "How will you mostly use the treadmill?", ar: "كيف بتستخدم جهاز المشي غالبًا؟"}
+        options:
+          - {en: "Light walking", ar: "مشي خفيف"}
+          - {en: "Brisk walking", ar: "مشي سريع"}
+          - {en: "Running", ar: "جري"}
+          - {en: "High-speed running", ar: "جري بسرعات عالية"}
+          - {en: "Walking and incline climbing", ar: "مشي وصعود مرتفعات"}
+          - {en: "Mixed use", ar: "استخدام متنوع"}
+      - ask: detail
+        q: {en: "Which tech features matter to you?", ar: "أي مميزات تقنية تهمك؟"}
+        multi: true
+        options:
+          - {en: "Digital display for workout data", ar: "شاشة رقمية لعرض بيانات التمرين"}
+          - {en: "Smart touchscreen", ar: "شاشة لمس ذكية"}
+          - {en: "Bluetooth", ar: "بلوتوث"}
+          - {en: "Built-in speakers", ar: "سماعات مدمجة"}
+          - {en: "Fitness app connectivity", ar: "الاتصال بتطبيقات اللياقة"}
+          - {en: "Preset workout programs", ar: "برامج تمارين جاهزة"}
+          - {en: "Heart rate monitoring", ar: "قياس نبض القلب"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  dumbbell:
+    for: [dumbbell]
+    questions:
+      - ask: detail
+        q: {en: "Which type of dumbbell do you prefer?", ar: "أي نوع دمبل تفضّل؟"}
+        options:
+          - {en: "Fixed-weight dumbbell", ar: "دمبل بوزن ثابت"}
+          - {en: "Adjustable dumbbell", ar: "دمبل قابل لتعديل الأوزان"}
+          - {en: "Dumbbell set with various weights", ar: "طقم دمبل بأوزان مختلفة"}
+      - ask: detail
+        q: {en: "Which dumbbell material do you prefer?", ar: "أي خامة دمبل تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Iron", ar: "حديد"}
+          - {en: "Rubber-coated iron", ar: "حديد مغطى بالمطاط"}
+          - {en: "Neoprene-coated iron", ar: "حديد مغطى بالنيوبرين"}
+          - {en: "Vinyl-coated iron", ar: "حديد مغطى بالفينيل"}
+          - {en: "Sand-filled plastic", ar: "بلاستيك محشو بالرمل"}
+          - {en: "Cement-filled plastic", ar: "بلاستيك محشو بالأسمنت"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  elliptical-machine:
+    for: [elliptical-machine]
+    questions:
+      - ask: detail
+        q: {en: "What are the machine's specifications?", ar: "ماهي مواصفات الجهاز؟"}
+        multi: true
+        options:
+          - {en: "Moving handles for a full-body workout", ar: "بمقابض متحركة لتمرين الجسم كامل"}
+          - {en: "Fixed handles", ar: "بمقابض ثابتة"}
+          - {en: "With seat", ar: "بمقعد للجلوس"}
+          - {en: "Small, compact machine", ar: "جهاز صغير ومدمج"}
+          - {en: "Digital display", ar: "شاشة رقمية"}
+          - {en: "Bluetooth", ar: "بلوتوث"}
+          - {en: "Built-in speakers", ar: "سماعات مدمجة"}
+          - {en: "Heart rate monitoring", ar: "قياس نبض القلب"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  kettlebells:
+    for: [kettlebells]
+    questions:
+      - ask: detail
+        q: {en: "Which type do you prefer?", ar: "أي نوع تفضّل؟"}
+        options:
+          - {en: "Cast iron", ar: "حديد زهر"}
+          - {en: "Coated iron", ar: "حديد مطلي"}
+          - {en: "Vinyl-coated iron", ar: "حديد مغطى بالفينيل"}
+          - {en: "Rubber-coated iron", ar: "حديد مغطى بالمطاط"}
+          - {en: "Plastic filled with sand or cement", ar: "بلاستيك محشو بالرمل أو الأسمنت"}
+          - {en: "Adjustable-weight kettlebell", ar: "كيتل بيل قابل لتعديل الوزن"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  medicine-ball:
+    for: [medicine-ball]
+    questions:
+      - ask: detail
+        q: {en: "Which type of medicine ball do you prefer?", ar: "أي نوع كرة طبية تفضّل؟"}
+        options:
+          - {en: "Standard medicine ball", ar: "كرة طبية عادية"}
+          - {en: "Bouncing medicine ball", ar: "كرة طبية للارتداد"}
+          - {en: "Non-bounce slam ball", ar: "كرة طبية للرمي بدون ارتداد (Slam Ball)"}
+          - {en: "Medicine ball with handles", ar: "كرة طبية بمقابض"}
+          - {en: "Large soft wall ball", ar: "كرة طبية كبيرة ولينة (Wall Ball)"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  power-rack:
+    for: [power-rack]
+    questions:
+      - ask: detail
+        q: {en: "What type of rack do you need?", ar: "أي نوع راك تحتاج؟"}
+        options:
+          - {en: "Full power rack", ar: "راك كامل (Power Rack)"}
+          - {en: "Half rack", ar: "نصف راك (Half Rack)"}
+          - {en: "Squat stand", ar: "راك مفتوح (Squat Stand)"}
+          - {en: "Rack with Smith machine", ar: "راك مع جهاز سميث"}
+          - {en: "Multi-function rack", ar: "راك متعدد الوظائف"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  yoga-mat:
+    for: [yoga-mat]
+    questions:
+      - ask: detail
+        q: {en: "Which mat material do you prefer?", ar: "أي خامة سجادة تفضّل؟"}
+        multi: true
+        options:
+          - {en: "Natural rubber", ar: "مطاط طبيعي"}
+          - {en: "TPE", ar: "TPE"}
+          - {en: "PVC", ar: "PVC"}
+          - {en: "NBR", ar: "NBR"}
+          - {en: "Natural cork", ar: "فلين طبيعي"}
+      - ask: detail
+        q: {en: "What's the main use?", ar: "ما الاستخدام الأساسي؟"}
+        options:
+          - {en: "Yoga", ar: "يوغا", match: [yoga]}
+          - {en: "Pilates", ar: "بيلاتس"}
+          - {en: "Floor exercises", ar: "تمارين أرضية"}
+          - {en: "Stretching", ar: "تمارين تمدد"}
+          - {en: "Multi-use", ar: "استخدام متعدد"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  leg-press-machine:
+    for: [leg-press-machine]
+    questions:
+      - ask: detail
+        q: {en: "What type of leg press machine do you need?", ar: "أي نوع جهاز ضغط أرجل تحتاج؟"}
+        options:
+          - {en: "Horizontal", ar: "أفقي"}
+          - {en: "Vertical", ar: "عمودي"}
+          - {en: "45° incline", ar: "مائل"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  chest-press-machine:
+    for: [chest-press-machine]
+    questions:
+      - ask: detail
+        q: {en: "What type of chest press machine do you need?", ar: "أي نوع جهاز ضغط صدر تحتاج؟"}
+        options:
+          - {en: "Plate-loaded", ar: "بأوزان صفائح"}
+          - {en: "Weight stack (selectorized)", ar: "بمكدس أوزان"}
+          - {en: "Multi-use", ar: "متعدد الاستخدام"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  jump-rope:
+    for: [jump-rope]
+    questions:
+      - ask: detail
+        q: {en: "Which type of jump rope do you prefer?", ar: "أي نوع حبل قفز تفضّل؟"}
+        options:
+          - {en: "Standard jump rope", ar: "حبل قفز عادي"}
+          - {en: "Speed rope", ar: "حبل سرعة (Speed Rope)"}
+          - {en: "Weighted rope", ar: "حبل موزون (Weighted Rope)"}
+          - {en: "Cordless rope", ar: "حبل بدون سلك (Cordless)"}
+          - {en: "Smart rope with counter", ar: "حبل ذكي بعدّاد"}
+          - {en: "Beaded rope", ar: "حبل خرز (Beaded Rope)"}
+          - {en: "Beginner rope", ar: "حبل للمبتدئين"}
+      - ask: detail
+        q: {en: "Which specifications matter most to you?", ar: "أي مواصفات تهمك أكثر؟"}
+        multi: true
+        options:
+          - {en: "Adjustable length", ar: "قابل لتعديل الطول"}
+          - {en: "Comfortable, non-slip handles", ar: "مقابض مريحة ومضادة للانزلاق"}
+          - {en: "Fast rotation with bearings", ar: "دوران سريع بمحامل"}
+          - {en: "Adjustable weight", ar: "وزن قابل للتعديل"}
+          - {en: "Jump and calorie counter", ar: "عدّاد للقفزات والسعرات"}
+          - {en: "App / Bluetooth connectivity", ar: "اتصال بتطبيق / بلوتوث"}
+          - {en: "Wear-resistant for outdoor use", ar: "مقاوم للتآكل للاستخدام الخارجي"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  air-bike:
+    for: [air-bike]
+    questions:
+      - ask: detail
+        q: {en: "Which feature matters most to you?", ar: "أي ميزة تهمك أكثر؟"}
+        options:
+          - {en: "Air resistance", ar: "مقاومة هوائية"}
+          - {en: "Tracking display", ar: "شاشة تتبع"}
+          - {en: "Adjustable seat", ar: "مقعد قابل للتعديل"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  barbell:
+    for: [barbell]
+    questions:
+      - ask: detail
+        q: {en: "What type of bar do you need?", ar: "أي نوع بار تحتاج؟"}
+        options:
+          - {en: "Straight Olympic bar", ar: "أولمبي مستقيم"}
+          - {en: "Straight standard bar", ar: "قياسي مستقيم"}
+          - {en: "Curved EZ bar", ar: "EZ منحني"}
+          - {en: "Curved W bar", ar: "W منحني"}
+          - {en: "Hex trap bar", ar: "تراب سداسي"}
+          - {en: "Dedicated squat bar", ar: "سكوات مخصص"}
+          - {en: "Short bar", ar: "قصير"}
+      - ask: detail
+        q: {en: "Which specifications matter most to you?", ar: "أي مواصفات تهمك أكثر؟"}
+        multi: true
+        options:
+          - {en: "Heavy load capacity", ar: "تحمّل أوزان ثقيلة"}
+          - {en: "50 mm Olympic plates", ar: "أقراص أولمبية 50 مم"}
+          - {en: "25–30 mm standard plates", ar: "أقراص قياسية 25–30 مم"}
+          - {en: "Non-slip grip", ar: "قبضة مانعة للانزلاق"}
+          - {en: "Smooth rotation", ar: "دوران سلس"}
+          - {en: "Fits a squat rack", ar: "مناسب لرف السكوات"}
+          - {en: "Lightweight", ar: "خفيف الوزن"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  boxing-gloves:
+    for: [boxing-gloves]
+    questions:
+      - ask: detail
+        q: {en: "Which type of boxing gloves do you prefer?", ar: "أي نوع قفازات ملاكمة تفضّل؟"}
+        options:
+          - {en: "Traditional boxing gloves", ar: "قفازات ملاكمة تقليدية"}
+          - {en: "Bag gloves", ar: "قفازات تدريب على الكيس"}
+          - {en: "Sparring gloves", ar: "قفازات سبارينغ"}
+          - {en: "Open-finger gloves (MMA)", ar: "قفازات ملاكمة مفتوحة الأصابع (MMA)"}
+          - {en: "Competition gloves", ar: "قفازات منافسات"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
+  weight-plates:
+    for: [weight-plates]
+    questions:
+      - ask: detail
+        q: {en: "Which type of weight plates do you prefer?", ar: "أي نوع أوزان تفضّل؟"}
+        options:
+          - {en: "Iron plates", ar: "أقراص حديد"}
+          - {en: "Rubber (bumper) plates", ar: "أقراص مطاطية"}
+          - {en: "Olympic plates", ar: "أقراص أولمبية"}
+          - {en: "Mixed set", ar: "طقم متنوع"}
+      - ask: budget
+        q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}

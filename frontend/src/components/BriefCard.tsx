@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { BriefAnswerAction, BriefQuestion, ProductBrief } from '../api/types'
+import { briefAnswer, questionKey } from '../lib/briefAnswer'
 import { briefWords } from '../lib/briefWords'
 import type { ReplyLanguage } from '../lib/turnWords'
 import { SlidersIcon, SparkIcon } from './icons'
@@ -35,7 +36,7 @@ export function BriefCard({ brief, language, active, opened, busy, onSubmit }: B
   // Narrow down opens showing what the search on screen already uses.
   const [picked, setPicked] = useState<Picked>(() =>
     Object.fromEntries(
-      brief.questions.flatMap((q) => (q.selected?.length ? [[q.kind, q.selected]] : [])),
+      brief.questions.flatMap((q) => (q.selected?.length ? [[questionKey(q), q.selected]] : [])),
     ),
   )
   const [extra, setExtra] = useState('')
@@ -44,26 +45,26 @@ export function BriefCard({ brief, language, active, opened, busy, onSubmit }: B
 
   const toggle = (question: BriefQuestion, key: string) =>
     setPicked((current) => {
-      const chosen = current[question.kind] ?? []
+      const at = questionKey(question)
+      const chosen = current[at] ?? []
       if (chosen.includes(key)) {
-        return { ...current, [question.kind]: chosen.filter((k) => k !== key) }
+        return { ...current, [at]: chosen.filter((k) => k !== key) }
       }
       // One answer replaces the last; several keep the newest few.
       const next =
         question.max_choices === 1 ? [key] : [...chosen, key].slice(-question.max_choices)
-      return { ...current, [question.kind]: next }
+      return { ...current, [at]: next }
     })
 
   const labelOf = (question: BriefQuestion, key: string) =>
     question.choices.find((c) => c.key === key)?.label ?? key
   const summaryParts = brief.questions.flatMap((q) => {
-    const chosen = picked[q.kind] ?? []
+    const chosen = picked[questionKey(q)] ?? []
     return chosen.length ? [chosen.map((k) => labelOf(q, k)).join(' or ')] : []
   })
   const anything = summaryParts.length > 0
 
   const submit = () => {
-    const first = (kind: string) => (picked[kind] ?? [])[0] ?? null
     setSent(true)
     const typed = extra.trim()
     if (typed) {
@@ -71,21 +72,7 @@ export function BriefCard({ brief, language, active, opened, busy, onSubmit }: B
       onSubmit(null, [...summaryParts, typed].join(' · '))
       return
     }
-    onSubmit(
-      {
-        kind: 'brief',
-        card: brief.card,
-        piece: first('type'),
-        room: first('room'),
-        people: first('people'),
-        budget: first('budget'),
-        space: first('space'),
-        colours: picked.colour ?? [],
-        styles: picked.style ?? [],
-        feel: first('feel'),
-      },
-      anything ? summaryParts.join(' · ') : brief.skip_label,
-    )
+    onSubmit(briefAnswer(brief, picked), anything ? summaryParts.join(' · ') : brief.skip_label)
   }
 
   if (!open) {
@@ -115,9 +102,9 @@ export function BriefCard({ brief, language, active, opened, busy, onSubmit }: B
         </div>
       )}
       {brief.questions.map((question) => {
-        const chosen = picked[question.kind] ?? []
+        const chosen = picked[questionKey(question)] ?? []
         return (
-          <div key={question.kind} className="flex flex-col gap-1.5">
+          <div key={questionKey(question)} className="flex flex-col gap-1.5">
             <div className="text-xs font-medium text-muted">
               {question.label}
               {question.max_choices > 1 && (
@@ -134,7 +121,7 @@ export function BriefCard({ brief, language, active, opened, busy, onSubmit }: B
                     disabled={disabled}
                     aria-pressed={on}
                     className={
-                      'rounded-full border px-3 py-1 text-[13px] font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed ' +
+                      'max-w-full rounded-full border px-3 py-1 text-start text-[13px] font-medium leading-snug transition focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed ' +
                       (on
                         ? 'border-clay bg-clay text-white'
                         : 'border-line bg-surface text-ink/80 hover:border-clay/50 hover:text-ink disabled:opacity-60')

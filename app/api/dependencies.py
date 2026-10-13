@@ -333,6 +333,16 @@ def customer_turn_coordinator(
                 app_resources.attributes,
                 app_resources.taxonomy,
                 ask_space=settings.customer_agent.designer_space_question,
+                sheet=(
+                    app_resources.subcategory_questions
+                    if settings.customer_agent.subcategory_questions
+                    else None
+                ),
+                named_chip_min=(
+                    settings.customer_agent.subcategory_chip_min_products
+                    if settings.customer_agent.subcategory_chips_from_names
+                    else None
+                ),
             )
             if app_resources.briefs is not None
             else None

@@ -579,6 +579,28 @@ class CustomerAgentSettings(BaseModel):
     (docs/designer-led-shopping-plan.md, phase 1). Off brings the card back,
     exactly as it was - a way back, not a second experience."""
 
+    subcategory_questions: bool = True
+    """Ask a new search for a sub-category the reviewed sheet covers its own
+    questions, all on one card, before any product
+    (`app/taxonomy/subcategory_questions_v1.yaml`): the sheet decides what is
+    asked, the catalog the chips wherever it has the data. Narrow down beside
+    its results asks the same questions. Off, every type is asked as before -
+    the two-question opening, or its family's card."""
+
+    subcategory_chips_from_names: bool = True
+    """On those cards, offer a chip the catalog has no field for - a material,
+    a feature, a shape, a size - only where the store's products of that type
+    are named with its words ("gas-lift" for lift-up storage), the most-named
+    first (CLAUDE.md 10.13). Every sheet question is still asked: one whose
+    names back fewer than two chips is asked in the sheet's own chips, the
+    backed ones first. Names decide only what is offered: nothing is filtered
+    on them and no product is said to have what a chip names. Off, every chip
+    is offered in the sheet's order, as before."""
+
+    subcategory_chip_min_products: int = Field(default=1, ge=1, le=100)
+    """How many of the store's products must be named with a chip's words
+    for it to be offered."""
+
     designer_led_brief: bool = True
     """Beside every list of results, what the search is using as removable
     chips, and Narrow down opened pre-filled with every option

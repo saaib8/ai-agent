@@ -25,6 +25,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.query import ResolvedSearch
 from app.taxonomy.briefs import ALWAYS_ASKED, BriefQuestionKind
+from app.taxonomy.subcategory_questions import (
+    MAX_OPTION_CHARS,
+    MAX_QUESTION_CHARS,
+    MAX_SHEET_QUESTIONS,
+    MAX_SHEET_TICKS,
+    MAX_WORDS_CHARS,
+)
 
 MAX_BRIEF_COLOURS: Final[int] = 3
 """Colours they may tick together. Alternatives, so a few is plenty."""
@@ -39,6 +46,10 @@ and the families are few."""
 MAX_OPENING_ASKED: Final[int] = 80
 """A bound on the session's record of opening questions asked - a few per
 product family."""
+
+MAX_BRIEF_FEELS: Final[int] = MAX_SHEET_QUESTIONS * MAX_SHEET_TICKS
+"""Feel chips ticked together across a sub-category's card: a few on each of
+its questions about materials, features or shapes."""
 
 
 class BriefMode(StrEnum):
@@ -61,7 +72,13 @@ class BriefChoice(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     key: str = Field(min_length=1, max_length=64)
-    label: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=MAX_OPTION_CHARS)
+    """Short; a sub-category's own answers may be a phrase, and wrap."""
+    kind: BriefQuestionKind | None = Field(default=None, exclude_if=lambda v: v is None)
+    """A chip of another kind than its question: the sheet's "Which color or
+    pattern" asks the catalog's colours and its own pattern words together, so
+    a pattern is a feel on a colour question. None means the question's kind;
+    a client answers each chip as its own kind."""
 
 
 class BriefQuestionView(BaseModel):
@@ -70,7 +87,14 @@ class BriefQuestionView(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: BriefQuestionKind
-    label: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=MAX_QUESTION_CHARS)
+    """A short title, or a sub-category's own question as a sentence."""
+    id: str | None = Field(
+        default=None, min_length=1, max_length=16, exclude_if=lambda v: v is None
+    )
+    """Which question this is on a sub-category's card, where several ask
+    about a feel - a material and a feature - and the kind alone cannot tell
+    them apart. None on the cards of `briefs_v1.yaml`."""
     choices: tuple[BriefChoice, ...] = Field(min_length=2)
     max_choices: int = Field(default=1, ge=1)
     """One for a single answer; more where several may be ticked together."""
@@ -119,15 +143,24 @@ class BriefChip(BaseModel):
 
 
 class BriefKindOption(BaseModel):
-    """What a kind key means: a type, and a seat count where it names one."""
+    """What a kind key means: a type, and a seat count where it names one.
+
+    A sub-category's own card may also offer a kind no sub-category names - a
+    rocking chair, a U-shaped sofa - which keeps the type searched and ranks by
+    its `words`; its `commerce_subcategory` is then None.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     key: str = Field(min_length=1, max_length=64)
     commerce_category: str = Field(min_length=1)
-    commerce_subcategory: str = Field(min_length=1)
+    commerce_subcategory: str | None = Field(default=None, min_length=1)
     seats: int | None = Field(default=None, ge=1)
     min_seats: int | None = Field(default=None, ge=1)
+    words: str | None = Field(
+        default=None, min_length=1, max_length=MAX_WORDS_CHARS, exclude_if=lambda v: v is None
+    )
+    """Words it ranks by, never filters on (CLAUDE.md 12.3)."""
 
 
 class BriefBudgetOption(BaseModel):
@@ -237,6 +270,9 @@ class PendingBrief(BaseModel):
     """They let go of the sizes saved for this kind in the message the card
     answers - "back to sofas, any size is fine". Kept with the card, so the
     search its answers run does not bring those sizes back."""
+    sheet: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The card asks a sub-category's own questions
+    (`subcategory_questions_v1.yaml`), and `name` is its row."""
 
     @property
     def always_asked(self) -> tuple[BriefQuestionKind, ...]:
