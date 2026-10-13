@@ -40,6 +40,10 @@ from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
 from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
 from app.taxonomy.rooms import RoomPieces, load_room_pieces
 from app.taxonomy.seating import SeatingSemantics, load_seating_semantics
+from app.taxonomy.subcategory_questions import (
+    SubcategoryQuestions,
+    load_subcategory_questions,
+)
 
 logger = get_logger(__name__)
 
@@ -96,6 +100,10 @@ class AppResources:
     # The cards of questions for a product search. Defaulted, like the
     # pairings: without them every search simply runs.
     briefs: Briefs | None = None
+    # Each sub-category's own questions, asked instead of its family's card
+    # when `customer_agent.subcategory_questions` is on. Defaulted like the
+    # cards: without them every type is asked as before.
+    subcategory_questions: SubcategoryQuestions | None = None
     # Which types compare with which. Defaulted: without it the comparison
     # pop-up is refused rather than comparing anything with anything.
     compare_groups: CompareGroups | None = None
@@ -167,6 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
     complements = load_complements(taxonomy=taxonomy)
     briefs = load_briefs(taxonomy=taxonomy)
+    subcategory_questions = load_subcategory_questions(taxonomy=taxonomy)
     compare_groups = load_compare_groups(taxonomy=taxonomy)
     logger.info(
         "taxonomy_loaded",
@@ -181,6 +190,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         room_pieces_version=rooms.version,
         complements_version=complements.version,
         briefs_version=briefs.version,
+        subcategory_questions_version=subcategory_questions.version,
         compare_groups_version=compare_groups.version,
     )
 
@@ -324,6 +334,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         rooms=rooms,
         complements=complements,
         briefs=briefs,
+        subcategory_questions=subcategory_questions,
         compare_groups=compare_groups,
         detector=detector,
         finder_vision=finder_vision,

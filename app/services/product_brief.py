@@ -17,6 +17,12 @@ and the budget become requirements - they tapped them - and colours, styles
 and the feel become preferences that only rank (CLAUDE.md 12.4). A feel has no
 field to filter on anyway: the catalog records no material (CLAUDE.md 5).
 
+A sub-category the reviewed sheet covers (`subcategory_questions_v1.yaml`,
+`customer_agent.subcategory_questions`) is asked its own questions instead -
+all of them, on one card: the sheet decides what is asked, the catalog decides
+the chips wherever it has the data, and what it cannot know - a material, a
+feature, a shape - is offered in the sheet's words, which only rank.
+
 Deterministic: no model is consulted to build a card or to read one.
 """
 
@@ -97,9 +103,22 @@ from app.taxonomy.briefs import (
 )
 from app.taxonomy.dimensions import DimensionRole
 from app.taxonomy.registry import CommerceTaxonomy
+from app.taxonomy.subcategory_questions import (
+    MAX_SHEET_CHOICES,
+    MAX_SHEET_TICKS,
+    SheetAsk,
+    SheetOption,
+    SheetQuestion,
+    SheetRow,
+    SubcategoryQuestions,
+)
 from app.taxonomy.words import customer_words, plural_words
 
 logger = get_logger(__name__)
+
+_FEWEST_CHOICES: Final[int] = 2
+"""Chips a question needs to be a choice - what `_question` asks of every
+card. A sheet question its names back fewer of is asked in the sheet's words."""
 
 MAX_COLOUR_CHOICES: Final[int] = 8
 MAX_STYLE_CHOICES: Final[int] = 6
@@ -144,6 +163,8 @@ class ProductBriefBuilder:
         taxonomy: CommerceTaxonomy,
         *,
         ask_space: bool = True,
+        sheet: SubcategoryQuestions | None = None,
+        named_chip_min: int | None = None,
     ) -> None:
         self._repository = repository
         self._briefs = briefs
@@ -153,6 +174,15 @@ class ProductBriefBuilder:
         """Whether a card asks how wide the space is ("How wide a space?").
         Off, the question is left off every card - opening, card and Narrow
         down alike - and a space given in words is still used."""
+        self._sheet = sheet
+        """Each sub-category's own questions, asked instead of its family's
+        card or opening. None asks every type as before."""
+        self._named_chip_min = named_chip_min
+        """A sheet chip the catalog has no field for - a material, a feature,
+        a shape - is offered only where at least this many of the store's
+        products are named with its words, the most-named first
+        (`app/taxonomy/name_match.py`). None offers every one, in the sheet's
+        order."""
 
     async def build(
         self,
@@ -192,6 +222,18 @@ class ProductBriefBuilder:
         to the questions they asked to narrow by ("by size" is the space).
         """
         request = resolved.request
+        row = self._sheet_row(request)
+        if row is not None:
+            return await self._build_from_sheet(
+                row,
+                resolved,
+                state,
+                context,
+                mode=mode,
+                language=language,
+                prefilled=prefilled,
+                only=only,
+            )
         briefs = state.product_brief
         if opening:
             opening_brief = self._briefs.for_opening(
@@ -202,9 +244,7 @@ class ProductBriefBuilder:
                 return None
             brief = opening_brief
             candidates = tuple(
-                kind
-                for kind in brief.opening
-                if _opening_key(brief.name, kind) not in briefs.asked
+                kind for kind in brief.opening if _opening_key(brief.name, kind) not in briefs.asked
             )
         elif prefilled:
             brief = self._briefs.for_narrowing(
@@ -403,9 +443,7 @@ class ProductBriefBuilder:
             opening=opening,
             # Only what it showed ticked: a typed "under 3,000" no band names
             # stays unless they choose a band to replace it.
-            replaces=tuple(
-                q.kind for q in questions if q.kind in _REPLACEABLE and q.selected
-            ),
+            replaces=tuple(q.kind for q in questions if q.kind in _REPLACEABLE and q.selected),
             narrowing=prefilled,
         )
         logger.info(
@@ -451,9 +489,7 @@ class ProductBriefBuilder:
             (AttributeFamily.STYLE, "style", request.styles_all_of),
         ):
             chips.extend(
-                BriefChip(
-                    facet=f"{name}:{value}", label=self._value_label(family, value, language)
-                )
+                BriefChip(facet=f"{name}:{value}", label=self._value_label(family, value, language))
                 for value in _values(search, family, strict)
             )
         lean = search.lean
@@ -523,6 +559,15 @@ class ProductBriefBuilder:
         if pending is None:
             return False
         request = resolved.request
+        if pending.sheet:
+            row = self._sheet_row(request)
+            if row is None or row.name != pending.name or pending.narrowing:
+                return False
+            return any(
+                _sheet_answered(question, resolved, state)
+                and not _sheet_answered(question, pending.base, state)
+                for question in row.questions
+            )
         brief = (
             self._briefs.for_opening(request.commerce_category, request.commerce_subcategory)
             if pending.opening
@@ -599,7 +644,10 @@ class ProductBriefBuilder:
             kind = next((k for k in pending.kinds if k.key == action.piece), None)
             if kind is None:
                 return None
-            search = _with_kind(search, kind)
+            if kind.commerce_subcategory is not None:
+                search = _with_kind(search, kind)
+            if kind.words is not None:
+                search = _with_words(search, kind.words)
         if action.budget is not None:
             band = next((b for b in pending.budgets if b.key == action.budget), None)
             if band is None:
@@ -634,12 +682,371 @@ class ProductBriefBuilder:
                 search = search.model_copy(
                     update={"semantic_text": _joined(search.semantic_text, feel.words)}
                 )
+        for key in action.feels:
+            ticked = next((f for f in pending.feels if f.key == key), None)
+            if ticked is None:
+                return None
+            search = _with_words(search, ticked.words)
         # A fresh set: exclusions from paging never carry into a changed
         # request (CLAUDE.md 13.5).
         fresh = search.model_copy(
             update={"request": search.request.model_copy(update={"exclude_product_ids": ()})}
         )
         return BriefAnswer(search=fresh, room=room)
+
+    # ── a sub-category's own questions ──────────────────────────────────────
+
+    def _sheet_row(self, request: ProductSearchRequest) -> SheetRow | None:
+        if self._sheet is None:
+            return None
+        return self._sheet.for_search(request.commerce_category, request.commerce_subcategory)
+
+    async def _build_from_sheet(
+        self,
+        row: SheetRow,
+        resolved: ResolvedSearch,
+        state: AgentStateV1,
+        context: RetailerContext,
+        *,
+        mode: BriefMode,
+        language: ReplyLanguage,
+        prefilled: bool,
+        only: tuple[BriefQuestionKind, ...],
+    ) -> BuiltBrief | None:
+        """A sub-category's own card: every question of its row still open,
+        together - nothing for the reply to choose - with the catalog's chips
+        wherever it has the data.
+
+        What they already said is left off, as on any card; a card with
+        nothing left to ask is skipped and the search runs. Narrow down beside
+        its results asks the same questions, opened showing what the search
+        uses, with the budget added where the row asks none.
+        """
+        request = resolved.request
+        briefs = state.product_brief
+        if mode is BriefMode.NARROW and not prefilled and row.name in briefs.shown:
+            return None
+        questions = list(row.questions)
+        if prefilled and not any(q.ask is SheetAsk.BUDGET for q in questions):
+            questions.append(_BUDGET_QUESTION)
+        open_questions = [
+            question
+            for question in questions
+            if (not only or question.kind in only)
+            and (prefilled or not _sheet_answered(question, resolved, state))
+        ]
+        if not open_questions:
+            return None
+        subcategory = request.commerce_subcategory
+        # Asking the kind counts the facts across every kind offered, as the
+        # family cards do: the colours and prices of what they may choose.
+        switches = (
+            option.subcategory
+            for question in open_questions
+            if question.ask is SheetAsk.TYPE
+            for option in question.options
+            if option.subcategory is not None
+        )
+        types = tuple(dict.fromkeys((*((subcategory,) if subcategory else ()), *switches)))
+        facts = await self._repository.brief_facts(types, context)
+        if not any(count for kind, _seats, count in facts.kinds if kind in types):
+            # The store stocks none of it: no answer would lead to a product,
+            # so the search runs and says so rather than asking first.
+            return None
+        named = await self._named_counts(open_questions, types, context)
+
+        views: list[BriefQuestionView] = []
+        kinds: list[BriefKindOption] = []
+        budgets: tuple[BriefBudgetOption, ...] = ()
+        colours: tuple[str, ...] = ()
+        people: tuple[BriefPeopleOption, ...] = ()
+        feels: list[BriefFeelOption] = []
+        for index, question in enumerate(open_questions, start=1):
+            qid = f"q{index}"
+            label = question.arabic if language is ReplyLanguage.AR else question.text
+            kind = question.kind
+            ticks = 1
+            asked_kinds: tuple[BriefKindOption, ...] = ()
+            asked_people: tuple[BriefPeopleOption, ...] = ()
+            asked_feels: tuple[BriefFeelOption, ...] = ()
+            match question.ask:
+                case SheetAsk.TYPE:
+                    offered = self._sheet_kinds(question, request, facts, qid, named)
+                    asked_kinds = tuple(option for option, _ in offered)
+                    choices = [(o.key, _sheet_label(s, language)) for o, s in offered]
+                case SheetAsk.PEOPLE:
+                    shown = question.options[:MAX_SHEET_CHOICES]
+                    seats = _reviewed_seats(facts, types)
+                    if seats:
+                        asked_people = tuple(
+                            BriefPeopleOption(
+                                key=f"{qid}-{number}",
+                                people=option.people or 1,
+                                or_more=option.or_more,
+                                combine=(option.people or 1) > max(seats),
+                            )
+                            for number, option in enumerate(shown, start=1)
+                        )
+                        keys = [option.key for option in asked_people]
+                    else:
+                        # No seat counts recorded for the type: a head count
+                        # can only rank, by how products are named ("6 seater").
+                        kind = BriefQuestionKind.FEEL
+                        asked_feels = tuple(
+                            BriefFeelOption(key=f"{qid}-{number}", words=f"{option.people} seater")
+                            for number, option in enumerate(shown, start=1)
+                        )
+                        keys = [option.key for option in asked_feels]
+                    choices = [
+                        (key, _sheet_label(option, language))
+                        for key, option in zip(keys, shown, strict=True)
+                    ]
+                case SheetAsk.COLOUR:
+                    colours = self._approved(AttributeFamily.COLOR, facts.colors)[
+                        :MAX_COLOUR_CHOICES
+                    ]
+                    choices = [
+                        (c, self._value_label(AttributeFamily.COLOR, c, language)) for c in colours
+                    ]
+                    ticks = MAX_BRIEF_COLOURS
+                    if question.options:
+                        # "Which color or pattern": the sheet's own words
+                        # beside the catalog's colours, one question.
+                        words = self._named_first(
+                            [
+                                (f"{qid}-{number}", option)
+                                for number, option in enumerate(question.options, start=1)
+                            ],
+                            named,
+                            beside=len(colours),
+                        )[:MAX_SHEET_CHOICES]
+                        asked_feels = tuple(
+                            BriefFeelOption(key=key, words=option.words or option.label)
+                            for key, option in words
+                        )
+                        worded = [(key, _sheet_label(option, language)) for key, option in words]
+                        choices = worded + choices if question.options_first else choices + worded
+                case SheetAsk.BUDGET:
+                    budgets = _budgets(facts)
+                    choices = [(b.key, _band_label(b, language)) for b in budgets]
+                case SheetAsk.DETAIL:
+                    details = self._named_first(
+                        [
+                            (f"{qid}-{number}", option)
+                            for number, option in enumerate(question.options, start=1)
+                        ],
+                        named,
+                    )[:MAX_SHEET_CHOICES]
+                    asked_feels = tuple(
+                        BriefFeelOption(key=key, words=option.words or option.label)
+                        for key, option in details
+                    )
+                    choices = [(key, _sheet_label(option, language)) for key, option in details]
+                    ticks = MAX_SHEET_TICKS if question.multi else 1
+            view = _question(kind, choices, ticks, label=label, language=language)
+            if view is None:
+                continue
+            if kind is not BriefQuestionKind.FEEL and asked_feels:
+                # Words asked beside the catalog's colours are feels, and say so.
+                view = _with_feel_chips(view, {feel.key for feel in asked_feels})
+            views.append(view.model_copy(update={"id": qid}))
+            kinds.extend(asked_kinds)
+            people = asked_people or people
+            feels.extend(asked_feels)
+        if not views:
+            return None
+        if prefilled:
+            views = [
+                view.model_copy(
+                    update={
+                        "selected": _sheet_selected(
+                            view, resolved, kinds=kinds, budgets=budgets, people=people, feels=feels
+                        )
+                    }
+                )
+                for view in views
+            ]
+
+        number = briefs.cards + 1
+        # The row's own word where the kind is still open - "Show me tables" -
+        # otherwise the kind they asked for.
+        family_word = subcategory is None or any(v.kind is BriefQuestionKind.TYPE for v in views)
+        key = subcategory or request.commerce_category
+        if language is ReplyLanguage.AR:
+            arabic_noun = (row.arabic_noun if family_word else None) or self._taxonomy.arabic(key)
+            submit = (
+                CARD_SUBMIT[language].format(noun=arabic_noun)
+                if arabic_noun
+                else CARD_SUBMIT_ANY[language]
+            )
+            skip = CARD_SKIP[language].format(noun=arabic_noun) if arabic_noun else submit
+            noun = arabic_noun or plural_words(customer_words(key))
+        else:
+            noun = (row.noun if family_word else None) or plural_words(customer_words(key))
+            submit = CARD_SUBMIT[language].format(noun=noun)
+            skip = CARD_SKIP[language].format(noun=noun)
+        card = ProductBrief(
+            card=number,
+            mode=mode,
+            noun=noun,
+            questions=tuple(views),
+            submit_label=submit,
+            skip_label=skip,
+        )
+        pending = PendingBrief(
+            card=number,
+            name=row.name,
+            base=resolved,
+            kinds=tuple(kinds),
+            budgets=budgets,
+            colours=colours,
+            feels=tuple(feels),
+            people=people,
+            replaces=tuple(v.kind for v in views if v.kind in _REPLACEABLE and v.selected),
+            narrowing=prefilled,
+            sheet=True,
+        )
+        minimum = self._named_chip_min
+        logger.info(
+            "product_brief_built",
+            store_id=context.store_id,
+            brief=row.name,
+            mode=mode.value,
+            sheet=True,
+            questions=[view.kind.value for view in views],
+            named_checked=len(named) if named is not None else None,
+            named_unbacked=(
+                sum(1 for count in named.values() if count < minimum)
+                if named is not None and minimum is not None
+                else None
+            ),
+            # Questions asked in the sheet's words: their names backed too few.
+            named_fallback=(
+                [
+                    view.id
+                    for view in views
+                    if any(named.get(choice.key, minimum) < minimum for choice in view.choices)
+                ]
+                if named is not None and minimum is not None
+                else None
+            ),
+        )
+        return BuiltBrief(card=card, pending=pending)
+
+    async def _named_counts(
+        self,
+        questions: Sequence[SheetQuestion],
+        types: Sequence[str],
+        context: RetailerContext,
+    ) -> dict[str, int] | None:
+        """How many of the store's products of these types are named with each
+        open chip's words, by the key the chip is drawn with - or None when
+        chips are not checked against names."""
+        if self._named_chip_min is None:
+            return None
+        checks = {
+            f"q{index}-{number}": option.names
+            for index, question in enumerate(questions, start=1)
+            for number, option in enumerate(question.options, start=1)
+            if option.names is not None
+        }
+        if not checks:
+            return {}
+        return await self._repository.name_match_counts(types, checks, context)
+
+    def _named_first(
+        self,
+        options: Sequence[tuple[str, SheetOption]],
+        named: dict[str, int] | None,
+        *,
+        beside: int = 0,
+    ) -> list[tuple[str, SheetOption]]:
+        """The chips the store's product names back, the most-named first -
+        the sheet's order among equals. Unchecked, every chip in the sheet's
+        order.
+
+        Every question of the sheet is asked. Where its names back too few
+        chips to make a choice - with `beside` other chips on the question,
+        such as the types it switches to - it is asked in the sheet's own
+        words: the backed chips first, then the sheet's others in its order.
+        Those only rank, as every such chip does.
+        """
+        if named is None or self._named_chip_min is None:
+            return list(options)
+        minimum = self._named_chip_min
+        counted = [
+            (named.get(key, 0), position, key, option)
+            for position, (key, option) in enumerate(options)
+        ]
+        backed = sorted(
+            (entry for entry in counted if entry[0] >= minimum),
+            key=lambda entry: (-entry[0], entry[1]),
+        )
+        chosen = [(key, option) for _count, _position, key, option in backed]
+        if beside + len(chosen) >= _FEWEST_CHOICES:
+            return chosen
+        return chosen + [
+            (key, option) for count, _position, key, option in counted if count < minimum
+        ]
+
+    def _sheet_kinds(
+        self,
+        question: SheetQuestion,
+        request: ProductSearchRequest,
+        facts: BriefFacts,
+        qid: str,
+        named: dict[str, int] | None = None,
+    ) -> list[tuple[BriefKindOption, SheetOption]]:
+        """The kinds a sub-category's card offers: those that switch to a type
+        the store stocks, the one it has most of first, then those that only
+        rank - the ones the store's names back, most-named first, or the
+        sheet's order where names are not checked - at most eight."""
+        switches: list[tuple[int, BriefKindOption, SheetOption]] = []
+        ranking: list[tuple[str, SheetOption]] = []
+        for number, option in enumerate(question.options, start=1):
+            key = f"{qid}-{number}"
+            if option.subcategory is None:
+                ranking.append((key, option))
+                continue
+            choice = KindChoice(
+                label=option.label,
+                subcategory=option.subcategory,
+                seats=option.seats,
+                min_seats=option.min_seats,
+            )
+            stock = _stock(choice, facts)
+            category = self._category_of(option.subcategory)
+            if stock == 0 or category is None:
+                continue
+            switches.append(
+                (
+                    stock,
+                    BriefKindOption(
+                        key=key,
+                        commerce_category=category,
+                        commerce_subcategory=option.subcategory,
+                        seats=option.seats,
+                        min_seats=option.min_seats,
+                        words=option.words,
+                    ),
+                    option,
+                )
+            )
+        switches.sort(key=lambda entry: -entry[0])
+        ranks = [
+            (
+                BriefKindOption(
+                    key=key,
+                    commerce_category=request.commerce_category,
+                    words=option.words or option.label,
+                ),
+                option,
+            )
+            for key, option in self._named_first(ranking, named, beside=len(switches))
+        ]
+        return [(kind, option) for _stock_count, kind, option in switches][
+            :MAX_SHEET_CHOICES
+        ] + ranks[: max(0, MAX_SHEET_CHOICES - len(switches))]
 
     # ── building ────────────────────────────────────────────────────────────
 
@@ -747,6 +1154,51 @@ def _answered(
             )
         case BriefQuestionKind.FEEL:
             return _names_a_feel(resolved.semantic_text, brief)
+
+
+def _sheet_answered(question: SheetQuestion, resolved: ResolvedSearch, state: AgentStateV1) -> bool:
+    """Whether they already said what a sub-category's question asks - in
+    this message or, for a colour, earlier on record. A kind or a detail is
+    said when their own words name one of its answers ("a velvet sofa")."""
+    request = resolved.request
+    labels = [option.label for option in question.options]
+    match question.ask:
+        case SheetAsk.TYPE:
+            return request.seating_capacity is not None or _names_any(
+                resolved.semantic_text, labels
+            )
+        case SheetAsk.PEOPLE:
+            return request.seating_capacity is not None or resolved.seat_preference is not None
+        case SheetAsk.BUDGET:
+            return request.price is not None
+        case SheetAsk.COLOUR:
+            # "Which color or pattern": a colour said, or one of its words.
+            return (
+                bool(request.colors_any_of)
+                or _leans(
+                    AttributeFamily.COLOR,
+                    resolved.semantic_preferences,
+                    state.customer_preferences.semantic_preferences,
+                )
+                or (bool(labels) and _names_any(resolved.semantic_text, labels))
+            )
+        case SheetAsk.DETAIL:
+            return _names_any(resolved.semantic_text, labels)
+
+
+def _names_any(text: str | None, labels: Sequence[str]) -> bool:
+    """Whether their words name one of these answers, or one side of an answer
+    that offers two ("Leather / Faux leather"). Spelling only, as for a feel:
+    every word of it must appear, and no word is mapped onto another."""
+    said = set(_words_of(text or ""))
+    if not said:
+        return False
+    for label in labels:
+        for part in label.split("/"):
+            words = set(_words_of(part))
+            if words and words <= said:
+                return True
+    return False
 
 
 def _names_a_feel(text: str | None, brief: Brief) -> bool:
@@ -994,6 +1446,14 @@ def _with_ticked(
     return _with_leanings(search, family, tuple(v for v in values if v not in required))
 
 
+def _with_words(search: ResolvedSearch, words: str) -> ResolvedSearch:
+    """Words a chip ranks by, added to what they described - never a filter,
+    and never twice."""
+    if words.casefold() in (search.semantic_text or "").casefold():
+        return search
+    return search.model_copy(update={"semantic_text": _joined(search.semantic_text, words)})
+
+
 def _joined(first: str | None, second: str) -> str:
     return " ".join(part for part in ((first or "").strip(), second) if part)
 
@@ -1017,6 +1477,21 @@ def _question(
         label=label or CARD_QUESTIONS[kind][language],
         choices=tuple(BriefChoice(key=key, label=text) for key, text in choices),
         max_choices=max_choices,
+    )
+
+
+def _with_feel_chips(view: BriefQuestionView, keys: set[str]) -> BriefQuestionView:
+    """A question whose chips include feels among its own kind - the sheet's
+    pattern words beside the catalog's colours - each feel marked as one."""
+    return view.model_copy(
+        update={
+            "choices": tuple(
+                choice.model_copy(update={"kind": BriefQuestionKind.FEEL})
+                if choice.key in keys
+                else choice
+                for choice in view.choices
+            )
+        }
     )
 
 
@@ -1081,6 +1556,57 @@ def _selected(
         case _:
             keys = []
     return tuple(key for key in keys if key in offered)
+
+
+def _sheet_selected(
+    question: BriefQuestionView,
+    resolved: ResolvedSearch,
+    *,
+    kinds: Sequence[BriefKindOption],
+    budgets: Sequence[BriefBudgetOption],
+    people: Sequence[BriefPeopleOption],
+    feels: Sequence[BriefFeelOption],
+) -> tuple[str, ...]:
+    """What a sub-category's Narrow down opens ticked: what the search uses."""
+    request = resolved.request
+    offered = {choice.key for choice in question.choices}
+    text = (resolved.semantic_text or "").casefold()
+    match question.kind:
+        case BriefQuestionKind.TYPE:
+            keys = [
+                kind.key
+                for kind in kinds
+                if kind.key in offered
+                and (
+                    kind.words.casefold() in text
+                    if kind.commerce_subcategory is None and kind.words
+                    else _is_kind(kind, request.commerce_subcategory, request.seating_capacity)
+                )
+            ]
+        case BriefQuestionKind.PEOPLE:
+            capacity = request.seating_capacity
+            head_count = resolved.seat_preference or (capacity.min_capacity if capacity else None)
+            mine = [p for p in people if p.key in offered]
+            fits = [p for p in mine if head_count is not None and p.people >= head_count]
+            more = [p for p in mine if p.or_more and head_count is not None]
+            chosen = min(fits, key=lambda p: p.people) if fits else more[0] if more else None
+            keys = [chosen.key] if chosen is not None else []
+        case _:
+            keys = list(
+                _selected(
+                    question,
+                    resolved,
+                    kinds=kinds,
+                    budgets=budgets,
+                    spaces=(),
+                    people=people,
+                    feels=feels,
+                )
+            )
+    # The sheet's words beside a colour question's colours, where they rank.
+    worded = {c.key for c in question.choices if c.kind is BriefQuestionKind.FEEL}
+    keys += [f.key for f in feels if f.key in worded and f.words.casefold() in text]
+    return tuple(keys[: question.max_choices])
 
 
 def _is_kind(
@@ -1351,6 +1877,28 @@ def _with_people(search: ResolvedSearch, option: BriefPeopleOption) -> ResolvedS
             ),
         }
     )
+
+
+def _sheet_label(option: SheetOption, language: ReplyLanguage) -> str:
+    """A sub-category's answer as its chip reads, in the sheet's own words."""
+    return option.arabic if language is ReplyLanguage.AR else option.label
+
+
+def _reviewed_seats(facts: BriefFacts, types: Sequence[str]) -> list[int]:
+    """The seat counts reviewed for these types: what a head count orders by."""
+    return [
+        capacity
+        for subcategory, capacity, count in facts.kinds
+        if subcategory in types and capacity is not None and count
+    ]
+
+
+_BUDGET_QUESTION: Final[SheetQuestion] = SheetQuestion(
+    ask=SheetAsk.BUDGET,
+    text=CARD_QUESTIONS[BriefQuestionKind.BUDGET][ReplyLanguage.EN],
+    arabic=CARD_QUESTIONS[BriefQuestionKind.BUDGET][ReplyLanguage.AR],
+)
+"""Narrow down always offers the budget, even where a row asks none."""
 
 
 def _kind_label(brief: Brief, option: BriefKindOption) -> str:

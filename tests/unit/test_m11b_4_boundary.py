@@ -229,6 +229,11 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         "cross_sell_shows_products",
         # Whether a new search opens with two writer-chosen questions.
         "designer_led_opening",
+        # Whether a sub-category the sheet covers is asked its own questions.
+        "subcategory_questions",
+        # Whether those cards offer only chips the store's product names back.
+        "subcategory_chips_from_names",
+        "subcategory_chip_min_products",
         # Whether results carry removable chips and a pre-filled Narrow down.
         "designer_led_brief",
         "designer_led_buttons",

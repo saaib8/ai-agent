@@ -167,9 +167,14 @@ export type BriefQuestionKind =
 
 export interface BriefQuestion {
   kind: BriefQuestionKind
+  /** A short title, or a sub-category's own question as a sentence. */
   label: string
-  /** Every choice leads to real products; `key` is what tapping sends back. */
-  choices: { key: string; label: string }[]
+  /** Which question on a sub-category's card, where several are feels. */
+  id?: string | null
+  /** Every choice leads to real products; `key` is what tapping sends back.
+   *  `kind`, when set, is the chip's own kind on a question of another: the
+   *  sheet's pattern words (feels) beside a colour question's colours. */
+  choices: { key: string; label: string; kind?: BriefQuestionKind | null }[]
   /** One for a single answer; more where several may be ticked together. */
   max_choices: number
   /** Keys already true of the search on screen: Narrow down opens showing them. */
@@ -367,6 +372,8 @@ export interface BriefAnswerAction {
   colours?: string[]
   styles?: string[]
   feel?: string | null
+  /** Every feel ticked on a sub-category's card - materials, features, shapes. */
+  feels?: string[]
 }
 
 /** ✕ on a chip: the search on screen again, without that one thing. */

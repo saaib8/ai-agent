@@ -750,7 +750,9 @@ refuses a set with any dissimilar product whatever the client sent.
 
 Designer-led shopping is built in phases (`docs/designer-led-shopping-plan.md`);
 each runs behind its own setting. Phase 1 is on by default and replaces the
-card of 10.4 for a new product search (switched off, the card returns):
+card of 10.4 for a new product search (switched off, the card returns). A
+sub-category the reviewed sheet covers is asked its own questions instead
+(10.13):
 
 - **Two questions, before any product, in one soft message** - an invitation
   a designer would make in a showroom, never a form, never budget.
@@ -1035,6 +1037,73 @@ only, exactly as before.
   pieces, their alternatives and seating combinations are unchanged.
 - Their sizes are read by floor side exactly like any other piece (15.1); nothing
   about them is special-cased.
+
+### 10.13 A sub-category's own questions (`customer_agent.subcategory_questions`)
+
+On by default. A new search for a sub-category the "ZORY Product Search" sheet
+covers - every one but `lounge-chair`, until its options are reviewed - is
+asked that sub-category's own questions (`app/taxonomy/subcategory_questions_v1.yaml`,
+loaded and validated against the taxonomy at startup) in place of the opening
+(10.5) or its family's card (10.4). Switched off, every type is asked exactly
+as before.
+
+- **All at once, on one card**, before any product: the sheet's questions,
+  at most three, exactly as it asks them. A question that lists colours with
+  patterns or materials ("Which color or pattern do you prefer?") stays one
+  question: the store's colours, then the sheet's words beside them - before
+  them where the sheet lists them first ("Which material or color") - up to
+  three ticked across both. Each word chip is marked a feel
+  (`BriefChoice.kind`), so a client sends it with the feels and the colours as
+  colours. The reply writes one or two warm sentences and asks nothing itself;
+  the card is the question. "Just show me" skips it.
+- **The sheet decides what is asked; the catalog decides the chips** wherever
+  it has the data: a type answer that names a sub-category (Office chair, an
+  L-shaped sofa, a 3-seater) switches the search to it and is offered only
+  where the store stocks it, the one it has most of first; colours are the
+  store's own for the type; the budget is bands cut from its real prices; a
+  head count orders by reviewed seats (10.5), or - where the type records
+  none - only ranks ("6 seater").
+- **What the catalog cannot know only ranks**: a material, a feature, a shape,
+  a size, a pattern, a use - and a type answer no sub-category names (a
+  rocking chair) - are the sheet's words, added to the descriptive wording
+  (12.3). Nothing is hidden and the reply never says a piece is made of or has
+  one. Such questions may take up to three ticks where they are a taste
+  (materials, features, patterns); a type, a size, a use, a head count or a
+  budget take one.
+- **Such a chip is offered only where the store's names back it**
+  (`customer_agent.subcategory_chips_from_names`, on by default): at least
+  `subcategory_chip_min_products` (one) of the store's active products of the
+  types the card offers are named with its words, counted in one read when
+  the card is built (`app/taxonomy/name_match.py`). Its words are reviewed
+  data - the option's `match` terms in the sheet ("gas lift" for lift-up
+  storage, "dhurry" for flatweave), else its own label's distinctive words -
+  matched as whole words with their plural, accents and Arabic spellings read
+  as one. **Every sheet question is still asked**: where its names back fewer
+  than two chips - with the kinds it switches to, for a type question - it is
+  asked in the sheet's own chips, the backed ones first, so a store with two
+  chaise lounges is asked the chaise questions too (logged as
+  `named_fallback`). A size comes from names ("King", "Queen"),
+  never from the dimension columns. This is the one use of names for what the
+  catalog has no field for (5): they decide only whether a chip is worth
+  offering - nothing is filtered on them, no product is said to be made of or
+  to have what a chip names, and the chip still only ranks. Off, every chip
+  is offered in the sheet's order.
+- **At most eight chips** a question: the most-stocked kinds, then the chips
+  the most products are named with, the reviewed order among equals and where
+  names are not checked. Answers that add nothing ("Not sure", "No
+  preference", "All colors", "Other ...") are left out, and brand questions
+  until the catalog records a brand.
+- **What they already said is left off**, as on any card: a seat count or
+  their own words naming an answer ("a velvet sofa"), a budget, a colour said
+  or on record. A card with nothing left to ask is skipped and the search runs.
+  A typed reply that answers one of its questions is searched, never asked
+  again.
+- **A search that named no kind** ("I need a table", "a light") gets the row
+  that asks the kind; tapping one searches it at once.
+- **Narrow down** beside its results asks the same questions, opened showing
+  what the search uses, with the budget added where the row asks none.
+- Worded from the sheet's Arabic tab for a customer answered in Arabic; the
+  catalog's chips keep their reviewed Arabic names.
 
 ## 11. Single-Product Discovery Flow
 
