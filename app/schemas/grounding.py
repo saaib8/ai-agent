@@ -26,7 +26,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.dimensions import NormalisedDimensions
-from app.schemas.product import CommerceClassification
+from app.schemas.product import CommerceClassification, ProductDisplay
 from app.schemas.query import ConstraintStrength
 from app.schemas.relaxation import RelaxableField, SetAsideOption, StopReason
 from app.schemas.semantic import SemanticSkipReason
@@ -161,6 +161,14 @@ class GroundedProduct(BaseModel):
     dimensions: NormalisedDimensions
     main_color: str | None = None
     styles: tuple[str, ...] = ()
+    name_arabic: str = ""
+    """The store's Arabic name, as stored - what a reply written in Arabic
+    calls the product. Merchant-controlled text, like the English name."""
+
+    display: ProductDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The card's text, ready to show in the reply's language - name, kind,
+    colour, styles, seats, price, size - attached to the payload. Display only;
+    never set where a reply is grounded."""
 
     relaxation_depth: int | None = Field(default=None, ge=0)
     """How far a search widened before this product became eligible, or None

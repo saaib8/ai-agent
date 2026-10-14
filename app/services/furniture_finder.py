@@ -71,6 +71,7 @@ from app.services.agent_state import (
     apply_update,
     commit_search_results,
 )
+from app.services.card_labels import card_labels
 from app.services.chat_runtime import LoadedSession, commit_exchange, load_for_turn
 from app.services.finder_imaging import (
     bounded_box,
@@ -82,6 +83,7 @@ from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.media_wording import photo_reply
 from app.services.object_description import ObjectDescriber
+from app.services.product_display import ProductDisplayWords, displayed
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.reply_language import session_language
 from app.services.similar_search import SimilarSearchBuilder
@@ -237,8 +239,12 @@ class FinderTurnRuntime:
         *,
         arabic_replies: bool = False,
         compare_groups: CompareGroups | None = None,
+        display: ProductDisplayWords | None = None,
     ) -> None:
         self._arabic_replies = arabic_replies
+        self._display = display
+        """Words each match's card text in the reply's language; None leaves
+        the cards in English, as before."""
         self._compare_groups = compare_groups
         """Which matches compare with which, so "compare the first two" is only
         offered when they can be. None: never offered across different types."""
@@ -327,8 +333,13 @@ class FinderTurnRuntime:
             session_id=request.session_id,
             session_revision=revision,
             response=response,
-            presentation=None if presentation.is_empty() else presentation,
+            presentation=(
+                None
+                if presentation.is_empty()
+                else displayed(presentation, self._display, language)
+            ),
             reply_language=language if self._arabic_replies else None,
+            labels=card_labels(language if self._arabic_replies else None),
         )
 
     def _committed_state(

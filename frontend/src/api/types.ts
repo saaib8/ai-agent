@@ -23,6 +23,235 @@ export interface CommerceClassification {
   seating_capacity: number | null
 }
 
+/** A product's card text, ready to show, in the reply's language - worded by
+ *  the server, so a client (this console or a store's widget) decides nothing. */
+/** A room piece's card text, ready to show, in the reply's language. */
+export interface BundleItemDisplay {
+  name: string
+  kind: string | null
+  seats: string | null
+  /** One piece's price: "950 SAR" / "950 ريال". */
+  price: string
+  /** What the line adds to the bill; null for a piece already owned. */
+  line_total: string | null
+}
+
+/** A room's totals, worded in the reply's language. */
+export interface BundleTotalsDisplay {
+  new_spend: string | null
+  budget: string | null
+}
+
+export interface ProductDisplay {
+  name: string
+  kind: string | null
+  color: string | null
+  styles: string[]
+  seats: string | null
+  price: string | null
+  size: string | null
+}
+
+/** Every word drawn around the conversation, in the reply's language - the
+ *  server's, as a store's widget gets them. Placeholders (`{name}`, `{names}`,
+ *  `{count}`, `{max}`, `{price}`, `{number}`, `{view}`, `{pieces}`, `{size}`,
+ *  `{style}`, `{room}`) are filled by the client; an Arabic label may leave one
+ *  out. */
+export interface CardLabels {
+  select: string
+  selected: string
+  more_like_this: string
+  not_this_one: string
+  compare: string
+  view_product: string
+  like: string
+  liked: string
+  like_product: string
+  unlike_product: string
+  widened: string
+  your_pick: string
+  show_different_options: string
+  compare_same_kind: string
+  compare_limit: string
+  compare_title: string
+  compare_count: string
+  compare_need_two: string
+  compare_one_more: string
+  stop_comparing: string
+  clear: string
+  your_picks: string
+  goes_with: string
+  what_goes_with: string
+  what_goes_with_product: string
+  remove_pick: string
+  focused_pick: string
+  add: string
+  view: string
+  room_limit: string
+  room_package: string
+  your_seating: string
+  seating_option: string
+  choose_this: string
+  not_this_option: string
+  more_options: string
+  status_complete: string
+  status_partial: string
+  status_infeasible: string
+  locked: string
+  already_owned: string
+  swap: string
+  swap_piece: string
+  each: string
+  new_spend: string
+  budget_up_to: string
+  budget_under: string
+  within_budget: string
+  over_budget: string
+  total_mixed_units: string
+  total_nothing_priced: string
+  camera_view: string
+  view_corner: string
+  view_eye_level: string
+  view_isometric: string
+  view_top_down: string
+  visualize: string
+  upload_room_photo: string
+  place_in_my_room: string
+  change_photo: string
+  narrow_down: string
+  quick_taps: string
+  narrow_these_down: string
+  up_to: string
+  cancel: string
+  anything_else: string
+  remove_chip: string
+  choice_or: string
+  comparison_heading: string
+  comparison_field: string
+  field_price: string
+  field_commerce_subcategory: string
+  field_seating_capacity: string
+  field_main_color: string
+  field_styles: string
+  field_length: string
+  field_overall_width: string
+  field_depth: string
+  field_height: string
+  comparison_different: string
+  comparison_same: string
+  listed_dimensions: string
+  listed_caveat: string
+  not_listed: string
+  not_listed_title: string
+  quick_reply: string
+  goes_well_with_it: string
+  also_goes_well_with_it: string
+  render_title: string
+  render_view: string
+  render_outdated: string
+  full_screen: string
+  open_full_screen: string
+  close: string
+  download: string
+  edit_selection: string
+  render_again: string
+  try_this_view: string
+  render_alt_furnished: string
+  render_alt_view: string
+  room_visualisation: string
+  say_like: string
+  say_not_this_one: string
+  say_what_goes_with: string
+  say_more_like: string
+  say_compare: string
+  say_without: string
+  say_take_option: string
+  say_not_option: string
+  say_more_seating: string
+  say_other_options: string
+  say_use_option: string
+  say_visualize_room: string
+  say_place_room: string
+  say_place_selection: string
+  say_visualize_selection: string
+  say_show_selection: string
+  say_show_selection_in_room: string
+  pieces_one: string
+  pieces_many: string
+  list_separator: string
+  list_and: string
+  catalog_title: string
+  close_catalogue: string
+  step_pick: string
+  step_room: string
+  try_again: string
+  loading_catalogue: string
+  back_to_products: string
+  nothing_picked: string
+  products_one: string
+  products_many: string
+  catalog_max_products: string
+  catalog_total: string
+  visualize_room: string
+  render_unavailable: string
+  waiting_for_reply: string
+  sort_label: string
+  sort_featured: string
+  sort_price_asc: string
+  sort_price_desc: string
+  search_placeholder: string
+  search_products: string
+  clear_search: string
+  filter_category: string
+  filter_type: string
+  filter_colour: string
+  filter_style: string
+  all_categories: string
+  all_types: string
+  any_colour: string
+  any_style: string
+  min_price: string
+  max_price: string
+  min_short: string
+  max_short: string
+  clear_filters: string
+  no_matches: string
+  catalog_page: string
+  previous_page: string
+  next_page: string
+  size_error: string
+  room_where: string
+  room_where_aria: string
+  room_setup: string
+  room_my_photo: string
+  room_kind: string
+  room_kind_aria: string
+  room_size: string
+  room_size_optional: string
+  room_length: string
+  room_width: string
+  room_view: string
+  in_the_room: string
+  upload_room_photo_long: string
+  room_photo_note: string
+  fit_enter_size: string
+  fit_over: string
+  fit_crowded: string
+  fit_ok: string
+  fit_coverage: string
+  fit_aim: string
+  fit_crowded_note: string
+  fit_over_note: string
+  fit_too_big: string
+  fit_uncounted_one: string
+  fit_uncounted_many: string
+  fit_not_counted: string
+  quantity_of: string
+  one_fewer: string
+  one_more: string
+  at_most_per_product: string
+}
+
 export interface GroundedProduct {
   grounding_ref: number
   presented_ordinal: number | null
@@ -37,6 +266,9 @@ export interface GroundedProduct {
   styles: string[]
   /** 0 = matched the request exactly; >0 = surfaced only after widening. */
   relaxation_depth: number | null
+  /** Its card text, ready to show in the reply's language. Display only:
+   *  everything the console sends back uses the English values. */
+  display?: ProductDisplay | null
 }
 
 export type ComparisonStatus = 'same' | 'different' | 'unknown'
@@ -90,6 +322,8 @@ export interface GroundedBundleItem {
   price_unit: string
   /** null when the line adds nothing to new spend (an already-owned piece). */
   new_spend_line_total: string | null
+  /** The card's text in the reply's language - what the widget shows. */
+  display?: BundleItemDisplay | null
 }
 
 export interface GroundedBundleTotals {
@@ -100,6 +334,8 @@ export interface GroundedBundleTotals {
   budget_currency: string | null
   budget_max_exclusive: boolean
   within_budget: boolean | null
+  /** The totals worded in the reply's language. */
+  display?: BundleTotalsDisplay | null
 }
 
 export interface GroundedBundlePresentation {
@@ -203,6 +439,10 @@ export interface PiecePickerData {
   pieces: { label: string; selected: boolean; essential: boolean }[]
   submit_label: string
   choose_for_me: { label: string; value: string }
+  /** The message the submit button sends, in the reply's language: the ticked
+   *  pieces' labels fill `{pieces}`, joined by `piece_separator`. */
+  submit_message?: string
+  piece_separator?: string
 }
 
 // ── Room visualisation ───────────────────────────────────────────────────────
@@ -298,6 +538,8 @@ export interface ChatResponse {
   reply_language?: 'en' | 'ar' | null
   /** Which assistant the reply is shown as - a label the server decides. */
   agent?: AgentKey
+  /** The words drawn around the products, in this reply's language. */
+  labels?: CardLabels | null
 }
 
 export interface BundleAlternativesAction {
@@ -442,6 +684,9 @@ export interface PickView {
   positions?: { list_revision: number; ordinal: number }[]
   /** The product the conversation is about. */
   focused: boolean
+  /** Its card text, ready to show in the reply's language. Display only:
+   *  everything the console sends back uses the English values. */
+  display?: ProductDisplay | null
 }
 
 /** One liked product, as the tray draws it. */
@@ -457,6 +702,9 @@ export interface LikedView {
   positions?: { list_revision: number; ordinal: number }[]
   /** It is among their picks as well. */
   picked: boolean
+  /** Its card text, ready to show in the reply's language. Display only:
+   *  everything the console sends back uses the English values. */
+  display?: ProductDisplay | null
 }
 
 export type PickAction =
@@ -567,6 +815,8 @@ export interface CatalogQuery {
   sort?: CatalogSort
   page?: number
   page_size?: number
+  /** The conversation's language: the tiles read in it. */
+  language?: 'en' | 'ar'
 }
 
 export interface CatalogItem {
@@ -586,6 +836,9 @@ export interface CatalogItem {
   /** Floor area in cm², for floor-standing pieces of known size only. */
   footprint_cm2: number | null
   longest_side_cm: number | null
+  /** Its card text, ready to show in the reply's language. Display only:
+   *  everything the console sends back uses the English values. */
+  display?: ProductDisplay | null
 }
 
 export interface CatalogPage {
@@ -599,6 +852,8 @@ export interface CatalogPage {
 export interface Facet {
   value: string
   count: number
+  /** How it reads, in the requested language; `value` is what a filter sends. */
+  label?: string | null
 }
 
 export interface CategoryFacet extends Facet {
@@ -608,6 +863,8 @@ export interface CategoryFacet extends Facet {
 export interface StudioOptions {
   room_types: { value: RoomType; label: string }[]
   styles: string[]
+  /** Each style's name in the requested language, by its value. */
+  style_labels?: Record<string, string> | null
   max_products: number
   max_quantity: number
   min_room_side_m: number
@@ -620,7 +877,13 @@ export interface CatalogFacets {
   categories: CategoryFacet[]
   colors: Facet[]
   styles: Facet[]
-  price: { currency: string; min_amount: string; max_amount: string } | null
+  price: {
+    currency: string
+    min_amount: string
+    max_amount: string
+    /** How the currency reads in the requested language ("SAR" / "ريال"). */
+    currency_label?: string
+  } | null
   studio: StudioOptions
 }
 

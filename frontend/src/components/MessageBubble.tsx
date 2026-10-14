@@ -27,7 +27,7 @@ import { RoomRender } from './presentation/RoomRender'
 import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
-import { turnWords } from '../lib/turnWords'
+import { cardWords } from '../lib/cardWords'
 import { agentLook } from '../lib/agents'
 
 export function UserBubble({
@@ -203,8 +203,9 @@ export function AssistantBubble({
   const hasRoom = !!presentation?.room
   const render = presentation?.render ?? null
   const seatingBundles = presentation?.seating_bundles ?? []
-  const language = data.reply_language === 'ar' ? 'ar' : 'en'
-  const words = turnWords(language)
+  // Every word around the reply, from the server as the widget gets them.
+  const words = cardWords(data.labels)
+  const roomWords = words.room
   const brief = presentation?.brief ?? null
   // "Help me narrow these down" is the turn's question: the card opens with its
   // questions showing and stays as a record, like a card of questions. Beside
@@ -213,7 +214,7 @@ export function AssistantBubble({
   const briefCard = brief && onBriefSubmit && (
     <BriefCard
       brief={brief}
-      language={language}
+      labels={data.labels}
       active={!!latest}
       opened={askedToNarrow}
       busy={!!busy}
@@ -243,7 +244,12 @@ export function AssistantBubble({
         )}
 
         {textReplies.length > 0 && onQuickReply && (
-          <QuickReplies replies={textReplies} onPick={onQuickReply} disabled={!!busy} />
+          <QuickReplies
+            replies={textReplies}
+            onPick={onQuickReply}
+            disabled={!!busy}
+            label={words.chips.quickReply}
+          />
         )}
 
         {latest && presentation?.piece_picker && onQuickReply && (
@@ -252,7 +258,7 @@ export function AssistantBubble({
 
         {brief?.mode === 'ask' && briefCard}
 
-        {focus && <FocusCard product={focus} />}
+        {focus && <FocusCard product={focus} labels={data.labels} />}
         {hasProducts && (
           <ProductGrid
             products={presentation!.products}
@@ -263,19 +269,20 @@ export function AssistantBubble({
             onMoreLikeThis={actsOnCards ? onMoreLikeThis : undefined}
             compare={isResultList ? compare : undefined}
             busy={busy}
+            labels={data.labels}
           />
         )}
         {brief?.mode === 'narrow' && (latest || askedToNarrow) && briefCard}
         {showBrief && (chips.length > 0 || narrowDown) && (
           <div className="flex flex-col gap-2">
             {chips.length > 0 && onDropChip && (
-              <BriefBar chips={chips} language={language} busy={!!busy} onDrop={onDropChip} />
+              <BriefBar chips={chips} labels={data.labels} busy={!!busy} onDrop={onDropChip} />
             )}
             {narrowDown && onBriefSubmit && (
               <BriefCard
                 key={narrowDown.card}
                 brief={narrowDown}
-                language={language}
+                labels={data.labels}
                 active
                 busy={!!busy}
                 onSubmit={onBriefSubmit}
@@ -288,18 +295,16 @@ export function AssistantBubble({
             replies={actionReplies}
             onPick={onQuickReply}
             disabled={!!busy}
-            label={offering ? 'Goes well with it' : 'Also goes well with it'}
+            label={offering ? words.chips.goesWellWithIt : words.chips.alsoGoesWellWithIt}
           />
         )}
         {hasComparison && (
-          <ComparisonTable
-            comparison={presentation!.comparison!}
-            language={data.reply_language === 'ar' ? 'ar' : 'en'}
-          />
+          <ComparisonTable comparison={presentation!.comparison!} labels={data.labels} />
         )}
         {hasRoom && (
           <RoomBundle
             room={presentation!.room!}
+            labels={data.labels}
             onSwapStart={onSwapStart}
             busy={busy}
             onVisualize={onVisualize}
@@ -314,11 +319,17 @@ export function AssistantBubble({
             busy={busy}
             onRerender={onRerender}
             onEdit={onEditSelection}
+            labels={data.labels}
           />
         )}
 
         {presentation?.chosen_seating && (
-          <RoomBundle room={presentation.chosen_seating} label={words.yourSeating} hideStatus />
+          <RoomBundle
+            room={presentation.chosen_seating}
+            label={roomWords.yourSeating}
+            labels={data.labels}
+            hideStatus
+          />
         )}
         {seatingBundles.length > 0 && (
           <div className="flex flex-col gap-2.5">
@@ -326,7 +337,8 @@ export function AssistantBubble({
               <RoomBundle
                 key={index}
                 room={bundle}
-                label={words.seatingOption(index + 1)}
+                label={roomWords.seatingOption(index + 1)}
+                labels={data.labels}
                 hideStatus
                 actions={
                   onCombination && (
@@ -336,14 +348,14 @@ export function AssistantBubble({
                         disabled={!!busy}
                         className="rounded-full bg-ink px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {words.chooseLabel}
+                        {roomWords.chooseThis}
                       </button>
                       <button
                         onClick={() => onCombination('dismiss', index + 1)}
                         disabled={!!busy}
                         className="rounded-full px-3 py-1.5 text-sm font-medium text-muted transition hover:text-ink disabled:opacity-50"
                       >
-                        {words.notThisLabel}
+                        {roomWords.notThisOption}
                       </button>
                     </>
                   )
@@ -356,7 +368,7 @@ export function AssistantBubble({
                 disabled={!!busy}
                 className="w-fit rounded-full border border-clay/30 bg-surface px-3.5 py-1.5 text-sm font-medium text-clay shadow-card transition hover:border-clay hover:bg-clay hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {words.moreLabel}
+                {roomWords.moreOptions}
               </button>
             )}
           </div>

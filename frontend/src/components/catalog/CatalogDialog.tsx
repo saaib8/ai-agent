@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getCatalogFacets } from '../../api/client'
 import type {
+  CardLabels,
   CatalogFacets,
   CatalogItem,
   CatalogSelection,
@@ -10,6 +11,9 @@ import type {
 } from '../../api/types'
 import type { RoomDraft, SelectedPiece } from '../../lib/catalog'
 import { parseSide, selectionTotal, unitCount } from '../../lib/catalog'
+import { cardWords } from '../../lib/cardWords'
+import { productText } from '../../lib/productWords'
+import type { ReplyLanguage } from '../../lib/turnWords'
 import { ChevronLeftIcon, CloseIcon, GridIcon, ImageIcon } from '../icons'
 import { BrowseStep } from './BrowseStep'
 import { RoomStep } from './RoomStep'
@@ -37,6 +41,11 @@ interface CatalogDialogProps {
   ) => void
   /** The room photo the session keeps, as a picture to show. */
   roomPhotoPreview: string | null
+  /** The conversation's language: the server words products and filters in it. */
+  language?: ReplyLanguage
+  /** The conversation's latest words (`ChatResponse.labels`) - every word the
+   *  catalogue shows, as a store's widget gets them. */
+  labels?: CardLabels | null
 }
 
 /**
@@ -56,8 +65,12 @@ export function CatalogDialog({
   onClose,
   onVisualize,
   roomPhotoPreview,
+  language = 'en',
+  labels,
 }: CatalogDialogProps) {
   const [step, setStep] = useState<CatalogStep>(initialStep)
+  const all = cardWords(labels)
+  const words = all.catalog
   const [facets, setFacets] = useState<CatalogFacets | null>(null)
   const [facetsError, setFacetsError] = useState<ErrorBody | null>(null)
   const [attempt, setAttempt] = useState(0)
@@ -65,7 +78,7 @@ export function CatalogDialog({
   useEffect(() => {
     let cancelled = false
     setFacetsError(null)
-    void getCatalogFacets(apiBase, storeId).then((result) => {
+    void getCatalogFacets(apiBase, storeId, language).then((result) => {
       if (cancelled) return
       if (result.ok) setFacets(result.data)
       else setFacetsError(result.error)
@@ -73,7 +86,7 @@ export function CatalogDialog({
     return () => {
       cancelled = true
     }
-  }, [apiBase, storeId, attempt])
+  }, [apiBase, storeId, language, attempt])
 
   useEffect(() => {
     const previous = document.body.style.overflow
@@ -136,13 +149,16 @@ export function CatalogDialog({
   }
 
   const units = unitCount(selection)
-  const total = selectionTotal(selection)
+  // The sum in the currency word the server gave for the conversation's language.
+  const currencyWord = (unit: string) =>
+    facets?.price?.currency === unit ? (facets.price.currency_label ?? unit) : unit
+  const total = selectionTotal(selection, currencyWord)
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <button
         type="button"
-        aria-label="Close catalogue"
+        aria-label={words.close}
         tabIndex={-1}
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-ink/40"
@@ -160,14 +176,14 @@ export function CatalogDialog({
             </span>
             <div className="min-w-0">
               <h2 id="catalog-title" className="text-[15px] font-semibold text-ink">
-                Browse catalogue
+                {words.title}
               </h2>
               <ol className="flex gap-2 text-xs text-muted">
                 <StepLabel n={1} active={step === 'browse'}>
-                  Pick products
+                  {words.stepPick}
                 </StepLabel>
                 <StepLabel n={2} active={step === 'room'}>
-                  Set up the room
+                  {words.stepRoom}
                 </StepLabel>
               </ol>
             </div>
@@ -175,7 +191,7 @@ export function CatalogDialog({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close catalogue"
+            aria-label={words.close}
             className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-canvas hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
           >
             <CloseIcon size={18} />
@@ -190,11 +206,11 @@ export function CatalogDialog({
               onClick={() => setAttempt((a) => a + 1)}
               className="rounded-full border border-line px-4 py-1.5 text-sm transition hover:border-clay/40 hover:text-clay"
             >
-              Try again
+              {words.tryAgain}
             </button>
           </div>
         ) : !facets ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted">Loading catalogue…</div>
+          <div className="flex flex-1 items-center justify-center text-sm text-muted">{words.loading}</div>
         ) : (
           <>
             {/* Kept mounted while setting up the room, so filters and page survive. */}
@@ -206,6 +222,8 @@ export function CatalogDialog({
                 selection={selection}
                 onAdd={add}
                 onQuantity={setQuantity}
+                language={language}
+                labels={labels}
               />
             </div>
             {step === 'room' && (
@@ -216,6 +234,7 @@ export function CatalogDialog({
                 selection={selection}
                 onQuantity={setQuantity}
                 roomPhotoPreview={roomPhotoPreview}
+                labels={labels}
               />
             )}
           </>
@@ -228,7 +247,7 @@ export function CatalogDialog({
                 <div
                   key={item.product_id}
                   className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-line bg-canvas"
-                  title={item.name_english}
+                  title={productText(item).name}
                 >
                   <img src={item.image_url} alt="" className="h-full w-full object-cover" />
                   {quantity > 1 && (
@@ -239,7 +258,7 @@ export function CatalogDialog({
                   <button
                     type="button"
                     onClick={() => setQuantity(item.product_id, 0)}
-                    aria-label={`Remove ${item.name_english}`}
+                    aria-label={words.quantity.remove(productText(item).name)}
                     className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-bl-md bg-ink/70 text-white hover:bg-ink"
                   >
                     <CloseIcon size={10} />
@@ -256,21 +275,23 @@ export function CatalogDialog({
                 className="inline-flex items-center gap-1 rounded-full border border-line px-3 py-2 text-sm text-ink transition hover:border-line-strong"
               >
                 <ChevronLeftIcon size={16} />
-                <span className="hidden sm:inline">Products</span>
+                <span className="hidden sm:inline">{words.backToProducts}</span>
               </button>
             ) : null}
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-ink">
+              <p className="truncate text-sm font-medium text-ink" dir="auto">
                 {selection.length === 0
-                  ? 'Nothing picked yet'
-                  : `${selection.length} ${selection.length === 1 ? 'product' : 'products'} · ${units} ${
-                      units === 1 ? 'piece' : 'pieces'
-                    }`}
+                  ? words.nothingPicked
+                  : words.picked(selection.length, units)}
                 {studio && selection.length > 0 && (
-                  <span className="font-normal text-muted"> (up to {studio.max_products})</span>
+                  <span className="font-normal text-muted"> {words.maxProducts(studio.max_products)}</span>
                 )}
               </p>
-              {total && <p className="text-xs text-muted">Total {total}</p>}
+              {total && (
+                <p className="text-xs text-muted" dir="auto">
+                  {words.total(total)}
+                </p>
+              )}
             </div>
             {step === 'browse' ? (
               <button
@@ -279,7 +300,7 @@ export function CatalogDialog({
                 disabled={selection.length === 0 || !facets}
                 className="inline-flex shrink-0 items-center gap-2 rounded-full bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 disabled:cursor-not-allowed disabled:bg-line-strong"
               >
-                Set up the room
+                {words.stepRoom}
               </button>
             ) : (
               <button
@@ -288,15 +309,15 @@ export function CatalogDialog({
                 disabled={!canRender}
                 title={
                   studio && !studio.render_available
-                    ? 'Room visualisation is not configured'
+                    ? words.renderUnavailable
                     : busy
-                      ? 'Waiting for the current reply'
+                      ? words.waitingForReply
                       : undefined
                 }
                 className="inline-flex shrink-0 items-center gap-2 rounded-full bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 disabled:cursor-not-allowed disabled:bg-line-strong"
               >
                 <ImageIcon size={16} />
-                {room.usePhoto ? 'Place in my room' : 'Visualize room'}
+                {room.usePhoto ? all.room.placeInMyRoom : words.visualizeRoom}
               </button>
             )}
           </div>

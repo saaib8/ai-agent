@@ -1,11 +1,12 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { RENDER_VIEWS } from '../../api/types'
 import type {
   BundleStatus,
+  CardLabels,
   GroundedBundleItem,
   GroundedBundlePresentation,
   RenderView,
 } from '../../api/types'
+import { cardWords, type CardWords } from '../../lib/cardWords'
 import { humanise, money, toNumber } from '../../lib/format'
 import { ImageIcon, SwapIcon, UploadIcon } from '../icons'
 import { ViewPicker } from './ViewPicker'
@@ -24,9 +25,11 @@ interface RoomBundleProps {
   onVisualizeInRoom?: (file: File | null) => void
   /** The room photo this session keeps, to show and reuse. */
   roomPhotoPreview?: string | null
-  /** Header label. Defaults to "Room package"; a seating combination overrides
-   *  it with "Seating option N". */
+  /** Header label. Defaults to the labels' "Room package"; a seating
+   *  combination overrides it with "Seating option N". */
   label?: string
+  /** The reply's words (`ChatResponse.labels`) - English without them. */
+  labels?: CardLabels | null
   /** Hide the complete/partial/infeasible badge. A seating combination is
    *  complete by construction, so the badge is noise there. */
   hideStatus?: boolean
@@ -35,10 +38,10 @@ interface RoomBundleProps {
   actions?: ReactNode
 }
 
-const STATUS_META: Record<BundleStatus, { label: string; cls: string }> = {
-  complete: { label: 'Complete', cls: 'bg-sage/15 text-sage' },
-  partial: { label: 'Partial', cls: 'bg-amber/15 text-amber' },
-  infeasible: { label: 'Infeasible', cls: 'bg-rose/12 text-rose' },
+const STATUS_CLASS: Record<BundleStatus, string> = {
+  complete: 'bg-sage/15 text-sage',
+  partial: 'bg-amber/15 text-amber',
+  infeasible: 'bg-rose/12 text-rose',
 }
 
 function Thumb({ item }: { item: GroundedBundleItem }) {
@@ -49,7 +52,7 @@ function Thumb({ item }: { item: GroundedBundleItem }) {
   return (
     <img
       src={item.image_url}
-      alt={item.name_english}
+      alt={item.display?.name ?? item.name_english}
       loading="lazy"
       onError={() => setFailed(true)}
       className="h-12 w-12 shrink-0 rounded-lg object-cover"
@@ -79,24 +82,27 @@ export function RoomBundle({
   onVisualize,
   onVisualizeInRoom,
   roomPhotoPreview = null,
-  label = 'Room package',
+  label,
   hideStatus = false,
   actions,
+  labels,
 }: RoomBundleProps) {
-  const status = STATUS_META[room.status]
+  const words = cardWords(labels).room
   const t = room.totals
   const spend = toNumber(t.new_spend_total)
   const budget = toNumber(t.budget_max_amount)
-  const grand = money(t.new_spend_total, t.currency)
-  const budgetLabel = money(t.budget_max_amount, t.budget_currency)
+  // The server's words for the reply's language, as a store's widget shows
+  // them; English figures only from a server that sent none.
+  const grand = t.display?.new_spend ?? money(t.new_spend_total, t.currency)
+  const budgetLabel = t.display?.budget ?? money(t.budget_max_amount, t.budget_currency)
 
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
       <div className="flex items-center justify-between border-b border-line bg-canvas/60 px-4 py-3">
-        <span className="text-sm font-semibold text-ink">{label}</span>
+        <span className="text-sm font-semibold text-ink">{label ?? words.title}</span>
         {!hideStatus && (
-          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${status.cls}`}>
-            {status.label}
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${STATUS_CLASS[room.status]}`}>
+            {words.status[room.status]}
           </span>
         )}
       </div>
@@ -104,46 +110,52 @@ export function RoomBundle({
       <ul className="divide-y divide-line">
         {room.items.map((item) => {
           const kind = item.commerce.subcategory ?? item.commerce.category
-          const unit = money(item.unit_price, item.price_unit)
-          const line = money(item.new_spend_line_total, item.price_unit)
+          const shown = item.display
+          const kindText = shown ? shown.kind : kind ? humanise(kind) : null
+          const unit = shown ? shown.price : money(item.unit_price, item.price_unit)
+          const line = shown ? shown.line_total : money(item.new_spend_line_total, item.price_unit)
           return (
             <li key={item.grounding_ref} className="flex items-center gap-3 px-4 py-3">
               <Thumb item={item} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-ink">
-                  {item.name_english}
+                <div className="truncate text-sm font-medium text-ink" dir="auto">
+                  {shown?.name ?? item.name_english}
                   {item.quantity > 1 && <span className="text-muted"> ×{item.quantity}</span>}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                  {kind && (
+                  {kindText && (
                     <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] text-muted">
-                      {humanise(kind)}
+                      {kindText}
                     </span>
                   )}
                   {item.locked && (
                     <span className="rounded-full bg-clay-soft px-2 py-0.5 text-[11px] font-medium text-clay">
-                      locked
+                      {words.locked}
                     </span>
                   )}
                   {item.acquisition === 'already_owned' && (
-                    <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] text-muted">already owned</span>
+                    <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] text-muted">{words.alreadyOwned}</span>
                   )}
                   {onSwapStart && item.acquisition === 'to_buy' && !item.locked && (
                     <button
                       onClick={() => onSwapStart(item.grounding_ref, humanise(kind ?? 'item'))}
                       disabled={busy}
-                      aria-label={`Swap the ${humanise(kind ?? 'item')}`}
+                      aria-label={words.swapPiece(kindText ?? humanise('item'))}
                       className="inline-flex items-center gap-1 rounded-full border border-clay/30 px-2 py-0.5 text-[11px] font-medium text-clay transition hover:border-clay hover:bg-clay hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <SwapIcon size={12} />
-                      Swap
+                      {words.swap}
                     </button>
                   )}
                 </div>
               </div>
               <div className="shrink-0 text-right">
-                {unit && <div className="text-[11px] text-muted">{unit} ea</div>}
-                <div className="text-sm font-medium text-ink">
+                {unit && (
+                  <div className="text-[11px] text-muted" dir="auto">
+                    {words.each(unit)}
+                  </div>
+                )}
+                <div className="text-sm font-medium text-ink" dir="auto">
                   {item.acquisition === 'already_owned' ? '—' : (line ?? unit ?? '—')}
                 </div>
               </div>
@@ -155,18 +167,20 @@ export function RoomBundle({
       <div className="space-y-1.5 px-4 py-4">
         {grand && (
           <div className="flex items-baseline justify-between">
-            <span className="text-sm text-muted">New spend</span>
-            <span className="text-lg font-semibold text-ink">{grand}</span>
+            <span className="text-sm text-muted">{words.newSpend}</span>
+            <span className="text-lg font-semibold text-ink" dir="auto">
+              {grand}
+            </span>
           </div>
         )}
         {budgetLabel && (
           <>
             <div className="flex items-baseline justify-between text-xs">
-              <span className="text-muted">
-                Budget {t.budget_max_exclusive ? '<' : '≤'} {budgetLabel}
+              <span className="text-muted" dir="auto">
+                {words.budget(budgetLabel, t.budget_max_exclusive)}
               </span>
               <span className={t.within_budget === false ? 'font-medium text-rose' : 'font-medium text-sage'}>
-                {t.within_budget === false ? 'over budget' : 'within budget'}
+                {t.within_budget === false ? words.overBudget : words.withinBudget}
               </span>
             </div>
             {spend != null && budget != null && (
@@ -175,8 +189,8 @@ export function RoomBundle({
           </>
         )}
         {t.total_unavailable && (
-          <div className="pt-1 text-xs italic text-muted">
-            Total unavailable: {humanise(t.total_unavailable)}
+          <div className="pt-1 text-xs italic text-muted" dir="auto">
+            {words.totalUnavailable(t.total_unavailable)}
           </div>
         )}
       </div>
@@ -188,6 +202,7 @@ export function RoomBundle({
       )}
       {onVisualize && room.items.length > 0 && (
         <VisualizeBar
+          words={words}
           busy={busy}
           onVisualize={onVisualize}
           onVisualizeInRoom={onVisualizeInRoom}
@@ -199,24 +214,33 @@ export function RoomBundle({
 }
 
 function VisualizeBar({
+  words,
   busy,
   onVisualize,
   onVisualizeInRoom,
   roomPhotoPreview,
 }: {
+  words: CardWords['room']
   busy: boolean
   onVisualize: (view: RenderView, viewLabel: string) => void
   onVisualizeInRoom?: (file: File | null) => void
   roomPhotoPreview: string | null
 }) {
   const [view, setView] = useState<RenderView>('corner')
-  const label = RENDER_VIEWS.find((v) => v.value === view)?.label ?? 'Corner'
+  const label = words.views[view]
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-canvas/60 px-4 py-3">
-      <ViewPicker value={view} onChange={setView} disabled={busy} />
+      <ViewPicker
+        value={view}
+        onChange={setView}
+        disabled={busy}
+        labels={words.views}
+        ariaLabel={words.cameraView}
+      />
       <div className="flex flex-wrap items-center gap-2">
         {onVisualizeInRoom && (
           <RoomPhotoButton
+            words={words}
             busy={busy}
             preview={roomPhotoPreview}
             onVisualizeInRoom={onVisualizeInRoom}
@@ -228,7 +252,7 @@ function VisualizeBar({
           className="inline-flex items-center gap-2 rounded-full bg-clay px-4 py-2 text-sm font-medium text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:bg-line-strong"
         >
           <ImageIcon size={16} />
-          Visualize
+          {words.visualize}
         </button>
       </div>
     </div>
@@ -241,10 +265,12 @@ function VisualizeBar({
  * placed in it again - or a different photo chosen.
  */
 function RoomPhotoButton({
+  words,
   busy,
   preview,
   onVisualizeInRoom,
 }: {
+  words: CardWords['room']
   busy: boolean
   preview: string | null
   onVisualizeInRoom: (file: File | null) => void
@@ -270,7 +296,7 @@ function RoomPhotoButton({
         <>
           <button type="button" onClick={() => onVisualizeInRoom(null)} disabled={busy} className={secondary}>
             <img src={preview} alt="" className="-ml-2 h-6 w-6 rounded-full object-cover" />
-            Place in my room
+            {words.placeInMyRoom}
           </button>
           <button
             type="button"
@@ -278,13 +304,13 @@ function RoomPhotoButton({
             disabled={busy}
             className="rounded-full px-2 py-2 text-xs font-medium text-muted transition hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Change photo
+            {words.changePhoto}
           </button>
         </>
       ) : (
         <button type="button" onClick={pick} disabled={busy} className={secondary}>
           <UploadIcon size={16} />
-          Upload room photo
+          {words.uploadRoomPhoto}
         </button>
       )}
     </>

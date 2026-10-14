@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.dimensions import NormalisedDimensions, RawDimensions
 
@@ -115,6 +115,37 @@ class ProductRow(BaseModel):
     main_color: str | None
     styles: tuple[str, ...]
     is_active: bool
+
+
+class ProductDisplay(BaseModel):
+    """How a product's card reads, ready to show, in the reply's language.
+
+    A client - the console or a store's widget - shows these as they are and
+    decides nothing: the name (in Arabic, the store's `name_arabic` as stored;
+    the English name only where it is empty), the kind, colour and styles in the
+    registries' reviewed words (`commerce_v1.yaml`, `catalog_attributes_v1.yaml`),
+    and the seats, price and listed size worded for that language, in Western
+    digits. Display only: every search, filter, comparison and pick keeps the
+    English values beside it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1)
+    kind: str | None = None
+    """The sub-category, else the category: "sofa" / "كنبة"."""
+
+    color: str | None = None
+    styles: tuple[str, ...] = ()
+    seats: str | None = None
+    """How many it seats, where reviewed: "4-seat" / "4 مقاعد"."""
+
+    price: str | None = None
+    """"3,600 SAR" / "3,600 ريال"."""
+
+    size: str | None = None
+    """The listed size, where it normalised: "L 220 · W 95 · H 85 cm" /
+    "الطول 220 · العرض 95 · الارتفاع 85 سم"."""
 
 
 class ProductCandidate(BaseModel):

@@ -27,6 +27,7 @@ from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_turn import CustomerResponse, RoomSwapContext
 from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
+from app.schemas.card_labels import CardLabels
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
@@ -174,6 +175,10 @@ class PiecePicker(BaseModel):
     pieces: tuple[PieceChoice, ...] = Field(min_length=1)
     submit_label: str = Field(min_length=1, max_length=40)
     choose_for_me: ReplyChoice
+    submit_message: str = Field(default="I'd like these pieces: {pieces}", min_length=1)
+    """The message the submit button sends, in the reply's language: the
+    ticked pieces' labels fill `{pieces}`, joined by `piece_separator`."""
+    piece_separator: str = Field(default=", ", min_length=1)
 
 
 class ChatPresentation(BaseModel):
@@ -330,3 +335,8 @@ class ChatResponse(BaseModel):
     """Which assistant the reply is shown as: Sarah (shopping), Salman (sales)
     or Nora (interior design). A label only - one assistant answers every turn;
     decided in code from what the turn did (`app/services/agent_persona.py`)."""
+
+    labels: CardLabels | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The words a client draws around the products - card buttons, the picks
+    tray, the compare bar, catalogue tiles - in the reply's language, so a
+    widget never keeps its own English copy (`app/services/card_labels.py`)."""

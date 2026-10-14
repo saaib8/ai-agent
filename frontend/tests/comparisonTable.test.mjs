@@ -17,10 +17,15 @@ function compile(path) {
 
 const dataUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const formatUrl = dataUrl(compile('../src/lib/format.ts'))
-const wordsUrl = dataUrl(compile('../src/lib/comparisonWords.ts'))
+const wordsUrl = dataUrl(compile('../src/lib/cardWords.ts'))
+const productWordsUrl = dataUrl(
+  compile('../src/lib/productWords.ts').replace("'./format'", JSON.stringify(formatUrl)),
+)
 const component = compile('../src/components/presentation/ComparisonTable.tsx')
   .replace("'../../lib/format'", JSON.stringify(formatUrl))
-  .replace("'../../lib/comparisonWords'", JSON.stringify(wordsUrl))
+  .replace("'../../lib/cardWords'", JSON.stringify(wordsUrl))
+  .replace("'../../lib/productWords'", JSON.stringify(productWordsUrl))
+const { ENGLISH } = await import(wordsUrl)
 const { ComparisonTable } = await import(dataUrl(
   `import React from ${JSON.stringify(import.meta.resolve('react'))};\n${component}`,
 ))
@@ -48,7 +53,7 @@ test('Catalog sizes remain visible when semantic measurement rows are unknown', 
   assert.match(html, /L 220 · W 180 · H 90 cm/)
   assert.match(html, /L 200 · W 160 · H 85 cm/)
   assert.match(html, /length and width may be recorded in either order/)
-  assert.doesNotMatch(html, /overall width/)
+  assert.doesNotMatch(html, /overall width/i)
 })
 
 test('Known measurement rows replace the listed sizes rather than sit beside them', () => {
@@ -62,7 +67,7 @@ test('Known measurement rows replace the listed sizes rather than sit beside the
   ] }])
   assert.doesNotMatch(html, /Listed dimensions/)
   assert.doesNotMatch(html, /L 220 · W 95 · H 85 cm/)
-  assert.match(html, /overall width/)
+  assert.match(html, /overall width/i)
   assert.match(html, /different/)
 })
 
@@ -86,4 +91,45 @@ test('Unknown units are never presented as centimetres', () => {
   ])
   assert.equal((html.match(/Not listed/g) ?? []).length, 2)
   assert.doesNotMatch(html, /220|95|85/)
+})
+
+test('names, prices and the kind, colour and styles rows read as the server worded them', () => {
+  const display = (name, price) => ({
+    name, kind: 'كنبة', color: 'بيج', styles: ['عصري', 'بسيط'], seats: null, price, size: null,
+  })
+  const products = [
+    { ...product(1), display: display('كنبة ثلاثية', '1,000 ريال') },
+    { ...product(2), display: display('كنبة رباعية', '1,200 ريال') },
+  ]
+  const cell = (value) => ({ known: true, value })
+  const rows = [
+    { field: 'commerce_subcategory', status: 'same', cells: [cell('sofa'), cell('sofa')] },
+    { field: 'main_color', status: 'same', cells: [cell('Beige'), cell('Beige')] },
+    { field: 'styles', status: 'same', cells: [cell('Minimalist, Modern'), cell('Minimalist, Modern')] },
+    { field: 'price', status: 'different', cells: [cell('1000 SAR'), cell('1200 SAR')] },
+  ]
+  // The server's Arabic words for the table (`ChatResponse.labels`).
+  const labels = {
+    ...ENGLISH, comparison_heading: 'المقارنة', field_styles: 'الطراز', list_separator: '، ',
+  }
+  const html = renderToStaticMarkup(
+    createElement(ComparisonTable, { comparison: { products, rows }, labels }),
+  )
+  assert.match(html, /المقارنة/)
+  assert.match(html, /الطراز/)
+  assert.match(html, /كنبة ثلاثية/)
+  assert.match(html, />بيج</)
+  assert.match(html, /عصري، بسيط/)
+  assert.match(html, /1000 SAR/)
+  // The header's price reads in riyals.
+  assert.match(html, /1,000 ريال/)
+  assert.doesNotMatch(html, />Beige</)
+  // Without the server's display text, the backend's words, in English.
+  const bare = [product(1), product(2)]
+  const english = renderToStaticMarkup(
+    createElement(ComparisonTable, { comparison: { products: bare, rows } }),
+  )
+  assert.match(english, /Product 1/)
+  assert.match(english, />Beige</)
+  assert.match(english, /1,000 SAR/)
 })

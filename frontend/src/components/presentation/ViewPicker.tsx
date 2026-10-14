@@ -5,14 +5,24 @@ interface ViewPickerProps {
   value: RenderView
   onChange: (view: RenderView) => void
   disabled?: boolean
+  /** Each view's name in the reply's language (`ChatResponse.labels`) -
+   *  English without them. */
+  labels?: Record<RenderView, string>
+  ariaLabel?: string
 }
 
 /** The camera views a render can use, as a segmented control. */
-export function ViewPicker({ value, onChange, disabled = false }: ViewPickerProps) {
+export function ViewPicker({
+  value,
+  onChange,
+  disabled = false,
+  labels,
+  ariaLabel = 'Camera view',
+}: ViewPickerProps) {
   return (
     <div
       role="radiogroup"
-      aria-label="Camera view"
+      aria-label={ariaLabel}
       className="inline-flex rounded-full border border-line bg-canvas p-0.5"
     >
       {RENDER_VIEWS.map((view) => {
@@ -28,7 +38,7 @@ export function ViewPicker({ value, onChange, disabled = false }: ViewPickerProp
               selected ? 'bg-surface text-ink shadow-card' : 'text-muted hover:text-ink'
             }`}
           >
-            {view.label}
+            {labels?.[view.value] ?? view.label}
           </button>
         )
       })}

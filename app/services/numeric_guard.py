@@ -206,6 +206,9 @@ def picks_figures(picks: Sequence[PickView] | None) -> tuple[Decimal, ...]:
     for pick in picks or ():
         figures.append(pick.price_amount)
         figures.extend(Decimal(n) for n in _NAME_NUMBER.findall(pick.name_english))
+        if pick.display is not None:
+            # The tray shows its own name: in Arabic, the store's Arabic name.
+            figures.extend(Decimal(n) for n in _NAME_NUMBER.findall(pick.display.name))
     return tuple(figures)
 
 

@@ -13,8 +13,10 @@ from collections.abc import Sequence
 from app.schemas.agent_decision import ProductInteractionOp
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_updates import AddItems, ProductInteractionUpdate, RemoveItems
+from app.schemas.language import ReplyLanguage
 from app.schemas.picks import LikedView, PickPosition, PickView
 from app.schemas.product import ProductCandidate
+from app.services.product_display import ProductDisplayWords
 from app.taxonomy.words import customer_words_or_none
 
 
@@ -54,7 +56,12 @@ def interaction_update(
             )
 
 
-def build_picks(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tuple[PickView, ...]:
+def build_picks(
+    state: AgentStateV1,
+    products: Sequence[ProductCandidate],
+    display: ProductDisplayWords | None = None,
+    language: ReplyLanguage = ReplyLanguage.EN,
+) -> tuple[PickView, ...]:
     """The picks as the tray draws them, from freshly read products.
 
     Numbered by position in the picks, never by position among what could be
@@ -90,12 +97,18 @@ def build_picks(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tu
                 presented_ordinal=on_screen.get(product_id),
                 positions=_positions(product_id, lists),
                 focused=interaction.focused_product_id == product_id,
+                display=display.product(product, language) if display else None,
             )
         )
     return tuple(picks)
 
 
-def build_liked(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tuple[LikedView, ...]:
+def build_liked(
+    state: AgentStateV1,
+    products: Sequence[ProductCandidate],
+    display: ProductDisplayWords | None = None,
+    language: ReplyLanguage = ReplyLanguage.EN,
+) -> tuple[LikedView, ...]:
     """The liked list as the tray draws it, numbered like the picks: a like
     the catalog no longer returns is absent and the rest keep their numbers."""
     interaction = state.product_interaction
@@ -118,9 +131,11 @@ def build_liked(state: AgentStateV1, products: Sequence[ProductCandidate]) -> tu
                 ),
                 positions=_positions(product_id, lists),
                 picked=product_id in interaction.selected_product_ids,
+                display=display.product(product, language) if display else None,
             )
         )
     return tuple(liked)
+
 
 
 def _lists_on_screen(state: AgentStateV1) -> list[tuple[int, tuple[int, ...]]]:

@@ -134,6 +134,9 @@ class SeatingBundleLine(BaseModel):
     model, which points at pieces by position like everywhere else (CLAUDE.md 6)."""
 
     name: str = Field(min_length=1)
+    name_arabic: str = ""
+    """The store's own Arabic name, as stored - for the card's display only."""
+
     commerce_subcategory: str = Field(min_length=1)
 
     unit_price: Decimal = Field(ge=0)

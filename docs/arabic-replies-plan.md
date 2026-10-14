@@ -362,8 +362,16 @@ performs never depend on the language.
   chips on almost every turn.
 - The piece picker's submit sentence ("I'd like these pieces: ...") is built
   by the frontend in English; better still, send piece keys rather than words.
+  (2026-10-14: the server now sends it - `piece_picker.submit_message` with
+  `{pieces}` and `piece_separator`, "أريد هذه القطع: {pieces}" / "، " in Arabic.)
 - Fixed UI text ("Quick reply", "· up to 3", buttons, the start screen) and
   right-to-left layout remain the frontend's.
+  (2026-10-14: every word around the conversation - buttons, the card of
+  questions, the comparison table, room cards and pictures, and the customer's
+  own message after a tap - now comes from the server in `labels`; the
+  console's own Arabic tables were removed. Browse Catalogue's screens
+  followed the same day; the start screen and the composer's own buttons
+  remain the frontend's.)
 
 ## 15. Compare moved into the chat (2026-10-08)
 

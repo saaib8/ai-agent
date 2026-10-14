@@ -1,13 +1,13 @@
 import { useState } from 'react'
-import type { BriefAnswerAction, BriefQuestion, ProductBrief } from '../api/types'
+import type { BriefAnswerAction, BriefQuestion, CardLabels, ProductBrief } from '../api/types'
 import { briefAnswer, questionKey } from '../lib/briefAnswer'
-import { briefWords } from '../lib/briefWords'
-import type { ReplyLanguage } from '../lib/turnWords'
+import { cardWords } from '../lib/cardWords'
 import { SlidersIcon, SparkIcon } from './icons'
 
 interface BriefCardProps {
   brief: ProductBrief
-  language: ReplyLanguage
+  /** The reply's words (`ChatResponse.labels`) - English without them. */
+  labels?: CardLabels | null
   /** Only the latest turn's card can be answered; older ones stay as a record. */
   active: boolean
   /** Narrow down they asked for is the turn's question, so it starts open with
@@ -30,8 +30,8 @@ type Picked = Record<string, string[]>
  * about, so sending an empty card shows what they first asked for. Beside
  * results it starts folded, as a way to narrow them down.
  */
-export function BriefCard({ brief, language, active, opened, busy, onSubmit }: BriefCardProps) {
-  const words = briefWords(language)
+export function BriefCard({ brief, labels, active, opened, busy, onSubmit }: BriefCardProps) {
+  const words = cardWords(labels).brief
   const [open, setOpen] = useState(brief.mode === 'ask' || !!opened)
   // Narrow down opens showing what the search on screen already uses.
   const [picked, setPicked] = useState<Picked>(() =>
@@ -60,7 +60,7 @@ export function BriefCard({ brief, language, active, opened, busy, onSubmit }: B
     question.choices.find((c) => c.key === key)?.label ?? key
   const summaryParts = brief.questions.flatMap((q) => {
     const chosen = picked[questionKey(q)] ?? []
-    return chosen.length ? [chosen.map((k) => labelOf(q, k)).join(' or ')] : []
+    return chosen.length ? [chosen.map((k) => labelOf(q, k)).join(words.or)] : []
   })
   const anything = summaryParts.length > 0
 

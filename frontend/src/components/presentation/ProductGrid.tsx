@@ -1,6 +1,7 @@
-import type { GroundedProduct } from '../../api/types'
+import type { CardLabels, GroundedProduct } from '../../api/types'
 import { ProductCard } from './ProductCard'
 import type { AlternativePick, CardCompare, CardLike, CardSelect } from './ProductCard'
+import { cardWords } from '../../lib/cardWords'
 
 export interface SearchRefineControls {
   /** Re-run the search, excluding everything on screen — a different page. */
@@ -25,6 +26,8 @@ interface ProductGridProps {
   /** Present when a similarity search can start from any card. */
   onMoreLikeThis?: (product: GroundedProduct) => void
   busy?: boolean
+  /** The reply's words around each card (`ChatResponse.labels`). */
+  labels?: CardLabels | null
 }
 
 /** Which cards are liked, by card number, and how to toggle one. */
@@ -53,6 +56,7 @@ export function ProductGrid({
   likes,
   onMoreLikeThis,
   busy,
+  labels,
 }: ProductGridProps) {
   if (products.length === 0) return null
   const showRefine = refine && !pick
@@ -76,6 +80,7 @@ export function ProductGrid({
             like={cardLike(p, likes)}
             onMoreLikeThis={onMoreLikeThis}
             busy={busy}
+            labels={labels}
           />
         ))}
       </div>
@@ -85,7 +90,7 @@ export function ProductGrid({
           disabled={busy}
           className="self-start rounded-lg border border-line px-3.5 py-2 text-xs font-semibold text-ink transition hover:border-line-strong hover:bg-canvas focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:opacity-50"
         >
-          Show me different options
+          {cardWords(labels).differentOptions}
         </button>
       )}
     </div>

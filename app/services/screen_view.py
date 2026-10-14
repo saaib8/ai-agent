@@ -37,6 +37,7 @@ from app.schemas.screen import (
     ScreenRoomCardView,
     ScreenRoomView,
 )
+from app.services.product_display import arabic_name as arabic_name_of
 from app.services.product_size import measurement
 from app.taxonomy.dimensions import FloorSide
 from app.taxonomy.words import customer_words_or_none
@@ -66,7 +67,9 @@ def _dimensions(dimensions: NormalisedDimensions) -> ScreenCardDimensions | None
     )
 
 
-def card_from_grounded(product: GroundedProduct) -> PresentedCardView | None:
+def card_from_grounded(
+    product: GroundedProduct, *, arabic_name: bool = False
+) -> PresentedCardView | None:
     """One rendered search result as a safe card.
 
     None when the product has no position on screen. A product grounded by
@@ -78,7 +81,12 @@ def card_from_grounded(product: GroundedProduct) -> PresentedCardView | None:
         return None
     return PresentedCardView(
         presented_ordinal=product.presented_ordinal,
-        name=product.name_english,
+        # A reply written in Arabic names the product as the store does there.
+        name=(
+            arabic_name_of(product.name_english, product.name_arabic)
+            if arabic_name
+            else product.name_english
+        ),
         commerce_category=customer_words_or_none(product.commerce.category),
         commerce_subcategory=customer_words_or_none(product.commerce.subcategory),
         price_amount=product.price_amount,
@@ -156,15 +164,20 @@ def comparison_view(comparison: ProductComparisonResult) -> ScreenComparisonView
     )
 
 
-def room_view(room: GroundedBundlePresentation) -> ScreenRoomView:
-    """The room package, exactly as its arithmetic was rendered."""
+def room_view(room: GroundedBundlePresentation, *, arabic_names: bool = False) -> ScreenRoomView:
+    """The room package, exactly as its arithmetic was rendered - its pieces
+    named in Arabic for a reply written in Arabic, as the cards show them."""
     totals = room.totals
     return ScreenRoomView(
         status=room.status,
         cards=tuple(
             ScreenRoomCardView(
                 presented_ordinal=item.grounding_ref,
-                name=item.name_english,
+                name=(
+                    arabic_name_of(item.name_english, item.name_arabic)
+                    if arabic_names
+                    else item.name_english
+                ),
                 commerce_category=customer_words_or_none(item.commerce.category),
                 commerce_subcategory=customer_words_or_none(item.commerce.subcategory),
                 quantity=item.quantity,
@@ -188,13 +201,17 @@ def screen_from_presentation(
     products: Sequence[GroundedProduct] = (),
     comparison: ProductComparisonResult | None = None,
     room: GroundedBundlePresentation | None = None,
+    arabic_names: bool = False,
 ) -> CustomerVisibleScreenView:
-    """This turn's screen, from the same objects the payload was built from."""
+    """This turn's screen, from the same objects the payload was built from -
+    its cards named in Arabic for a reply written in Arabic."""
     cards = tuple(
-        card for product in products if (card := card_from_grounded(product)) is not None
+        card
+        for product in products
+        if (card := card_from_grounded(product, arabic_name=arabic_names)) is not None
     )
     return CustomerVisibleScreenView(
         products=cards,
         comparison=comparison_view(comparison) if comparison is not None else None,
-        room=room_view(room) if room is not None else None,
+        room=room_view(room, arabic_names=arabic_names) if room is not None else None,
     )

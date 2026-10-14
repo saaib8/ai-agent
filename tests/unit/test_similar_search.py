@@ -323,11 +323,14 @@ def test_verified_provenance_can_be_supplied_without_touching_the_facts() -> Non
     assert searched.name_english == plain.name_english
 
 
-def test_the_builder_exposes_no_arabic_field() -> None:
+def test_the_builder_copies_the_arabic_name_and_attaches_no_display() -> None:
+    """The store's Arabic name is copied like the English one, for an Arabic
+    reply to name the product; how a card reads in Arabic is attached to the
+    payload, never where a turn is grounded."""
     product = to_grounded_product(_candidate(), grounding_ref=1)
 
-    assert "name_arabic" not in type(product).model_fields
-    assert "كنبة" not in product.model_dump_json()
+    assert product.name_arabic == "كنبة"
+    assert product.display is None
 
 
 def test_every_grounded_field_is_copied_not_derived() -> None:

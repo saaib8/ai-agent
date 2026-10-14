@@ -111,10 +111,11 @@ export interface UseChat {
    *  which is shown as an error turn. */
   uploadRoomPhoto: (file: File, config: ConsoleConfig) => Promise<UploadedRoomPhoto | null>
   /** Render the room package from a camera view - or in their own room photo,
-   *  when its id is given. A committed turn. */
+   *  when its id is given. A committed turn; `text` is the customer's side of
+   *  it, in the conversation's words. */
   visualize: (
     view: RenderView,
-    viewLabel: string,
+    text: string,
     config: ConsoleConfig,
     roomPhotoId?: string,
   ) => Promise<string | null>
@@ -394,17 +395,8 @@ export function useChat(): UseChat {
   )
 
   const visualize = useCallback(
-    async (view: RenderView, viewLabel: string, config: ConsoleConfig, roomPhotoId?: string) => {
-      setTurns((prev) => [
-        ...prev,
-        {
-          kind: 'user',
-          id: nextId(),
-          text: roomPhotoId
-            ? 'Place my room package in my room'
-            : `Visualize my room — ${viewLabel.toLowerCase()} view`,
-        },
-      ])
+    async (view: RenderView, text: string, config: ConsoleConfig, roomPhotoId?: string) => {
+      setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text }])
       setSending(true)
       setActivity('rendering')
       const controller = new AbortController()

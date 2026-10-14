@@ -19,6 +19,7 @@ from app.api.routes.chat import router as chat_router
 from app.api.routes.comparisons import router as comparisons_router
 from app.api.routes.furniture_finder import router as furniture_finder_router
 from app.api.routes.health import router as health_router
+from app.api.routes.labels import router as labels_router
 from app.api.routes.picks import router as picks_router
 from app.api.routes.visualization import router as visualization_router
 from app.core.config import Settings, get_settings
@@ -66,4 +67,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(catalog_router, prefix=settings.api.prefix)
     app.include_router(picks_router, prefix=settings.api.prefix)
     app.include_router(comparisons_router, prefix=settings.api.prefix)
+    app.include_router(labels_router, prefix=settings.api.prefix)
     return app

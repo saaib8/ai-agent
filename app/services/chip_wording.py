@@ -422,3 +422,9 @@ PIECE_PICKED: Mapping[ReplyLanguage, str] = MappingProxyType(
 DESIGN_MY_ROOM: Mapping[ReplyLanguage, str] = MappingProxyType(
     {EN: "Design my room", AR: "صمّم غرفتي"}
 )
+# The message the pieces card sends, with the ticked pieces' labels in
+# `{pieces}` joined by the language's comma - read like a typed answer.
+PIECES_MESSAGE: Mapping[ReplyLanguage, str] = MappingProxyType(
+    {EN: "I'd like these pieces: {pieces}", AR: "أريد هذه القطع: {pieces}"}
+)
+LIST_SEPARATOR: Mapping[ReplyLanguage, str] = MappingProxyType({EN: ", ", AR: "، "})

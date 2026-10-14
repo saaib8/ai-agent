@@ -27,6 +27,7 @@ from app.schemas.comparison import ComparisonStatus
 from app.schemas.design import DesignPriority
 from app.schemas.discovery import PriceConstraint, ProductSort
 from app.schemas.grounding import GroundedProduct, SearchOutcome, TurnFailureCode, TypeMix
+from app.schemas.language import ReplyLanguage
 from app.schemas.product_brief import BriefMode
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
@@ -695,10 +696,12 @@ def _screen(result: CustomerTurnResult | None) -> CustomerVisibleScreenView:
         products = grounding.selection.products
     elif grounding.product_detail is not None:
         products = (grounding.product_detail,)
+    language = result.reply_language or result.state.reply_language
     return screen_from_presentation(
         products=products,
         comparison=grounding.comparison,
         room=build_bundle_presentation(result),
+        arabic_names=language is ReplyLanguage.AR,
     )
 
 

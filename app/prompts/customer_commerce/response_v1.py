@@ -15,7 +15,7 @@ from __future__ import annotations
 from app.schemas.language import ReplyLanguage
 
 VERSION = "customer_response/v1.32"
-ARABIC_VERSION = "customer_response/v1.32+ar.8"
+ARABIC_VERSION = "customer_response/v1.32+ar.9"
 """The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
 Everything but the language paragraph is shared, so the two cannot drift."""
 
@@ -1042,7 +1042,9 @@ write a figure in words or in Arabic-Indic digits. Say ريال for SAR.
 
 The summary describes the cards in English. Describe them in Arabic - "كنبة
 رمادية بثلاثة مقاعد" - rather than pasting its English words; a brand or a
-product's own name stays as written. The chips beside your reply may be in
+product's own name stays as written. Each card's name is the store's own name
+for it, as the customer reads it on the card: when you name a product, write
+that name exactly. The chips beside your reply may be in
 English; never translate or repeat them.
 """
 

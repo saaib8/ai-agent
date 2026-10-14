@@ -18,11 +18,11 @@ function compile(path) {
 const react = JSON.stringify(import.meta.resolve('react'))
 const dataUrl = (source) => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const withReact = (source) => `import React from ${react};\n${source}`
-const wordsUrl = dataUrl(compile('../src/lib/briefWords.ts'))
+const wordsUrl = dataUrl(compile('../src/lib/cardWords.ts'))
 const answerUrl = dataUrl(compile('../src/lib/briefAnswer.ts'))
 const iconsUrl = dataUrl(withReact(compile('../src/components/icons.tsx')))
 const component = compile('../src/components/BriefCard.tsx')
-  .replace("'../lib/briefWords'", JSON.stringify(wordsUrl))
+  .replace("'../lib/cardWords'", JSON.stringify(wordsUrl))
   .replace("'../lib/briefAnswer'", JSON.stringify(answerUrl))
   .replace("'./icons'", JSON.stringify(iconsUrl))
   .replace("from 'react'", `from ${react}`)
@@ -51,7 +51,6 @@ const brief = (mode) => ({
 const render = (props) =>
   renderToStaticMarkup(
     createElement(BriefCard, {
-      language: 'en',
       active: true,
       busy: false,
       onSubmit: () => {},

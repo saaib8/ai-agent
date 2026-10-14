@@ -73,6 +73,7 @@ from app.schemas.visualization import (
     RoomRenderPresentation,
     VisualizeRequest,
 )
+from app.services.card_labels import card_labels
 from app.services.chat_runtime import commit_exchange, load_for_turn
 from app.services.discovery import to_candidate
 from app.services.media_wording import (
@@ -384,6 +385,7 @@ class VisualizationTurnRuntime:
             response=response,
             presentation=ChatPresentation(render=render),
             reply_language=language if self._arabic_replies else None,
+            labels=card_labels(language if self._arabic_replies else None),
             # Room visualisation is Sarah's, like product discovery.
             agent=AgentPersona.SARAH,
         )
@@ -488,6 +490,7 @@ class CatalogVisualizationRuntime:
             response=response,
             presentation=ChatPresentation(render=render),
             reply_language=language if self._arabic_replies else None,
+            labels=card_labels(language if self._arabic_replies else None),
             # Room visualisation is Sarah's, like product discovery.
             agent=AgentPersona.SARAH,
         )

@@ -139,6 +139,10 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # Whether a bed picked asks the room's size. A flag: the kinds come
         # from the reviewed card data above.
         "fit_after_pick",
+        # The picks' text in the reply's language: the reviewed display names
+        # and the store's Arabic name. A lookup over registry data, no catalog
+        # access, and nothing it returns is read by a model.
+        "product_display",
     ]
 
 

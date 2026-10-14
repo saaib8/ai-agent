@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { RENDER_VIEWS } from '../../api/types'
-import type { RenderView, RoomRenderPresentation } from '../../api/types'
+import type { CardLabels, RenderView, RoomRenderPresentation } from '../../api/types'
+import { cardWords, type CardWords } from '../../lib/cardWords'
 import { CloseIcon, DownloadIcon, ExpandIcon, GridIcon, ImageIcon } from '../icons'
 import { ViewPicker } from './ViewPicker'
 
@@ -14,6 +15,8 @@ interface RoomRenderProps {
   onRerender?: (view: RenderView, viewLabel: string) => void
   /** A catalogue render: reopen the catalogue with its pieces and room. */
   onEdit?: () => void
+  /** The conversation's words (`ChatResponse.labels`) - English without them. */
+  labels?: CardLabels | null
 }
 
 /**
@@ -21,38 +24,50 @@ interface RoomRenderProps {
  * from another view while it still shows what it pictured. A catalogue render
  * can also be reopened in the catalogue to change its pieces.
  */
-export function RoomRender({ render, outdated, busy = false, onRerender, onEdit }: RoomRenderProps) {
+export function RoomRender({
+  render,
+  outdated,
+  busy = false,
+  onRerender,
+  onEdit,
+  labels,
+}: RoomRenderProps) {
   const [fullScreen, setFullScreen] = useState(false)
+  const all = cardWords(labels)
+  const words = all.picture
+  const views = all.room.views
   // In their own room the photo is the camera: no other view to try.
   const inRoom = !!render.room_photo_id
+  const viewName = render.view ? views[render.view] : render.view_label
+  const alt = inRoom ? words.altFurnished : words.altView(viewName)
   const firstOther = RENDER_VIEWS.find((v) => v.value !== render.view)?.value ?? 'corner'
   const [nextView, setNextView] = useState<RenderView>(firstOther)
-  const nextLabel = RENDER_VIEWS.find((v) => v.value === nextView)?.label ?? ''
+  const nextLabel = views[nextView]
 
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
       <div className="flex items-center justify-between border-b border-line bg-canvas/60 px-4 py-3">
-        <span className="text-sm font-semibold text-ink">Your room</span>
+        <span className="text-sm font-semibold text-ink">{words.title}</span>
         <span className="rounded-full bg-canvas px-2.5 py-0.5 text-[11px] font-medium text-muted">
-          {inRoom ? render.view_label : `${render.view_label} view`}
+          {inRoom ? words.title : words.view(viewName)}
         </span>
       </div>
 
       {outdated && (
         <div className="border-b border-amber/20 bg-amber/10 px-4 py-2 text-xs text-amber">
-          Package changed since this render.
+          {words.outdated}
         </div>
       )}
 
       <button
         onClick={() => setFullScreen(true)}
-        aria-label="Open full screen"
+        aria-label={words.openFullScreen}
         className="group relative block w-full bg-canvas focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-clay/40"
         style={{ aspectRatio: `${render.width} / ${render.height}` }}
       >
         <img
           src={render.image_url}
-          alt={inRoom ? 'Your room, furnished' : `Your room, ${render.view_label.toLowerCase()} view`}
+          alt={alt}
           className={`h-full w-full object-cover ${outdated ? 'opacity-70' : ''}`}
         />
         <span className="absolute right-3 top-3 rounded-full bg-ink/55 p-1.5 text-white opacity-0 transition group-hover:opacity-100">
@@ -63,47 +78,55 @@ export function RoomRender({ render, outdated, busy = false, onRerender, onEdit 
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <ActionButton onClick={() => setFullScreen(true)}>
           <ExpandIcon size={14} />
-          Full screen
+          {words.fullScreen}
         </ActionButton>
         <ActionButton onClick={() => void download(render)}>
           <DownloadIcon size={14} />
-          Download
+          {words.download}
         </ActionButton>
         {onEdit && (
           <ActionButton onClick={onEdit} disabled={busy}>
             <GridIcon size={14} />
-            Edit selection
+            {words.editSelection}
           </ActionButton>
         )}
 
         {onRerender && !outdated && inRoom && (
           <div className="ml-auto">
             <button
-              onClick={() => onRerender('corner', render.view_label)}
+              onClick={() => onRerender('corner', words.title)}
               disabled={busy}
               className="inline-flex items-center gap-1.5 rounded-full border border-clay/30 px-3 py-1.5 text-xs font-medium text-clay transition hover:border-clay hover:bg-clay hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ImageIcon size={14} />
-              Render again
+              {words.renderAgain}
             </button>
           </div>
         )}
         {onRerender && !outdated && !inRoom && (
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <ViewPicker value={nextView} onChange={setNextView} disabled={busy} />
+            <ViewPicker
+              value={nextView}
+              onChange={setNextView}
+              disabled={busy}
+              labels={views}
+              ariaLabel={all.room.cameraView}
+            />
             <button
               onClick={() => onRerender(nextView, nextLabel)}
               disabled={busy || nextView === render.view}
               className="inline-flex items-center gap-1.5 rounded-full border border-clay/30 px-3 py-1.5 text-xs font-medium text-clay transition hover:border-clay hover:bg-clay hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ImageIcon size={14} />
-              Try this view
+              {words.tryThisView}
             </button>
           </div>
         )}
       </div>
 
-      {fullScreen && <Lightbox render={render} onClose={() => setFullScreen(false)} />}
+      {fullScreen && (
+        <Lightbox render={render} alt={alt} words={words} onClose={() => setFullScreen(false)} />
+      )}
     </div>
   )
 }
@@ -128,7 +151,17 @@ function ActionButton({
   )
 }
 
-function Lightbox({ render, onClose }: { render: RoomRenderPresentation; onClose: () => void }) {
+function Lightbox({
+  render,
+  alt,
+  words,
+  onClose,
+}: {
+  render: RoomRenderPresentation
+  alt: string
+  words: CardWords['picture']
+  onClose: () => void
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
@@ -139,20 +172,20 @@ function Lightbox({ render, onClose }: { render: RoomRenderPresentation; onClose
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Room visualisation"
+      aria-label={words.roomVisualisation}
       onClick={onClose}
       className="fixed inset-0 z-50 flex animate-fade items-center justify-center bg-ink/85 p-4 sm:p-8"
     >
       <button
         onClick={onClose}
-        aria-label="Close"
+        aria-label={words.close}
         className="absolute right-4 top-4 rounded-full bg-surface/15 p-2 text-white transition hover:bg-surface/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
       >
         <CloseIcon size={20} />
       </button>
       <img
         src={render.image_url}
-        alt={render.room_photo_id ? 'Your room, furnished' : `Your room, ${render.view_label.toLowerCase()} view`}
+        alt={alt}
         onClick={(e) => e.stopPropagation()}
         className="max-h-full max-w-full rounded-xl object-contain shadow-soft"
       />

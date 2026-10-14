@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { getCatalogProducts } from '../../api/client'
-import type { CatalogFacets, CatalogItem, CatalogPage, CatalogSort, ErrorBody } from '../../api/types'
+import type {
+  CardLabels,
+  CatalogFacets,
+  CatalogItem,
+  CatalogPage,
+  CatalogSort,
+  ErrorBody,
+} from '../../api/types'
 import type { SelectedPiece } from '../../lib/catalog'
 import { styleLabel } from '../../lib/catalog'
+import { cardWords } from '../../lib/cardWords'
 import { humanise } from '../../lib/format'
+import { optionLabel } from '../../lib/productWords'
+import type { ReplyLanguage } from '../../lib/turnWords'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, SearchIcon } from '../icons'
 import { CatalogTile } from './CatalogTile'
 
@@ -15,19 +25,31 @@ interface BrowseStepProps {
   selection: SelectedPiece[]
   onAdd: (item: CatalogItem) => void
   onQuantity: (productId: number, quantity: number) => void
+  /** The conversation's language: the server words products and filters in it. */
+  language?: ReplyLanguage
+  /** The conversation's latest words (`ChatResponse.labels`) - every word the
+   *  step shows. */
+  labels?: CardLabels | null
 }
 
-const SORTS: { value: CatalogSort; label: string }[] = [
-  { value: 'featured', label: 'Featured' },
-  { value: 'price_asc', label: 'Price: low to high' },
-  { value: 'price_desc', label: 'Price: high to low' },
-]
+const SORTS: CatalogSort[] = ['featured', 'price_asc', 'price_desc']
 
 const fieldClass =
   'h-9 rounded-full border border-line bg-surface px-3 text-sm text-ink transition focus:border-clay/50 focus:outline-none focus:ring-2 focus:ring-clay/15'
 
 /** Search, filter and page through the store's catalog, adding pieces. */
-export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuantity }: BrowseStepProps) {
+export function BrowseStep({
+  apiBase,
+  storeId,
+  facets,
+  selection,
+  onAdd,
+  onQuantity,
+  language = 'en',
+  labels,
+}: BrowseStepProps) {
+  const words = cardWords(labels).catalog
+  const kindLabel = (value: string) => capitalise(humanise(value))
   const [searchInput, setSearchInput] = useState('')
   const [q, setQ] = useState('')
   const [category, setCategory] = useState('')
@@ -79,6 +101,7 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
           : {}),
         sort,
         page,
+        language,
       },
       controller.signal,
     ).then((result) => {
@@ -88,7 +111,22 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
       setLoading(false)
     })
     return () => controller.abort()
-  }, [apiBase, storeId, q, category, subcategory, color, style, minPrice, maxPrice, currency, sort, page, attempt])
+  }, [
+    apiBase,
+    storeId,
+    q,
+    category,
+    subcategory,
+    color,
+    style,
+    minPrice,
+    maxPrice,
+    currency,
+    sort,
+    page,
+    language,
+    attempt,
+  ])
 
   const hasFilters = !!(q || category || color || style || minPrice || maxPrice)
   const clearFilters = () => {
@@ -129,8 +167,8 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               maxLength={80}
-              placeholder="Search by name…"
-              aria-label="Search products"
+              placeholder={words.searchPlaceholder}
+              aria-label={words.searchProducts}
               autoFocus
               className={`${fieldClass} w-full pl-9 pr-9`}
             />
@@ -138,7 +176,7 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
               <button
                 type="button"
                 onClick={() => setSearchInput('')}
-                aria-label="Clear search"
+                aria-label={words.clearSearch}
                 className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-muted hover:bg-canvas hover:text-ink"
               >
                 <CloseIcon size={14} />
@@ -146,16 +184,16 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
             )}
           </div>
           <Select
-            label="Sort"
+            label={words.sort.label}
             value={sort}
             onChange={(v) => {
               setSort(v as CatalogSort)
               setPage(1)
             }}
           >
-            {SORTS.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
+            {SORTS.map((value) => (
+              <option key={value} value={value}>
+                {words.sort[value]}
               </option>
             ))}
           </Select>
@@ -164,7 +202,7 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
         {/* One swipeable row on a phone; wraps where there is room. */}
         <div className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&>*]:shrink-0">
           <Select
-            label="Category"
+            label={words.filter.category}
             value={category}
             onChange={(v) => {
               setCategory(v)
@@ -172,39 +210,39 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
               setPage(1)
             }}
           >
-            <option value="">All categories</option>
+            <option value="">{words.allCategories}</option>
             {facets.categories.map((c) => (
               <option key={c.value} value={c.value}>
-                {capitalise(humanise(c.value))} ({c.count})
+                {optionLabel(c, kindLabel)} ({c.count})
               </option>
             ))}
           </Select>
           {category && subcategories.length > 0 && (
-            <Select label="Type" value={subcategory} onChange={onFilter(setSubcategory)}>
-              <option value="">All types</option>
+            <Select label={words.filter.type} value={subcategory} onChange={onFilter(setSubcategory)}>
+              <option value="">{words.allTypes}</option>
               {subcategories.map((s) => (
                 <option key={s.value} value={s.value}>
-                  {capitalise(humanise(s.value))} ({s.count})
+                  {optionLabel(s, kindLabel)} ({s.count})
                 </option>
               ))}
             </Select>
           )}
           {facets.colors.length > 0 && (
-            <Select label="Colour" value={color} onChange={onFilter(setColor)}>
-              <option value="">Any colour</option>
+            <Select label={words.filter.colour} value={color} onChange={onFilter(setColor)}>
+              <option value="">{words.anyColour}</option>
               {facets.colors.map((c) => (
                 <option key={c.value} value={c.value}>
-                  {c.value} ({c.count})
+                  {optionLabel(c, (value) => value)} ({c.count})
                 </option>
               ))}
             </Select>
           )}
           {facets.styles.length > 0 && (
-            <Select label="Style" value={style} onChange={onFilter(setStyle)}>
-              <option value="">Any style</option>
+            <Select label={words.filter.style} value={style} onChange={onFilter(setStyle)}>
+              <option value="">{words.anyStyle}</option>
               {facets.styles.map((s) => (
                 <option key={s.value} value={s.value}>
-                  {styleLabel(s.value)} ({s.count})
+                  {optionLabel(s, styleLabel)} ({s.count})
                 </option>
               ))}
             </Select>
@@ -212,23 +250,23 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
           {priceHint && (
             <div className="flex items-center gap-1.5">
               <PriceInput
-                label="Minimum price"
+                label={words.minPrice}
                 value={minPrice}
-                placeholder="Min"
+                placeholder={words.minShort}
                 onChange={onFilter(setMinPrice)}
               />
               <span className="text-muted">–</span>
               <PriceInput
-                label="Maximum price"
+                label={words.maxPrice}
                 value={maxPrice}
-                placeholder="Max"
+                placeholder={words.maxShort}
                 onChange={onFilter(setMaxPrice)}
               />
               <span
                 className="text-xs text-muted"
-                title={`${Math.floor(Number(priceHint.min_amount))}–${Math.ceil(Number(priceHint.max_amount))} ${priceHint.currency}`}
+                title={`${Math.floor(Number(priceHint.min_amount))}–${Math.ceil(Number(priceHint.max_amount))} ${priceHint.currency_label ?? priceHint.currency}`}
               >
-                {priceHint.currency}
+                {priceHint.currency_label ?? priceHint.currency}
               </span>
             </div>
           )}
@@ -238,7 +276,7 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
               onClick={clearFilters}
               className="px-1 text-xs font-medium text-clay hover:underline"
             >
-              Clear filters
+              {words.clearFilters}
             </button>
           )}
         </div>
@@ -253,7 +291,7 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
               onClick={() => setAttempt((a) => a + 1)}
               className="rounded-full border border-line px-4 py-1.5 text-sm transition hover:border-clay/40 hover:text-clay"
             >
-              Try again
+              {words.tryAgain}
             </button>
           </Centered>
         ) : !data ? (
@@ -264,14 +302,16 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
           </div>
         ) : data.items.length === 0 ? (
           <Centered>
-            <p className="text-sm text-muted">No products match these filters.</p>
+            <p className="text-sm text-muted" dir="auto">
+              {words.noMatches}
+            </p>
             {hasFilters && (
               <button
                 type="button"
                 onClick={clearFilters}
                 className="rounded-full border border-line px-4 py-1.5 text-sm transition hover:border-clay/40 hover:text-clay"
               >
-                Clear filters
+                {words.clearFilters}
               </button>
             )}
           </Centered>
@@ -292,24 +332,24 @@ export function BrowseStep({ apiBase, storeId, facets, selection, onAdd, onQuant
                   maxProducts={facets.studio.max_products}
                   onAdd={() => onAdd(item)}
                   onQuantity={(n) => onQuantity(item.product_id, n)}
+                  labels={labels}
                 />
               ))}
             </div>
             <div className="mt-4 flex items-center justify-between gap-2">
-              <p className="text-xs text-muted">
-                {data.count.toLocaleString()} products · page {data.page} of{' '}
-                {Math.max(data.total_pages, 1)}
+              <p className="text-xs text-muted" dir="auto">
+                {words.page(data.count.toLocaleString(), data.page, Math.max(data.total_pages, 1))}
               </p>
               <div className="flex gap-1">
                 <PagerButton
-                  label="Previous page"
+                  label={words.previousPage}
                   disabled={page <= 1 || loading}
                   onClick={() => setPage(Math.max(1, page - 1))}
                 >
                   <ChevronLeftIcon size={16} />
                 </PagerButton>
                 <PagerButton
-                  label="Next page"
+                  label={words.nextPage}
                   disabled={page >= data.total_pages || loading}
                   onClick={() => setPage(page + 1)}
                 >

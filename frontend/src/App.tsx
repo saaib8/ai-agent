@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { RENDER_VIEWS } from './api/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BriefAnswerAction,
   BriefChip,
@@ -20,7 +19,9 @@ import { CatalogDialog } from './components/catalog/CatalogDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
 import { TopNav } from './components/TopNav'
-import { conversationLanguage, turnWords } from './lib/turnWords'
+import { cardWords, latestLabels } from './lib/cardWords'
+import { productText } from './lib/productWords'
+import { conversationLanguage } from './lib/turnWords'
 import { useChat } from './hooks/useChat'
 import { useConfig } from './hooks/useConfig'
 import { useHealth } from './hooks/useHealth'
@@ -103,8 +104,13 @@ export default function App() {
   // cross-sell a piece the room already holds). The backend marks the list with
   // the piece it is for; re-enter swap mode so an alternative's "Select" swaps.
   const lastTurn = chat.turns[chat.turns.length - 1]
-  // What a tapped button says on the customer's side, in the conversation's language.
-  const words = turnWords(conversationLanguage(chat.turns))
+  // The conversation's language, for the catalogue it opens.
+  const language = conversationLanguage(chat.turns)
+  // The latest reply's words: what a tapped button says on the customer's side
+  // and every label drawn outside a reply - the server's, as the widget gets them.
+  const labels = latestLabels(chat.turns)
+  const words = useMemo(() => cardWords(labels), [labels])
+  const say = words.say
   const swapCtx =
     lastTurn?.kind === 'assistant' ? (lastTurn.data.presentation?.swap_context ?? null) : null
   useEffect(() => {
@@ -146,17 +152,17 @@ export default function App() {
       setSwap({ bundleOrdinal, role })
       // Deterministic: the backend runs this role's own search — never a
       // language model deciding whether "other beds" means a search or a room.
-      void chat.send(words.otherRoomOptions(role), config.config, {
+      void chat.send(say.otherOptions(role), config.config, {
         bundle: { kind: 'list_alternatives', bundle_ordinal: bundleOrdinal },
       })
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   const handlePickAlternative = useCallback(
     (alternativeOrdinal: number) => {
       if (chat.sending || swap === null) return
-      void chat.send(words.useRoomOption(alternativeOrdinal, swap.role), config.config, {
+      void chat.send(say.useOption(alternativeOrdinal, swap.role), config.config, {
         bundle: {
           kind: 'swap',
           bundle_ordinal: swap.bundleOrdinal,
@@ -165,7 +171,7 @@ export default function App() {
       })
       setSwap(null)
     },
-    [chat, config.config, swap, words],
+    [chat, config.config, swap, say],
   )
 
   const handleShowMoreOptions = useCallback(() => {
@@ -173,10 +179,10 @@ export default function App() {
     setSwap(null)
     // Deterministic: re-run the search in progress, excluding everything just
     // shown. No model decides whether "show me more" means a new search.
-    void chat.send(words.differentOptions, config.config, {
+    void chat.send(say.differentOptions, config.config, {
       search: { kind: 'more_options' },
     })
-  }, [chat, config.config, words])
+  }, [chat, config.config, say])
 
   const handleExcludeProduct = useCallback(
     (product: GroundedProduct) => {
@@ -185,16 +191,17 @@ export default function App() {
       // The message names the piece so the conversation record reads clearly;
       // `rejected` shows it on the user's turn so the thread makes visible which
       // one was passed on, not just that something was.
-      void chat.send(words.notThisOne(product.name_english), config.config, {
+      void chat.send(say.notThisOne(product.name_english), config.config, {
         search: { kind: 'exclude', ordinal: product.presented_ordinal },
         rejected: {
-          name: product.name_english,
+          // The card's own name, as the server worded it for the reply.
+          name: product.display?.name ?? product.name_english,
           imageUrl: product.image_url,
-          label: words.notThisOneLabel,
+          label: words.notThisOne,
         },
       })
     },
-    [chat, config.config, words],
+    [chat, config.config, say, words],
   )
 
   // ── picks: ticking, what goes with one, comparing two ───────────────────────
@@ -221,12 +228,12 @@ export default function App() {
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
-        void chat.send(words.likeProduct(chosen.name_english), config.config, {
+        void chat.send(say.like(chosen.name_english), config.config, {
           product: { kind: 'goes_with', pick: chosen.pick },
         })
       }
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   // ♡ is silent and never waits: it is queued and saved once nothing else is
@@ -265,12 +272,12 @@ export default function App() {
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
-        void chat.send(words.likeProduct(chosen.name_english), config.config, {
+        void chat.send(say.like(chosen.name_english), config.config, {
           product: { kind: 'goes_with', pick: chosen.pick },
         })
       }
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   const handleMoreLikeThis = useCallback(
@@ -278,22 +285,22 @@ export default function App() {
       const ordinal = product.presented_ordinal
       if (chat.sending || chat.picking || ordinal == null) return
       setSwap(null)
-      void chat.send(words.moreLikeThis(product.name_english), config.config, {
+      void chat.send(say.moreLike(product.name_english), config.config, {
         product: { kind: 'more_like_this', card: { list_revision: listRevision, ordinal } },
       })
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   const handleMoreLikeThisLiked = useCallback(
     (item: LikedView) => {
       if (chat.sending || chat.picking) return
       setSwap(null)
-      void chat.send(words.moreLikeThis(item.name_english), config.config, {
+      void chat.send(say.moreLike(item.name_english), config.config, {
         product: { kind: 'more_like_this', liked: item.liked },
       })
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   const handleRemovePick = useCallback(
@@ -308,11 +315,11 @@ export default function App() {
     (pick: PickView) => {
       if (chat.sending || chat.picking) return
       setSwap(null)
-      void chat.send(words.whatGoesWith(pick.name_english), config.config, {
+      void chat.send(say.whatGoesWith(pick.name_english), config.config, {
         product: { kind: 'goes_with', pick: pick.pick },
       })
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   // ── comparing the checked cards in the conversation ─────────────────────
@@ -345,7 +352,7 @@ export default function App() {
           listRevision,
           ordinal,
           family,
-          name: product.name_english,
+          name: productText(product).name,
           imageUrl: product.image_url || null,
         },
       ])
@@ -356,13 +363,13 @@ export default function App() {
   const handleCompare = useCallback(async () => {
     if (comparing.length < 2 || chat.sending || chat.picking) return
     setSwap(null)
-    await chat.send(words.compareProducts(comparing.map((card) => card.name)), config.config, {
+    await chat.send(say.compare(comparing.map((card) => card.name)), config.config, {
       product: {
         kind: 'compare_cards',
         cards: comparing.map((card) => ({ list_revision: card.listRevision, ordinal: card.ordinal })),
       },
     })
-  }, [chat, comparing, config.config, words])
+  }, [chat, comparing, config.config, say])
 
   const handleUncheckCompare = useCallback((card: CheckedCard) => {
     setComparing((checked) => checked.filter((c) => c !== card))
@@ -384,11 +391,11 @@ export default function App() {
     (chip: BriefChip) => {
       if (chat.sending || chat.picking) return
       setSwap(null)
-      void chat.send(words.dropChip(chip.label), config.config, {
+      void chat.send(say.without(chip.label), config.config, {
         search: { kind: 'drop', facet: chip.facet },
       })
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   const handleCombination = useCallback(
@@ -397,15 +404,15 @@ export default function App() {
       setSwap(null)
       const text =
         op === 'more'
-          ? words.moreCombinations
+          ? say.moreSeating
           : op === 'choose'
-            ? words.chooseCombination(position ?? 1)
-            : words.notCombination(position ?? 1)
+            ? say.takeOption(position ?? 1)
+            : say.notOption(position ?? 1)
       void chat.send(text, config.config, {
         search: { kind: 'combination', op, position },
       })
     },
-    [chat, config.config, words],
+    [chat, config.config, say],
   )
 
   const handleChoice = useCallback(
@@ -461,9 +468,9 @@ export default function App() {
     (view: RenderView, viewLabel: string) => {
       if (chat.sending) return
       setSwap(null)
-      void chat.visualize(view, viewLabel, config.config)
+      void chat.visualize(view, say.visualizeRoom(viewLabel), config.config)
     },
-    [chat, config.config],
+    [chat, config.config, say],
   )
 
   /** The session's room photo id - after uploading a new photo first, when one
@@ -495,20 +502,20 @@ export default function App() {
       setSwap(null)
       const photoId = await roomPhotoFor(file)
       if (!photoId) return
-      const code = await chat.visualize('corner', 'Your room', config.config, photoId)
+      const code = await chat.visualize('corner', say.placeRoom, config.config, photoId)
       forgetLostRoomPhoto(code, photoId)
     },
-    [chat, config.config, roomPhotoFor, forgetLostRoomPhoto],
+    [chat, config.config, roomPhotoFor, forgetLostRoomPhoto, say],
   )
 
   const handleRerenderInRoom = useCallback(
     async (photoId: string) => {
       if (chat.sending) return
       setSwap(null)
-      const code = await chat.visualize('corner', 'Your room', config.config, photoId)
+      const code = await chat.visualize('corner', say.placeRoom, config.config, photoId)
       forgetLostRoomPhoto(code, photoId)
     },
-    [chat, config.config, forgetLostRoomPhoto],
+    [chat, config.config, forgetLostRoomPhoto, say],
   )
 
   const closeCatalog = useCallback(() => setCatalogStep(null), [])
@@ -531,7 +538,6 @@ export default function App() {
       photo: File | 'kept' | null,
     ) => {
       const units = items.reduce((n, item) => n + item.quantity, 0)
-      const pieces = `${units} ${units === 1 ? 'piece' : 'pieces'}`
       setCatalogStep(null)
       if (photo !== null || room === null) {
         void (async () => {
@@ -542,21 +548,24 @@ export default function App() {
           renderSelection(
             { items, room: null, room_photo_id: photoId },
             view,
-            `Place my selection in my room — ${pieces}`,
+            say.placeSelection(units),
           )
         })()
         return
       }
-      const viewLabel = RENDER_VIEWS.find((v) => v.value === view)?.label ?? view
       renderSelection(
         { items, room },
         view,
-        `Visualize my selection — ${pieces} in a ` +
-          `${room.length_m} × ${room.width_m} m ${styleLabel(room.style).toLowerCase()} ` +
-          `${humanise(room.room_type)}, ${viewLabel.toLowerCase()} view`,
+        say.visualizeSelection(
+          units,
+          `${room.length_m} × ${room.width_m}`,
+          styleLabel(room.style).toLowerCase(),
+          humanise(room.room_type),
+          words.room.views[view],
+        ),
       )
     },
-    [renderSelection, roomPhotoFor],
+    [renderSelection, roomPhotoFor, say, words],
   )
 
   const handleRerenderSelection = useCallback(
@@ -564,11 +573,9 @@ export default function App() {
       renderSelection(
         selection,
         view,
-        selection.room_photo_id
-          ? 'Show my selection in my room again'
-          : `Show my selection — ${viewLabel.toLowerCase()} view`,
+        selection.room_photo_id ? say.showSelectionInRoom : say.showSelection(viewLabel),
       ),
-    [renderSelection],
+    [renderSelection, say],
   )
 
   const handleEditSelection = useCallback((selection: CatalogSelection, view: RenderView) => {
@@ -680,6 +687,8 @@ export default function App() {
           onClose={closeCatalog}
           onVisualize={handleCatalogVisualize}
           roomPhotoPreview={roomPhoto?.previewUrl ?? null}
+          language={language}
+          labels={latestLabels(chat.turns)}
         />
       )}
     </div>
