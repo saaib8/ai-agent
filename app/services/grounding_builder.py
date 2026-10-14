@@ -44,5 +44,6 @@ def to_grounded_product(
         dimensions=product.dimensions,
         main_color=product.main_color,
         styles=product.styles,
+        name_arabic=product.name_arabic,
         relaxation_depth=relaxation_depth,
     )

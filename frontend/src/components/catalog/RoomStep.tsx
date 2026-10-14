@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
-import type { StudioOptions } from '../../api/types'
+import type { CardLabels, StudioOptions } from '../../api/types'
 import type { FitCheck, RoomDraft, SelectedPiece } from '../../lib/catalog'
 import { ROOM_PRESETS, fitCheck, parseSide, styleLabel } from '../../lib/catalog'
+import { cardWords, type CardWords } from '../../lib/cardWords'
 import { money } from '../../lib/format'
+import { productText } from '../../lib/productWords'
 import { AlertIcon, CloseIcon, UploadIcon } from '../icons'
 import { ViewPicker } from '../presentation/ViewPicker'
 import { QuantityStepper } from './QuantityStepper'
@@ -16,6 +18,8 @@ interface RoomStepProps {
   onQuantity: (productId: number, quantity: number) => void
   /** The room photo the session already keeps, as a picture to show. */
   roomPhotoPreview: string | null
+  /** The conversation's words (`ChatResponse.labels`) - English without them. */
+  labels?: CardLabels | null
 }
 
 const fieldClass =
@@ -37,7 +41,11 @@ export function RoomStep({
   selection,
   onQuantity,
   roomPhotoPreview,
+  labels,
 }: RoomStepProps) {
+  const all = cardWords(labels)
+  const words = all.catalog
+  const nameOf = (item: SelectedPiece['item']) => productText(item).name
   const set = (patch: Partial<RoomDraft>) => onRoomChange({ ...room, ...patch })
   const min = studio.min_room_side_m
   const max = studio.max_room_side_m
@@ -45,19 +53,19 @@ export function RoomStep({
   const width = parseSide(room.width, min, max)
   const sizeError =
     (room.length && length === null) || (room.width && width === null)
-      ? `Enter sides between ${min} and ${max} m.`
+      ? words.sizeError(min, max)
       : null
   const fit =
     length !== null && width !== null
-      ? fitCheck(selection, length, width, studio.crowded_floor_ratio)
+      ? fitCheck(selection, length, width, studio.crowded_floor_ratio, nameOf)
       : null
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-5">
-          <Field label="Where">
-            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Where to place the pieces">
+          <Field label={words.where}>
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={words.whereAria}>
               <button
                 type="button"
                 role="radio"
@@ -65,7 +73,7 @@ export function RoomStep({
                 onClick={() => set({ usePhoto: false })}
                 className={pillClass(!room.usePhoto)}
               >
-                Set up a room
+                {words.setUpRoom}
               </button>
               <button
                 type="button"
@@ -74,7 +82,7 @@ export function RoomStep({
                 onClick={() => set({ usePhoto: true })}
                 className={pillClass(room.usePhoto)}
               >
-                My room photo
+                {words.myRoomPhoto}
               </button>
             </div>
           </Field>
@@ -84,11 +92,12 @@ export function RoomStep({
               file={room.photoFile}
               keptPreview={roomPhotoPreview}
               onFile={(photoFile) => set({ photoFile })}
+              words={all}
             />
           ) : (
             <>
-          <Field label="Room">
-            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Room type">
+          <Field label={words.room}>
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={words.roomAria}>
               {studio.room_types.map((option) => (
                 <button
                   key={option.value}
@@ -104,7 +113,7 @@ export function RoomStep({
             </div>
           </Field>
 
-          <Field label="Style" htmlFor="room-style">
+          <Field label={words.filter.style} htmlFor="room-style">
             <select
               id="room-style"
               value={room.style}
@@ -113,7 +122,7 @@ export function RoomStep({
             >
               {studio.styles.map((style) => (
                 <option key={style} value={style}>
-                  {styleLabel(style)}
+                  {studio.style_labels?.[style] || styleLabel(style)}
                 </option>
               ))}
             </select>
@@ -122,13 +131,13 @@ export function RoomStep({
             </>
           )}
 
-          <Field label={room.usePhoto ? 'Size (metres) - optional, for the fit check' : 'Size (metres)'}>
+          <Field label={room.usePhoto ? words.sizeOptional : words.size}>
             <div className="flex flex-wrap items-center gap-2">
-              <SideInput label="Room length in metres" value={room.length} min={min} max={max} onChange={(v) => set({ length: v })} />
+              <SideInput label={words.roomLength} value={room.length} min={min} max={max} onChange={(v) => set({ length: v })} />
               <span className="text-muted" aria-hidden>
                 ×
               </span>
-              <SideInput label="Room width in metres" value={room.width} min={min} max={max} onChange={(v) => set({ width: v })} />
+              <SideInput label={words.roomWidth} value={room.width} min={min} max={max} onChange={(v) => set({ width: v })} />
               <div className="flex flex-wrap gap-1.5">
                 {ROOM_PRESETS.map(([l, w]) => (
                   <button
@@ -142,21 +151,30 @@ export function RoomStep({
                 ))}
               </div>
             </div>
-            {sizeError && <p className="mt-1.5 text-xs text-rose">{sizeError}</p>}
+            {sizeError && (
+              <p className="mt-1.5 text-xs text-rose" dir="auto">
+                {sizeError}
+              </p>
+            )}
           </Field>
 
           {!room.usePhoto && (
-            <Field label="View">
-              <ViewPicker value={room.view} onChange={(view) => set({ view })} />
+            <Field label={words.view}>
+              <ViewPicker
+                value={room.view}
+                onChange={(view) => set({ view })}
+                labels={all.room.views}
+                ariaLabel={all.room.cameraView}
+              />
             </Field>
           )}
         </div>
 
         <div className="space-y-4">
-          <FitCard fit={fit} ratio={studio.crowded_floor_ratio} />
+          <FitCard fit={fit} ratio={studio.crowded_floor_ratio} words={words.fit} />
 
           <div>
-            <h3 className="mb-2 text-sm font-semibold text-ink">In the room</h3>
+            <h3 className="mb-2 text-sm font-semibold text-ink">{words.inTheRoom}</h3>
             <ul className="divide-y divide-line rounded-2xl border border-line bg-surface">
               {selection.map(({ item, quantity }) => (
                 <li key={item.product_id} className="flex items-center gap-3 px-3 py-2.5">
@@ -166,22 +184,25 @@ export function RoomStep({
                     className="h-11 w-11 shrink-0 rounded-lg bg-canvas object-cover"
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm text-ink" title={item.name_english}>
-                      {item.name_english}
+                    <div className="truncate text-sm text-ink" title={nameOf(item)} dir="auto">
+                      {nameOf(item)}
                     </div>
-                    <div className="text-xs text-muted">{money(item.price_amount, item.price_unit)}</div>
+                    <div className="text-xs text-muted" dir="auto">
+                      {item.display?.price ?? money(item.price_amount, item.price_unit)}
+                    </div>
                   </div>
                   <QuantityStepper
                     value={quantity}
                     max={studio.max_quantity}
                     onChange={(n) => onQuantity(item.product_id, n)}
-                    label={item.name_english}
+                    label={nameOf(item)}
+                    labels={labels}
                     size="sm"
                   />
                   <button
                     type="button"
                     onClick={() => onQuantity(item.product_id, 0)}
-                    aria-label={`Remove ${item.name_english}`}
+                    aria-label={words.quantity.remove(nameOf(item))}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted transition hover:bg-canvas hover:text-rose"
                   >
                     <CloseIcon size={14} />
@@ -202,17 +223,19 @@ function RoomPhotoField({
   file,
   keptPreview,
   onFile,
+  words,
 }: {
   file: File | null
   keptPreview: string | null
   onFile: (file: File | null) => void
+  words: CardWords
 }) {
   const input = useRef<HTMLInputElement>(null)
   const filePreview = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
   useEffect(() => () => (filePreview ? URL.revokeObjectURL(filePreview) : undefined), [filePreview])
   const preview = filePreview ?? keptPreview
   return (
-    <Field label="Your room">
+    <Field label={words.picture.title}>
       <input
         ref={input}
         type="file"
@@ -226,13 +249,13 @@ function RoomPhotoField({
       />
       {preview ? (
         <div className="flex items-center gap-3">
-          <img src={preview} alt="Your room" className="h-20 w-28 rounded-xl border border-line object-cover" />
+          <img src={preview} alt={words.picture.title} className="h-20 w-28 rounded-xl border border-line object-cover" />
           <button
             type="button"
             onClick={() => input.current?.click()}
             className="rounded-full border border-line px-3 py-1.5 text-sm text-ink transition hover:border-clay/40 hover:text-clay"
           >
-            Change photo
+            {words.room.changePhoto}
           </button>
         </div>
       ) : (
@@ -242,11 +265,11 @@ function RoomPhotoField({
           className="flex w-full max-w-sm items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong bg-surface px-4 py-6 text-sm text-muted transition hover:border-clay/50 hover:text-clay"
         >
           <UploadIcon size={18} />
-          Upload a photo of your room
+          {words.catalog.uploadPhoto}
         </button>
       )}
-      <p className="mt-1.5 text-xs text-muted">
-        We clear out its furniture and decor first, then place your pieces in it.
+      <p className="mt-1.5 text-xs text-muted" dir="auto">
+        {words.catalog.photoNote}
       </p>
     </Field>
   )
@@ -258,28 +281,32 @@ const LEVEL_META: Record<FitCheck['level'], { bar: string; text: string }> = {
   over: { bar: 'bg-rose', text: 'text-rose' },
 }
 
-function FitCard({ fit, ratio }: { fit: FitCheck | null; ratio: number }) {
+function FitCard({
+  fit,
+  ratio,
+  words,
+}: {
+  fit: FitCheck | null
+  ratio: number
+  words: CardWords['catalog']['fit']
+}) {
   if (!fit) {
     return (
-      <div className="rounded-2xl border border-line bg-canvas/60 px-4 py-3 text-sm text-muted">
-        Enter the room size to check the pieces fit.
+      <div className="rounded-2xl border border-line bg-canvas/60 px-4 py-3 text-sm text-muted" dir="auto">
+        {words.enterSize}
       </div>
     )
   }
   const meta = LEVEL_META[fit.level]
   const pct = Math.round(fit.ratio * 100)
-  const headline =
-    fit.level === 'over'
-      ? 'Too much for this room'
-      : fit.level === 'crowded'
-        ? 'This will feel crowded'
-        : 'Fits comfortably'
+  const aim = Math.round(ratio * 100)
+  const headline = fit.level === 'over' ? words.over : fit.level === 'crowded' ? words.crowded : words.ok
   return (
     <div className="rounded-2xl border border-line bg-surface px-4 py-3.5 shadow-card">
       <div className="flex items-baseline justify-between gap-3">
         <h3 className={`text-sm font-semibold ${meta.text}`}>{headline}</h3>
-        <span className="text-xs text-muted">
-          {fit.coveredM2.toFixed(1)} of {fit.floorM2.toFixed(1)} m² · {pct}%
+        <span className="text-xs text-muted" dir="auto">
+          {words.coverage(fit.coveredM2.toFixed(1), fit.floorM2.toFixed(1), pct)}
         </span>
       </div>
       <div className="relative mt-2.5 h-2 overflow-hidden rounded-full bg-canvas">
@@ -287,29 +314,20 @@ function FitCard({ fit, ratio }: { fit: FitCheck | null; ratio: number }) {
         <div
           className="absolute inset-y-0 w-px bg-ink/40"
           style={{ left: `${ratio * 100}%` }}
-          title={`Aim for under ${Math.round(ratio * 100)}%`}
+          title={words.aim(aim)}
         />
       </div>
-      <ul className="mt-2.5 space-y-1 text-xs leading-relaxed text-muted">
-        {fit.level === 'crowded' && (
-          <li>Furniture covers {pct}% of the floor. Aim for under {Math.round(ratio * 100)}% so there&apos;s room to walk.</li>
-        )}
-        {fit.level === 'over' && <li>These pieces need more floor than the room has.</li>}
+      <ul className="mt-2.5 space-y-1 text-xs leading-relaxed text-muted" dir="auto">
+        {fit.level === 'crowded' && <li>{words.crowdedNote(pct, aim)}</li>}
+        {fit.level === 'over' && <li>{words.overNote}</li>}
         {fit.tooBig.map((piece) => (
           <li key={piece.name} className="flex gap-1.5 text-rose">
             <AlertIcon size={14} className="mt-0.5 shrink-0" />
-            <span>
-              {piece.name} ({piece.lengthM} m) won&apos;t fit this room.
-            </span>
+            <span dir="auto">{words.tooBig(piece.name, piece.lengthM)}</span>
           </li>
         ))}
-        {fit.uncounted > 0 && (
-          <li>
-            {fit.uncounted} {fit.uncounted === 1 ? 'piece has' : 'pieces have'} no recorded size, so{' '}
-            {fit.uncounted === 1 ? "it isn't" : "they aren't"} counted.
-          </li>
-        )}
-        <li>Rugs, lighting and decor aren&apos;t counted.</li>
+        {fit.uncounted > 0 && <li>{words.uncounted(fit.uncounted)}</li>}
+        <li>{words.notCounted}</li>
       </ul>
     </div>
   )

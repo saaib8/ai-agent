@@ -305,6 +305,24 @@ def test_the_piece_picker_names_the_pieces_in_arabic_and_marks_a_pick() -> None:
     assert arabic.choose_for_me.label == "اختر لي"
 
 
+def test_the_pieces_card_sends_its_message_in_the_replys_language() -> None:
+    """The submit button's message is the server's, so a widget sends the same
+    words the console does - Arabic with the Arabic comma in Arabic."""
+    pieces = (
+        RoomPieceOffer(
+            key="rug", label="Rug", label_ar="سجادة", tier=PieceTier.ESSENTIAL, selected=True
+        ),
+    )
+    question = _question(RoomQuestionKind.PIECES, pieces=pieces)
+
+    english, arabic = piece_picker(question), piece_picker(question, AR)
+
+    assert english is not None and arabic is not None
+    sent = lambda p, labels: p.submit_message.format(pieces=p.piece_separator.join(labels))  # noqa: E731
+    assert sent(english, ["Sofa", "Rug"]) == "I'd like these pieces: Sofa, Rug"
+    assert sent(arabic, ["كنبة", "سجادة"]) == "أريد هذه القطع: كنبة، سجادة"
+
+
 def test_every_registry_piece_has_an_arabic_label() -> None:
     for kind in ROOMS.kinds:
         template = ROOMS.template(kind)

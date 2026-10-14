@@ -232,13 +232,17 @@ def test_semantic_text_is_never_a_contract_field() -> None:
 
 APPROVED_LANGUAGE_FIELDS = frozenset({"reply_language", "switch_reply_language"})
 """The language replies are written in (docs/arabic-replies-plan.md). Nothing
-else on a model-facing contract names a language: decisions, search and
-grounding stay English, and no Arabic product data reaches a model."""
+else on a model-facing contract names a language: decisions and search stay
+English, and no Arabic product data reaches the decision model."""
+
+APPROVED_ARABIC_DISPLAY_FIELDS = frozenset({"name_arabic"})
+"""A grounded product's Arabic: the store's Arabic name, so a reply written in
+Arabic names the product as its card does. The card's text in the reply's
+language (`display`) is attached to the payload only. Never on what the
+decision model reads."""
 
 
-@pytest.mark.parametrize(
-    "model", (*MODEL_FACING, *GROUNDING_FACING, TurnGrounding), ids=lambda m: m.__name__
-)
+@pytest.mark.parametrize("model", MODEL_FACING, ids=lambda m: m.__name__)
 def test_only_the_reply_language_is_a_language_field(model: type[BaseModel]) -> None:
     for name in _names(model):
         assert "arabic" not in name, f"{model.__name__}.{name}"
@@ -247,9 +251,22 @@ def test_only_the_reply_language_is_a_language_field(model: type[BaseModel]) -> 
             assert name in APPROVED_LANGUAGE_FIELDS, f"{model.__name__}.{name}"
 
 
-def test_grounded_products_display_english() -> None:
+@pytest.mark.parametrize("model", (*GROUNDING_FACING, TurnGrounding), ids=lambda m: m.__name__)
+def test_grounding_carries_arabic_only_for_display(model: type[BaseModel]) -> None:
+    for name in _names(model):
+        if "arabic" in name:
+            assert name in APPROVED_ARABIC_DISPLAY_FIELDS, f"{model.__name__}.{name}"
+        assert "locale" not in name, f"{model.__name__}.{name}"
+        if "language" in name:
+            assert name in APPROVED_LANGUAGE_FIELDS, f"{model.__name__}.{name}"
+
+
+def test_grounded_products_reason_in_english_and_display_arabic() -> None:
+    """English is what every decision reads; the Arabic is display only, and
+    nothing grounds a turn with it attached."""
     assert "name_english" in GroundedProduct.model_fields
-    assert "name_arabic" not in GroundedProduct.model_fields
+    assert set(GroundedProduct.model_fields) >= APPROVED_ARABIC_DISPLAY_FIELDS
+    assert GroundedProduct.model_fields["display"].default is None
 
 
 # ── immutability and closure ────────────────────────────────────────────────

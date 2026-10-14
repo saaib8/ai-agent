@@ -44,6 +44,7 @@ from app.services.interior_design import InteriorDesignAgent
 from app.services.object_description import ObjectDescriber
 from app.services.picks import PicksRuntime
 from app.services.product_brief import ProductBriefBuilder
+from app.services.product_display import ProductDisplayWords
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
@@ -348,6 +349,7 @@ def customer_turn_coordinator(
             else None
         ),
         arabic_replies=settings.customer_agent.arabic_replies,
+        product_display=product_display_words(app_resources),
         compare_groups=app_resources.compare_groups,
         cross_sell_shows_products=settings.customer_agent.cross_sell_shows_products,
         designer_led_opening=settings.customer_agent.designer_led_opening,
@@ -485,6 +487,13 @@ def session_store(app_resources: ResourcesDep) -> SessionStore:
 SessionStoreDep = Annotated[SessionStore, Depends(session_store)]
 
 
+def product_display_words(app_resources: AppResources) -> ProductDisplayWords:
+    """Products' text ready to show - name, kind, colour, styles, seats, price,
+    size - in the reply's language, from the reviewed registries. Arabic only
+    while Arabic replies are on: off, no reply is ever in Arabic."""
+    return ProductDisplayWords(app_resources.taxonomy, app_resources.attributes)
+
+
 def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRuntime:
     """Ticks and unticks: the reference resolver, fresh reads, the session."""
     repository = ProductRepository(session)
@@ -493,6 +502,7 @@ def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRunt
         product_hydration_service(session),
         session_store(app_resources),
         app_resources.settings.customer_agent,
+        display=product_display_words(app_resources),
     )
 
 
@@ -536,6 +546,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         customer_response_generator(app_resources),
         session_store(app_resources),
         app_resources.settings.session,
+        display=product_display_words(app_resources),
     )
 
 
@@ -605,6 +616,7 @@ def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> Fin
         ),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
         compare_groups=app_resources.compare_groups,
+        display=product_display_words(app_resources),
     )
 
 
@@ -685,6 +697,8 @@ def catalog_service(session: SessionDep, app_resources: ResourcesDep) -> Catalog
         app_resources.attributes,
         app_resources.settings.effective_catalog(),
         render_available=app_resources.render_generator is not None,
+        display=product_display_words(app_resources),
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
 
 

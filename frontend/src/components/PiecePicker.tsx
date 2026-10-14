@@ -23,6 +23,12 @@ export function PiecePicker({ picker, onSend, disabled }: PiecePickerProps) {
     })
 
   const chosen = picker.pieces.filter((p) => ticked.has(p.label)).map((p) => p.label)
+  // The server's sentence in the reply's language, as a store's widget sends it;
+  // English from a server that sent none.
+  const message = (picker.submit_message ?? "I'd like these pieces: {pieces}").replace(
+    '{pieces}',
+    chosen.join(picker.piece_separator ?? ', '),
+  )
 
   return (
     <div className="flex animate-rise flex-col gap-2.5 pt-0.5">
@@ -50,7 +56,7 @@ export function PiecePicker({ picker, onSend, disabled }: PiecePickerProps) {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={() => onSend(`I'd like these pieces: ${chosen.join(', ')}`)}
+          onClick={() => onSend(message)}
           disabled={disabled || chosen.length === 0}
           className="rounded-full bg-ink px-4 py-1.5 text-sm font-medium text-white transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-50"
         >

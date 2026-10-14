@@ -55,9 +55,11 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.agent_persona import speaker
 from app.services.bundle_presentation import build_bundle_presentation
+from app.services.card_labels import card_labels
 from app.services.cross_sell import companion_choices
 from app.services.next_step import asks_its_own_question
 from app.services.product_brief import opening_asked, record_asked
+from app.services.product_display import ProductDisplayWords, displayed
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first, offers_what_goes_with
 from app.services.room_presentation import (
@@ -101,11 +103,15 @@ class ChatRuntime:
         responses: CustomerResponseGenerator,
         sessions: SessionStore,
         settings: SessionSettings,
+        display: ProductDisplayWords | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._responses = responses
         self._sessions = sessions
         self._settings = settings
+        self._display = display
+        """The cards' text, ready to show in the reply's language; None sends
+        none."""
 
     # ── 1. load ─────────────────────────────────────────────────────────────
 
@@ -338,8 +344,8 @@ class ChatRuntime:
 
     # ── 5. answer ───────────────────────────────────────────────────────────
 
-    @staticmethod
     def public_response(
+        self,
         request: ChatRequest,
         revision: int,
         response: CustomerResponse,
@@ -353,12 +359,19 @@ class ChatRuntime:
             session_id=request.session_id,
             session_revision=revision,
             response=response,
-            presentation=presentation,
+            presentation=self._displayed(presentation, reply_language or ReplyLanguage.EN),
             picks=picks,
             liked=liked,
             reply_language=reply_language,
             agent=agent,
+            labels=card_labels(reply_language),
         )
+
+    def _displayed(
+        self, presentation: ChatPresentation | None, language: ReplyLanguage
+    ) -> ChatPresentation | None:
+        """Every product and room piece with its text in the reply's language."""
+        return displayed(presentation, self._display, language)
 
     @staticmethod
     def agent(turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:

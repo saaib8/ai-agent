@@ -126,9 +126,16 @@ export type Fetched<T> =
   | { ok: false; status: number | 'network' | 'aborted'; error: ErrorBody }
 
 /** The store's filter values with counts, and what a room render allows. */
-export async function getCatalogFacets(base: string, storeId: number): Promise<Fetched<CatalogFacets>> {
-  return getJson<CatalogFacets>(base, '/v1/catalog/facets', { store_id: storeId }, (p) =>
-    typeof p === 'object' && p !== null && 'categories' in p,
+export async function getCatalogFacets(
+  base: string,
+  storeId: number,
+  language?: 'en' | 'ar',
+): Promise<Fetched<CatalogFacets>> {
+  return getJson<CatalogFacets>(
+    base,
+    '/v1/catalog/facets',
+    { store_id: storeId, ...(language ? { language } : {}) },
+    (p) => typeof p === 'object' && p !== null && 'categories' in p,
   )
 }
 

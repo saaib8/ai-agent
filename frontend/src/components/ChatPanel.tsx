@@ -23,6 +23,7 @@ import { AssistantBubble, UserBubble, ZoryAvatar } from './MessageBubble'
 import { PhotoTurn } from './PhotoTurn'
 import { PicksTray } from './PicksTray'
 import type { CheckedCard } from '../lib/compare'
+import { cardWords, latestLabels } from '../lib/cardWords'
 import { TypingIndicator } from './TypingIndicator'
 
 interface ChatPanelProps {
@@ -233,8 +234,8 @@ export function ChatPanel({
               checked,
               disabled: !checked && (comparing.length >= compareMax || otherKind),
               hint: otherKind
-                ? 'Compare it with products of the same kind'
-                : `Up to ${compareMax} products at a time - uncheck one first`,
+                ? cardWords(latestLabels(turns)).compareHintKind
+                : cardWords(latestLabels(turns)).compareHintMax(compareMax),
               onToggle: (p: GroundedProduct) => onToggleCompare(p, listRevision),
             }
           },
@@ -453,6 +454,7 @@ export function ChatPanel({
         onCompare={onCompare}
         onUncheck={onUncheckCompare}
         onClear={onClearCompare}
+        labels={latestLabels(turns)}
       />
       <PicksTray
         picks={picks}
@@ -460,6 +462,7 @@ export function ChatPanel({
         error={picksError}
         onRemove={onRemovePick}
         onGoesWith={onGoesWith}
+        labels={latestLabels(turns)}
       />
       <Composer
         value={draft}

@@ -690,6 +690,7 @@ def _line(
     return SeatingBundleLine(
         product_id=row.product_id,
         name=row.name_english,
+        name_arabic=row.name_arabic,
         commerce_subcategory=piece.subcategory,
         unit_price=row.price_amount,
         quantity=quantity,

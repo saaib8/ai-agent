@@ -135,6 +135,7 @@ def _cards(groups: Sequence[tuple[BundleLine, int]]) -> tuple[GroundedBundleItem
         GroundedBundleItem(
             grounding_ref=position,
             name_english=line.product.name_english,
+            name_arabic=line.product.name_arabic,
             image_url=line.product.image_url,
             product_url=line.product.product_url,
             commerce=line.product.commerce,
@@ -238,6 +239,7 @@ def build_state_bundle_presentation(
             GroundedBundleItem(
                 grounding_ref=len(items) + 1,
                 name_english=product.name_english,
+                name_arabic=product.name_arabic,
                 image_url=product.image_url,
                 product_url=product.product_url,
                 commerce=product.commerce,

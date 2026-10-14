@@ -106,14 +106,17 @@ def test_the_runtime_holds_only_the_four_things_it_sequences() -> None:
     """A collaborator list is the cheapest description of what a layer does.
 
     The domain engine, the wording layer, the session store and the policy that
-    bounds them. A repository, a taxonomy or a provider client appearing here
-    would mean orchestration had started doing the work it orchestrates.
+    bounds them - and, for display only, the cards' text in the reply's
+    language: a lookup over reviewed registry data that reads no catalog and
+    decides nothing. A
+    repository, a taxonomy or a provider client appearing here would mean
+    orchestration had started doing the work it orchestrates.
     """
     parameters = [
         name for name in inspect.signature(ChatRuntime.__init__).parameters if name != "self"
     ]
 
-    assert parameters == ["coordinator", "responses", "sessions", "settings"]
+    assert parameters == ["coordinator", "responses", "sessions", "settings", "display"]
 
 
 def test_the_runtime_exposes_the_five_phases_a_graph_sequences() -> None:

@@ -35,9 +35,13 @@ from app.schemas.catalog import (
 )
 from app.schemas.dimensions import NormalisedDimensions
 from app.schemas.discovery import ProductSort
+from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductRow
 from app.schemas.retailer import RetailerContext
+from app.services.chip_wording import currency_word
 from app.services.discovery import to_candidate
+from app.services.media_wording import ARABIC_ROOMS
+from app.services.product_display import ProductDisplayWords
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 
@@ -68,7 +72,15 @@ class CatalogService:
         settings: CatalogSettings,
         *,
         render_available: bool,
+        display: ProductDisplayWords | None = None,
+        arabic_replies: bool = False,
     ) -> None:
+        self._display = display
+        """Tiles' and filters' text, ready to show in the requested language;
+        None sends none."""
+        self._arabic_replies = arabic_replies
+        """Whether a requested Arabic is honoured; off, everything reads in
+        English."""
         self._repository = repository
         self._taxonomy = taxonomy
         self._attributes = attributes
@@ -86,32 +98,56 @@ class CatalogService:
             else []
         )
         return CatalogPage(
-            items=tuple(catalog_item(row) for row in rows),
+            items=tuple(
+                catalog_item(row, self._display, self._language(query.language)) for row in rows
+            ),
             page=query.page,
             page_size=size,
             total_pages=math.ceil(count / size),
             count=count,
         )
 
-    async def facets(self, context: RetailerContext) -> CatalogFacets:
+    async def facets(
+        self, context: RetailerContext, language: ReplyLanguage | None = None
+    ) -> CatalogFacets:
+        shown = self._language(language)
         types = await self._repository.supported_commerce_types(context)
         counts = await self._repository.facet_counts(context)
         price = counts.prices[0] if counts.prices else None
         return CatalogFacets(
-            categories=self._categories(types),
-            colors=self._approved(AttributeFamily.COLOR, counts.colors),
-            styles=self._approved(AttributeFamily.STYLE, counts.styles),
+            categories=self._categories(types, shown),
+            colors=self._approved(AttributeFamily.COLOR, counts.colors, shown),
+            styles=self._approved(AttributeFamily.STYLE, counts.styles, shown),
             price=(
-                PriceRange(currency=price[0], min_amount=price[1], max_amount=price[2])
+                PriceRange(
+                    currency=price[0],
+                    min_amount=price[1],
+                    max_amount=price[2],
+                    currency_label=currency_word(price[0], shown),
+                )
                 if price is not None
                 else None
             ),
             studio=StudioOptions(
                 room_types=tuple(
-                    RoomTypeOption(value=room_type, label=label)
+                    RoomTypeOption(
+                        value=room_type,
+                        label=(
+                            ARABIC_ROOMS.get(room_type, label)
+                            if shown is ReplyLanguage.AR
+                            else label
+                        ),
+                    )
                     for room_type, (label, _) in ROOM_TYPES.items()
                 ),
                 styles=tuple(sorted(self._attributes.styles)),
+                style_labels=(
+                    self._display.labels(
+                        AttributeFamily.STYLE, sorted(self._attributes.styles), shown
+                    )
+                    if self._display is not None
+                    else None
+                ),
                 max_products=self._settings.max_products,
                 max_quantity=self._settings.max_quantity,
                 min_room_side_m=self._settings.min_room_side_m,
@@ -174,8 +210,15 @@ class CatalogService:
 
     # ── facets ──────────────────────────────────────────────────────────────
 
+    def _language(self, requested: ReplyLanguage | None) -> ReplyLanguage:
+        """The language asked for - English where none is, or while Arabic
+        replies are off."""
+        if not self._arabic_replies or requested is None:
+            return ReplyLanguage.EN
+        return requested
+
     def _categories(
-        self, types: tuple[tuple[str, str | None, int], ...]
+        self, types: tuple[tuple[str, str | None, int], ...], language: ReplyLanguage
     ) -> tuple[CategoryFacet, ...]:
         """Approved categories this store stocks, each with its approved
         subcategories. A category counts every product in it, including those
@@ -187,18 +230,27 @@ class CatalogService:
                 continue
             totals[category] = totals.get(category, 0) + count
             if subcategory is not None and self._taxonomy.is_pair(category, subcategory):
-                children.setdefault(category, []).append(Facet(value=subcategory, count=count))
+                children.setdefault(category, []).append(
+                    Facet(value=subcategory, count=count, label=self._kind(subcategory, language))
+                )
         return tuple(
             CategoryFacet(
                 value=category,
                 count=totals[category],
                 subcategories=tuple(sorted(children.get(category, ()), key=lambda f: f.value)),
+                label=self._kind(category, language),
             )
             for category in sorted(totals)
         )
 
+    def _kind(self, key: str, language: ReplyLanguage) -> str | None:
+        return self._display.kind(key, language) if self._display is not None else None
+
     def _approved(
-        self, family: AttributeFamily, counted: tuple[tuple[str, int], ...]
+        self,
+        family: AttributeFamily,
+        counted: tuple[tuple[str, int], ...],
+        language: ReplyLanguage = ReplyLanguage.EN,
     ) -> tuple[Facet, ...]:
         """Stored values mapped onto the vocabulary; spellings of one approved
         value are counted together, and unapproved values are left out."""
@@ -208,10 +260,25 @@ class CatalogService:
             if canonical is not None:
                 merged[canonical] = merged.get(canonical, 0) + count
         ordered = sorted(merged.items(), key=lambda item: (-item[1], item[0]))
-        return tuple(Facet(value=value, count=count) for value, count in ordered)
+        return tuple(
+            Facet(
+                value=value,
+                count=count,
+                label=(
+                    self._display.value(family, value, language)
+                    if self._display is not None
+                    else None
+                ),
+            )
+            for value, count in ordered
+        )
 
 
-def catalog_item(row: ProductRow) -> CatalogItem:
+def catalog_item(
+    row: ProductRow,
+    display: ProductDisplayWords | None = None,
+    language: ReplyLanguage = ReplyLanguage.EN,
+) -> CatalogItem:
     candidate = to_candidate(row)
     footprint, longest = _floor_facts(candidate.commerce.category, candidate.dimensions)
     return CatalogItem(
@@ -226,6 +293,7 @@ def catalog_item(row: ProductRow) -> CatalogItem:
         dimensions=candidate.dimensions,
         main_color=candidate.main_color,
         styles=candidate.styles,
+        display=display.product(candidate, language) if display is not None else None,
         stands_on_floor=candidate.commerce.category in FLOOR_CATEGORIES,
         footprint_cm2=footprint,
         longest_side_cm=longest,

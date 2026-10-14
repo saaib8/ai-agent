@@ -28,7 +28,14 @@ from app.schemas.room_opener import (
     RoomQuestion,
     RoomQuestionKind,
 )
-from app.services.chip_wording import DESIGN_MY_ROOM, PIECE_PICKED, Chip, chip
+from app.services.chip_wording import (
+    DESIGN_MY_ROOM,
+    LIST_SEPARATOR,
+    PIECE_PICKED,
+    PIECES_MESSAGE,
+    Chip,
+    chip,
+)
 from app.taxonomy.rooms import PieceTier
 
 EN = ReplyLanguage.EN
@@ -162,6 +169,8 @@ def piece_picker(question: RoomQuestion, language: ReplyLanguage = EN) -> PieceP
         ),
         submit_label=DESIGN_MY_ROOM[language],
         choose_for_me=chip(Chip.CHOOSE_FOR_ME, language),
+        submit_message=PIECES_MESSAGE[language],
+        piece_separator=LIST_SEPARATOR[language],
     )
 
 

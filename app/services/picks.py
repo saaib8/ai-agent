@@ -37,6 +37,7 @@ from app.schemas.agent_updates import (
     RemoveItems,
     ReplaceItems,
 )
+from app.schemas.language import ReplyLanguage
 from app.schemas.picks import (
     DeselectPickAction,
     LikeCardAction,
@@ -56,6 +57,7 @@ from app.schemas.retailer import RetailerContext
 from app.services.agent_state import apply_update
 from app.services.chat_runtime import commit_state, load_for_turn
 from app.services.hydration import ProductHydrationService
+from app.services.product_display import ProductDisplayWords
 from app.services.product_interaction import build_liked, build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
 
@@ -89,13 +91,24 @@ class PicksRuntime:
         hydration: ProductHydrationService,
         sessions: SessionStore,
         settings: CustomerAgentSettings,
+        display: ProductDisplayWords | None = None,
     ) -> None:
+        self._display = display
+        """The tray's text, ready to show in the conversation's language."""
+        self._arabic_replies = settings.arabic_replies
         self._references = references
         self._hydration = hydration
         self._sessions = sessions
         self._max_picks = settings.max_picks
         self._max_likes = settings.max_likes
         self._buttons = settings.designer_led_buttons
+
+    def _language(self, state: AgentStateV1) -> ReplyLanguage:
+        """The conversation's language, as the session holds it - English while
+        Arabic replies are off or nothing has settled it."""
+        if not self._arabic_replies:
+            return ReplyLanguage.EN
+        return state.reply_language or ReplyLanguage.EN
 
     async def apply(self, request: PicksRequest, context: RetailerContext) -> PicksResponse:
         """Load, change, commit, report.
@@ -145,8 +158,12 @@ class PicksRuntime:
         return PicksResponse(
             session_id=request.session_id,
             session_revision=revision,
-            picks=build_picks(final, products),
-            liked=build_liked(final, products) if self._buttons else None,
+            picks=build_picks(final, products, self._display, self._language(final)),
+            liked=(
+                build_liked(final, products, self._display, self._language(final))
+                if self._buttons
+                else None
+            ),
             goes_with=goes_with,
         )
 

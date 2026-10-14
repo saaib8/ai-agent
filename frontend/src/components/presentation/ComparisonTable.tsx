@@ -1,7 +1,12 @@
-import type { ProductComparisonResult } from '../../api/types'
-import { comparisonWords } from '../../lib/comparisonWords'
-import { dimensionsLine, humanise, money } from '../../lib/format'
-import type { ReplyLanguage } from '../../lib/turnWords'
+import type {
+  CardLabels,
+  ComparisonCell,
+  GroundedProduct,
+  ProductComparisonResult,
+} from '../../api/types'
+import { cardWords, type CardWords } from '../../lib/cardWords'
+import { humanise } from '../../lib/format'
+import { productText } from '../../lib/productWords'
 
 const STATUS_STYLES: Record<string, string> = {
   different: 'bg-clay-soft text-clay',
@@ -11,15 +16,35 @@ const STATUS_STYLES: Record<string, string> = {
 /** The measurements the backend reads per product type (CLAUDE.md 15.1). */
 const SIZE_FIELDS = new Set(['length', 'overall_width', 'depth', 'height'])
 
+/** A cell as this conversation reads it. The kind, colour and styles rows
+ *  read from the product in that column, as the server worded it for the
+ *  reply (`display`); every other cell is shown as the backend wrote it. */
+function cellText(
+  field: string,
+  cell: ComparisonCell,
+  product: GroundedProduct,
+  words: CardWords,
+): string {
+  if (!cell.known || cell.value == null) return '—'
+  if (!product.display) return cell.value
+  const text = productText(product)
+  if (field === 'commerce_subcategory') return text.kind ?? cell.value
+  if (field === 'main_color') return text.color ?? cell.value
+  if (field === 'styles') return text.styles.length ? text.styles.join(words.separator) : cell.value
+  return cell.value
+}
+
 export function ComparisonTable({
   comparison,
-  language = 'en',
+  labels,
 }: {
   comparison: ProductComparisonResult
-  language?: ReplyLanguage
+  /** The reply's words (`ChatResponse.labels`) - English without them. */
+  labels?: CardLabels | null
 }) {
   const { products } = comparison
-  const words = comparisonWords(language)
+  const all = cardWords(labels)
+  const words = all.comparison
   // A row no product's listing fills tells the customer nothing, so it is
   // left out. A row only some fill stays: the known value is still worth
   // comparing, with a dash where the other listing is silent.
@@ -34,7 +59,7 @@ export function ComparisonTable({
   )
   const dimensions = measured.every(Boolean)
     ? null
-    : products.map((product, i) => (measured[i] ? undefined : dimensionsLine(product.dimensions)))
+    : products.map((product, i) => (measured[i] ? undefined : productText(product).size))
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
       <div className="border-b border-line bg-canvas/60 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">
@@ -64,9 +89,11 @@ export function ComparisonTable({
                     #{p.presented_ordinal ?? i + 1}
                   </span>
                   <br />
-                  <span className="text-sm leading-snug">{p.name_english}</span>
+                  <span className="text-sm leading-snug" dir="auto">
+                    {productText(p).name}
+                  </span>
                   <div className="mt-1 text-sm font-semibold text-clay">
-                    {money(p.price_amount, p.price_unit)}
+                    {productText(p).price}
                   </div>
                   {p.product_url && (
                     <a
@@ -103,7 +130,7 @@ export function ComparisonTable({
               <tr key={row.field} className="border-t border-line">
                 <td className="sticky left-0 z-10 bg-surface px-4 py-3 align-top">
                   <span className="font-medium capitalize text-ink">
-                    {words.fields[row.field] ?? humanise(row.field)}
+                    {words.fieldName(row.field) ?? humanise(row.field)}
                   </span>
                   {row.status !== 'unknown' && (
                     <span
@@ -119,7 +146,7 @@ export function ComparisonTable({
                     className={`px-4 py-3 align-top ${cell.known ? 'text-ink' : 'text-muted/60'}`}
                     title={cell.known ? undefined : words.notListedTitle}
                   >
-                    {cell.known ? cell.value : '—'}
+                    {cellText(row.field, cell, products[i], all)}
                   </td>
                 ))}
               </tr>

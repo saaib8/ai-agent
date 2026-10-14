@@ -23,7 +23,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.dimensions import NormalisedDimensions
 from app.schemas.discovery import ProductSort
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
-from app.schemas.product import CommerceClassification
+from app.schemas.language import ReplyLanguage
+from app.schemas.product import CommerceClassification, ProductDisplay
 from app.schemas.room_photo import ROOM_PHOTO_ID_PATTERN
 from app.schemas.visualization import RenderRoomSpec, RenderView, RoomType
 
@@ -62,6 +63,10 @@ class CatalogQuery(BaseModel):
     sort: CatalogSort = CatalogSort.FEATURED
     page: int = Field(default=1, ge=1, le=10_000)
     page_size: int | None = Field(default=None, ge=1)
+    language: ReplyLanguage | None = None
+    """The language the tiles read in - the conversation's, as the client last
+    saw it (`ChatResponse.reply_language`). English where none is given or
+    Arabic replies are off; it filters nothing."""
 
     @model_validator(mode="after")
     def _price_bounds_are_usable(self) -> Self:
@@ -126,6 +131,8 @@ class CatalogItem(BaseModel):
     dimensions: NormalisedDimensions
     main_color: str | None
     styles: tuple[str, ...]
+    display: ProductDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The tile's text, ready to show in the requested language."""
     stands_on_floor: bool = False
     footprint_cm2: float | None = None
     longest_side_cm: float | None = None
@@ -150,6 +157,9 @@ class Facet(BaseModel):
 
     value: str
     count: int = Field(ge=1)
+    label: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """How it reads, in the requested language - display only; the value is
+    what a filter sends back."""
 
 
 class CategoryFacet(BaseModel):
@@ -158,6 +168,9 @@ class CategoryFacet(BaseModel):
     value: str
     count: int = Field(ge=1)
     subcategories: tuple[Facet, ...] = ()
+    label: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """How it reads, in the requested language - display only; the value is
+    what a filter sends back."""
 
 
 class PriceRange(BaseModel):
@@ -166,6 +179,9 @@ class PriceRange(BaseModel):
     currency: str
     min_amount: Decimal
     max_amount: Decimal
+    currency_label: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """How the currency reads in the requested language ("SAR" / "ريال"), for a
+    total the client adds up - display only; `currency` is what a filter sends."""
 
 
 class RoomTypeOption(BaseModel):
@@ -173,6 +189,7 @@ class RoomTypeOption(BaseModel):
 
     value: RoomType
     label: str
+    """How it reads in the requested language; `value` is what is sent back."""
 
 
 class StudioOptions(BaseModel):
@@ -185,6 +202,9 @@ class StudioOptions(BaseModel):
     styles: tuple[str, ...]
     """Every approved style, not only those this store tags: a room's style
     describes the room, not the products in it."""
+
+    style_labels: dict[str, str] | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Each style's name in the requested language, by its value."""
 
     max_products: int = Field(ge=1)
     max_quantity: int = Field(ge=1)

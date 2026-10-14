@@ -1,3 +1,5 @@
+import type { CardLabels } from '../../api/types'
+import { cardWords } from '../../lib/cardWords'
 import { MinusIcon, PlusIcon } from '../icons'
 
 interface QuantityStepperProps {
@@ -7,22 +9,32 @@ interface QuantityStepperProps {
   onChange: (value: number) => void
   label: string
   size?: 'sm' | 'md'
+  /** The conversation's words (`ChatResponse.labels`) - English without them. */
+  labels?: CardLabels | null
 }
 
 /** − n + for one product's quantity. Stepping below one removes it. */
-export function QuantityStepper({ value, max, onChange, label, size = 'md' }: QuantityStepperProps) {
+export function QuantityStepper({
+  value,
+  max,
+  onChange,
+  label,
+  size = 'md',
+  labels,
+}: QuantityStepperProps) {
+  const words = cardWords(labels).catalog.quantity
   const box = size === 'sm' ? 'h-7 w-7' : 'h-8 w-8'
   const button = `flex ${box} items-center justify-center rounded-full text-ink transition hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-40`
   return (
     <div
       role="group"
-      aria-label={`Quantity of ${label}`}
+      aria-label={words.of(label)}
       className="inline-flex items-center rounded-full border border-line bg-surface"
     >
       <button
         type="button"
         onClick={() => onChange(value - 1)}
-        aria-label={value === 1 ? `Remove ${label}` : `One fewer ${label}`}
+        aria-label={value === 1 ? words.remove(label) : words.fewer(label)}
         className={button}
       >
         <MinusIcon size={14} />
@@ -34,8 +46,8 @@ export function QuantityStepper({ value, max, onChange, label, size = 'md' }: Qu
         type="button"
         onClick={() => onChange(value + 1)}
         disabled={value >= max}
-        aria-label={`One more ${label}`}
-        title={value >= max ? `At most ${max} of one product` : undefined}
+        aria-label={words.more(label)}
+        title={value >= max ? words.atMost(max) : undefined}
         className={button}
       >
         <PlusIcon size={14} />

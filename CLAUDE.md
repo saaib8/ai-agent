@@ -2397,6 +2397,35 @@ the turn did (`app/services/agent_persona.py`), never by a model:
 - **Sarah** - product discovery, Furniture Finder, room visualisation (every
   render), and everything else.
 
+**The server words what a client shows around products, in the reply's
+language** - so a store's widget, like the console, shows it as it is and keeps
+no copy of its own (docs/widget-display-contract.md). Each product on the
+chat's cards, the product in focus, the products compared, the picks tray and
+Browse Catalogue's tiles carries `display`: the name (in Arabic, the store's
+`name_arabic` exactly as stored - the English name only where it is empty),
+the kind, colour and styles in the registries' reviewed words
+(`commerce_v1.yaml`, `catalog_attributes_v1.yaml`), and the seats, price and
+listed size worded for the language, in Western digits
+(`app/services/product_display.py`). Every piece of a room package and of a
+seating combination carries `display` too (name, kind, seats, the price of one,
+the line total), and its totals the worded new spend and budget. Every chat reply
+carries `labels` - every word a client draws around the conversation: the card
+buttons, the picks tray, the compare bar, Browse Catalogue's screens, the room package card,
+the card of questions, the comparison table, a room picture, and the message a
+tapped button puts on the customer's side - with placeholders for the client to
+fill (`app/services/card_labels.py`; an Arabic label may leave one out, never add
+one). A photo search's pick and a room picture carry `labels` too, and the pick's
+cards `display`. The console keeps no words of its own beyond an English
+fallback; `GET /v1/labels?language=` answers before any reply has. Browse Catalogue takes `language` and words its tiles, filter options
+(`label`), room styles (`style_labels`), room types and the currency
+(`price.currency_label`) in it. The language is the reply's
+(`reply_language`), the session's for the picks endpoint, and English while
+`customer_agent.arabic_replies` is off. Display only: every search, filter,
+comparison, pick and decision keeps the English values beside it, and nothing
+the decision model reads carries Arabic. A reply written in Arabic is given
+each card's Arabic name, so its words and the cards name a product alike. A
+room package and its renders stay English.
+
 ---
 
 ## 26. Product Discovery Service Contract

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { GroundedProduct } from '../../api/types'
-import { dimensionsLine, humanise, money } from '../../lib/format'
+import type { CardLabels, GroundedProduct } from '../../api/types'
+import { cardWords } from '../../lib/cardWords'
+import { productText } from '../../lib/productWords'
 import { CheckIcon, HeartIcon, PlusIcon, SparkIcon } from '../icons'
 
 function Chip({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'accent' }) {
@@ -53,6 +54,7 @@ export function ProductCard({
   like,
   onMoreLikeThis,
   busy = false,
+  labels,
 }: {
   product: GroundedProduct
   pick?: AlternativePick
@@ -69,13 +71,16 @@ export function ProductCard({
   onMoreLikeThis?: (product: GroundedProduct) => void
   /** A turn is in flight: actions that start one wait for it. */
   busy?: boolean
+  /** The reply's words around a card (`ChatResponse.labels`). The product's
+   *  own text comes worded from the server (`display`). */
+  labels?: CardLabels | null
 }) {
   const [imgFailed, setImgFailed] = useState(false)
-  const { commerce } = product
-  const price = money(product.price_amount, product.price_unit)
-  const dims = dimensionsLine(product.dimensions)
+  const words = cardWords(labels)
+  const text = productText(product)
+  const price = text.price
+  const dims = text.size
   const widened = product.relaxation_depth != null && product.relaxation_depth > 0
-  const kind = commerce.subcategory ?? commerce.category
 
   const picked = select?.picked ?? false
 
@@ -89,7 +94,7 @@ export function ProductCard({
         {!imgFailed && product.image_url ? (
           <img
             src={product.image_url}
-            alt={product.name_english}
+            alt={text.name}
             loading="lazy"
             onError={() => setImgFailed(true)}
             className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
@@ -115,8 +120,8 @@ export function ProductCard({
           <button
             onClick={() => like.onToggle(product)}
             aria-pressed={like.liked}
-            aria-label={like.liked ? `Unlike ${product.name_english}` : `Like ${product.name_english}`}
-            title={like.liked ? 'Liked' : 'Like'}
+            aria-label={like.liked ? words.unlikeName(text.name) : words.likeName(text.name)}
+            title={like.liked ? words.liked : words.like}
             className={`absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-surface/90 shadow-card backdrop-blur-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 ${
               like.liked ? 'text-rose' : 'text-muted hover:text-rose'
             }`}
@@ -126,23 +131,23 @@ export function ProductCard({
         )}
         {widened && (
           <span className="absolute right-2 top-2 rounded-full bg-amber px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-            widened
+            {words.widened}
           </span>
         )}
       </div>
 
       <div className="flex flex-1 flex-col gap-2 p-3.5">
-        <h4 className="text-sm font-medium leading-snug text-ink" title={product.name_english}>
-          {product.name_english}
+        <h4 className="text-sm font-medium leading-snug text-ink" title={text.name} dir="auto">
+          {text.name}
         </h4>
         {price && <div className="text-[15px] font-semibold text-clay">{price}</div>}
 
         <div className="flex flex-wrap gap-1.5">
-          {kind && <Chip tone="accent">{humanise(kind)}</Chip>}
-          {commerce.seating_capacity != null && <Chip>{commerce.seating_capacity}-seat</Chip>}
-          {product.main_color && <Chip>{humanise(product.main_color)}</Chip>}
-          {product.styles.map((s) => (
-            <Chip key={s}>{humanise(s)}</Chip>
+          {text.kind && <Chip tone="accent">{text.kind}</Chip>}
+          {text.seats && <Chip>{text.seats}</Chip>}
+          {text.color && <Chip>{text.color}</Chip>}
+          {text.styles.map((s) => (
+            <Chip key={s}>{s}</Chip>
           ))}
         </div>
 
@@ -165,7 +170,7 @@ export function ProductCard({
                 onChange={() => compare.onToggle(product)}
                 className="h-3.5 w-3.5 accent-[var(--color-clay)]"
               />
-              Compare
+              {words.compare}
             </label>
           )}
           {select && !pick && product.presented_ordinal != null && (
@@ -180,7 +185,7 @@ export function ProductCard({
               }`}
             >
               {picked ? <CheckIcon size={13} /> : <PlusIcon size={13} />}
-              {picked ? 'Selected' : 'Select'}
+              {picked ? words.selected : words.select}
             </button>
           )}
           {pick && (
@@ -198,7 +203,7 @@ export function ProductCard({
               className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink transition hover:border-clay/50 hover:text-clay focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <SparkIcon size={13} />
-              More like this
+              {words.moreLikeThis}
             </button>
           )}
           {!pick && onExclude && product.presented_ordinal != null && (
@@ -206,7 +211,7 @@ export function ProductCard({
               onClick={() => onExclude(product)}
               className="w-full rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
             >
-              Not this one
+              {words.notThisOne}
             </button>
           )}
           {product.product_url && (
@@ -216,7 +221,7 @@ export function ProductCard({
               rel="noopener noreferrer"
               className="text-xs font-medium text-clay hover:underline"
             >
-              View product →
+              {words.viewProduct}
             </a>
           )}
         </div>

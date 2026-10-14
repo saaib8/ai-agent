@@ -45,15 +45,20 @@ export function parseSide(value: string, min: number, max: number): number | nul
   return Number.isFinite(n) && n >= min && n <= max ? n : null
 }
 
-/** "8,450 SAR", summed per currency so amounts are never added across them. */
-export function selectionTotal(pieces: SelectedPiece[]): string | null {
+/** "8,450 SAR", summed per currency so amounts are never added across them -
+ *  each named by `currencyWord`, the server's word for it in the conversation's
+ *  language ("ريال"). */
+export function selectionTotal(
+  pieces: SelectedPiece[],
+  currencyWord: (unit: string) => string = (unit) => unit,
+): string | null {
   const byCurrency = new Map<string, number>()
   for (const { item, quantity } of pieces) {
     const amount = toNumber(item.price_amount)
     if (amount == null) continue
     byCurrency.set(item.price_unit, (byCurrency.get(item.price_unit) ?? 0) + amount * quantity)
   }
-  const parts = [...byCurrency].map(([unit, sum]) => money(String(sum), unit))
+  const parts = [...byCurrency].map(([unit, sum]) => money(String(sum), currencyWord(unit)))
   return parts.length ? parts.join(' + ') : null
 }
 
@@ -85,6 +90,9 @@ export function fitCheck(
   lengthM: number,
   widthM: number,
   crowdedRatio: number,
+  /** How a piece is named in the warning: its English name unless the
+   *  conversation reads another. */
+  nameOf: (item: CatalogItem) => string = (item) => item.name_english,
 ): FitCheck {
   const floorM2 = lengthM * widthM
   const roomShort = Math.min(lengthM, widthM) * 100
@@ -102,7 +110,7 @@ export function fitCheck(
     const long = item.longest_side_cm
     const short = item.footprint_cm2 / long
     if (long > roomLong || short > roomShort) {
-      tooBig.push({ name: item.name_english, lengthM: Math.round(long) / 100 })
+      tooBig.push({ name: nameOf(item), lengthM: Math.round(long) / 100 })
     }
   }
   const coveredM2 = coveredCm2 / 10_000

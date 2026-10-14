@@ -26,6 +26,39 @@ from app.schemas.bundle import BundleStatus, TotalUnavailableReason
 from app.schemas.product import CommerceClassification
 
 
+class BundleItemDisplay(BaseModel):
+    """How a room piece's card reads, ready to show, in the reply's language.
+
+    The room's counterpart of `ProductDisplay`, worded by the same rules - the
+    store's Arabic name as stored, the reviewed kind, figures in Western digits
+    - and shown as it is. Display only: the figures beside it stay the ones the
+    arithmetic used.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1)
+    kind: str | None = None
+    """The sub-category, else the category: "bed" / "سرير"."""
+
+    seats: str | None = None
+    price: str
+    """One piece's price: "950 SAR" / "950 ريال"."""
+
+    line_total: str | None = None
+    """What the line adds to the bill, or None for a piece already owned."""
+
+
+class BundleTotalsDisplay(BaseModel):
+    """The room's totals, worded for the reply's language."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    new_spend: str | None = None
+    budget: str | None = None
+    """The customer's ceiling: "12,000 SAR" / "12,000 ريال"."""
+
+
 class GroundedBundleItem(BaseModel):
     """One rendered piece of the room.
 
@@ -41,6 +74,9 @@ class GroundedBundleItem(BaseModel):
     grounding_ref: int = Field(ge=1)
 
     name_english: str
+    name_arabic: str = ""
+    """The store's own Arabic name, as stored - read only to word `display`."""
+
     image_url: str
     product_url: str
     commerce: CommerceClassification
@@ -62,6 +98,9 @@ class GroundedBundleItem(BaseModel):
     price, and the product does not cost nothing - the customer simply is not
     buying it again.
     """
+
+    display: BundleItemDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The card's text in the reply's language, attached as the reply is sent."""
 
     @model_validator(mode="after")
     def _only_a_purchase_has_a_line_total(self) -> Self:
@@ -95,6 +134,9 @@ class GroundedBundleTotals(BaseModel):
     reaches here."""
 
     within_budget: bool | None = None
+
+    display: BundleTotalsDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The totals worded in the reply's language, attached as the reply is sent."""
 
     @model_validator(mode="after")
     def _figures_travel_with_their_units(self) -> Self:

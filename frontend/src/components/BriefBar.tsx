@@ -1,18 +1,18 @@
-import type { BriefChip } from '../api/types'
-import { briefWords } from '../lib/briefWords'
-import type { ReplyLanguage } from '../lib/turnWords'
+import type { BriefChip, CardLabels } from '../api/types'
+import { cardWords } from '../lib/cardWords'
 import { CloseIcon } from './icons'
 
 interface BriefBarProps {
   chips: BriefChip[]
-  language: ReplyLanguage
+  /** The reply's words (`ChatResponse.labels`) - English without them. */
+  labels?: CardLabels | null
   busy: boolean
   onDrop: (chip: BriefChip) => void
 }
 
 /** What the search on screen is using, each taken away by its ✕. */
-export function BriefBar({ chips, language, busy, onDrop }: BriefBarProps) {
-  const words = briefWords(language)
+export function BriefBar({ chips, labels, busy, onDrop }: BriefBarProps) {
+  const words = cardWords(labels).brief
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {chips.map((chip) => (

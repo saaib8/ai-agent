@@ -84,6 +84,7 @@ def _present_bundle(
         GroundedBundleItem(
             grounding_ref=position,
             name_english=line.name,
+            name_arabic=line.name_arabic,
             image_url=line.image_url,
             product_url=line.product_url,
             commerce=CommerceClassification(

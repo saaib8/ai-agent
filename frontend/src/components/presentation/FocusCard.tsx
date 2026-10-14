@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import type { GroundedProduct } from '../../api/types'
-import { dimensionsLine, humanise, money } from '../../lib/format'
+import type { CardLabels, GroundedProduct } from '../../api/types'
+import { cardWords } from '../../lib/cardWords'
+import { productText } from '../../lib/productWords'
 
 /**
  * The pick the customer just chose, drawn above what goes with it.
@@ -9,12 +10,19 @@ import { dimensionsLine, humanise, money } from '../../lib/format'
  * introduces the companions beneath. Wide rather than a grid tile, so it reads
  * as the subject of the turn and not as one of the suggestions.
  */
-export function FocusCard({ product }: { product: GroundedProduct }) {
+export function FocusCard({
+  product,
+  labels,
+}: {
+  product: GroundedProduct
+  /** The reply's words around a card (`ChatResponse.labels`). */
+  labels?: CardLabels | null
+}) {
   const [imgFailed, setImgFailed] = useState(false)
-  const { commerce } = product
-  const kind = commerce.subcategory ?? commerce.category
-  const price = money(product.price_amount, product.price_unit)
-  const dims = dimensionsLine(product.dimensions)
+  const text = productText(product)
+  const words = cardWords(labels)
+  const price = text.price
+  const dims = text.size
 
   return (
     <div className="flex overflow-hidden rounded-2xl border border-clay/40 bg-surface shadow-card ring-1 ring-clay/15">
@@ -22,7 +30,7 @@ export function FocusCard({ product }: { product: GroundedProduct }) {
         {!imgFailed && product.image_url ? (
           <img
             src={product.image_url}
-            alt={product.name_english}
+            alt={text.name}
             onError={() => setImgFailed(true)}
             className="h-full w-full object-cover"
           />
@@ -30,29 +38,31 @@ export function FocusCard({ product }: { product: GroundedProduct }) {
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-3.5">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-clay">
-          Your pick
+          {words.yourPick}
         </span>
-        <h4 className="text-sm font-semibold leading-snug text-ink">{product.name_english}</h4>
+        <h4 className="text-sm font-semibold leading-snug text-ink" dir="auto">
+          {text.name}
+        </h4>
         {price && <div className="text-[15px] font-semibold text-clay">{price}</div>}
         <div className="flex flex-wrap gap-1.5 text-[11px] text-muted">
-          {kind && (
+          {text.kind && (
             <span className="rounded-full border border-clay/20 bg-clay-soft px-2 py-0.5 text-clay">
-              {humanise(kind)}
+              {text.kind}
             </span>
           )}
-          {commerce.seating_capacity != null && (
+          {text.seats && (
             <span className="rounded-full border border-line bg-canvas px-2 py-0.5">
-              {commerce.seating_capacity}-seat
+              {text.seats}
             </span>
           )}
-          {product.main_color && (
+          {text.color && (
             <span className="rounded-full border border-line bg-canvas px-2 py-0.5">
-              {humanise(product.main_color)}
+              {text.color}
             </span>
           )}
-          {product.styles.map((style) => (
+          {text.styles.map((style) => (
             <span key={style} className="rounded-full border border-line bg-canvas px-2 py-0.5">
-              {humanise(style)}
+              {style}
             </span>
           ))}
         </div>
@@ -64,7 +74,7 @@ export function FocusCard({ product }: { product: GroundedProduct }) {
             rel="noopener noreferrer"
             className="mt-auto text-xs font-medium text-clay hover:underline"
           >
-            View product →
+            {words.viewProduct}
           </a>
         )}
       </div>

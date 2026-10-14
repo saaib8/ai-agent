@@ -300,6 +300,7 @@ from app.services.interior_design import InteriorDesignAgent
 from app.services.next_step import already_asks, asks_for_product_type, next_step
 from app.services.numeric_guard import refinement_figures, stated_figures
 from app.services.product_brief import ProductBriefBuilder, without_facet
+from app.services.product_display import ProductDisplayWords
 from app.services.product_interaction import build_liked, build_picks, interaction_update
 from app.services.product_size import floor_sides, made_to_fit
 from app.services.proposal_mapping import MappedProposals, map_proposals
@@ -1202,7 +1203,11 @@ class CustomerTurnCoordinator:
         size: SizeSettings | None = None,
         mixed_types: bool = False,
         fit_after_pick: bool = False,
+        product_display: ProductDisplayWords | None = None,
     ) -> None:
+        self._product_display = product_display
+        """The picks' text, ready to show in the reply's language; None sends
+        none."""
         self._fit_after_pick = fit_after_pick
         """Whether a bed picked asks the room's size, a mattress after it comes
         in the bed's size, and a fit between two pieces never asks the room."""
@@ -2762,6 +2767,7 @@ class CustomerTurnCoordinator:
                 SeatingBundleLine(
                     product_id=product.product_id,
                     name=product.name_english,
+                    name_arabic=product.name_arabic,
                     commerce_subcategory=product.commerce.subcategory,
                     unit_price=product.price_amount,
                     quantity=line.quantity,
@@ -3434,8 +3440,14 @@ class CustomerTurnCoordinator:
         except _HANDLED_CATALOG_FAILURES:
             logger.warning("chosen_kinds_unavailable", store_id=turn.context.store_id)
             return (), None, None
-        picks = build_picks(state, products)
-        liked = build_liked(state, products) if self._designer_led_buttons else None
+        started = self._language_before(turn)
+        language = started.reply if started is not None else ReplyLanguage.EN
+        picks = build_picks(state, products, self._product_display, language)
+        liked = (
+            build_liked(state, products, self._product_display, language)
+            if self._designer_led_buttons
+            else None
+        )
         by_id = {product.product_id: product for product in products}
         chosen_products = [by_id[p] for p in chosen if p in by_id]
         if len(chosen_products) != len(chosen):

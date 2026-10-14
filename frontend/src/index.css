@@ -25,8 +25,10 @@
   --color-amber: #a9741b; /* caution */
   --color-rose: #b23b2e; /* error / over budget */
 
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  /* Inter has no Arabic letters: Arabic product names and words fall to a
+     readable Arabic face rather than whatever the system picks. */
+  --font-sans: 'Inter', 'Noto Sans Arabic', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: 'Fraunces', 'Noto Sans Arabic', Georgia, 'Times New Roman', serif;
 
   /* Very soft — depth without heavy elevation. */
   --shadow-card: 0 1px 2px rgb(38 34 31 / 0.05);

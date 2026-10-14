@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import type { PickView } from '../api/types'
-import { money } from '../lib/format'
+import type { CardLabels, PickView } from '../api/types'
+import { cardWords } from '../lib/cardWords'
+import { productText } from '../lib/productWords'
 import { CloseIcon, SparkIcon } from './icons'
 
 interface PicksTrayProps {
@@ -11,6 +12,9 @@ interface PicksTrayProps {
   error: string | null
   onRemove: (pick: PickView) => void
   onGoesWith: (pick: PickView) => void
+  /** The conversation's latest words (`ChatResponse.labels`); each pick is
+   *  named as the server worded it (`display`). */
+  labels?: CardLabels | null
 }
 
 /**
@@ -21,7 +25,14 @@ interface PicksTrayProps {
  * show what goes with it. Comparing is not done here: it is two similar cards
  * checked on the results, shown in a pop-up.
  */
-export function PicksTray({ picks, busy, error, onRemove, onGoesWith }: PicksTrayProps) {
+export function PicksTray({
+  picks,
+  busy,
+  error,
+  onRemove,
+  onGoesWith,
+  labels,
+}: PicksTrayProps) {
   if (picks.length === 0) return error ? <TrayError message={error} /> : null
 
   return (
@@ -29,7 +40,7 @@ export function PicksTray({ picks, busy, error, onRemove, onGoesWith }: PicksTra
       <div className="mx-auto max-w-3xl">
         {error && <TrayError message={error} />}
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
-          Your picks ({picks.length})
+          {cardWords(labels).tray.yourPicks(picks.length)}
         </div>
         <div className="flex gap-2 overflow-x-auto pb-2.5 [scrollbar-width:thin]">
           {picks.map((pick) => (
@@ -37,6 +48,8 @@ export function PicksTray({ picks, busy, error, onRemove, onGoesWith }: PicksTra
               key={pick.pick}
               pick={pick}
               busy={busy}
+              name={productText(pick).name}
+              labels={labels}
               onGoesWith={() => onGoesWith(pick)}
               onRemove={() => onRemove(pick)}
             />
@@ -50,20 +63,26 @@ export function PicksTray({ picks, busy, error, onRemove, onGoesWith }: PicksTra
 function PickTile({
   pick,
   busy,
+  name,
+  labels,
   onGoesWith,
   onRemove,
 }: {
   pick: PickView
   busy: boolean
+  /** Its name as the conversation reads it. */
+  name: string
+  labels: CardLabels | null | undefined
   onGoesWith: () => void
   onRemove: () => void
 }) {
   const [imgFailed, setImgFailed] = useState(false)
+  const words = cardWords(labels).tray
   return (
     // The ring marks the pick "it" refers to: the last one ticked or asked
     // about. A tick is silent, so it is not labelled as a question.
     <div
-      title={pick.focused ? 'The pick "it" refers to' : undefined}
+      title={pick.focused ? words.focused : undefined}
       className={`flex w-60 shrink-0 items-center gap-2.5 rounded-xl border bg-surface p-2 shadow-card ${
         pick.focused ? 'border-clay ring-1 ring-clay/25' : 'border-line'
       }`}
@@ -79,25 +98,25 @@ function PickTile({
         ) : null}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-medium text-ink" title={pick.name_english}>
-          {pick.name_english}
+        <div className="truncate text-xs font-medium text-ink" title={name} dir="auto">
+          {name}
         </div>
-        <div className="text-[11px] text-muted">{money(pick.price_amount, pick.price_unit)}</div>
+        <div className="text-[11px] text-muted">{productText(pick).price}</div>
       </div>
       <button
         onClick={onGoesWith}
         disabled={busy}
-        aria-label={`What goes with ${pick.name_english}`}
-        title="What goes with it"
+        aria-label={words.goesWithName(name)}
+        title={words.goesWithTitle}
         className="inline-flex shrink-0 items-center gap-1 rounded-full border border-clay/30 px-2 py-1 text-[11px] font-semibold text-clay transition hover:border-clay hover:bg-clay hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <SparkIcon size={12} />
-        Goes with
+        {words.goesWith}
       </button>
       <button
         onClick={onRemove}
         disabled={busy}
-        aria-label={`Remove ${pick.name_english} from your picks`}
+        aria-label={words.removeName(name)}
         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted transition hover:bg-canvas hover:text-rose disabled:cursor-not-allowed disabled:opacity-50"
       >
         <CloseIcon size={13} />

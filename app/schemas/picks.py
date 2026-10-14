@@ -23,6 +23,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
+from app.schemas.product import ProductDisplay
 
 
 class SelectPickAction(BaseModel):
@@ -147,6 +148,9 @@ class PickView(BaseModel):
     focused: bool = False
     """The product the conversation is about, when it is this pick."""
 
+    display: ProductDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Its text, ready to show in the conversation's language."""
+
 
 class LikedView(BaseModel):
     """One liked product, as the tray draws it. Read fresh from the catalog."""
@@ -168,6 +172,9 @@ class LikedView(BaseModel):
 
     picked: bool = False
     """It is among their picks as well."""
+
+    display: ProductDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Its text, ready to show in the conversation's language."""
 
 
 class PicksResponse(BaseModel):

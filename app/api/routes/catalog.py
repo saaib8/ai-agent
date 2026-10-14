@@ -18,6 +18,7 @@ from app.api.dependencies import (
 )
 from app.schemas.catalog import CatalogFacets, CatalogPage, CatalogQuery, CatalogVisualizeRequest
 from app.schemas.chat import ChatResponse
+from app.schemas.language import ReplyLanguage
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -38,10 +39,12 @@ async def catalog_facets(
     store_id: Annotated[int, Query(ge=1)],
     catalog: CatalogServiceDep,
     retailers: RetailerContextProviderDep,
+    language: Annotated[ReplyLanguage | None, Query()] = None,
 ) -> CatalogFacets:
-    """The filter values this store's catalog holds, and what a room render allows."""
+    """The filter values this store's catalog holds, and what a room render
+    allows - labelled in `language`, the conversation's as the client saw it."""
     context = await retailers.resolve(store_id)
-    return await catalog.facets(context)
+    return await catalog.facets(context, language)
 
 
 @router.post("/visualizations", response_model=ChatResponse)
