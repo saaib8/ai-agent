@@ -100,6 +100,17 @@ class SemanticIndexUnavailableError(IntegrationUnavailableError):
     code = "semantic_index_unavailable"
 
 
+class StoreKnowledgeUnavailableError(IntegrationUnavailableError):
+    """The store's own documents could not be searched.
+
+    Unlike semantic ranking this is the turn itself - the customer asked about
+    the store - so it is reported as a failure the reply owns, never answered
+    from anywhere else.
+    """
+
+    code = "store_knowledge_unavailable"
+
+
 class LLMUnavailableError(IntegrationUnavailableError):
     """The model provider was unreachable, timed out, or refused the call."""
 
