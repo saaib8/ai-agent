@@ -154,12 +154,13 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
     action says**. Its decision is a stand-in that executed nothing; if it
     counted as an answer, the response model would be asked to word a turn
     it knows nothing about, and could tell the customer something happened
-    when nothing did.
+    when nothing did. A question about the shop that could not be looked up is
+    the same: its `ANSWER` carries nothing to answer from.
     """
     grounding = result.grounding
-    if (
-        grounding.failure is not None
-        and grounding.failure.code is TurnFailureCode.REQUEST_NOT_UNDERSTOOD
+    if grounding.failure is not None and grounding.failure.code in (
+        TurnFailureCode.REQUEST_NOT_UNDERSTOOD,
+        TurnFailureCode.STORE_INFO_UNAVAILABLE,
     ):
         return False
     return (
@@ -168,6 +169,7 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
         or grounding.product_detail is not None
         or grounding.comparison is not None
         or bool(grounding.design_guidance)
+        or grounding.store_knowledge is not None
         or result.bundle_outcome is not None
         or result.bundle_change is not None
         or result.decision.action is AgentAction.ANSWER
@@ -251,6 +253,17 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             clarification,
             result=result,
             guidance=grounding.design_guidance,
+        )
+
+    if grounding.store_knowledge is not None:
+        # A question about the shop, answered from its own documents. Like
+        # design advice, it is what they asked even with cards still on screen.
+        return _view(
+            ResponseOutcomeKind.POLICY_ANSWER,
+            clarification,
+            result=result,
+            policy_question=grounding.store_knowledge.question,
+            policy_passages=grounding.store_knowledge.passages,
         )
 
     if grounding.comparison is not None:

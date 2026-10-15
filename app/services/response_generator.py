@@ -79,6 +79,7 @@ from app.services.numeric_guard import (
     guidance_figures,
     picks_counts,
     picks_figures,
+    policy_figures,
     screen_figures,
     seating_counts,
     seating_figures,
@@ -466,6 +467,9 @@ class CustomerResponseGenerator:
                 # measurements. Sayable as guidance about rooms in general,
                 # never as a fact about a product (CLAUDE.md 14, 41).
                 *guidance_figures(view.guidance),
+                # What the shop's own documents say, repeated in the answer
+                # written from them - never a figure they do not state.
+                *policy_figures(view.policy_passages),
             ),
         )
         refs = valid_grounding_refs(result.grounding)

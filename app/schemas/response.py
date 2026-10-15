@@ -55,6 +55,7 @@ from app.schemas.seating_solution import (
     SeatingShapeOption,
     SeatingSolutionOutcome,
 )
+from app.schemas.store_knowledge import MAX_STORE_QUESTION_CHARS, KnowledgePassage
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.briefs import OPENING_QUESTIONS, BriefQuestionKind
 from app.taxonomy.dimensions import DimensionRole
@@ -129,6 +130,15 @@ class ResponseOutcomeKind(StrEnum):
     Words and no cards. The guidance on the view is what the reply is written
     from, and it is general knowledge rather than anything about a product this
     retailer sells (CLAUDE.md 36, 41).
+    """
+
+    POLICY_ANSWER = "policy_answer"
+    """A question about the shop itself - delivery, returns, warranty,
+    payment, contact - answered from the shop's own documents.
+
+    Words and no cards. The passages on the view are the only source: none
+    means the documents do not say, and the reply says so rather than guess
+    (CLAUDE.md 3.3).
     """
 
     DETERMINISTIC_CLARIFICATION = "deterministic_clarification"
@@ -1047,6 +1057,15 @@ class ResponseGroundingView(BaseModel):
     what this retailer has (CLAUDE.md 41).
     """
 
+    policy_question: str | None = Field(
+        default=None, min_length=1, max_length=MAX_STORE_QUESTION_CHARS
+    )
+    """The question about the shop being answered, for `POLICY_ANSWER`."""
+
+    policy_passages: tuple[KnowledgePassage, ...] = ()
+    """What the shop's own documents say about it - the only thing a
+    `POLICY_ANSWER` may be written from. Empty: they do not say."""
+
     screen: CustomerVisibleScreenView = CustomerVisibleScreenView()
     """What the customer is looking at while they read this reply.
 
@@ -1119,6 +1138,11 @@ class ResponseGroundingView(BaseModel):
 
         if (self.kind is ResponseOutcomeKind.DESIGN_ADVICE) != bool(self.guidance):
             raise ValueError("design advice carries guidance, and only it does")
+
+        if (self.kind is ResponseOutcomeKind.POLICY_ANSWER) != (self.policy_question is not None):
+            raise ValueError("a policy answer carries its question, and only it does")
+        if self.policy_passages and self.kind is not ResponseOutcomeKind.POLICY_ANSWER:
+            raise ValueError("only a policy answer is written from the shop's documents")
 
         if self.kind is ResponseOutcomeKind.ZERO_RESULTS and self.presented_count:
             raise ValueError("a zero-result search presents nothing")
