@@ -45,6 +45,7 @@ from app.schemas.response import (
     SwapOfferGroundingView,
 )
 from app.schemas.screen import CustomerVisibleScreenView
+from app.schemas.store_knowledge import KnowledgePassage
 
 ResponseNumericAllowance = frozenset[str]
 """Canonical numeric tokens generated prose may contain.
@@ -366,6 +367,18 @@ def guidance_figures(guidance: Sequence[DesignGuidance]) -> tuple[Decimal, ...]:
         for bound in (measurement.minimum, measurement.maximum)
         if bound is not None
     )
+
+
+def policy_figures(passages: Sequence[KnowledgePassage]) -> tuple[Decimal, ...]:
+    """Figures the shop's own documents state - "4 to 7 working days",
+    "within 14 days", "+966 50 000 0000".
+
+    Sayable because the shop wrote them and the reply repeats them; read with
+    the same lexical reader as everything else, so nothing is derived here.
+    A figure no passage states - a fee, a time the documents never give - is
+    still refused (CLAUDE.md 3.3).
+    """
+    return tuple(Decimal(token) for passage in passages for token in numbers_in(passage.text))
 
 
 def stated_figures(request: ProductSearchRequest) -> tuple[Decimal, ...]:
