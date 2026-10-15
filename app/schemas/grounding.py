@@ -118,6 +118,14 @@ class TurnFailureCode(StrEnum):
     only need to say what they are after (CLAUDE.md 10.4).
     """
 
+    STORE_INFO_UNAVAILABLE = "store_info_unavailable"
+    """A question about the store could not be looked up in its documents.
+
+    An outage, never "the store does not say": that is an empty lookup, which
+    the reply answers honestly. Reported rather than answered from anywhere
+    else, because a guessed policy is worse than none.
+    """
+
     DESIGN_ADVICE_UNAVAILABLE = "design_advice_unavailable"
     """A design *question* went unanswered.
 
