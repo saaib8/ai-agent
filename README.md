@@ -61,24 +61,32 @@ Hence `--factory`.
 
 ## Furniture Finder
 
-Find catalog products like something in a photo. Two endpoints:
+Find catalog products like something in a photo, answered by Zory's own finder.
+Two endpoints:
 
 * `POST /v1/furniture-finder/photos` (multipart: `session_id`, `store_id`, `image`)
-  runs the main platform's object detector (Modal) and returns the objects this
-  store sells something in, with outlines to draw over the photo.
+  uploads the photo to Zory as the shopper, runs `process_furniture_finder` (as an
+  inner step of the ai-agent turn, so Zory does not charge again), reads the
+  detection back, and returns the pieces this store sells something like, with
+  outlines to draw over the photo - the platform finder's own clean-up: confidence at least 0.3,
+  duplicate outlines merged, ranked by confidence weighted by size, at most 12.
 * `POST /v1/furniture-finder/picks` (`session_id`, `store_id`, `image_id`,
-  `object_id`) describes the picked object with a vision model, embeds the
-  description with the model the product index was built with, searches the
-  index in the object's category for this store, and resolves the neighbours
-  through the store-scoped repository. It answers as a chat turn
-  (`ChatResponse`) and commits the products as the list on screen, so "compare
-  the first two" in the next `/v1/chat` message refers to them.
+  `object_id`) asks Zory's `get-recommendations` for products like the picked
+  piece - cut from Zory's own stored copy of the photo, so outline and pixels
+  match - maps the matches to this store's products through the repository (by
+  `pinecone_id`), and answers as a chat turn (`ChatResponse`) whose products
+  become the list on screen, so "compare the first two" in the next `/v1/chat`
+  message refers to them.
 
-The product index (`nora-products-v2`) is **text**: one embedded document per
-product (`text-embedding-3-large`, 1024 dims), with `store_id`, `category` and
-`product_url` metadata. Matches join to the catalog by `product_url`. Configure
-with `ZORY_FURNITURE_FINDER__*` (see `.env.example`); requires the `semantic`
-extra.
+Both run as the shopper whose widget session the gateway forwards in
+`X-Zory-Widget-Token`, `X-Zory-Widget-Key` and `X-Zory-Widget-Store-Id` - a
+member, or an anonymous visitor. Locally, with none forwarded, the ai-agent
+signs in its own anonymous visitor per session on
+`ZORY_FURNITURE_FINDER__LOCAL_WIDGET_KEY`; every other environment refuses
+(`finder_access_refused`). `docker-compose.yml` sets `ZORY_ENVIRONMENT=local`, so a
+server deployed with it counts as local: leave `LOCAL_WIDGET_KEY` out of any
+server real shoppers can reach. Configure with `ZORY_FURNITURE_FINDER__*` (see
+`.env.example`).
 
 ## Room visualisation
 

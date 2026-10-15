@@ -1,9 +1,9 @@
 """Furniture Finder contracts: a photo, the objects in it, and a pick.
 
-Two exchanges. The first uploads a photo and returns what the detector found
-in it. The second picks one of those objects and is a **chat turn**: it
-answers with the same `ChatResponse` a message does, and it commits the
-products it found as the list on screen, so "compare the first two" on the
+Two exchanges. The first uploads a photo and returns what the main platform's
+finder found in it. The second picks one of those objects and is a **chat
+turn**: it answers with the same `ChatResponse` a message does, and it commits
+the products it found as the list on screen, so "compare the first two" on the
 next message resolves against them.
 
 What the client may send on the pick is deliberately narrow: which photo and
@@ -15,9 +15,10 @@ detector never proposed.
 
 from __future__ import annotations
 
+import re
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 """The rule the session store enforces when it builds a key (M13 27)."""
@@ -25,7 +26,26 @@ SESSION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 IMAGE_ID_PATTERN = r"^[0-9a-f]{32}$"
 """A photo id is application-issued (a uuid4 hex), never chosen by a client."""
 
-FINDER_PHOTO_VERSION = "finder_photo_v1"
+FINDER_PHOTO_VERSION = "finder_photo_v2"
+
+STORED_IMAGE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9/_.\-]{0,511}$"
+"""A key in the main platform's image store, as its finder returned it. A
+relative path only - never a scheme, a host or a step out of the folder - since
+it is appended to the configured base to make the link the platform reads."""
+
+
+def is_plain_key(value: object) -> bool:
+    """A key the main platform stores an image under: no scheme, no host, no `..`."""
+    return (
+        isinstance(value, str)
+        and re.fullmatch(STORED_IMAGE_PATTERN, value) is not None
+        and ".." not in value
+    )
+
+
+WIDGET_SESSION_PATTERN = r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$"
+WIDGET_KEY_PATTERN = r"^[a-z0-9][a-z0-9-]{0,63}$"
+WIDGET_STORE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9-]{0,127}$"
 
 Point = tuple[int, int]
 
@@ -73,9 +93,10 @@ class FinderPhoto(BaseModel):
     """A photo held for picking, between the upload and the pick.
 
     Stored under the store and the session it was uploaded in, with the
-    session's lifetime, and never anywhere else. The image kept is the
-    downscaled one the detector saw, so the outlines and the pixels share one
-    coordinate space by construction.
+    session's lifetime, and never anywhere else. The photo itself stays with
+    the main platform: what is kept here is which scan it was and where the
+    platform keeps the copy its detector saw, so a pick is cut from the same
+    pixels the outlines were drawn on.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -84,46 +105,19 @@ class FinderPhoto(BaseModel):
     image_id: str = Field(pattern=IMAGE_ID_PATTERN)
     width: int = Field(gt=0)
     height: int = Field(gt=0)
-    jpeg_b64: str = Field(min_length=1)
+    scan_id: str = Field(min_length=1, max_length=64)
+    """The platform's id for the detection, for its logs and ours."""
+    stored_image: str = Field(pattern=STORED_IMAGE_PATTERN)
     objects: tuple[DetectedObject, ...] = ()
+
+    @model_validator(mode="after")
+    def _stored_image_stays_in_its_folder(self) -> Self:
+        if not is_plain_key(self.stored_image):
+            raise ValueError("stored_image must be a plain key, never a step out of its folder")
+        return self
 
     def object(self, object_id: int) -> DetectedObject | None:
         return next((o for o in self.objects if o.object_id == object_id), None)
-
-
-class ObjectDescription(BaseModel):
-    """What the vision model saw in a picked object, as words to search with.
-
-    A query, never a fact: nothing here is shown to the customer as a product
-    attribute, and no filter is built from it. The index was built from text
-    documents about each product, so this is turned into the same shape of
-    document and embedded the same way.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    summary: str = Field(min_length=1, max_length=300)
-    styles: tuple[str, ...] = Field(default=(), max_length=3)
-    color: str = Field(min_length=1, max_length=60)
-    materials: tuple[str, ...] = Field(default=(), max_length=3)
-
-    def query_text(self, category_words: str) -> str:
-        """A document shaped like the index's own product documents.
-
-        Those read "<name>. Category: <category>. Style: <a, b>. Color: <c>.
-        ...", so the query leads with the summary where a name would be and
-        follows with the same labelled fields. The documents have no material
-        field; it follows the summary as a short clause of its own, where a
-        product name would usually mention it.
-        """
-        parts = [self.summary.rstrip(". ")]
-        if self.materials:
-            parts.append("Material: " + ", ".join(self.materials))
-        parts.append(f"Category: {category_words}")
-        if self.styles:
-            parts.append("Style: " + ", ".join(self.styles))
-        parts.append(f"Color: {self.color}")
-        return ". ".join(parts) + "."
 
 
 # ── wire contracts ──────────────────────────────────────────────────────────
@@ -160,6 +154,21 @@ class FinderPhotoResponse(BaseModel):
     """Objects the detector found that this catalog has nothing to match
     against. A count, not their labels: enough for a client to say "some
     items can't be matched here" without describing another store's range."""
+
+
+class ShopperCredentials(BaseModel):
+    """Who the finder runs as on the main platform: the shopper's widget session.
+
+    Forwarded by the gateway from the widget - a signed-in member's token or an
+    anonymous visitor's. Opaque here: the platform verifies it and decides the
+    store from it; this service only passes it on, and never logs it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    token: SecretStr
+    widget_key: str | None = Field(default=None, pattern=WIDGET_KEY_PATTERN)
+    store_public_id: str | None = Field(default=None, pattern=WIDGET_STORE_PATTERN)
 
 
 class FinderPickRequest(BaseModel):

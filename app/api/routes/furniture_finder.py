@@ -2,8 +2,10 @@
 
 Transport only, like the chat route. The upload validates the form, resolves
 the retailer scope and hands the bytes to the finder; the pick resolves scope
-and hands the request to the turn runtime. Nothing here crops, embeds, searches
-or touches a session (CLAUDE.md 3.2).
+and hands the request to the turn runtime. Both pass on the shopper's widget
+session the gateway forwarded (`X-Zory-Widget-Token`, `X-Zory-Widget-Key`,
+`X-Zory-Widget-Store-Id`), which the main platform's finder runs as. Nothing
+here detects, searches or touches a session (CLAUDE.md 3.2).
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from app.api.dependencies import (
     FinderTurnRuntimeDep,
     FurnitureFinderServiceDep,
     RetailerContextProviderDep,
+    ShopperCredentialsDep,
 )
 from app.schemas.chat import ChatResponse
 from app.schemas.furniture_finder import (
@@ -34,6 +37,7 @@ async def upload_photo(
     image: Annotated[UploadFile, File()],
     finder: FurnitureFinderServiceDep,
     retailers: RetailerContextProviderDep,
+    shopper: ShopperCredentialsDep,
 ) -> FinderPhotoResponse:
     """Upload a photo; get back the objects in it this catalog can match.
 
@@ -42,7 +46,7 @@ async def upload_photo(
     """
     context = await retailers.resolve(store_id)
     data = await image.read(finder.max_upload_bytes + 1)
-    return await finder.upload(data, session_id=session_id, context=context)
+    return await finder.upload(data, session_id=session_id, context=context, shopper=shopper)
 
 
 @router.post("/picks", response_model=ChatResponse)
@@ -50,6 +54,7 @@ async def pick_object(
     request: FinderPickRequest,
     runtime: FinderTurnRuntimeDep,
     retailers: RetailerContextProviderDep,
+    shopper: ShopperCredentialsDep,
 ) -> ChatResponse:
     """Pick one object; get back matching products as a chat turn.
 
@@ -57,4 +62,4 @@ async def pick_object(
     list the next message's "the second one" resolves against.
     """
     context = await retailers.resolve(request.store_id)
-    return await runtime.pick(request, context)
+    return await runtime.pick(request, context, shopper)

@@ -7,11 +7,16 @@ the value that could disagree about it.
 
 Short-lived by design: a photo lives exactly as long as a session does, and it
 is written once and never updated. No archive, no copy elsewhere.
+
+A local run also keeps here the anonymous visitor it signed in for the
+session, so one session is one visitor on the main platform, as it is for a
+shopper on the widget. Never in a deployed environment.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
@@ -21,7 +26,7 @@ from app.core.config import SessionSettings
 from app.core.exceptions import SessionStoreUnavailableError
 from app.core.logging import get_logger
 from app.repositories.sessions import session_key
-from app.schemas.furniture_finder import FinderPhoto
+from app.schemas.furniture_finder import FinderPhoto, ShopperCredentials
 
 logger = get_logger(__name__)
 
@@ -29,6 +34,11 @@ logger = get_logger(__name__)
 def photo_key(store_id: int, session_id: str, image_id: str) -> str:
     """The session key, validated by the session store's own rule, plus the photo."""
     return f"{session_key(store_id, session_id)}:finder:{image_id}"
+
+
+def visitor_key(store_id: int, session_id: str) -> str:
+    """The session key plus the anonymous visitor a local run signed in for it."""
+    return f"{session_key(store_id, session_id)}:finder-visitor"
 
 
 class FinderPhotoStore:
@@ -70,3 +80,50 @@ class FinderPhotoStore:
         except ValidationError as exc:
             logger.warning("finder_photo_unreadable", error_count=len(exc.errors()))
             return None
+
+    # ── the local anonymous visitor ─────────────────────────────────────────
+
+    async def save_visitor(
+        self, store_id: int, session_id: str, visitor: ShopperCredentials, ttl_s: int
+    ) -> None:
+        """Keep the visitor no longer than its token lives, nor the session does."""
+        key = visitor_key(store_id, session_id)
+        value = json.dumps(
+            {
+                "token": visitor.token.get_secret_value(),
+                "widget_key": visitor.widget_key,
+                "store_public_id": visitor.store_public_id,
+            }
+        )
+        try:
+            async with asyncio.timeout(self._settings.operation_timeout_s):
+                await self._client.set(key, value, ex=max(1, min(ttl_s, self._settings.ttl_s)))
+        except TimeoutError as exc:
+            raise SessionStoreUnavailableError(dependency="redis") from exc
+        except RedisError as exc:
+            logger.warning("finder_visitor_save_failed", error_type=type(exc).__name__)
+            raise SessionStoreUnavailableError(dependency="redis") from exc
+
+    async def load_visitor(self, store_id: int, session_id: str) -> ShopperCredentials | None:
+        key = visitor_key(store_id, session_id)
+        try:
+            async with asyncio.timeout(self._settings.operation_timeout_s):
+                raw = await self._client.get(key)
+        except TimeoutError as exc:
+            raise SessionStoreUnavailableError(dependency="redis") from exc
+        except RedisError as exc:
+            logger.warning("finder_visitor_load_failed", error_type=type(exc).__name__)
+            raise SessionStoreUnavailableError(dependency="redis") from exc
+        if raw is None:
+            return None
+        try:
+            return ShopperCredentials.model_validate_json(raw)
+        except ValidationError:
+            return None
+
+    async def forget_visitor(self, store_id: int, session_id: str) -> None:
+        try:
+            async with asyncio.timeout(self._settings.operation_timeout_s):
+                await self._client.delete(visitor_key(store_id, session_id))
+        except (TimeoutError, RedisError) as exc:
+            logger.warning("finder_visitor_forget_failed", error_type=type(exc).__name__)
