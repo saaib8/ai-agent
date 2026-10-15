@@ -156,6 +156,7 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # takes a product before ours holds it. A deterministic check through
         # a typed client; no model reads it, and it never searches.
         "cart_check",
+        "store_knowledge",
     ]
 
 

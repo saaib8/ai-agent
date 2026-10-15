@@ -345,6 +345,7 @@ def customer_turn_coordinator(
         closest_type=ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
+        store_knowledge=app_resources.store_knowledge,
         briefs=(
             ProductBriefBuilder(
                 repository,
