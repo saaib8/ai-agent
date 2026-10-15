@@ -28,6 +28,10 @@ MIXED_TYPES_SUFFIX = "+mixed-types.2"
 and the SOFAS, SETS AND SECTIONALS section explains `only_asked_type`. Off, the
 prompt carries neither."""
 
+STORE_KNOWLEDGE_SUFFIX = "+store-knowledge.1"
+"""Added where the store's own documents can be searched and the THE STORE
+ITSELF section explains `store_question`. Off, the prompt carries neither."""
+
 FIT_AFTER_PICK_SUFFIX = "+fit-pick.1"
 """Added where a bed picked asks the room's size and the PIECE IN A PIECE
 section explains `fit_with_piece`. Off, the prompt carries neither."""
@@ -1041,6 +1045,21 @@ advice with fit_question true.
 """
 
 
+_STORE_KNOWLEDGE_SECTION = """\
+THE STORE ITSELF
+store_question: with answer, when they ask about the store rather than its
+products - delivery and shipping, returns and exchanges, warranty, payment and
+instalments, assembly, branches and opening hours, how to reach the store or
+its support team, a technical problem with their order or account. Restate the
+question in their own terms, carrying what they said earlier when the message
+only continues it ("and to Jeddah?" after asking about delivery). The answer
+comes from the store's own documents; never answer it from what you believe
+about stores. A question about a product - its price, size, stock or delivery
+date on its card - is not this. Otherwise leave it empty.
+
+"""
+
+
 _MIXED_TYPES_SECTION = """\
 SOFAS, SETS AND SECTIONALS
 A search for sofas also shows sofa sets and sectional sofas beside the sofas.
@@ -1064,6 +1083,7 @@ def build_instructions(
     reply_language: bool = False,
     mixed_types: bool = False,
     fit_after_pick: bool = False,
+    store_knowledge: bool = False,
 ) -> str:
     """The decision instructions, with the colour and style vocabulary and the
     room registry when given, the LANGUAGE section where Arabic replies are
@@ -1081,6 +1101,8 @@ def build_instructions(
         sections += _MIXED_TYPES_SECTION
     if fit_after_pick:
         sections += _FIT_AFTER_PICK_SECTION
+    if store_knowledge:
+        sections += _STORE_KNOWLEDGE_SECTION
     instructions = INSTRUCTIONS
     if reply_language:
         # The LANGUAGE section says which language each field is written in.

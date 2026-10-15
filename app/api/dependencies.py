@@ -274,6 +274,7 @@ def customer_agent_decision_service(
         reply_language=app_resources.settings.customer_agent.arabic_replies,
         mixed_types=app_resources.settings.customer_agent.mixed_types,
         fit_after_pick=app_resources.settings.customer_agent.fit_after_pick,
+        store_knowledge=app_resources.store_knowledge is not None,
     )
 
 
