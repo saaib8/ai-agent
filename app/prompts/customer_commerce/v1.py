@@ -30,7 +30,7 @@ prompt carries neither."""
 
 STORE_KNOWLEDGE_SUFFIX = "+store-knowledge.1"
 """Added where the store's own documents can be searched and the THE STORE
-ITSELF section explains `store_question`. Off, the prompt carries neither."""
+ITSELF section explains `policy_question`. Off, the prompt carries neither."""
 
 FIT_AFTER_PICK_SUFFIX = "+fit-pick.1"
 """Added where a bed picked asks the room's size and the PIECE IN A PIECE
@@ -1047,7 +1047,7 @@ advice with fit_question true.
 
 _STORE_KNOWLEDGE_SECTION = """\
 THE STORE ITSELF
-store_question: with answer, when they ask about the store rather than its
+policy_question: with answer, when they ask about the store rather than its
 products - delivery and shipping, returns and exchanges, warranty, payment and
 instalments, assembly, branches and opening hours, how to reach the store or
 its support team, a technical problem with their order or account. Restate the

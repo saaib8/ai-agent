@@ -970,7 +970,7 @@ class CustomerAgentDecision(BaseModel):
     it. Left out of the model's response schema unless that is on
     (`with_fit_after_pick`)."""
 
-    store_question: SkipJsonSchema[str | None] = Field(
+    policy_question: SkipJsonSchema[str | None] = Field(
         default=None, min_length=1, max_length=MAX_STORE_QUESTION_CHARS
     )
     """A question about the store itself - delivery, returns, warranty,
@@ -1180,9 +1180,9 @@ class CustomerAgentDecision(BaseModel):
             raise ValueError("whether a piece fits is the designer's: design_handoff")
         if self.narrow_by is not None and self.action is not AgentAction.ANSWER:
             raise ValueError("narrowing the results on screen is an answer")
-        if self.store_question is not None and self.action is not AgentAction.ANSWER:
+        if self.policy_question is not None and self.action is not AgentAction.ANSWER:
             raise ValueError("a question about the store is an answer")
-        if self.store_question is not None and self.narrow_by is not None:
+        if self.policy_question is not None and self.narrow_by is not None:
             raise ValueError("a question about the store narrows nothing on screen")
 
     def _check_reference_payloads(self) -> None:
@@ -1432,14 +1432,14 @@ def with_mixed_types(schema: type[CustomerAgentDecision]) -> type[CustomerAgentD
 
 
 def with_store_knowledge(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
-    """`schema` with `store_question` shown to the model, where the store's own
+    """`schema` with `policy_question` shown to the model, where the store's own
     documents can be searched. Transport only, like the language fields:
     `to_plain_decision` turns the result back into the plain contract."""
     return create_model(
         f"{schema.__name__}WithStoreKnowledge",
         __base__=schema,
         __doc__=schema.__doc__,
-        store_question=(
+        policy_question=(
             str | None,
             Field(default=None, min_length=1, max_length=MAX_STORE_QUESTION_CHARS),
         ),
