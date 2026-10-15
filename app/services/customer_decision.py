@@ -82,7 +82,7 @@ def _mixed_types_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAge
 
 @cache
 def _store_knowledge_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
-    """The schema with `store_question` shown, built once per schema."""
+    """The schema with `policy_question` shown, built once per schema."""
     return with_store_knowledge(schema)
 
 
@@ -131,7 +131,7 @@ class CustomerAgentDecisionService:
         `mixed_types` is whether a sofa search also shows sofa sets and
         sectionals: only then do they explain, and the schema carry,
         `only_asked_type`. `store_knowledge` is whether the store's own
-        documents can be searched: only then is `store_question` explained and
+        documents can be searched: only then is `policy_question` explained and
         carried. Off, the model is asked exactly what it was asked before.
         """
         self._client = client
@@ -237,7 +237,7 @@ class CustomerAgentDecisionService:
             follow_up_goal=str(decision.follow_up_goal) if decision.follow_up_goal else None,
             blocking_clarification=decision.clarification is not None,
             only_asked_type=decision.only_asked_type,
-            store_question=decision.store_question is not None,
+            policy_question=decision.policy_question is not None,
             has_interaction=decision.interaction is not None,
             has_new_search=decision.new_search is not None,
             has_refinement=decision.refinement is not None,
