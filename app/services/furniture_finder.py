@@ -1,14 +1,21 @@
 """Furniture Finder: find catalog products like something in a photo.
 
-A detector outlines the objects in the photo. When the customer picks one, a
-vision model describes it in words, the description is embedded into the same
-space as the product index's text documents, the index proposes neighbours in
-the detected category, and PostgreSQL decides which of them this retailer
-actually sells (CLAUDE.md 16).
+The main platform's own finder does the looking (CLAUDE.md 16). The photo is
+uploaded to it as the shopper, its detector outlines what is in the photo, and
+when the customer picks a piece it compares that piece's pixels with every
+product photo the store has. PostgreSQL then decides which of the proposals
+this retailer actually sells, in the order the platform ranked them. No model
+of ours is consulted.
 
-The vision model is the only model consulted, and only as an interpreter of
-pixels: its words are a query, never a fact the customer is shown, and it
-cannot change the category the detector assigned (CLAUDE.md 3.3).
+The shopper is the widget session the gateway forwarded - a member or an
+anonymous visitor - so the platform scopes and records the scan as theirs. A
+local run with no forwarded session signs in an anonymous visitor of its own,
+one per session; anywhere else, no session means no finder.
+
+What is offered on a photo follows the platform's own finder: outlines it is
+less sure of are dropped, an outline drawn twice for one piece is kept once,
+the pieces people shop for come first (confidence weighted by size), and only
+so many are offered. Pieces this store sells nothing like are left out too.
 
 A pick is a **turn**, not a side channel. Its results become the list on
 screen, committed to the session exactly like a search's, so the next message
@@ -25,24 +32,34 @@ refines a real, structured search rather than an image nobody can filter.
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import time
 import uuid
 from collections.abc import Sequence
 
 from app.core.config import FurnitureFinderSettings, SessionSettings
 from app.core.exceptions import (
-    EmbeddingUnavailableError,
+    DetectionUnavailableError,
+    FinderAccessRefusedError,
     FinderImageNotFoundError,
     InvalidRequestError,
     VisualSearchUnavailableError,
+    ZoryError,
+    ZoryTokenRejectedError,
 )
 from app.core.logging import get_logger
-from app.integrations.detection import ObjectDetector, RawDetection
-from app.integrations.embeddings import QueryEmbedder
-from app.integrations.finder_index import FinderIndex, IndexMatch, category_key
+from app.integrations.zory_finder import (
+    RawDetection,
+    ZoryFinderClient,
+    ZoryMatch,
+    ZoryScan,
+    category_key,
+)
 from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.sessions import SessionStore
+from app.repositories.stores import StoreRepository
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_turn import CustomerResponse
 from app.schemas.agent_updates import (
@@ -59,9 +76,10 @@ from app.schemas.furniture_finder import (
     FinderPhotoResponse,
     FinderPickRequest,
     ImageBox,
-    ObjectDescription,
+    ShopperCredentials,
     view_of,
 )
+from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.resolution import SimilarSearchSeed
@@ -73,16 +91,10 @@ from app.services.agent_state import (
 )
 from app.services.card_labels import card_labels
 from app.services.chat_runtime import LoadedSession, commit_exchange, load_for_turn
-from app.services.finder_imaging import (
-    bounded_box,
-    clamp_polygon,
-    object_views,
-    prepare_upload,
-)
+from app.services.finder_imaging import bounded_box, clamp_polygon, prepare_upload
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
 from app.services.media_wording import photo_reply
-from app.services.object_description import ObjectDescriber
 from app.services.product_display import ProductDisplayWords, displayed
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.reply_language import session_language
@@ -91,29 +103,37 @@ from app.taxonomy.compare_groups import CompareGroups
 
 logger = get_logger(__name__)
 
+_VISITOR_TOKEN_FALLBACK_TTL_S = 600
+"""How long a visitor token is kept when its expiry cannot be read."""
+_VISITOR_TOKEN_MARGIN_S = 60
+
 
 class FurnitureFinderService:
     """Photo in, pickable objects out; object in, matching products out."""
 
     def __init__(
         self,
-        detector: ObjectDetector,
-        describer: ObjectDescriber,
-        embedder: QueryEmbedder,
-        index: FinderIndex,
+        zory: ZoryFinderClient,
         photos: FinderPhotoStore,
         repository: ProductRepository,
         hydration: ProductHydrationService,
+        stores: StoreRepository,
+        sessions: SessionStore,
         settings: FurnitureFinderSettings,
+        *,
+        local_visitors: bool = False,
+        arabic_replies: bool = False,
     ) -> None:
-        self._detector = detector
-        self._describer = describer
-        self._embedder = embedder
-        self._index = index
+        self._zory = zory
         self._photos = photos
         self._repository = repository
         self._hydration = hydration
+        self._stores = stores
+        self._sessions = sessions
         self._settings = settings
+        self._local_visitors = local_visitors and settings.local_widget_key is not None
+        """Only a local run may act as a visitor nobody forwarded."""
+        self._arabic_replies = arabic_replies
 
     @property
     def max_upload_bytes(self) -> int:
@@ -122,12 +142,17 @@ class FurnitureFinderService:
     # ── upload ──────────────────────────────────────────────────────────────
 
     async def upload(
-        self, data: bytes, *, session_id: str, context: RetailerContext
+        self,
+        data: bytes,
+        *,
+        session_id: str,
+        context: RetailerContext,
+        shopper: ShopperCredentials | None = None,
     ) -> FinderPhotoResponse:
         """Detect what is in a photo and keep it for the pick that follows.
 
-        The photo is prepared before anything is paid for, so an unusable
-        upload is refused without a detector call.
+        The photo is prepared before anything is asked of the platform, so an
+        unusable upload is refused without a scan.
         """
         started = time.perf_counter()
         settings = self._settings
@@ -136,24 +161,32 @@ class FurnitureFinderService:
             max_bytes=settings.max_upload_bytes,
             min_side=settings.min_image_side,
             max_side=settings.detection_max_side,
+            upscale_short_side_to=settings.min_short_side,
         )
-        raw = await self._detector.detect(prepared.jpeg)
+        try:
+            scan = await self._scan(prepared.jpeg, session_id, context, shopper)
+        except (FinderAccessRefusedError, DetectionUnavailableError) as exc:
+            raise _worded(exc, await self._language(context, session_id)) from exc
+        width, height = scan.size or (prepared.width, prepared.height)
         matchable = await self._repository.visual_categories(context)
-
-        objects = _pickable(raw, matchable, prepared.width, prepared.height)
+        objects, unmatched = _pickable(scan.detections, matchable, width, height, settings)
         photo = FinderPhoto(
             image_id=uuid.uuid4().hex,
-            width=prepared.width,
-            height=prepared.height,
-            jpeg_b64=base64.b64encode(prepared.jpeg).decode("ascii"),
+            width=width,
+            height=height,
+            scan_id=scan.scan_id,
+            stored_image=scan.stored_image,
             objects=objects,
         )
         await self._photos.save(context.store_id, session_id, photo)
         logger.info(
             "finder_photo_detected",
             store_id=context.store_id,
-            detected_count=len(raw),
+            scan_id=scan.scan_id,
+            detected_count=len(scan.detections),
             pickable_count=len(objects),
+            unmatched_count=unmatched,
+            forwarded_shopper=shopper is not None,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return FinderPhotoResponse(
@@ -161,8 +194,62 @@ class FurnitureFinderService:
             width=photo.width,
             height=photo.height,
             objects=tuple(view_of(o) for o in objects),
-            unmatched_count=len(raw) - len(objects),
+            unmatched_count=unmatched,
         )
+
+    async def _scan(
+        self,
+        jpeg: bytes,
+        session_id: str,
+        context: RetailerContext,
+        shopper: ShopperCredentials | None,
+    ) -> ZoryScan:
+        if shopper is not None:
+            # The shopper's own session: never retried as anyone else.
+            return await self._zory.scan(shopper, jpeg)
+        visitor = await self._visitor(context, session_id)
+        try:
+            return await self._zory.scan(visitor, jpeg)
+        except ZoryTokenRejectedError:
+            # Our own visitor's token expired: sign in again, once.
+            await self._photos.forget_visitor(context.store_id, session_id)
+            visitor = await self._visitor(context, session_id)
+            return await self._zory.scan(visitor, jpeg)
+
+    async def _visitor(self, context: RetailerContext, session_id: str) -> ShopperCredentials:
+        """The anonymous visitor a local run acts as for this session.
+
+        Refused anywhere but a local run: a deployed finder acts only as the
+        shopper the gateway forwarded, never as someone of its own making.
+        """
+        if not self._local_visitors or self._settings.local_widget_key is None:
+            raise FinderAccessRefusedError(reason="no_shopper_session")
+        kept = await self._photos.load_visitor(context.store_id, session_id)
+        if kept is not None:
+            logger.info("finder_local_visitor_reused", store_id=context.store_id)
+            return kept
+        store = await self._stores.get_active(context.store_id)
+        if store is None:
+            raise FinderAccessRefusedError(reason="store_unknown")
+        visitor = await self._zory.anonymous_visitor(
+            widget_key=self._settings.local_widget_key,
+            store_public_id=str(store.uuid),
+            anonymous_id=_anonymous_id(context.store_id, session_id),
+        )
+        await self._photos.save_visitor(
+            context.store_id, session_id, visitor, _token_ttl_s(visitor)
+        )
+        logger.info("finder_local_visitor_signed_in", store_id=context.store_id)
+        return visitor
+
+    async def _language(self, context: RetailerContext, session_id: str) -> ReplyLanguage:
+        """The session's reply language, for a refusal worded in it."""
+        try:
+            envelope = await self._sessions.load(context.store_id, session_id)
+        except ZoryError:
+            envelope = None
+        stored = envelope.state.reply_language if envelope is not None else None
+        return session_language(stored, enabled=self._arabic_replies)
 
     # ── pick ────────────────────────────────────────────────────────────────
 
@@ -175,40 +262,32 @@ class FurnitureFinderService:
         return photo
 
     async def find(
-        self, photo: FinderPhoto, detected: DetectedObject, context: RetailerContext
-    ) -> tuple[tuple[ProductCandidate, ...], ObjectDescription]:
-        """Products this store sells like the object, best first, and what it looked like.
+        self,
+        photo: FinderPhoto,
+        detected: DetectedObject,
+        context: RetailerContext,
+        shopper: ShopperCredentials | None = None,
+    ) -> tuple[ProductCandidate, ...]:
+        """Products this store sells like the piece, best first.
 
-        The index proposes; PostgreSQL disposes. A neighbour whose product is
-        inactive, deleted or another retailer's is dropped, never shown from
-        what the index remembers, and a product indexed twice appears once, at
-        its best position.
+        The platform proposes, from the copy of the photo its detector saw;
+        PostgreSQL disposes. A proposal whose product is inactive, deleted or
+        another retailer's is dropped, never shown from what the platform's
+        index remembers, and a product proposed twice appears once, at its
+        best position.
         """
-        tight, medium = object_views(
-            base64.b64decode(photo.jpeg_b64),
+        matches = await self._zory.recommend(
+            shopper,
+            image_url=f"{self._settings.stored_image_base_url.rstrip('/')}/{photo.stored_image}",
+            category=detected.label,
             box=detected.box,
             polygon=detected.polygon,
-            padding=self._settings.medium_crop_padding,
-        )
-        description = await self._describer.describe(
-            category_words=detected.display_label, views=(tight, medium)
-        )
-        try:
-            vector = await self._embedder.embed_query(
-                description.query_text(detected.display_label)
-            )
-        except EmbeddingUnavailableError as exc:
-            # No degraded answer exists: without the vector there is nothing
-            # to search with, so the customer is told to try again.
-            raise VisualSearchUnavailableError(reason="embedding_unavailable") from exc
-        matches = await self._index.nearest(
-            vector=vector,
-            store_id=context.store_id,
-            category=category_key(detected.label),
+            size=(photo.width, photo.height),
             top_k=self._settings.candidate_limit,
+            store_id=context.store_id,
         )
         by_vector, by_url = await self._repository.ids_for_visual_matches(
-            [m.vector_id for m in matches],
+            [m.pinecone_id for m in matches],
             [m.product_url for m in matches if m.product_url],
             context,
         )
@@ -219,11 +298,12 @@ class FurnitureFinderService:
         logger.info(
             "finder_matches_resolved",
             store_id=context.store_id,
-            neighbour_count=len(matches),
+            scan_id=photo.scan_id,
+            proposed_count=len(matches),
             resolved_count=len(ordered),
             presented_count=len(products),
         )
-        return products, description
+        return tuple(products)
 
 
 class FinderTurnRuntime:
@@ -262,13 +342,18 @@ class FinderTurnRuntime:
             return self._compare_groups.all_comparable(kinds)
         return kinds[0] is not None and kinds[0] == kinds[1]
 
-    async def pick(self, request: FinderPickRequest, context: RetailerContext) -> ChatResponse:
+    async def pick(
+        self,
+        request: FinderPickRequest,
+        context: RetailerContext,
+        shopper: ShopperCredentials | None = None,
+    ) -> ChatResponse:
         """Load, find, commit, answer - in the order the chat runtime uses.
 
-        A stale screen is refused before the embedding model or the index is
-        paid for, and nothing is returned that could not be persisted: a reply
-        describing a session that someone else has since moved on would put
-        the wrong list behind "the second one" (M13 18, 33).
+        A stale screen is refused before the platform is asked anything, and
+        nothing is returned that could not be persisted: a reply describing a
+        session that someone else has since moved on would put the wrong list
+        behind "the second one" (M13 18, 33).
         """
         started = time.perf_counter()
         loaded = await load_for_turn(
@@ -285,12 +370,15 @@ class FinderTurnRuntime:
                 object_id=request.object_id,
             )
 
-        products, description = await self._finder.find(photo, detected, context)
-        state = self._committed_state(loaded.envelope.state, products)
-        on_screen = state is not None
         language = session_language(
             loaded.envelope.state.reply_language, enabled=self._arabic_replies
         )
+        try:
+            products = await self._finder.find(photo, detected, context, shopper)
+        except (FinderAccessRefusedError, VisualSearchUnavailableError) as exc:
+            raise _worded(exc, language) from exc
+        state = self._committed_state(loaded.envelope.state, products)
+        on_screen = state is not None
         response = photo_reply(
             detected.display_label,
             len(products),
@@ -318,7 +406,7 @@ class FinderTurnRuntime:
         )
 
         revision = await self._persist(
-            request, loaded, state or loaded.envelope.state, detected, description, response
+            request, loaded, state or loaded.envelope.state, detected, response
         )
         logger.info(
             "finder_pick_completed",
@@ -390,7 +478,9 @@ class FinderTurnRuntime:
                 active_search=ActiveSearchUpdate(
                     request=composed.candidate.request,
                     semantics=composed.candidate.semantics,
-                    semantic_preferences=ReplaceItems(items=composed.candidate.semantic_preferences),
+                    semantic_preferences=ReplaceItems(
+                        items=composed.candidate.semantic_preferences
+                    ),
                     semantic_intent=(
                         ClearSemanticIntent() if intent is None else SetSemanticIntent(value=intent)
                     ),
@@ -405,13 +495,12 @@ class FinderTurnRuntime:
         loaded: LoadedSession,
         state: AgentStateV1,
         detected: DetectedObject,
-        description: ObjectDescription,
         response: CustomerResponse,
     ) -> int:
         """Commit the pick as an exchange, or refuse because someone else did.
 
-        What the customer did is recorded in words, with what the item looked
-        like, so "the same but in grey" has something to be the same as.
+        What the customer did is recorded in words, so the conversation knows
+        which piece of the photo the cards on screen are like.
         """
         return await commit_exchange(
             self._sessions,
@@ -420,7 +509,7 @@ class FinderTurnRuntime:
             session_id=request.session_id,
             loaded=loaded,
             state=state,
-            customer_said=_pick_utterance(detected, description),
+            customer_said=_pick_utterance(detected),
             response=response,
         )
 
@@ -429,42 +518,73 @@ class FinderTurnRuntime:
 
 
 def _pickable(
-    raw: Sequence[RawDetection], matchable: frozenset[str], width: int, height: int
-) -> tuple[DetectedObject, ...]:
-    """Detections this store can match, inside the photo, numbered from one.
+    raw: Sequence[RawDetection],
+    matchable: frozenset[str],
+    width: int,
+    height: int,
+    settings: FurnitureFinderSettings,
+) -> tuple[tuple[DetectedObject, ...], int]:
+    """The pieces offered on a photo, numbered from one, and how many were not.
 
-    Larger objects first: the sofa is what people came for, and the order is
-    the order a client lists them in.
+    The platform finder's own rules, in its order: outlines it is less sure of
+    are dropped; an outline overlapping a surer one is the same piece labelled
+    twice; what is left is ranked by confidence weighted by size - the sofa,
+    not the four cushions on it - and capped. A piece this store sells nothing
+    like is counted, never offered: tapping it could only ever find nothing.
     """
-    kept: list[tuple[int, RawDetection, ImageBox]] = []
-    for detection in raw:
-        if category_key(detection.label) not in matchable:
+    kept: list[tuple[RawDetection, ImageBox]] = []
+    for detection in sorted(raw, key=lambda d: d.confidence, reverse=True):
+        if detection.confidence < settings.min_confidence:
             continue
         box = bounded_box(*detection.box, width, height)
         if box is None:
             continue
-        kept.append(((box.x2 - box.x1) * (box.y2 - box.y1), detection, box))
-    kept.sort(key=lambda item: item[0], reverse=True)
-    return tuple(
-        DetectedObject(
-            object_id=position,
-            label=detection.label,
-            confidence=round(detection.confidence, 3),
-            box=box,
-            polygon=clamp_polygon(detection.polygon, width, height),
-        )
-        for position, (_, detection, box) in enumerate(kept, start=1)
+        if any(_overlap(box, other) > settings.duplicate_overlap for _, other in kept):
+            continue
+        kept.append((detection, box))
+
+    offered = [(d, b) for d, b in kept if category_key(d.label) in matchable]
+    unmatched = len(kept) - len(offered)
+    area = float(width * height) or 1.0
+    offered.sort(key=lambda item: item[0].confidence * (_area(item[1]) / area) ** 0.5, reverse=True)
+    return (
+        tuple(
+            DetectedObject(
+                object_id=position,
+                label=detection.label,
+                confidence=round(detection.confidence, 3),
+                box=box,
+                polygon=clamp_polygon(detection.polygon, width, height),
+            )
+            for position, (detection, box) in enumerate(offered[: settings.max_objects], start=1)
+        ),
+        unmatched,
     )
 
 
+def _area(box: ImageBox) -> int:
+    return (box.x2 - box.x1) * (box.y2 - box.y1)
+
+
+def _overlap(a: ImageBox, b: ImageBox) -> float:
+    """Intersection over union of two boxes."""
+    width = min(a.x2, b.x2) - max(a.x1, b.x1)
+    height = min(a.y2, b.y2) - max(a.y1, b.y1)
+    if width <= 0 or height <= 0:
+        return 0.0
+    inter = width * height
+    union = _area(a) + _area(b) - inter
+    return inter / union if union > 0 else 0.0
+
+
 def _resolved_order(
-    matches: Sequence[IndexMatch], by_vector: dict[str, int], by_url: dict[str, int]
+    matches: Sequence[ZoryMatch], by_vector: dict[str, int], by_url: dict[str, int]
 ) -> list[int]:
-    """Product ids in neighbour order, each once, at its best position."""
+    """Product ids in the platform's order, each once, at its best position."""
     ordered: list[int] = []
     seen: set[int] = set()
     for match in matches:
-        product_id = by_vector.get(match.vector_id)
+        product_id = by_vector.get(match.pinecone_id)
         if product_id is None and match.product_url:
             product_id = by_url.get(match.product_url)
         if product_id is None or product_id in seen:
@@ -474,9 +594,35 @@ def _resolved_order(
     return ordered
 
 
-def _pick_utterance(detected: DetectedObject, description: ObjectDescription) -> str:
+def _anonymous_id(store_id: int, session_id: str) -> str:
+    """One stable device id per store and session, revealing neither."""
+    digest = hashlib.sha256(f"{store_id}:{session_id}".encode()).hexdigest()
+    return f"ai-agent-{digest[:32]}"
+
+
+def _token_ttl_s(visitor: ShopperCredentials) -> int:
+    """How long a visitor token may be kept: until shortly before it expires.
+
+    Read from the token's own claims without verifying them - the platform
+    verifies it on every call; this only decides when to sign in again.
+    """
+    try:
+        payload = visitor.token.get_secret_value().split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        remaining = int(claims["exp"]) - int(time.time()) - _VISITOR_TOKEN_MARGIN_S
+    except (IndexError, KeyError, TypeError, ValueError):
+        return _VISITOR_TOKEN_FALLBACK_TTL_S
+    return max(1, remaining)
+
+
+def _worded(exc: ZoryError, language: ReplyLanguage) -> ZoryError:
+    """The same refusal, in the words of the customer's language."""
+    arabic = getattr(exc, "public_message_ar", None)
+    if language is ReplyLanguage.AR and isinstance(arabic, str):
+        exc.public_message = arabic
+    return exc
+
+
+def _pick_utterance(detected: DetectedObject) -> str:
     label = detected.display_label
-    return (
-        f"[Shared a photo and picked the {label} in it: {description.summary.rstrip('. ')}] "
-        f"Show me products like this {label}."
-    )
+    return f"[Shared a photo and picked the {label} in it] Show me products like this {label}."

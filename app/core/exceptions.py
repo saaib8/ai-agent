@@ -116,6 +116,7 @@ class DetectionUnavailableError(IntegrationUnavailableError):
 
     code = "detection_unavailable"
     public_message = "We couldn't analyse that photo right now. Please try again shortly."
+    public_message_ar = "تعذّر تحليل هذه الصورة الآن. يُرجى المحاولة مرة أخرى بعد قليل."
 
 
 class VisualSearchUnavailableError(IntegrationUnavailableError):
@@ -123,6 +124,7 @@ class VisualSearchUnavailableError(IntegrationUnavailableError):
 
     code = "visual_search_unavailable"
     public_message = "We couldn't search for that item right now. Please try again shortly."
+    public_message_ar = "تعذّر البحث عن هذه القطعة الآن. يُرجى المحاولة مرة أخرى بعد قليل."
 
 
 class RenderUnavailableError(IntegrationUnavailableError):
@@ -144,6 +146,28 @@ class ImageRejectedError(InvalidRequestError):
 
     code = "image_rejected"
     public_message = "That file could not be used. Please upload a JPEG, PNG or WebP photo."
+
+
+class FinderAccessRefusedError(ZoryError):
+    """The main platform would not run the finder for this shopper.
+
+    Their widget token was missing, expired or not for this store, or the
+    store is not entitled to it. Nothing about why reaches the customer: the
+    platform's own reason is logged as `reason`.
+    """
+
+    code = "finder_access_refused"
+    http_status = HTTPStatus.FORBIDDEN
+    public_message = "Finding furniture from a photo isn't available right now."
+    public_message_ar = "البحث عن الأثاث من صورة غير متاح حاليًا."
+
+
+class ZoryTokenRejectedError(FinderAccessRefusedError):
+    """The shopper's token itself was refused - expired, most often.
+
+    Distinct so that a token this service signed in for itself can be replaced
+    once; a token the gateway forwarded is the shopper's, and is never retried.
+    """
 
 
 class FinderImageNotFoundError(ZoryError):

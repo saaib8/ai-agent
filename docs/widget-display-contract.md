@@ -115,7 +115,40 @@ Arabic lines that start with a number ("950 ريال للقطعة") need right-t
 direction to read in order - render text with `dir="auto"` (or `rtl` in an Arabic
 layout).
 
-## 5. Gateway (Zory backend `core/ai_agent/`) - what to check
+## 5. Furniture Finder runs as the shopper
+
+`POST /v1/furniture-finder/photos` and `POST /v1/furniture-finder/picks` keep their
+bodies and answers, but are now answered by **Zory's own finder** (the photo is
+uploaded and detected with `process_furniture_finder`, a picked piece matched with
+`get-recommendations`), **run as the shopper**. The gateway must forward the widget
+session it already verified, on both calls:
+
+| Header | Value |
+|---|---|
+| `X-Zory-Widget-Token` | the shopper's widget access token (member, or anonymous visitor) |
+| `X-Zory-Widget-Key` | the widget key the token was issued for (`ai-agent`) |
+| `X-Zory-Widget-Store-Id` | the store's public id (uuid, or Salla id) |
+
+- **Billing:** unchanged - the photo is a search in the ai-agent session, as the
+  gateway bills it today. The ai-agent marks the detection as an inner step
+  (`step_type`), so Zory does **not** charge the finder again.
+- **Without the headers**, the ai-agent refuses with `403 finder_access_refused` -
+  unless it runs as local (`ZORY_ENVIRONMENT=local`) with
+  `ZORY_FURNITURE_FINDER__LOCAL_WIDGET_KEY` set, when it signs in an anonymous
+  Product Discovery visitor of its own instead of the shopper. `docker-compose.yml`
+  sets `ZORY_ENVIRONMENT=local`, so keep `LOCAL_WIDGET_KEY` out of any server real
+  shoppers reach.
+- **A refused token is never retried** as anyone else: a forwarded token Zory
+  rejects (expired, most often) is answered `403 finder_access_refused`, and the
+  widget refreshes its session and tries again.
+- **Errors** (our wording, Arabic for an Arabic session): `finder_access_refused`
+  (403 - token missing, expired or not for this store), `detection_unavailable`
+  (503), `visual_search_unavailable` (503), plus the existing `image_rejected` and
+  `finder_image_not_found`.
+- A malformed header is refused with 422 before anything runs.
+
+
+## 6. Gateway (Zory backend `core/ai_agent/`) - what to check
 
 Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):
 
@@ -123,7 +156,7 @@ Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):
 |---|---|---|
 | Chat (`ai_agent_views.py`) | returns `{**answer, ...}` - all new fields pass through | nothing |
 | Picks (`picks_views.py`) | returns the answer as is | nothing |
-| Photo search pick (`finder_service.pick_object`) | returns `{**answer, ...}` | nothing |
+| Photo search upload + pick (`finder_service`) | forwards only session, store and photo | forward the three `X-Zory-Widget-*` headers (section 5) - until then the ai-agent cannot act as the shopper: it answers `finder_access_refused` (which the gateway turns into `agent_unavailable`, refunded), or, on a server with `LOCAL_WIDGET_KEY`, runs as its own visitor instead |
 | Room pictures (`render_service._render`) | returns `{**answer, ...}` | nothing |
 | Catalogue products (`catalog_service.products`) | forwards only `CATALOG_FILTERS` | add `"language"` to `CATALOG_FILTERS` (`constants.py`) |
 | Catalogue facets (`catalog_service.facets`) | forwards only `store_id` | forward `language` from the request |

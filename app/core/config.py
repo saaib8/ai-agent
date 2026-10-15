@@ -292,63 +292,62 @@ class PineconeSettings(BaseModel):
 
 
 class FurnitureFinderSettings(BaseModel):
-    """Photo-based product finding. Absent when the finder is not configured.
+    """Photo-based product finding, answered by the main platform's own finder.
 
-    Three steps, each served by something this service does not own: the
-    object detector deployed on Modal outlines what is in a photo; a vision
-    model describes the picked object in words; and the description is
-    searched in a product index built from **text** documents about each
-    product. The index is text, so the query must be embedded by the model
-    and at the width the index was built with - a vector from anything else
-    is in a different space, and its nearest neighbours would be noise that
-    still looks like an answer.
+    Absent when the finder is not configured. Three calls to Zory, each made
+    as the shopper: the photo is uploaded into the shopper's own prefix, Zory's
+    finder detects what is in it (as an inner step - the ai-agent session has
+    already paid for the turn), and for a picked piece Zory's recommendations
+    compare the piece's own pixels with every product photo in the store
+    (CLAUDE.md 16). PostgreSQL still decides which matches this retailer sells.
 
-    The vision and embedding models use the language-model provider's key
-    (`llm.api_key`): same provider, different jobs.
+    The shopper is whoever the widget token the gateway forwards names - a
+    member, or an anonymous visitor. With no token, a local run signs in its
+    own anonymous visitor per session on `local_widget_key`; every other
+    environment refuses, so no deployment silently acts as someone else.
     """
 
-    detector_url: str = Field(min_length=1)
-    """The synchronous Modal detection endpoint."""
+    zory_base_url: str = Field(min_length=1)
+    """The Zory API host, e.g. https://stageapi.zory.ai. No default: no
+    environment's host belongs in the codebase (CLAUDE.md 31)."""
 
-    detector_key: SecretStr
-    detector_secret: SecretStr
-    detector_timeout_s: float = Field(default=150.0, gt=0)
-    """Modal caps a synchronous request at about 150 s; a cold start alone can
-    take 20."""
+    stored_image_base_url: str = Field(min_length=1)
+    """Where Zory keeps the copy of the photo its detector saw. Recommendations
+    are cut from that copy, so the outlines and the pixels share one grid."""
 
-    detector_confidence: float = Field(default=0.25, gt=0, lt=1)
+    timeout_s: float = Field(default=240.0, gt=0)
+    """Detection can take minutes on a cold start, and the customer waits."""
 
-    vision_model: str = Field(min_length=1)
-    """Describes the picked object. No default: no model identifier belongs in
-    the codebase (CLAUDE.md 31)."""
+    step_type: str = Field(default="ai_agent", min_length=1, max_length=40)
+    """Marks the detection as a step inside the ai-agent turn, which Zory does
+    not charge again: the session the gateway opened has paid for it."""
 
-    vision_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
-    """Set for a reasoning model, unset for one that rejects it. Kept apart
-    from `llm.reasoning_effort`: describing a crop is a short job, and the
-    customer is waiting on it."""
-
-    vision_timeout_s: float = Field(default=30.0, gt=0)
-
-    embedding_model: str = Field(min_length=1)
-    """The model the product index was built with."""
-
-    embedding_dimensions: int = Field(gt=0)
-    """The width the product index was built at, requested from the model."""
-
-    index_api_key: SecretStr
-    index_name: str = Field(min_length=1)
-    index_namespace: str = Field(min_length=1)
-    """The product index and its namespace. Vectors carry `store_id`,
-    `category` and `product_url` metadata; the category is the catalog's
-    visual category, the same vocabulary the detector labels with."""
+    local_widget_key: str | None = Field(default=None, min_length=1, max_length=64)
+    """The widget an anonymous local visitor signs in on (Product Discovery,
+    `furniture-detection`). Used only when the environment is local."""
 
     result_limit: int = Field(default=10, gt=0, le=50)
     """How many products one pick presents."""
 
-    candidate_limit: int = Field(default=40, gt=0, le=200)
-    """How many neighbours are asked of the index before PostgreSQL decides
-    which of them are still sellable here. Larger than `result_limit` so that
-    stale or inactive vectors do not leave the customer with a short list."""
+    candidate_limit: int = Field(default=20, gt=0, le=200)
+    """How many matches are asked of Zory before PostgreSQL decides which of
+    them are still sellable here. Larger than `result_limit` so that matches
+    this store no longer sells do not leave the customer with a short list."""
+
+    min_confidence: float = Field(default=0.3, ge=0, lt=1)
+    """Outlines the detector is less sure of are not offered."""
+
+    max_objects: int = Field(default=12, gt=0, le=50)
+    """At most this many pieces are offered on one photo, so the picture stays
+    readable."""
+
+    duplicate_overlap: float = Field(default=0.6, gt=0, le=1)
+    """Two outlines overlapping more than this are one piece the detector
+    labelled twice (a sofa and a 3-seater sofa); the surer one is kept."""
+
+    min_short_side: int = Field(default=512, gt=0)
+    """A smaller photo is enlarged until its shorter side reaches this: Zory
+    refuses images under 500 pixels on either side."""
 
     max_upload_bytes: int = Field(default=40 * 1024 * 1024, gt=0)
     """A memory ceiling, not a rule about photos: the console shrinks a photo
@@ -356,13 +355,8 @@ class FurnitureFinderSettings(BaseModel):
     min_image_side: int | None = Field(default=None, gt=0)
     """None accepts a photo of any size."""
     detection_max_side: int = Field(default=1600, gt=0)
-    """Uploads are downscaled to this before detection, and every coordinate
-    the detector returns is in that downscaled image's pixel space - which is
-    the image kept for cropping, so the two can never disagree."""
-
-    medium_crop_padding: float = Field(default=0.15, ge=0, le=1)
-    """Context around the object in the second view the vision model sees, as
-    a share of its longer side."""
+    """Uploads are downscaled to this before they are sent; Zory keeps the
+    copy it detects on, and every coordinate is in that copy's pixel space."""
 
     @model_validator(mode="after")
     def _candidates_cover_results(self) -> FurnitureFinderSettings:
@@ -920,8 +914,8 @@ class Settings(BaseSettings):
             "response_configured": self.customer_agent.response_model is not None,
             "interior_design_configured": self.interior_design.model is not None,
             "furniture_finder_configured": self.furniture_finder is not None,
-            "furniture_finder_index": (
-                self.furniture_finder.index_name if self.furniture_finder else None
+            "furniture_finder_upstream": (
+                self.furniture_finder.zory_base_url if self.furniture_finder else None
             ),
             "visualization_configured": self.visualization is not None,
         }

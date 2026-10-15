@@ -10,9 +10,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Header, Request
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Environment
 from app.core.exceptions import ConfigurationError
 from app.core.lifespan import AppResources, get_resources
 from app.integrations.llm import StructuredLLMClient
@@ -24,6 +26,12 @@ from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
+from app.schemas.furniture_finder import (
+    WIDGET_KEY_PATTERN,
+    WIDGET_SESSION_PATTERN,
+    WIDGET_STORE_PATTERN,
+    ShopperCredentials,
+)
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.card_comparison import CardComparisonService
@@ -41,7 +49,6 @@ from app.services.furniture_finder import FinderTurnRuntime, FurnitureFinderServ
 from app.services.health import HealthService
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
-from app.services.object_description import ObjectDescriber
 from app.services.picks import PicksRuntime
 from app.services.product_brief import ProductBriefBuilder
 from app.services.product_display import ProductDisplayWords
@@ -573,31 +580,23 @@ def furniture_finder_service(
     serves chat exactly as before; only a photo finds the capability absent.
     """
     settings = app_resources.settings.furniture_finder
-    detector = app_resources.detector
-    vision = app_resources.finder_vision
-    embedder = app_resources.finder_embedder
-    index = app_resources.finder_index
-    if (
-        settings is None
-        or detector is None
-        or vision is None
-        or embedder is None
-        or index is None
-    ):
+    zory = app_resources.zory_finder
+    if settings is None or zory is None:
         raise ConfigurationError(
             detail="furniture_finder must be configured to use Furniture Finder",
             public_message="Furniture Finder is not configured.",
         )
     repository = ProductRepository(session)
     return FurnitureFinderService(
-        detector,
-        ObjectDescriber(vision),
-        embedder,
-        index,
+        zory,
         FinderPhotoStore(app_resources.redis.client, app_resources.settings.session),
         repository,
         ProductHydrationService(repository),
+        StoreRepository(session),
+        session_store(app_resources),
         settings,
+        local_visitors=app_resources.settings.environment is Environment.LOCAL,
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
 
 
@@ -621,6 +620,33 @@ def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> Fin
 
 
 FinderTurnRuntimeDep = Annotated[FinderTurnRuntime, Depends(finder_turn_runtime)]
+
+
+def shopper_credentials(
+    token: Annotated[
+        str | None,
+        Header(alias="X-Zory-Widget-Token", max_length=4096, pattern=WIDGET_SESSION_PATTERN),
+    ] = None,
+    widget_key: Annotated[
+        str | None, Header(alias="X-Zory-Widget-Key", pattern=WIDGET_KEY_PATTERN)
+    ] = None,
+    store_public_id: Annotated[
+        str | None, Header(alias="X-Zory-Widget-Store-Id", pattern=WIDGET_STORE_PATTERN)
+    ] = None,
+) -> ShopperCredentials | None:
+    """The shopper's widget session, as the gateway forwarded it, or None.
+
+    Transport only: the main platform verifies the token and decides the store
+    from it. A malformed header is refused before anything runs.
+    """
+    if token is None:
+        return None
+    return ShopperCredentials(
+        token=SecretStr(token), widget_key=widget_key, store_public_id=store_public_id
+    )
+
+
+ShopperCredentialsDep = Annotated[ShopperCredentials | None, Depends(shopper_credentials)]
 
 
 # ── Room visualisation ──────────────────────────────────────────────────────

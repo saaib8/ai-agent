@@ -1,14 +1,9 @@
 """Pixel work for Furniture Finder. Pure functions over bytes.
 
 Nothing here calls a provider, reads settings or touches state, so every rule
-about what a usable photo is and what a crop contains is testable with a
-synthetic image.
-
-Two crops per object, because that is how the product image index is queried
-upstream: a **tight** crop with everything outside the object's outline turned
-white - a catalog-style cut-out, so the room's floor and walls do not pull the
-match towards products photographed in similar rooms - and a **medium** crop
-with some surrounding context, which carries shape cues a hard cut-out loses.
+about what a usable photo is, and what part of it an outline covers, is
+testable with a synthetic image. The crops the product search compares are
+cut by the main platform from the copy it keeps, not here.
 """
 
 from __future__ import annotations
@@ -16,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 
-from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.exceptions import ImageRejectedError
 from app.schemas.furniture_finder import ImageBox, Point
@@ -30,7 +25,6 @@ enormous canvas is refused rather than expanded into memory."""
 
 _WHITE = (255, 255, 255)
 _UPLOAD_QUALITY = 90
-_CROP_QUALITY = 95
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +43,7 @@ def prepare_upload(
     min_side: int | None,
     max_side: int,
     upscale_to: int | None = None,
+    upscale_short_side_to: int | None = None,
 ) -> PreparedPhoto:
     """A customer upload as an upright RGB JPEG no larger than `max_side`.
 
@@ -59,6 +54,9 @@ def prepare_upload(
     `min_side` None accepts a photo of any size. `upscale_to` scales a smaller
     one up until its longer side reaches it, so work done on it - an image
     model's edit - comes back at a usable size rather than postage-stamp small.
+    `upscale_short_side_to` scales one up until its *shorter* side reaches it,
+    as far as `max_side` allows: the platform's finder refuses images under
+    500 pixels on either side.
     """
     if not data:
         raise ImageRejectedError(public_message="The uploaded file is empty.")
@@ -103,6 +101,13 @@ def prepare_upload(
             (max(1, round(rgb.width * scale)), max(1, round(rgb.height * scale))),
             Image.Resampling.LANCZOS,
         )
+    if upscale_short_side_to is not None and min(rgb.size) < upscale_short_side_to:
+        scale = min(upscale_short_side_to / min(rgb.size), max_side / max(rgb.size))
+        if scale > 1:
+            rgb = rgb.resize(
+                (max(1, round(rgb.width * scale)), max(1, round(rgb.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
     return PreparedPhoto(jpeg=_jpeg(rgb, _UPLOAD_QUALITY), width=rgb.width, height=rgb.height)
 
 
@@ -129,41 +134,6 @@ def clamp_polygon(points: tuple[Point, ...], width: int, height: int) -> tuple[P
     return tuple(
         (min(max(x, 0), width - 1), min(max(y, 0), height - 1)) for x, y in points
     )
-
-
-def object_views(
-    photo_jpeg: bytes, *, box: ImageBox, polygon: tuple[Point, ...], padding: float
-) -> tuple[bytes, bytes]:
-    """The tight cut-out and the padded context crop, as JPEG bytes.
-
-    An outline that covers nothing inside its own box - a degenerate polygon -
-    leaves the tight crop unmasked rather than solid white: an empty cut-out
-    would embed as "white rectangle" and match whatever product happens to be
-    photographed on the plainest background.
-    """
-    image = Image.open(BytesIO(photo_jpeg)).convert("RGB")
-    bounds = bounded_box(box.x1, box.y1, box.x2, box.y2, image.width, image.height)
-    if bounds is None:
-        raise ValueError("object box lies outside the photo")
-    area = (bounds.x1, bounds.y1, bounds.x2, bounds.y2)
-
-    mask = Image.new("L", image.size, 0)
-    ImageDraw.Draw(mask).polygon(list(polygon), fill=255)
-    tight = image.crop(area)
-    tight_mask = mask.crop(area)
-    if tight_mask.getbbox() is not None:
-        tight = Image.composite(tight, Image.new("RGB", tight.size, _WHITE), tight_mask)
-
-    pad = int(padding * max(bounds.x2 - bounds.x1, bounds.y2 - bounds.y1))
-    medium = image.crop(
-        (
-            max(0, bounds.x1 - pad),
-            max(0, bounds.y1 - pad),
-            min(image.width, bounds.x2 + pad),
-            min(image.height, bounds.y2 + pad),
-        )
-    )
-    return _jpeg(tight, _CROP_QUALITY), _jpeg(medium, _CROP_QUALITY)
 
 
 def _flattened(image: Image.Image) -> Image.Image:

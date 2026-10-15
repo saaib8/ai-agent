@@ -1,25 +1,25 @@
-"""Furniture Finder: pixels, providers, the service, and a pick as a turn.
+"""Furniture Finder: pixels, settings, and a finder that refuses while being rebuilt.
 
-What is faked is only what leaves the process - the detector, the embedding
-model, the image index, PostgreSQL and Redis. The imaging, the parsing, the
-ordering, the state commit and the routes are the real code.
+The old engine - the Modal detector, the vision description and the text
+index - is gone. Until the main platform's finder is wired in, what can be
+tested is the pixel work the new finder keeps, the settings, and that a photo
+or a pick is refused in our own words rather than half-handled.
 
-The claim that matters most is the last section's: a pick's products become
-the list on screen, so the *next chat message* resolves "the second one"
-against them. A finder whose results the conversation cannot address would be
-a gallery bolted onto a chat, which is not what was built.
+The other half of a pick - turning matches into a committed chat turn - did
+not change, so it is still driven here by a stand-in finder that answers with
+the rows it is given. Other suites reuse these helpers for the same reason.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from io import BytesIO
-from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -35,44 +35,43 @@ from app.api.dependencies import (
 from app.api.errors import register_exception_handlers
 from app.api.routes.chat import router as chat_router
 from app.api.routes.furniture_finder import router as finder_router
-from app.core.config import FurnitureFinderSettings, LLMSettings, SessionSettings
+from app.core.config import FurnitureFinderSettings, SessionSettings
 from app.core.exceptions import (
     DetectionUnavailableError,
-    EmbeddingUnavailableError,
+    FinderAccessRefusedError,
     FinderImageNotFoundError,
     ImageRejectedError,
     InvalidRequestError,
-    LLMRequestError,
-    LLMResponseInvalidError,
-    LLMUnavailableError,
     SessionConflictError,
     VisualSearchUnavailableError,
+    ZoryTokenRejectedError,
 )
-from app.integrations.detection import ModalObjectDetector, RawDetection, parse_detections
-from app.integrations.embeddings import OpenAIQueryEmbedder
-from app.integrations.finder_index import (
-    IndexMatch,
-    PineconeFinderIndex,
+from app.integrations.zory_finder import (
+    RawDetection,
+    ZoryFinderClient,
+    ZoryMatch,
+    ZoryScan,
     category_key,
-    read_matches,
+    parse_detection_result,
 )
-from app.integrations.llm import OpenAIStructuredClient
+from app.schemas.agent_state import AgentStateV1
 from app.schemas.dimensions import RawDimensions
 from app.schemas.furniture_finder import (
     DetectedObject,
     FinderPhoto,
     FinderPickRequest,
     ImageBox,
-    ObjectDescription,
+    ShopperCredentials,
 )
+from app.schemas.language import ReplyLanguage
 from app.schemas.product import CommerceClassification, ProductRow
 from app.schemas.product_reference import PresentedOrdinal
 from app.schemas.resolution import ResolvedProductReference
-from app.schemas.retailer import RetailerContext
-from app.services.finder_imaging import bounded_box, object_views, prepare_upload
+from app.schemas.retailer import RetailerContext, StoreRow
+from app.schemas.session import new_session
+from app.services.finder_imaging import bounded_box, prepare_upload
 from app.services.furniture_finder import FinderTurnRuntime, FurnitureFinderService
 from app.services.hydration import ProductHydrationService
-from app.services.object_description import ObjectDescriber
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.similar_search import SimilarSearchBuilder
@@ -81,7 +80,7 @@ from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from PIL import Image, ImageChops
+from PIL import Image
 from pydantic import SecretStr, ValidationError
 
 from tests.conftest import build_settings
@@ -91,26 +90,28 @@ STORE, OTHER_STORE = 50, 51
 SESSION = "sess-1"
 CONTEXT = RetailerContext(store_id=STORE)
 IMAGE_ID = "a" * 32
+STORE_UUID = UUID("527106f8-8bdf-4e69-8d1d-834045147283")
+STORED_IMAGE = "furniture-finder-stage/20261014-user-96.png"
+
+SHOPPER = ShopperCredentials(
+    token=SecretStr("aaa.bbb.ccc"), widget_key="ai-agent", store_public_id=str(STORE_UUID)
+)
 
 TAXONOMY = load_taxonomy()
 ATTRIBUTES = load_catalog_attributes()
 DIMENSIONS = load_dimension_semantics(taxonomy=TAXONOMY)
 
+__all__ = ["DIMENSIONS", "FakeSessionStore"]
+
 
 def finder_settings(**overrides: Any) -> FurnitureFinderSettings:
     values: dict[str, Any] = {
-        "detector_url": "https://detector.test/segment",
-        "detector_key": "wk-test",
-        "detector_secret": "ws-test",
-        "vision_model": "test-vision",
-        "vision_reasoning_effort": "low",
-        "embedding_model": "test-embedding",
-        "embedding_dimensions": 4,
-        "index_api_key": "pinecone-test",
-        "index_name": "products-index",
-        "index_namespace": "products",
+        "zory_base_url": "https://zory.test",
+        "stored_image_base_url": "https://images.test",
+        "local_widget_key": "furniture-detection",
         "result_limit": 3,
         "candidate_limit": 8,
+        "min_short_side": 100,
         "min_image_side": 50,
         "detection_max_side": 400,
     }
@@ -124,18 +125,6 @@ def a_photo_file(
     buffer = BytesIO()
     Image.new("RGB", (width, height), color).save(buffer, format=fmt)
     return buffer.getvalue()
-
-
-def a_detection(
-    label: str, box: tuple[int, int, int, int], confidence: float = 0.9
-) -> RawDetection:
-    x1, y1, x2, y2 = box
-    return RawDetection(
-        label=label,
-        confidence=confidence,
-        box=box,
-        polygon=((x1, y1), (x2 - 1, y1), (x2 - 1, y2 - 1), (x1, y2 - 1)),
-    )
 
 
 def rgb_at(image: Image.Image, x: int, y: int) -> tuple[int, ...]:
@@ -204,347 +193,751 @@ class TestPrepareUpload:
         assert "50 pixels" in raised.value.public_message
 
 
-class TestObjectViews:
-    def test_the_tight_view_is_the_object_cut_out_on_white(self) -> None:
-        photo = a_photo_file(200, 200, color="navy")
-        triangle = ((50, 50), (149, 50), (50, 149))
-        tight, _ = object_views(
-            photo, box=ImageBox(x1=50, y1=50, x2=150, y2=150), polygon=triangle, padding=0.15
-        )
-        image = Image.open(BytesIO(tight)).convert("RGB")
-        assert image.size == (100, 100)
-        inside = rgb_at(image, 10, 10)
-        outside = rgb_at(image, 95, 95)
-        assert max(inside) < 150, "inside the outline keeps the photo's pixels"
-        assert min(outside) > 240, "outside the outline is white"
-
-    def test_the_medium_view_adds_context_and_stays_inside_the_photo(self) -> None:
-        photo = a_photo_file(200, 200)
-        square = ((50, 50), (149, 50), (149, 149), (50, 149))
-        _, medium = object_views(
-            photo, box=ImageBox(x1=50, y1=50, x2=150, y2=150), polygon=square, padding=0.15
-        )
-        assert Image.open(BytesIO(medium)).size == (130, 130), "15 px on each side"
-
-        _, edge = object_views(
-            photo, box=ImageBox(x1=0, y1=0, x2=100, y2=100), polygon=square, padding=0.5
-        )
-        assert Image.open(BytesIO(edge)).size == (150, 150), "clamped at the photo's edge"
-
-    def test_an_outline_covering_nothing_leaves_the_crop_unmasked(self) -> None:
-        """A solid white cut-out would match the plainest product photo."""
-        photo = a_photo_file(200, 200, color="navy")
-        elsewhere = ((0, 0), (5, 0), (0, 5))
-        tight, _ = object_views(
-            photo, box=ImageBox(x1=100, y1=100, x2=150, y2=150), polygon=elsewhere, padding=0
-        )
-        original = Image.open(BytesIO(photo)).convert("RGB").crop((100, 100, 150, 150))
-        cropped = Image.open(BytesIO(tight)).convert("RGB")
-        worst = max(ImageChops.difference(original, cropped).tobytes())
-        assert worst < 40, "only JPEG noise differs"
-
-
 def test_boxes_are_clamped_into_the_photo_or_dropped() -> None:
     assert bounded_box(-5, -5, 50, 60, 40, 40) == ImageBox(x1=0, y1=0, x2=40, y2=40)
     assert bounded_box(50, 50, 80, 80, 40, 40) is None
     assert bounded_box(10, 10, 10, 20, 40, 40) is None
 
 
-# ── the detector ════════════════════════════════════════════════════════════
+# ── the platform client, on the wire ════════════════════════════════════════
 
 
-def modal_body(*objects: dict[str, Any], frame: list[int] | None = None) -> dict[str, Any]:
+Handler = Callable[[httpx.Request], httpx.Response]
+
+
+def a_client(handler: Handler) -> ZoryFinderClient:
+    return ZoryFinderClient(finder_settings(), transport=httpx.MockTransport(handler))
+
+
+async def sign_in(client: ZoryFinderClient) -> Any:
+    return await client.anonymous_visitor(
+        widget_key="furniture-detection",
+        store_public_id=str(STORE_UUID),
+        anonymous_id="ai-agent-0123456789abcdef",
+    )
+
+
+class TestSignIn:
+    async def test_a_visitor_is_signed_in_as_the_widget_does(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200, json={"tokens": {"access": "v.t.k", "refresh": "r"}, "anonymous": True}
+            )
+
+        visitor = await sign_in(a_client(handle))
+
+        assert str(seen[0].url) == "https://zory.test/api/widgets/auth/anonymous/"
+        assert seen[0].headers["X-Zory-Widget-Key"] == "furniture-detection"
+        assert seen[0].headers["X-Zory-Integration-Id"] == str(STORE_UUID)
+        assert "Authorization" not in seen[0].headers, "no password, no token: it is a sign-in"
+        assert json.loads(seen[0].content) == {"anonymous_id": "ai-agent-0123456789abcdef"}
+        assert visitor.token.get_secret_value() == "v.t.k"
+        assert visitor.widget_key == "furniture-detection"
+        assert visitor.store_public_id == str(STORE_UUID)
+        assert "v.t.k" not in repr(visitor), "the token never prints"
+
+    async def test_an_answer_without_a_token_is_a_refusal(self) -> None:
+        client = a_client(lambda _: httpx.Response(200, json={"anonymous": True}))
+        with pytest.raises(FinderAccessRefusedError):
+            await sign_in(client)
+
+    @pytest.mark.parametrize(
+        ("status", "body", "error"),
+        [
+            (401, {"code": "token_not_valid"}, ZoryTokenRejectedError),
+            (403, {"code": "feature_not_entitled"}, FinderAccessRefusedError),
+            (429, {"code": "visitor_daily_limit"}, FinderAccessRefusedError),
+            (502, {}, DetectionUnavailableError),
+        ],
+    )
+    async def test_a_refusal_becomes_our_error(
+        self, status: int, body: dict[str, Any], error: type[Exception]
+    ) -> None:
+        client = a_client(lambda _: httpx.Response(status, json=body))
+        with pytest.raises(error):
+            await sign_in(client)
+
+    async def test_an_unreachable_platform_is_our_error(self) -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("down", request=request)
+
+        with pytest.raises(DetectionUnavailableError):
+            await sign_in(a_client(handle))
+
+
+# ── the platform's detection, parsed ════════════════════════════════════════
+
+
+def zory_result(
+    *objects: dict[str, Any],
+    frame: list[int] | None = None,
+    original: list[int] | None = None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {"detected_objects": list(objects)}
     if frame is not None:
         result["frame_size"] = frame
-        result["original_dimensions"] = [200, 100]
-    return {"status": "success", "result": result}
+    if original is not None:
+        result["original_dimensions"] = original
+    return result
 
 
-def modal_object(label: str = "sofa", **overrides: Any) -> dict[str, Any]:
-    value: dict[str, Any] = {
+def zory_object(label: str = "sofa", **overrides: Any) -> dict[str, Any]:
+    item: dict[str, Any] = {
         "label": label,
-        "confidence": 0.8,
-        "mask_polygon": [[10, 10], [60, 10], [60, 40], [10, 40]],
-        "bbox_from_mask": [10.0, 10.0, 60.0, 40.0],
+        "confidence": 0.9,
+        "mask_polygon": [[10, 10], [50, 10], [50, 40], [10, 40]],
+        "bbox_from_mask": [10, 10, 50, 40],
     }
-    value.update(overrides)
-    return value
+    item.update(overrides)
+    return item
 
 
-class TestParseDetections:
+class TestParseDetectionResult:
     def test_outlines_become_detections_with_a_box_around_the_outline(self) -> None:
-        (sofa,) = parse_detections(modal_body(modal_object(" Sofa ")))
-        assert sofa.label == "sofa"
-        assert sofa.box == (10, 10, 61, 41)
-        assert sofa.polygon[0] == (10, 10)
+        detections, _ = parse_detection_result(zory_result(zory_object(" Side-Table ")))
+        assert detections == (
+            RawDetection(
+                label="side-table",
+                confidence=0.9,
+                box=(10, 10, 51, 41),
+                polygon=((10, 10), (50, 10), (50, 40), (10, 40)),
+            ),
+        )
 
     @pytest.mark.parametrize(
         "broken",
         [
-            modal_object(label=""),
-            modal_object(confidence=1.5),
-            modal_object(mask_polygon=[[1, 2], [3, 4]]),
-            modal_object(mask_polygon=[[1, 2], [3], [5, 6]]),
-            "not an object",
+            {"label": ""},
+            {"confidence": 1.5},
+            {"mask_polygon": [[1, 2], [3]], "bbox_from_mask": None},
+            {"mask_polygon": [[1, 2], [3, 4]], "bbox_from_mask": None},
         ],
     )
-    def test_one_bad_outline_does_not_cost_the_others(self, broken: Any) -> None:
-        parsed = parse_detections(modal_body(broken, modal_object("chair")))
-        assert [d.label for d in parsed] == ["chair"]
+    def test_one_bad_outline_does_not_cost_the_others(self, broken: dict[str, Any]) -> None:
+        detections, _ = parse_detection_result(zory_result(zory_object(**broken), zory_object()))
+        assert len(detections) == 1
+
+    @pytest.mark.parametrize("result", [None, {}, {"detected_objects": "sofa"}, ["sofa"]])
+    def test_a_result_that_is_not_a_detection_is_a_failure(self, result: Any) -> None:
+        with pytest.raises(DetectionUnavailableError):
+            parse_detection_result(result)
+
+    def test_coordinates_are_in_the_stored_copys_space(self) -> None:
+        detections, size = parse_detection_result(
+            zory_result(zory_object(), frame=[100, 100], original=[200, 300])
+        )
+        assert detections[0].polygon[1] == (100, 30)
+        assert size == (200, 300)
+
+    def test_a_piece_with_no_outline_is_kept_by_its_box(self) -> None:
+        """As the platform's own finder does, rather than losing the piece."""
+        detections, _ = parse_detection_result(zory_result(zory_object(mask_polygon=None)))
+        assert detections[0].polygon == ((10, 10), (50, 10), (50, 40), (10, 40))
+
+    def test_the_size_falls_back_to_the_frame_and_then_to_nothing(self) -> None:
+        assert parse_detection_result(zory_result(frame=[640, 480]))[1] == (640, 480)
+        assert parse_detection_result(zory_result())[1] is None
+
+    def test_labels_are_spelled_as_the_catalogs_categories(self) -> None:
+        assert category_key("Side Table ") == "side-table"
+
+
+# ── the scan, on the wire ═══════════════════════════════════════════════════
+
+
+def scan_handler(seen: list[httpx.Request], **overrides: Any) -> Handler:
+    """The platform's three finder calls, answered as stage answered them."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        path = request.url.path
+        if path == "/api/widgets/uploads/":
+            return httpx.Response(
+                201, json={"key": "widget-uploads/s/visitor-9/abc.jpg", "url": "https://t/x"}
+            )
+        if path == "/api/process_furniture_finder/":
+            return httpx.Response(
+                200, json=overrides.get("process", {"uuid": 1626, "img_url": STORED_IMAGE})
+            )
+        if path == "/api/object-detection/1626/":
+            return httpx.Response(
+                200,
+                json={"data": zory_result(zory_object(), frame=[200, 120], original=[200, 120])},
+            )
+        return httpx.Response(404)
+
+    return handle
+
+
+class TestScan:
+    async def test_a_scan_uploads_detects_and_reads_back_as_the_shopper(self) -> None:
+        seen: list[httpx.Request] = []
+        client = a_client(scan_handler(seen))
+
+        scan = await client.scan(SHOPPER, a_photo_file())
+
+        assert [r.url.path for r in seen] == [
+            "/api/widgets/uploads/",
+            "/api/process_furniture_finder/",
+            "/api/object-detection/1626/",
+        ]
+        for request in seen:
+            assert request.headers["Authorization"] == "Bearer aaa.bbb.ccc"
+            assert request.headers["X-Zory-Widget-Key"] == "ai-agent"
+            assert request.headers["X-Zory-Widget-Store-Id"] == str(STORE_UUID)
+        form = dict(httpx.QueryParams(seen[1].content.decode()))
+        assert form == {
+            "image_url": "widget-uploads/s/visitor-9/abc.jpg",
+            "step_type": "ai_agent",
+            "type": "furniture_finder",
+        }, "an inner step of the ai-agent turn, on the shopper's own upload"
+        assert not seen[2].url.query, "the dashboard's `permission` flag would refuse a widget"
+        assert scan == ZoryScan(
+            scan_id="1626",
+            stored_image=STORED_IMAGE,
+            detections=scan.detections,
+            size=(200, 120),
+        )
+        assert [d.label for d in scan.detections] == ["sofa"]
+        await client.close()
+
+    @pytest.mark.parametrize("stored", ["https://evil.test/x.png", "../x.png", "", None])
+    async def test_a_stored_copy_that_is_not_a_plain_key_is_refused(self, stored: Any) -> None:
+        client = a_client(scan_handler([], process={"uuid": 1626, "img_url": stored}))
+        with pytest.raises(DetectionUnavailableError):
+            await client.scan(SHOPPER, a_photo_file())
 
     @pytest.mark.parametrize(
-        "body",
+        ("status", "error"),
         [
-            {"status": "error", "error": "GPU out of memory"},
-            {"status": "success", "result": {"no": "objects"}},
-            ["not", "a", "dict"],
+            (401, ZoryTokenRejectedError),
+            (403, FinderAccessRefusedError),
+            (429, FinderAccessRefusedError),
+            (502, DetectionUnavailableError),
         ],
     )
-    def test_an_envelope_that_is_not_a_detection_is_a_failure(self, body: Any) -> None:
+    async def test_a_refusal_becomes_our_error(self, status: int, error: type[Exception]) -> None:
+        client = a_client(lambda _: httpx.Response(status, json={"code": "refused"}))
+        with pytest.raises(error):
+            await client.scan(SHOPPER, a_photo_file())
+
+    async def test_an_unreachable_platform_is_our_error(self) -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("down", request=request)
+
         with pytest.raises(DetectionUnavailableError):
-            parse_detections(body)
-
-    def test_coordinates_are_returned_in_the_sent_images_space(self) -> None:
-        (sofa,) = parse_detections(modal_body(modal_object(), frame=[100, 50]))
-        assert sofa.polygon[0] == (20, 20), "frame 100x50 scaled back to 200x100"
+            await a_client(handle).scan(SHOPPER, a_photo_file())
 
 
-class TestModalDetector:
-    async def test_sends_the_photo_with_proxy_auth_and_parses_the_answer(self) -> None:
+# ── recommendations, on the wire ════════════════════════════════════════════
+
+
+async def recommend(client: ZoryFinderClient, shopper: ShopperCredentials | None) -> Any:
+    return await client.recommend(
+        shopper,
+        image_url=f"https://images.test/{STORED_IMAGE}",
+        category="sofa",
+        box=ImageBox(x1=10, y1=10, x2=51, y2=41),
+        polygon=((10, 10), (50, 10), (50, 40)),
+        size=(200, 120),
+        top_k=8,
+        store_id=STORE,
+    )
+
+
+class TestRecommend:
+    async def test_recommendations_are_asked_for_one_piece_in_one_store(self) -> None:
         seen: list[httpx.Request] = []
 
-        def answer(request: httpx.Request) -> httpx.Response:
+        def handle(request: httpx.Request) -> httpx.Response:
             seen.append(request)
-            return httpx.Response(200, json=modal_body(modal_object()))
-
-        detector = ModalObjectDetector(finder_settings(), transport=httpx.MockTransport(answer))
-        detections = await detector.detect(b"jpeg-bytes")
-        await detector.close()
-
-        assert [d.label for d in detections] == ["sofa"]
-        request = seen[0]
-        assert request.headers["Modal-Key"] == "wk-test"
-        assert request.headers["Modal-Secret"] == "ws-test"
-        sent = json.loads(request.content)
-        assert base64.b64decode(sent["image"]) == b"jpeg-bytes"
-        assert sent["confidence_threshold"] == 0.25
-
-    @pytest.mark.parametrize("status", [401, 500, 504])
-    async def test_a_refusal_is_our_error_not_the_transports(self, status: int) -> None:
-        detector = ModalObjectDetector(
-            finder_settings(),
-            transport=httpx.MockTransport(lambda _: httpx.Response(status, text="secret stack")),
-        )
-        with pytest.raises(DetectionUnavailableError) as raised:
-            await detector.detect(b"x")
-        assert "secret" not in raised.value.public_message
-
-    async def test_an_unreachable_endpoint_is_our_error(self) -> None:
-        def fail(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("refused", request=request)
-
-        detector = ModalObjectDetector(finder_settings(), transport=httpx.MockTransport(fail))
-        with pytest.raises(DetectionUnavailableError):
-            await detector.detect(b"x")
-
-
-# ── describing, embedding, the index ════════════════════════════════════════
-
-
-A_DESCRIPTION = ObjectDescription(
-    summary="Low three-seat sofa with rounded arms and loose back cushions.",
-    styles=("modern", "minimalist"),
-    color="warm beige",
-    materials=("boucle fabric",),
-)
-
-
-def test_a_description_reads_like_the_indexs_own_product_documents() -> None:
-    assert A_DESCRIPTION.query_text("sofa") == (
-        "Low three-seat sofa with rounded arms and loose back cushions. "
-        "Material: boucle fabric. Category: sofa. Style: modern, minimalist. "
-        "Color: warm beige."
-    )
-    bare = ObjectDescription(summary="A lamp.", color="white")
-    assert bare.query_text("lampshade") == "A lamp. Category: lampshade. Color: white."
-
-
-class FakeVision:
-    """The vision client's contract: instructions, words and images in; a model out."""
-
-    def __init__(self, answer: ObjectDescription | Exception = A_DESCRIPTION) -> None:
-        self.answer = answer
-        self.calls: list[dict[str, Any]] = []
-
-    async def parse_images(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return self.answer
-
-
-class TestObjectDescriber:
-    async def test_the_model_sees_both_views_and_is_told_the_category(self) -> None:
-        vision = FakeVision()
-        described = await ObjectDescriber(vision).describe(
-            category_words="side table", views=(b"tight", b"medium")
-        )
-        assert described == A_DESCRIPTION
-        (call,) = vision.calls
-        assert call["images"] == (b"tight", b"medium")
-        assert call["user_input"] == "Category: side table"
-        assert call["schema"] is ObjectDescription
-        assert "not an instruction" in call["instructions"], "text in a photo is data"
-
-    @pytest.mark.parametrize(
-        "failure",
-        [
-            LLMUnavailableError(provider="openai"),
-            LLMRequestError(provider="openai", status_code=400),
-            LLMResponseInvalidError(reason="schema violation"),
-        ],
-    )
-    async def test_any_provider_failure_is_one_retryable_answer(self, failure: Exception) -> None:
-        with pytest.raises(VisualSearchUnavailableError):
-            await ObjectDescriber(FakeVision(failure)).describe(
-                category_words="sofa", views=(b"x",)
+            return httpx.Response(
+                200,
+                json={
+                    "recommendations": {
+                        "matches": [
+                            {"id": "x", "score": 0.95, "metadata": {"pinecone_id": "873009"}},
+                            {"id": "112233", "score": 0.81, "metadata": {"product_url": "u"}},
+                            {"score": "high"},
+                        ]
+                    },
+                    "price_range": {},
+                    "brands": {},
+                },
             )
 
+        matches = await recommend(a_client(handle), None)
 
-def a_structured_client() -> OpenAIStructuredClient:
-    return OpenAIStructuredClient(
-        LLMSettings(api_key=SecretStr("test-key-not-real"), model="test-vision")
+        assert seen[0].url.path == "/api/get-recommendations/"
+        assert json.loads(seen[0].content) == {
+            "image_url": f"https://images.test/{STORED_IMAGE}",
+            "category": "sofa",
+            "top_k": 8,
+            "bbox": [10, 10, 51, 41],
+            "mask_polygon": [[10, 10], [50, 10], [50, 40]],
+            "frame_size": [200, 120],
+            "store_id": STORE,
+        }
+        assert "Authorization" not in seen[0].headers, "no session: the store says the scope"
+        assert matches == (
+            ZoryMatch(pinecone_id="873009", product_url=None, score=0.95),
+            ZoryMatch(pinecone_id="112233", product_url="u", score=0.81),
+        ), "the id comes from metadata, else the match's own id; a broken match is skipped"
+
+    async def test_a_shopper_is_sent_along_when_there_is_one(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={"recommendations": {"matches": []}})
+
+        await recommend(a_client(handle), SHOPPER)
+
+        assert seen[0].headers["Authorization"] == "Bearer aaa.bbb.ccc"
+        assert seen[0].headers["X-Zory-Widget-Key"] == "ai-agent"
+
+    async def test_a_category_the_platform_has_no_products_for_is_an_empty_answer(self) -> None:
+        client = a_client(lambda _: httpx.Response(400, json={"error": "Category not supported."}))
+        assert await recommend(client, SHOPPER) == ()
+
+    @pytest.mark.parametrize(
+        ("status", "body", "error"),
+        [
+            (400, {"error": "bbox is required"}, VisualSearchUnavailableError),
+            (401, {"code": "token_not_valid"}, ZoryTokenRejectedError),
+            (403, {"code": "feature_not_entitled"}, FinderAccessRefusedError),
+            (502, {}, VisualSearchUnavailableError),
+            (200, {"recommendations": "none"}, VisualSearchUnavailableError),
+        ],
     )
+    async def test_a_refusal_becomes_our_error(
+        self, status: int, body: dict[str, Any], error: type[Exception]
+    ) -> None:
+        client = a_client(lambda _: httpx.Response(status, json=body))
+        with pytest.raises(error):
+            await recommend(client, SHOPPER)
+
+    async def test_an_unreachable_platform_is_our_error(self) -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("down", request=request)
+
+        with pytest.raises(VisualSearchUnavailableError):
+            await recommend(a_client(handle), SHOPPER)
 
 
-async def test_images_travel_in_the_user_turn_as_jpeg_data() -> None:
-    client = a_structured_client()
-    seen: dict[str, Any] = {}
-
-    async def _parse(**kwargs: Any) -> Any:
-        seen.update(kwargs)
-        return SimpleNamespace(output_parsed=A_DESCRIPTION)
-
-    client._client.responses.parse = _parse  # type: ignore[method-assign]
-    answer = await client.parse_images(
-        instructions="describe",
-        user_input="Category: sofa",
-        images=(b"one", b"two"),
-        schema=ObjectDescription,
-    )
-
-    assert answer == A_DESCRIPTION
-    assert seen["instructions"] == "describe", "instructions never mix with the images"
-    (turn,) = seen["input"]
-    assert turn["role"] == "user"
-    text, first, second = turn["content"]
-    assert text == {"type": "input_text", "text": "Category: sofa"}
-    assert first == {
-        "type": "input_image",
-        "image_url": "data:image/jpeg;base64," + base64.b64encode(b"one").decode(),
-    }
-    assert second["image_url"].endswith(base64.b64encode(b"two").decode())
+# ── photo prep ══════════════════════════════════════════════════════════════
 
 
-class TestReducedWidthEmbedding:
-    def embedder(self, width: int) -> tuple[OpenAIQueryEmbedder, dict[str, Any]]:
-        embedder = OpenAIQueryEmbedder(
-            LLMSettings(api_key=SecretStr("test-key-not-real"), model="chat"),
-            model="text-embedding-test",
-            dimensions=4,
+class TestEnlargingSmallPhotos:
+    """The platform's finder refuses images under 500 pixels on either side."""
+
+    def test_a_small_photo_is_enlarged_until_its_short_side_reaches_the_minimum(self) -> None:
+        prepared = prepare_upload(
+            a_photo_file(300, 200),
+            max_bytes=5_000_000,
+            min_side=None,
+            max_side=1600,
+            upscale_short_side_to=512,
         )
-        seen: dict[str, Any] = {}
+        assert (prepared.width, prepared.height) == (768, 512), "aspect kept"
 
-        async def _create(**kwargs: Any) -> Any:
-            seen.update(kwargs)
-            return SimpleNamespace(data=[SimpleNamespace(embedding=[0.5] * width)])
+    def test_enlarging_never_passes_the_longest_side_allowed(self) -> None:
+        prepared = prepare_upload(
+            a_photo_file(1500, 100),
+            max_bytes=5_000_000,
+            min_side=None,
+            max_side=1600,
+            upscale_short_side_to=512,
+        )
+        assert prepared.width == 1600
 
-        embedder._client.embeddings.create = _create  # type: ignore[method-assign]
-        return embedder, seen
-
-    async def test_the_width_is_requested_from_the_model(self) -> None:
-        embedder, seen = self.embedder(4)
-        assert await embedder.embed_query("a sofa") == (0.5, 0.5, 0.5, 0.5)
-        assert seen["model"] == "text-embedding-test"
-        assert seen["dimensions"] == 4
-
-    async def test_an_answer_of_another_width_is_refused(self) -> None:
-        embedder, _ = self.embedder(3072)
-        with pytest.raises(EmbeddingUnavailableError):
-            await embedder.embed_query("a sofa")
+    def test_a_large_enough_photo_is_left_alone(self) -> None:
+        prepared = prepare_upload(
+            a_photo_file(900, 600),
+            max_bytes=5_000_000,
+            min_side=None,
+            max_side=1600,
+            upscale_short_side_to=512,
+        )
+        assert (prepared.width, prepared.height) == (900, 600)
 
 
-def test_the_semantic_ranking_embedder_still_asks_for_the_native_width() -> None:
-    settings = LLMSettings(
-        api_key=SecretStr("test-key-not-real"), model="chat", embedding_model="native-embedding"
+# ── the upload ══════════════════════════════════════════════════════════════
+
+
+def a_detection(
+    label: str, box: tuple[int, int, int, int], confidence: float = 0.9
+) -> RawDetection:
+    x1, y1, x2, y2 = box
+    return RawDetection(
+        label=label,
+        confidence=confidence,
+        box=box,
+        polygon=((x1, y1), (x2 - 1, y1), (x2 - 1, y2 - 1), (x1, y2 - 1)),
     )
-    embedder = OpenAIQueryEmbedder(settings)
-    assert embedder.model == "native-embedding"
-    assert embedder._dimensions is None
 
 
-def test_index_matches_are_read_in_order_from_either_shape() -> None:
-    as_dict = {
-        "matches": [
-            {"id": "v1", "score": 0.9, "metadata": {"product_url": "https://x/1"}},
-            {"id": "v2", "score": 0.8, "metadata": {}},
-        ]
+def a_token(expires_in_s: int) -> str:
+    claims = (
+        base64.urlsafe_b64encode(json.dumps({"exp": int(time.time()) + expires_in_s}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    return f"eyJhbGciOiJIUzI1NiJ9.{claims}.signature"
+
+
+class FakeZory:
+    """The platform's finder: what it was asked, as whom, and what it answers."""
+
+    def __init__(
+        self,
+        detections: Sequence[RawDetection] = (),
+        *,
+        size: tuple[int, int] | None = (200, 120),
+        matches: Sequence[ZoryMatch] = (),
+        scan_error: Exception | None = None,
+        recommend_error: Exception | None = None,
+        reject_first_scan: bool = False,
+        visitor_access: str = "visitor.access.one",
+    ) -> None:
+        self.detections = tuple(detections)
+        self.size = size
+        self.matches = tuple(matches)
+        self.scan_error = scan_error
+        self.recommend_error = recommend_error
+        self.reject_first_scan = reject_first_scan
+        self.visitor_access = visitor_access
+        self.scan_calls: list[tuple[ShopperCredentials, tuple[int, int]]] = []
+        self.visitor_calls: list[dict[str, str]] = []
+        self.recommend_calls: list[dict[str, Any]] = []
+
+    async def anonymous_visitor(
+        self, *, widget_key: str, store_public_id: str, anonymous_id: str
+    ) -> ShopperCredentials:
+        self.visitor_calls.append(
+            {
+                "widget_key": widget_key,
+                "store_public_id": store_public_id,
+                "anonymous_id": anonymous_id,
+            }
+        )
+        return ShopperCredentials(
+            token=SecretStr(self.visitor_access),
+            widget_key=widget_key,
+            store_public_id=store_public_id,
+        )
+
+    async def scan(self, shopper: ShopperCredentials, image_jpeg: bytes) -> ZoryScan:
+        self.scan_calls.append((shopper, Image.open(BytesIO(image_jpeg)).size))
+        if self.reject_first_scan and len(self.scan_calls) == 1:
+            raise ZoryTokenRejectedError(reason="token_not_valid")
+        if self.scan_error is not None:
+            raise self.scan_error
+        return ZoryScan(
+            scan_id="1626", stored_image=STORED_IMAGE, detections=self.detections, size=self.size
+        )
+
+    async def recommend(
+        self, shopper: ShopperCredentials | None, **kwargs: Any
+    ) -> tuple[ZoryMatch, ...]:
+        self.recommend_calls.append({"shopper": shopper, **kwargs})
+        if self.recommend_error is not None:
+            raise self.recommend_error
+        return self.matches
+
+
+class FakePhotos:
+    def __init__(self) -> None:
+        self.saved: dict[tuple[int, str, str], FinderPhoto] = {}
+        self.visitors: dict[tuple[int, str], ShopperCredentials] = {}
+        self.visitor_ttls: list[int] = []
+
+    async def save(self, store_id: int, session_id: str, photo: FinderPhoto) -> None:
+        self.saved[(store_id, session_id, photo.image_id)] = photo
+
+    async def load(self, store_id: int, session_id: str, image_id: str) -> FinderPhoto | None:
+        return self.saved.get((store_id, session_id, image_id))
+
+    async def save_visitor(
+        self, store_id: int, session_id: str, visitor: ShopperCredentials, ttl_s: int
+    ) -> None:
+        self.visitors[(store_id, session_id)] = visitor
+        self.visitor_ttls.append(ttl_s)
+
+    async def load_visitor(self, store_id: int, session_id: str) -> ShopperCredentials | None:
+        return self.visitors.get((store_id, session_id))
+
+    async def forget_visitor(self, store_id: int, session_id: str) -> None:
+        self.visitors.pop((store_id, session_id), None)
+
+
+class FakeStores:
+    async def get_active(self, store_id: int) -> StoreRow | None:
+        if store_id != STORE:
+            return None
+        return StoreRow(id=store_id, uuid=STORE_UUID, name_english="Cityw", active_status=True)
+
+
+def a_service(
+    *,
+    catalog: FakeCatalog | None = None,
+    zory: FakeZory | None = None,
+    photos: FakePhotos | None = None,
+    sessions: FakeSessionStore | None = None,
+    local: bool = True,
+    arabic_replies: bool = False,
+    **settings: Any,
+) -> tuple[FurnitureFinderService, dict[str, Any]]:
+    parts: dict[str, Any] = {
+        "catalog": catalog or FakeCatalog(),
+        "zory": zory or FakeZory(),
+        "photos": photos or FakePhotos(),
+        "sessions": sessions or FakeSessionStore(),
     }
-
-    class Match:
-        def __init__(self, id: str, score: float, metadata: Any) -> None:  # noqa: A002
-            self.id, self.score, self.metadata = id, score, metadata
-
-    response = SimpleNamespace(matches=[Match("v3", 0.7, None)])
-
-    assert read_matches(as_dict) == (
-        IndexMatch("v1", 0.9, "https://x/1"),
-        IndexMatch("v2", 0.8, None),
+    service = FurnitureFinderService(
+        parts["zory"],
+        parts["photos"],
+        parts["catalog"],
+        ProductHydrationService(parts["catalog"]),
+        FakeStores(),  # type: ignore[arg-type]
+        parts["sessions"],
+        finder_settings(**settings),
+        local_visitors=local,
+        arabic_replies=arabic_replies,
     )
-    assert read_matches(response) == (IndexMatch("v3", 0.7, None),)
+    return service, parts
 
 
-def test_categories_follow_the_catalogs_spelling() -> None:
-    assert category_key(" Side Table ") == "side-table"
-    assert category_key("2-seater-sofa") == "2-seater-sofa"
+async def an_arabic_session(sessions: FakeSessionStore) -> None:
+    fresh = new_session()
+    state = AgentStateV1().model_copy(update={"reply_language": ReplyLanguage.AR})
+    envelope = fresh.advanced(state=state, conversation=fresh.conversation)
+    assert await sessions.save_if_revision(STORE, SESSION, expected_revision=0, envelope=envelope)
 
 
-async def test_the_index_is_asked_within_one_store_and_one_category() -> None:
-    queries: list[dict[str, Any]] = []
+class TestUpload:
+    async def test_the_platform_finders_clean_up_is_applied(self) -> None:
+        """Unsure outlines dropped, one piece labelled twice kept once, the
+        pieces people shop for first - the sofa, not the side table."""
+        service, _ = a_service(
+            zory=FakeZory(
+                [
+                    a_detection("side-table", (150, 80, 180, 110), confidence=0.95),
+                    a_detection("sofa", (10, 10, 140, 100), confidence=0.6),
+                    a_detection("3-seater-sofa", (12, 12, 140, 100), confidence=0.5),
+                    a_detection("side-table", (5, 100, 20, 115), confidence=0.2),
+                ]
+            ),
+            catalog=FakeCatalog(categories=frozenset({"sofa", "side-table", "3-seater-sofa"})),
+        )
 
-    def _query(**kwargs: Any) -> Any:
-        queries.append(kwargs)
-        return {"matches": [{"id": "prod-1", "score": 0.8, "metadata": {"product_url": "u"}}]}
+        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
 
-    index = PineconeFinderIndex.__new__(PineconeFinderIndex)
-    index._index = SimpleNamespace(query=_query)
-    index._index_name, index._namespace = "products-index", "products"
+        assert [(o.object_id, o.label) for o in reply.objects] == [(1, "sofa"), (2, "side-table")]
+        assert reply.unmatched_count == 0
 
-    matches = await index.nearest(vector=(0.1, 0.2), store_id=50, category="sofa", top_k=7)
+    async def test_only_pieces_this_store_sells_are_offered_and_the_rest_counted(self) -> None:
+        service, _ = a_service(
+            zory=FakeZory(
+                [
+                    a_detection("sofa", (10, 10, 140, 100)),
+                    a_detection("lampshade", (150, 5, 190, 50)),
+                ]
+            )
+        )
 
-    assert matches == (IndexMatch("prod-1", 0.8, "u"),)
-    (query,) = queries
-    assert query["namespace"] == "products"
-    assert query["filter"] == {"store_id": {"$eq": 50}, "category": {"$eq": "sofa"}}
-    assert query["top_k"] == 7
-    assert query["include_values"] is False
+        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+
+        assert [o.label for o in reply.objects] == ["sofa"]
+        assert reply.unmatched_count == 1
+
+    async def test_only_so_many_pieces_are_offered(self) -> None:
+        detections = [a_detection("sofa", (i * 30, 10, i * 30 + 25, 60)) for i in range(6)]
+        service, _ = a_service(zory=FakeZory(detections), max_objects=4)
+
+        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+
+        assert len(reply.objects) == 4
+
+    async def test_a_dropped_piece_is_not_counted_as_unmatched(self) -> None:
+        """unmatched_count means "found, but this store sells nothing like it" -
+        not "too unsure" and not "the same piece twice"."""
+        service, _ = a_service(
+            zory=FakeZory(
+                [
+                    a_detection("sofa", (10, 10, 140, 100), confidence=0.9),
+                    a_detection("sofa", (11, 11, 140, 100), confidence=0.7),
+                    a_detection("lampshade", (150, 5, 190, 50), confidence=0.1),
+                ]
+            )
+        )
+
+        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+
+        assert [o.label for o in reply.objects] == ["sofa"]
+        assert reply.unmatched_count == 0
+
+    async def test_the_photo_is_kept_with_the_platforms_scan_and_its_copys_size(self) -> None:
+        service, parts = a_service(
+            zory=FakeZory([a_detection("sofa", (10, 10, 140, 100))], size=(180, 108))
+        )
+
+        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+
+        assert (reply.width, reply.height) == (180, 108)
+        photo = parts["photos"].saved[(STORE, SESSION, reply.image_id)]
+        assert (photo.scan_id, photo.stored_image) == ("1626", STORED_IMAGE)
+        assert "jpeg_b64" not in photo.model_dump(), "the photo stays with the platform"
+
+    async def test_outlines_are_clamped_into_the_stored_copy(self) -> None:
+        service, _ = a_service(zory=FakeZory([a_detection("sofa", (-5, 10, 300, 100))]))
+
+        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+
+        box = reply.objects[0].box
+        assert (box.x1, box.x2) == (0, 200)
+
+    async def test_a_forwarded_shopper_is_who_the_platform_scans_as(self) -> None:
+        service, parts = a_service()
+
+        await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT, shopper=SHOPPER)
+
+        assert parts["zory"].scan_calls[0][0] is SHOPPER
+        assert parts["zory"].visitor_calls == []
+        assert parts["photos"].visitors == {}, "nothing of our own is signed in or saved"
+
+    async def test_a_forwarded_shopper_is_never_retried_as_anyone_else(self) -> None:
+        service, parts = a_service(zory=FakeZory(reject_first_scan=True))
+
+        with pytest.raises(FinderAccessRefusedError):
+            await service.upload(
+                a_photo_file(), session_id=SESSION, context=CONTEXT, shopper=SHOPPER
+            )
+        assert len(parts["zory"].scan_calls) == 1
+        assert parts["zory"].visitor_calls == []
+
+    async def test_a_forwarded_shopper_works_where_no_visitor_of_our_own_may(self) -> None:
+        """A deployment: not local, so no visitor of ours - but the shopper's own."""
+        service, parts = a_service(local=False)
+
+        await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT, shopper=SHOPPER)
+
+        assert parts["zory"].scan_calls[0][0] is SHOPPER
+
+    async def test_locally_one_anonymous_visitor_is_signed_in_per_session(self) -> None:
+        service, parts = a_service()
+
+        await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+        await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+        await service.upload(a_photo_file(), session_id="sess-2", context=CONTEXT)
+
+        calls = parts["zory"].visitor_calls
+        assert len(calls) == 2, "the session's visitor is kept, not signed in again"
+        assert {c["widget_key"] for c in calls} == {"furniture-detection"}
+        assert {c["store_public_id"] for c in calls} == {str(STORE_UUID)}
+        assert calls[0]["anonymous_id"] != calls[1]["anonymous_id"]
+        assert all(SESSION not in c["anonymous_id"] for c in calls), "no session id leaves"
+        assert 16 <= len(calls[0]["anonymous_id"]) <= 100
+
+    async def test_a_visitor_is_kept_only_until_its_token_expires(self) -> None:
+        service, parts = a_service(zory=FakeZory(visitor_access=a_token(3600)))
+
+        await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+
+        assert 3500 <= parts["photos"].visitor_ttls[0] <= 3540
+
+    async def test_an_expired_visitor_is_signed_in_again_once(self) -> None:
+        service, parts = a_service(zory=FakeZory(reject_first_scan=True))
+
+        await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+
+        assert len(parts["zory"].visitor_calls) == 2
+        assert len(parts["zory"].scan_calls) == 2
+
+    async def test_without_a_shopper_a_deployment_refuses_before_asking_anything(self) -> None:
+        service, parts = a_service(local=False)
+
+        with pytest.raises(FinderAccessRefusedError) as raised:
+            await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+        assert raised.value.code == "finder_access_refused"
+        assert parts["zory"].scan_calls == []
+        assert parts["zory"].visitor_calls == []
+
+    async def test_a_store_that_is_not_active_is_refused(self) -> None:
+        service, parts = a_service()
+
+        with pytest.raises(FinderAccessRefusedError):
+            await service.upload(
+                a_photo_file(), session_id=SESSION, context=RetailerContext(store_id=99)
+            )
+        assert parts["zory"].visitor_calls == []
+
+    async def test_an_unusable_upload_is_refused_before_the_platform_is_asked(self) -> None:
+        service, parts = a_service()
+        with pytest.raises(ImageRejectedError):
+            await service.upload(b"not a photo", session_id=SESSION, context=CONTEXT)
+        assert parts["zory"].scan_calls == []
+
+    async def test_a_refusal_reads_in_the_sessions_language(self) -> None:
+        sessions = FakeSessionStore()
+        await an_arabic_session(sessions)
+        service, _ = a_service(
+            zory=FakeZory(scan_error=FinderAccessRefusedError(reason="feature_not_entitled")),
+            sessions=sessions,
+            arabic_replies=True,
+        )
+
+        with pytest.raises(FinderAccessRefusedError) as raised:
+            await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+        assert raised.value.public_message == "البحث عن الأثاث من صورة غير متاح حاليًا."
+
+    async def test_a_failed_scan_reads_in_the_sessions_language(self) -> None:
+        sessions = FakeSessionStore()
+        await an_arabic_session(sessions)
+        service, _ = a_service(
+            zory=FakeZory(scan_error=DetectionUnavailableError(reason="status_502")),
+            sessions=sessions,
+            arabic_replies=True,
+        )
+
+        with pytest.raises(DetectionUnavailableError) as raised:
+            await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+        assert raised.value.public_message.startswith("تعذّر تحليل")
+
+    async def test_with_arabic_off_a_refusal_stays_english(self) -> None:
+        sessions = FakeSessionStore()
+        await an_arabic_session(sessions)
+        service, _ = a_service(
+            zory=FakeZory(scan_error=DetectionUnavailableError(reason="status_502")),
+            sessions=sessions,
+        )
+
+        with pytest.raises(DetectionUnavailableError) as raised:
+            await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+        assert raised.value.public_message.startswith("We couldn't analyse")
+
+    async def test_an_english_chat_keeps_english_refusals(self) -> None:
+        service, _ = a_service(
+            zory=FakeZory(scan_error=FinderAccessRefusedError(reason="feature_not_entitled")),
+            arabic_replies=True,
+        )
+
+        with pytest.raises(FinderAccessRefusedError) as raised:
+            await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
+        assert raised.value.public_message.startswith("Finding furniture")
+
+    async def test_a_small_photo_is_enlarged_before_it_is_sent(self) -> None:
+        service, parts = a_service(min_short_side=240)
+
+        await service.upload(a_photo_file(200, 120), session_id=SESSION, context=CONTEXT)
+
+        assert parts["zory"].scan_calls[0][1] == (400, 240)
 
 
-async def test_an_index_failure_is_ours() -> None:
-    def _query(**_: Any) -> Any:
-        raise RuntimeError("401 Unauthorized: pcsk_secret")
-
-    index = PineconeFinderIndex.__new__(PineconeFinderIndex)
-    index._index = SimpleNamespace(query=_query)
-    index._index_name, index._namespace = "products-index", "products"
-
-    with pytest.raises(VisualSearchUnavailableError) as raised:
-        await index.nearest(vector=(0.1,), store_id=50, category="sofa", top_k=1)
-    assert "pcsk" not in raised.value.public_message
-
-
-# ── the service ═════════════════════════════════════════════════════════════
+# ── finding products like a piece ═══════════════════════════════════════════
 
 
 def a_row(
@@ -613,85 +1006,6 @@ class FakeCatalog:
         ]
 
 
-class FakeDetector:
-    def __init__(self, detections: Sequence[RawDetection] = ()) -> None:
-        self.detections = tuple(detections)
-        self.calls = 0
-
-    async def detect(self, image_jpeg: bytes) -> tuple[RawDetection, ...]:
-        self.calls += 1
-        Image.open(BytesIO(image_jpeg))  # it really is the prepared JPEG
-        return self.detections
-
-
-class FakeEmbedder:
-    def __init__(self, error: Exception | None = None) -> None:
-        self.texts: list[str] = []
-        self.error = error
-
-    @property
-    def model(self) -> str:
-        return "test-embedding"
-
-    async def embed_query(self, text: str) -> tuple[float, ...]:
-        self.texts.append(text)
-        if self.error is not None:
-            raise self.error
-        return (1.0, 0.0, 0.0, 0.0)
-
-
-class FakeIndex:
-    def __init__(self, matches: Sequence[IndexMatch] = ()) -> None:
-        self.matches = tuple(matches)
-        self.calls: list[dict[str, Any]] = []
-
-    async def nearest(self, **kwargs: Any) -> tuple[IndexMatch, ...]:
-        self.calls.append(kwargs)
-        return self.matches
-
-
-class FakePhotos:
-    def __init__(self) -> None:
-        self.saved: dict[tuple[int, str, str], FinderPhoto] = {}
-
-    async def save(self, store_id: int, session_id: str, photo: FinderPhoto) -> None:
-        self.saved[(store_id, session_id, photo.image_id)] = photo
-
-    async def load(self, store_id: int, session_id: str, image_id: str) -> FinderPhoto | None:
-        return self.saved.get((store_id, session_id, image_id))
-
-
-def a_service(
-    *,
-    catalog: FakeCatalog | None = None,
-    detector: FakeDetector | None = None,
-    index: FakeIndex | None = None,
-    photos: FakePhotos | None = None,
-    vision: FakeVision | None = None,
-    embedder: FakeEmbedder | None = None,
-    **settings: Any,
-) -> tuple[FurnitureFinderService, dict[str, Any]]:
-    parts: dict[str, Any] = {
-        "catalog": catalog or FakeCatalog(),
-        "detector": detector or FakeDetector(),
-        "vision": vision or FakeVision(),
-        "embedder": embedder or FakeEmbedder(),
-        "index": index or FakeIndex(),
-        "photos": photos or FakePhotos(),
-    }
-    service = FurnitureFinderService(
-        parts["detector"],
-        ObjectDescriber(parts["vision"]),
-        parts["embedder"],
-        parts["index"],
-        parts["photos"],
-        parts["catalog"],
-        ProductHydrationService(parts["catalog"]),
-        finder_settings(**settings),
-    )
-    return service, parts
-
-
 def a_stored_photo(
     photos: FakePhotos, *, store_id: int = STORE, session_id: str = SESSION
 ) -> FinderPhoto:
@@ -699,7 +1013,8 @@ def a_stored_photo(
         image_id=IMAGE_ID,
         width=200,
         height=120,
-        jpeg_b64=base64.b64encode(a_photo_file()).decode(),
+        scan_id="1626",
+        stored_image=STORED_IMAGE,
         objects=(
             DetectedObject(
                 object_id=1,
@@ -714,111 +1029,95 @@ def a_stored_photo(
     return photo
 
 
-class TestUpload:
-    async def test_only_objects_this_catalog_can_match_are_offered(self) -> None:
-        service, parts = a_service(
-            detector=FakeDetector(
-                [
-                    a_detection("plate", (5, 5, 20, 20)),
-                    a_detection("side-table", (10, 10, 40, 40)),
-                    a_detection("sofa", (40, 20, 190, 110)),
-                ]
-            )
-        )
-        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
-
-        assert [(o.object_id, o.label) for o in reply.objects] == [(1, "sofa"), (2, "side-table")]
-        assert reply.objects[1].display_label == "side table"
-        assert reply.unmatched_count == 1
-        assert (reply.width, reply.height) == (200, 120)
-
-        stored = parts["photos"].saved[(STORE, SESSION, reply.image_id)]
-        assert [o.label for o in stored.objects] == ["sofa", "side-table"]
-        assert Image.open(BytesIO(base64.b64decode(stored.jpeg_b64))).size == (200, 120)
-
-    async def test_outlines_are_clamped_into_the_stored_photo(self) -> None:
-        service, _ = a_service(detector=FakeDetector([a_detection("sofa", (-30, -10, 500, 90))]))
-        reply = await service.upload(a_photo_file(), session_id=SESSION, context=CONTEXT)
-        (sofa,) = reply.objects
-        assert sofa.box == ImageBox(x1=0, y1=0, x2=200, y2=90)
-        assert all(0 <= x < 200 and 0 <= y < 120 for x, y in sofa.polygon)
-
-    async def test_an_unusable_upload_is_refused_before_the_detector_is_paid(self) -> None:
-        service, parts = a_service()
-        with pytest.raises(ImageRejectedError):
-            await service.upload(b"garbage", session_id=SESSION, context=CONTEXT)
-        assert parts["detector"].calls == 0
-        assert parts["photos"].saved == {}
-
-
 class TestFind:
-    async def test_neighbours_resolve_to_this_stores_products_in_index_order(self) -> None:
+    async def test_matches_resolve_to_this_stores_products_in_the_platforms_order(self) -> None:
         catalog = FakeCatalog(
-            [a_row(1), a_row(2), a_row(3), a_row(4), a_row(9, store_id=OTHER_STORE)],
-            vectors={"v-a": 3, "v-b": 1, "v-other": 9},
-            urls={"https://page/2": 2, "https://page/4": 4},
+            [a_row(31), a_row(32), a_row(33)], vectors={"v31": 31, "v32": 32, "v33": 33}
         )
-        index = FakeIndex(
-            [
-                IndexMatch("v-a", 0.95, None),
-                IndexMatch("v-other", 0.94, None),  # another retailer's: gone
-                IndexMatch("prod-77", 0.93, "https://page/2"),  # joined by page
-                IndexMatch("v-a-second-photo", 0.92, None),  # unresolvable: gone
-                IndexMatch("v-b", 0.91, None),
-                IndexMatch("v-a", 0.90, None),  # the same product again: once
-                IndexMatch("v-late", 0.50, "https://page/4"),  # past the limit
+        zory = FakeZory(
+            matches=[
+                ZoryMatch("v33", None, 0.95),
+                ZoryMatch("v31", None, 0.9),
+                ZoryMatch("unknown", None, 0.88),
+                ZoryMatch("v31", None, 0.7),
             ]
         )
-        service, parts = a_service(catalog=catalog, index=index)
+        service, parts = a_service(catalog=catalog, zory=zory)
         photo = a_stored_photo(parts["photos"])
 
-        products, description = await service.find(photo, photo.objects[0], CONTEXT)
+        products = await service.find(photo, photo.objects[0], CONTEXT)
 
-        assert [p.product_id for p in products] == [3, 2, 1]
-        assert description == A_DESCRIPTION
-        assert parts["index"].calls[0] == {
-            "vector": (1.0, 0.0, 0.0, 0.0),
-            "store_id": STORE,
+        assert [p.product_id for p in products] == [33, 31], "Zory's order, each once"
+        assert zory.recommend_calls[0] == {
+            "shopper": None,
+            "image_url": f"https://images.test/{STORED_IMAGE}",
             "category": "sofa",
+            "box": photo.objects[0].box,
+            "polygon": photo.objects[0].polygon,
+            "size": (200, 120),
             "top_k": 8,
+            "store_id": STORE,
         }
 
-    async def test_the_object_is_described_from_its_crops_and_searched_as_words(self) -> None:
+    async def test_a_match_is_found_by_its_page_when_its_id_is_not_known(self) -> None:
+        catalog = FakeCatalog([a_row(31)], urls={"https://example.test/31": 31})
+        zory = FakeZory(matches=[ZoryMatch("other-index-id", "https://example.test/31", 0.9)])
+        service, parts = a_service(catalog=catalog, zory=zory)
+        photo = a_stored_photo(parts["photos"])
+
+        products = await service.find(photo, photo.objects[0], CONTEXT)
+
+        assert [p.product_id for p in products] == [31]
+
+    async def test_results_are_capped_after_the_store_decides(self) -> None:
+        rows = [a_row(31 + i) for i in range(5)]
+        catalog = FakeCatalog(rows, vectors={f"v{r.id}": r.id for r in rows})
+        zory = FakeZory(matches=[ZoryMatch(f"v{r.id}", None, 0.9) for r in rows])
+        service, parts = a_service(catalog=catalog, zory=zory, result_limit=2)
+        photo = a_stored_photo(parts["photos"])
+
+        products = await service.find(photo, photo.objects[0], CONTEXT)
+
+        assert [p.product_id for p in products] == [31, 32]
+
+    async def test_another_stores_product_is_never_shown(self) -> None:
+        catalog = FakeCatalog(
+            [a_row(31), a_row(90, store_id=OTHER_STORE)], vectors={"v31": 31, "v90": 90}
+        )
+        zory = FakeZory(matches=[ZoryMatch("v90", None, 0.99), ZoryMatch("v31", None, 0.9)])
+        service, parts = a_service(catalog=catalog, zory=zory)
+        photo = a_stored_photo(parts["photos"])
+
+        products = await service.find(photo, photo.objects[0], CONTEXT)
+
+        assert [p.product_id for p in products] == [31]
+
+    async def test_the_shopper_is_passed_on(self) -> None:
         service, parts = a_service()
         photo = a_stored_photo(parts["photos"])
 
-        await service.find(photo, photo.objects[0], CONTEXT)
+        await service.find(photo, photo.objects[0], CONTEXT, SHOPPER)
 
-        (call,) = parts["vision"].calls
-        tight, medium = call["images"]
-        assert Image.open(BytesIO(tight)).size == (160, 80)
-        assert Image.open(BytesIO(medium)).size == (200, 120)
-        assert call["user_input"] == "Category: sofa"
-        assert parts["embedder"].texts == [A_DESCRIPTION.query_text("sofa")]
+        assert parts["zory"].recommend_calls[0]["shopper"] is SHOPPER
 
-    async def test_nothing_resolvable_is_an_empty_answer_not_a_failure(self) -> None:
-        service, parts = a_service(index=FakeIndex([IndexMatch("v-x", 0.9, None)]))
+    async def test_nothing_proposed_is_an_empty_answer_not_a_failure(self) -> None:
+        service, parts = a_service()
         photo = a_stored_photo(parts["photos"])
-        products, _ = await service.find(photo, photo.objects[0], CONTEXT)
-        assert products == ()
-
-    async def test_a_failed_description_searches_nothing(self) -> None:
-        service, parts = a_service(vision=FakeVision(LLMUnavailableError(provider="openai")))
-        photo = a_stored_photo(parts["photos"])
-        with pytest.raises(VisualSearchUnavailableError):
-            await service.find(photo, photo.objects[0], CONTEXT)
-        assert parts["embedder"].texts == []
-        assert parts["index"].calls == []
-
-    async def test_a_failed_embedding_is_the_same_retryable_answer(self) -> None:
-        service, parts = a_service(embedder=FakeEmbedder(EmbeddingUnavailableError(reason="x")))
-        photo = a_stored_photo(parts["photos"])
-        with pytest.raises(VisualSearchUnavailableError):
-            await service.find(photo, photo.objects[0], CONTEXT)
-        assert parts["index"].calls == []
+        assert await service.find(photo, photo.objects[0], CONTEXT) == ()
 
 
 # ── a pick, as a turn ═══════════════════════════════════════════════════════
+
+
+def a_finding_service(
+    rows: Sequence[ProductRow] | None = None,
+) -> tuple[FurnitureFinderService, dict[str, Any]]:
+    rows = rows if rows is not None else [a_row(31), a_row(32), a_row(33)]
+    catalog = FakeCatalog(rows, vectors={f"v{row.id}": row.id for row in rows})
+    zory = FakeZory(matches=[ZoryMatch(f"v{row.id}", None, 0.9) for row in rows])
+    service, parts = a_service(catalog=catalog, zory=zory)
+    a_stored_photo(parts["photos"])
+    return service, parts
 
 
 def a_runtime(
@@ -848,17 +1147,6 @@ def a_pick(**overrides: Any) -> FinderPickRequest:
     }
     values.update(overrides)
     return FinderPickRequest(**values)
-
-
-def a_finding_service(
-    rows: Sequence[ProductRow] | None = None,
-) -> tuple[FurnitureFinderService, dict[str, Any]]:
-    rows = rows if rows is not None else [a_row(31), a_row(32), a_row(33)]
-    catalog = FakeCatalog(rows, vectors={f"v{row.id}": row.id for row in rows})
-    index = FakeIndex([IndexMatch(f"v{row.id}", 0.9, None) for row in rows])
-    service, parts = a_service(catalog=catalog, index=index)
-    a_stored_photo(parts["photos"])
-    return service, parts
 
 
 class TestPick:
@@ -925,8 +1213,9 @@ class TestPick:
 
         messages = sessions.saved[(STORE, SESSION)].conversation.messages
         assert [m.role.value for m in messages] == ["user", "assistant"]
-        assert "picked the sofa" in messages[0].content
-        assert "rounded arms and loose back cushions" in messages[0].content
+        assert messages[0].content == (
+            "[Shared a photo and picked the sofa in it] Show me products like this sofa."
+        )
         assert messages[1].content.startswith("Here are the 3 closest matches")
         assert messages[1].content.endswith("hear more about one?"), "the offer is kept"
 
@@ -942,13 +1231,13 @@ class TestPick:
         assert "couldn't find anything" in reply.response.message
         assert sessions.saved[(STORE, SESSION)].state.active_search is None
 
-    async def test_a_stale_screen_is_refused_before_anything_is_paid_for(self) -> None:
+    async def test_a_stale_screen_is_refused_before_the_platform_is_asked(self) -> None:
         service, parts = a_finding_service()
         runtime, sessions = a_runtime(service)
 
         with pytest.raises(SessionConflictError):
             await runtime.pick(a_pick(expected_session_revision=3), CONTEXT)
-        assert parts["vision"].calls == []
+        assert parts["zory"].recommend_calls == []
         assert sessions.saves == 0
 
     async def test_a_photo_from_another_session_or_store_is_not_found(self) -> None:
@@ -976,6 +1265,25 @@ class TestPick:
         runtime, _ = a_runtime(service, Racing())
         with pytest.raises(SessionConflictError):
             await runtime.pick(a_pick(), CONTEXT)
+
+    async def test_the_pick_runs_as_the_forwarded_shopper(self) -> None:
+        service, parts = a_finding_service()
+        runtime, _ = a_runtime(service)
+
+        await runtime.pick(a_pick(), CONTEXT, SHOPPER)
+
+        assert parts["zory"].recommend_calls[0]["shopper"] is SHOPPER
+
+    async def test_a_failed_search_reads_in_the_sessions_language(self) -> None:
+        sessions = FakeSessionStore()
+        await an_arabic_session(sessions)
+        service, parts = a_finding_service()
+        parts["zory"].recommend_error = VisualSearchUnavailableError(reason="status_502")
+        runtime, _ = a_runtime(service, sessions, arabic_replies=True)
+
+        with pytest.raises(VisualSearchUnavailableError) as raised:
+            await runtime.pick(a_pick(), CONTEXT)
+        assert raised.value.public_message.startswith("تعذّر البحث")
 
 
 async def test_the_second_one_resolves_to_the_photos_second_match() -> None:
@@ -1016,18 +1324,28 @@ def an_app(
     return app
 
 
-async def post_photo(client: AsyncClient, data: bytes, **form: Any) -> httpx.Response:
+async def post_photo(
+    client: AsyncClient, data: bytes, headers: dict[str, str] | None = None, **form: Any
+) -> httpx.Response:
     fields = {"session_id": SESSION, "store_id": str(STORE), **form}
     return await client.post(
         "/v1/furniture-finder/photos",
         data=fields,
         files={"image": ("room.jpg", data, "image/jpeg")},
+        headers=headers,
     )
+
+
+WIDGET_HEADERS = {
+    "X-Zory-Widget-Token": "aaa.bbb.ccc",
+    "X-Zory-Widget-Key": "ai-agent",
+    "X-Zory-Widget-Store-Id": str(STORE_UUID),
+}
 
 
 class TestRoutes:
     async def test_an_upload_answers_with_the_pickable_objects(self) -> None:
-        service, _ = a_service(detector=FakeDetector([a_detection("sofa", (40, 20, 190, 110))]))
+        service, _ = a_service(zory=FakeZory([a_detection("sofa", (40, 20, 190, 110))]))
         async with AsyncClient(
             transport=ASGITransport(app=an_app(service)), base_url="http://t"
         ) as client:
@@ -1038,7 +1356,68 @@ class TestRoutes:
         assert len(payload["image_id"]) == 32
         assert payload["objects"][0]["label"] == "sofa"
         assert payload["objects"][0]["display_label"] == "sofa"
-        assert "jpeg_b64" not in reply.text, "the stored photo never goes back out"
+        for kept in ("stored_image", "scan_id", STORED_IMAGE, "jpeg_b64"):
+            assert kept not in reply.text, "what the platform keeps never goes back out"
+
+    async def test_the_shoppers_widget_session_is_passed_on(self) -> None:
+        service, parts = a_finding_service()
+        runtime, _ = a_runtime(service)
+        app = an_app(service, runtime)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            await post_photo(client, a_photo_file(), headers=WIDGET_HEADERS)
+            await client.post(
+                "/v1/furniture-finder/picks",
+                json=a_pick().model_dump(exclude_none=True),
+                headers=WIDGET_HEADERS,
+            )
+
+        scanned_as = parts["zory"].scan_calls[0][0]
+        assert scanned_as.token.get_secret_value() == "aaa.bbb.ccc"
+        assert (scanned_as.widget_key, scanned_as.store_public_id) == ("ai-agent", str(STORE_UUID))
+        assert parts["zory"].recommend_calls[0]["shopper"] == scanned_as
+        assert parts["zory"].visitor_calls == []
+
+    async def test_without_the_headers_a_local_run_uses_its_own_visitor(self) -> None:
+        service, parts = a_service()
+        async with AsyncClient(
+            transport=ASGITransport(app=an_app(service)), base_url="http://t"
+        ) as client:
+            await post_photo(client, a_photo_file())
+
+        assert len(parts["zory"].visitor_calls) == 1
+        assert parts["zory"].scan_calls[0][0].widget_key == "furniture-detection"
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {"X-Zory-Widget-Token": "not a token"},
+            {"X-Zory-Widget-Token": "a.b.c", "X-Zory-Widget-Key": "Bad Key"},
+            {"X-Zory-Widget-Token": "a.b.c", "X-Zory-Widget-Store-Id": "../x"},
+        ],
+    )
+    async def test_a_malformed_widget_header_is_refused_before_anything_runs(
+        self, headers: dict[str, str]
+    ) -> None:
+        service, parts = a_service()
+        async with AsyncClient(
+            transport=ASGITransport(app=an_app(service)), base_url="http://t"
+        ) as client:
+            reply = await post_photo(client, a_photo_file(), headers=headers)
+        assert reply.status_code == 422
+        assert parts["zory"].scan_calls == []
+
+    async def test_without_a_shopper_a_deployment_says_so_in_our_words(self) -> None:
+        service, _ = a_service(local=False)
+        async with AsyncClient(
+            transport=ASGITransport(app=an_app(service)), base_url="http://t"
+        ) as client:
+            reply = await post_photo(client, a_photo_file())
+        assert reply.status_code == 403
+        assert reply.json()["error"] == {
+            "code": "finder_access_refused",
+            "message": "Finding furniture from a photo isn't available right now.",
+            "trace_id": None,
+        }
 
     @pytest.mark.parametrize(
         "form",
@@ -1049,9 +1428,9 @@ class TestRoutes:
         async with AsyncClient(
             transport=ASGITransport(app=an_app(service)), base_url="http://t"
         ) as client:
-            reply = await post_photo(client, a_photo_file(), **form)
+            reply = await post_photo(client, a_photo_file(), None, **form)
         assert reply.status_code == 422
-        assert parts["detector"].calls == 0
+        assert parts["zory"].scan_calls == []
 
     async def test_a_bad_file_is_refused_with_a_message_a_customer_can_act_on(self) -> None:
         service, _ = a_service()
@@ -1062,21 +1441,21 @@ class TestRoutes:
         assert reply.status_code == 422
         assert reply.json()["error"]["code"] == "image_rejected"
 
-    async def test_an_unknown_store_is_refused_before_detection(self) -> None:
+    async def test_an_unknown_store_is_refused_before_anything_is_asked(self) -> None:
         service, parts = a_service()
         async with AsyncClient(
             transport=ASGITransport(app=an_app(service)), base_url="http://t"
         ) as client:
             reply = await post_photo(client, a_photo_file(), store_id="999")
         assert reply.status_code == 404
-        assert parts["detector"].calls == 0
+        assert parts["zory"].scan_calls == []
 
     async def test_the_finder_refuses_cleanly_when_not_configured(self) -> None:
         """No finder settings: the route answers, and says why, in our words."""
 
         class Unconfigured:
             settings = build_settings()
-            detector = finder_vision = finder_embedder = finder_index = None
+            zory_finder = None
 
         app = an_app()
         app.dependency_overrides[resources] = lambda: Unconfigured()
@@ -1114,7 +1493,7 @@ class TestRoutes:
         ) as client:
             reply = await client.post("/v1/furniture-finder/picks", json=body)
         assert reply.status_code == 422
-        assert parts["vision"].calls == []
+        assert parts["zory"].recommend_calls == []
 
 
 async def test_the_next_chat_message_sees_the_photos_matches() -> None:
@@ -1152,22 +1531,50 @@ async def test_the_next_chat_message_sees_the_photos_matches() -> None:
     assert "picked the sofa" in turn.conversation.messages[0].content
 
 
+# ── settings ════════════════════════════════════════════════════════════════
+
+
 def test_settings_keep_the_candidate_pool_at_least_as_large_as_the_results() -> None:
     with pytest.raises(ValidationError):
         finder_settings(result_limit=10, candidate_limit=5)
 
 
-def test_no_secret_is_rendered_in_the_startup_summary() -> None:
-    settings = build_settings(
-        furniture_finder=finder_settings().model_dump(mode="json")
-        | {
-            "detector_key": "wk-real",
-            "detector_secret": "ws-real",
-            "google_api_key": "AIza-real",
-            "index_api_key": "pcsk-real",
-        }
+def test_the_zory_host_and_the_stored_copy_have_no_default() -> None:
+    with pytest.raises(ValidationError) as raised:
+        FurnitureFinderSettings()  # type: ignore[call-arg]
+    missing = {error["loc"][0] for error in raised.value.errors()}
+    assert missing == {"zory_base_url", "stored_image_base_url"}
+
+
+def test_the_defaults_follow_the_platform_finder() -> None:
+    settings = FurnitureFinderSettings(
+        zory_base_url="https://zory.test", stored_image_base_url="https://images.test"
     )
-    rendered = json.dumps(settings.redacted())
-    assert settings.redacted()["furniture_finder_configured"] is True
-    for secret in ("wk-real", "ws-real", "pcsk-real"):
-        assert secret not in rendered
+    assert (settings.min_confidence, settings.duplicate_overlap, settings.max_objects) == (
+        0.3,
+        0.6,
+        12,
+    )
+    assert settings.min_short_side == 512
+    assert settings.result_limit == 10
+    assert settings.candidate_limit == 20
+    assert settings.step_type == "ai_agent"
+    assert settings.local_widget_key is None, "no visitor of our own unless configured"
+
+
+def test_the_finder_is_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ZORY_FURNITURE_FINDER__ZORY_BASE_URL", "https://stageapi.zory.ai")
+    monkeypatch.setenv("ZORY_FURNITURE_FINDER__STORED_IMAGE_BASE_URL", "https://bucket.test")
+    monkeypatch.setenv("ZORY_FURNITURE_FINDER__LOCAL_WIDGET_KEY", "furniture-detection")
+    finder = build_settings().furniture_finder
+    assert finder is not None
+    assert finder.zory_base_url == "https://stageapi.zory.ai"
+    assert finder.stored_image_base_url == "https://bucket.test"
+    assert finder.local_widget_key == "furniture-detection"
+
+
+def test_the_startup_summary_names_the_platform_it_calls() -> None:
+    settings = build_settings(furniture_finder=finder_settings().model_dump(mode="json"))
+    summary = settings.redacted()
+    assert summary["furniture_finder_configured"] is True
+    assert summary["furniture_finder_upstream"] == "https://zory.test"
