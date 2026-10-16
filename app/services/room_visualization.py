@@ -386,8 +386,8 @@ class VisualizationTurnRuntime:
             presentation=ChatPresentation(render=render),
             reply_language=language if self._arabic_replies else None,
             labels=card_labels(language if self._arabic_replies else None),
-            # Room visualisation is Sarah's, like product discovery.
-            agent=AgentPersona.SARAH,
+            # Room visualisation is Sara's, like product discovery.
+            agent=AgentPersona.SARA,
         )
 
 
@@ -491,8 +491,8 @@ class CatalogVisualizationRuntime:
             presentation=ChatPresentation(render=render),
             reply_language=language if self._arabic_replies else None,
             labels=card_labels(language if self._arabic_replies else None),
-            # Room visualisation is Sarah's, like product discovery.
-            agent=AgentPersona.SARAH,
+            # Room visualisation is Sara's, like product discovery.
+            agent=AgentPersona.SARA,
         )
 
     def _checked_room(self, room: RenderRoomSpec) -> RenderRoomSpec:

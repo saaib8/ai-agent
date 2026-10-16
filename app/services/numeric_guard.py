@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from app.core.numbers import parse_stated_amount
+from app.schemas.cart import CartView
 from app.schemas.design import DesignGuidance
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.picks import PickView
@@ -221,6 +222,38 @@ def picks_counts(picks: Sequence[PickView] | None) -> tuple[int, ...]:
     for pick in picks:
         kinds[pick.kind] = kinds.get(pick.kind, 0) + 1
     return (len(picks), *kinds.values())
+
+
+def cart_figures(cart: CartView | None) -> tuple[Decimal, ...]:
+    """Every figure the cart beside the reply shows: each line's price and
+    line total, and what it all comes to (CLAUDE.md 36).
+
+    Summed by the application from prices read this turn, then shown - so
+    "your cart comes to 14,350 SAR" reports what they can read. Anything
+    worked out from it - what is left of a budget, a saving - still is not.
+    """
+    if cart is None:
+        return ()
+    return (
+        *(line.unit_price for line in cart.lines),
+        *(line.line_total for line in cart.lines),
+        *(total.amount for total in cart.totals),
+        # The numbers in a changed product's name ("6 Seater"), as the reply
+        # may name it - the same allowance the picks' names have.
+        *(Decimal(n) for change in cart.changes for n in _NAME_NUMBER.findall(change.name)),
+    )
+
+
+def cart_counts(cart: CartView | None) -> tuple[int, ...]:
+    """The counts the cart shows: how many items, how many products, and how
+    many of each."""
+    if cart is None:
+        return ()
+    return (
+        *((cart.item_count, len(cart.lines)) if cart.lines else ()),
+        *(line.quantity for line in cart.lines),
+        *(q for change in cart.changes for q in (change.quantity_before, change.quantity_after)),
+    )
 
 
 def screen_figures(screen: CustomerVisibleScreenView) -> tuple[Decimal | int, ...]:

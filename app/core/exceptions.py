@@ -465,3 +465,10 @@ class PickLimitError(InvalidRequestError):
 
     code = "pick_limit"
     public_message = "Your picks are full. Remove one to add another."
+
+
+class CartQuantityError(InvalidRequestError):
+    """More of one product than the cart takes (`cart_max_quantity`)."""
+
+    code = "cart_quantity"
+    public_message = "That's more of one product than the cart takes."

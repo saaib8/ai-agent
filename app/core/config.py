@@ -663,8 +663,14 @@ class CustomerAgentSettings(BaseModel):
     answer. Off, a sofa search shows sofas only, exactly as before."""
 
     max_picks: int = Field(default=10, ge=2, le=50)
-    """How many products the picks tray keeps. A shortlist, not a second
-    catalogue: past this a tick asks them to remove one first."""
+    """How many products the cart keeps - the picks tray became the cart
+    (CLAUDE.md 36); how many of each is `cart_max_quantity`. Past this, a tap
+    asks them to remove one first. A whole room or a seating combination is
+    added whole, even past it."""
+
+    cart_max_quantity: int = Field(default=10, ge=1, le=100)
+    """How many of one product the cart takes - at most the schema's ceiling,
+    `MAX_CART_QUANTITY`."""
 
     max_likes: int = Field(default=20, ge=2, le=50)
     """How many products the liked list keeps. Past this the oldest like is

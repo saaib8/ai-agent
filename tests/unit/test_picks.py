@@ -200,7 +200,7 @@ async def test_a_full_tray_refuses_another_pick() -> None:
     with pytest.raises(PickLimitError) as raised:
         await _runtime(sessions, max_picks=2).apply(_tick(3), CONTEXT)
 
-    assert "up to 2 picks" in raised.value.public_message
+    assert "up to 2 products" in raised.value.public_message
 
 
 async def test_a_card_beyond_the_results_on_screen_is_refused() -> None:

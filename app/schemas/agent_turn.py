@@ -29,6 +29,7 @@ from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage
 from app.schemas.agent_view import AgentStateView
 from app.schemas.bundle import BundleOptimizationOutcome
 from app.schemas.bundle_action import BundleActionRequest
+from app.schemas.cart import CartView
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.conversation import ConversationContext
 from app.schemas.design import DesignGuidance
@@ -439,6 +440,11 @@ class CustomerTurnResult(BaseModel):
     liked: tuple[LikedView, ...] | None = None
     """Their liked list after the turn, read with the picks; None when it was
     not read or the buttons are switched off."""
+
+    cart: CartView | None = None
+    """Their cart after the turn: the picks with how many of each, the totals,
+    and what this turn changed (CLAUDE.md 36). Built by the runtime from
+    `picks` once the turn is done; None wherever `picks` is."""
 
     focus: GroundedProduct | None = None
     """The pick the customer asked about, drawn above what goes with it.

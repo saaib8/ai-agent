@@ -63,12 +63,15 @@ from app.schemas.response import (
 )
 from app.schemas.screen import CustomerVisibleScreenView
 from app.schemas.text_choice import TextReplyChoice, closes_on_a_question
+from app.services.agent_persona import speaker
 from app.services.arabic_wording import in_language
 from app.services.next_step import already_asks
 from app.services.numeric_guard import (
     build_allowance,
     bundle_counts,
     bundle_stretch_figures,
+    cart_counts,
+    cart_figures,
     check_numeric_policy,
     chosen_seating_counts,
     guidance_figures,
@@ -388,6 +391,7 @@ class CustomerResponseGenerator:
             conversation=turn.conversation,
             grounding=view,
             follow_up_allowed=route.follow_up_allowed,
+            speaking_as=speaker(turn, result),
         )
         allowance = build_allowance(
             turn.message,
@@ -408,6 +412,7 @@ class CustomerResponseGenerator:
                 # kind - the tray shows them, so "your 2 sofa sets" is a count
                 # they can read, not one we invented (CLAUDE.md 10.2).
                 *picks_counts(result.picks),
+                *cart_counts(result.cart),
             ),
             # Figures the customer can read off the cards beside the reply.
             # Repeating one is reporting what is on screen; the guard still
@@ -431,6 +436,9 @@ class CustomerResponseGenerator:
                 # The picks tray is on screen too: their prices and the numbers
                 # in their names ("6 Seater") are theirs to read and ours to say.
                 *picks_figures(result.picks),
+                # The cart is on screen too: its line totals and what it all
+                # comes to, summed by the application (CLAUDE.md 36).
+                *cart_figures(result.cart),
                 # The lowest real total of each shape a seating question offers.
                 *(seating_figures(view.seating) if view.seating else ()),
                 # The lowest real total that would fill a piece the budget
@@ -484,6 +492,7 @@ class CustomerResponseGenerator:
             conversation=turn.conversation,
             grounding=view,
             follow_up_allowed=follow_up_allowed,
+            speaking_as=speaker(turn, result),
         )
         response, calls = await self._call_and_validate(
             request,

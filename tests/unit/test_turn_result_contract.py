@@ -152,6 +152,9 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # offered beside it as chips. None of them reaches the reply model.
         "picks",
         "liked",
+        # The picks with how many of each, priced, and what the turn changed
+        # (CLAUDE.md 36).
+        "cart",
         "focus",
         "companions",
         # A finished room's missing pieces, asked about when they want a

@@ -14,15 +14,15 @@ const { AGENTS, agentLook } = await import(
 test('Each reply is shown under the assistant the server named', () => {
   assert.equal(agentLook('nora').name, 'Nora')
   assert.equal(agentLook('salman').name, 'Salman')
-  assert.equal(agentLook('sarah').name, 'Sarah')
+  assert.equal(agentLook('sara').name, 'Sara')
 })
 
-test('A reply with no assistant named is Sarah, the session voice', () => {
-  assert.equal(agentLook(undefined).name, 'Sarah')
-  assert.equal(agentLook('someone-else').name, 'Sarah')
+test('A reply with no assistant named is Sara, the session voice', () => {
+  assert.equal(agentLook(undefined).name, 'Sara')
+  assert.equal(agentLook('someone-else').name, 'Sara')
 })
 
-test('Sarah and Salman share an initial, so their colours differ', () => {
-  assert.equal(AGENTS.sarah.initial, AGENTS.salman.initial)
-  assert.notEqual(AGENTS.sarah.avatar, AGENTS.salman.avatar)
+test('Sara and Salman share an initial, so their colours differ', () => {
+  assert.equal(AGENTS.sara.initial, AGENTS.salman.initial)
+  assert.notEqual(AGENTS.sara.avatar, AGENTS.salman.avatar)
 })

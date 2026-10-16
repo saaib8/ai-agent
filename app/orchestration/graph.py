@@ -175,5 +175,6 @@ async def _build_public_response(
             state["result"].reply_language,
             state["result"].liked,
             runtime.context.chat.agent(state["turn"], state["result"]),
+            state["result"].cart,
         )
     }

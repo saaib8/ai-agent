@@ -22,6 +22,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.agent_state import MAX_CART_QUANTITY
+from app.schemas.cart import CartView
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 from app.schemas.product import ProductDisplay
 
@@ -92,8 +94,24 @@ class SelectLikedAction(BaseModel):
     liked: int = Field(ge=1)
 
 
+class SetQuantityAction(BaseModel):
+    """How many of a product in the cart: the pick at this position, from now
+    on. Removing it is `deselect`; a quantity is at least one."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["quantity"] = "quantity"
+    pick: int = Field(ge=1)
+    quantity: int = Field(ge=1, le=MAX_CART_QUANTITY)
+
+
 PickActionRequest = Annotated[
-    SelectPickAction | DeselectPickAction | LikeCardAction | UnlikeAction | SelectLikedAction,
+    SelectPickAction
+    | DeselectPickAction
+    | LikeCardAction
+    | UnlikeAction
+    | SelectLikedAction
+    | SetQuantityAction,
     Field(discriminator="kind"),
 ]
 
@@ -190,3 +208,7 @@ class PicksResponse(BaseModel):
     conversation ("I like the ..."): its card, and what goes with it when
     anything does. Set on every new pick; None on an untick, a tick that
     changed nothing, or a pick that could not be read back."""
+    cart: CartView | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The cart after this action - the picks with how many of each, the
+    totals, and what changed for the store's own cart (CLAUDE.md 36). None
+    when it could not be read; the client keeps the cart it has."""

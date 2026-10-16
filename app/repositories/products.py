@@ -342,6 +342,18 @@ def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class StoreProductIdentity:
+    """How the store itself knows one product, for :meth:`ProductRepository.store_identities`."""
+
+    product_id: int
+    uuid: str
+    salla_product_id: str | None
+    product_url: str
+    name_english: str
+    name_arabic: str | None
+
+
 class ProductRepository:
     """Read-only, store-scoped access to the Django-owned product catalog."""
 
@@ -381,6 +393,45 @@ class ProductRepository:
         )
         result = await self._session.execute(statement)
         return [_to_product_row(row) for row in result]
+
+    async def store_identities(
+        self, product_ids: Sequence[int], context: RetailerContext
+    ) -> list[StoreProductIdentity]:
+        """How the store itself knows these products - its public id, its
+        Salla id and its page - for copying a cart into the store's own.
+
+        Kept apart from `get_by_ids` so nothing that ranks, grounds or prompts
+        ever carries a store's own product id: only the cart reads these.
+        """
+        unique_ids = sorted(set(product_ids))
+        if not unique_ids:
+            return []
+        statement = (
+            select(
+                core_product.c.id,
+                core_product.c.uuid,
+                core_product.c.salla_product_id,
+                core_product.c.product_url,
+                core_product.c.name_english,
+                core_product.c.name_arabic,
+            )
+            .where(*self._scope_clauses(context), core_product.c.id.in_(unique_ids))
+            .order_by(core_product.c.id)
+        )
+        result = await self._session.execute(statement)
+        return [
+            StoreProductIdentity(
+                product_id=row.id,
+                uuid=str(row.uuid),
+                salla_product_id=(str(row.salla_product_id).strip() or None)
+                if row.salla_product_id is not None
+                else None,
+                product_url=row.product_url,
+                name_english=row.name_english,
+                name_arabic=row.name_arabic,
+            )
+            for row in result
+        ]
 
     def _eligibility_clauses(
         self,

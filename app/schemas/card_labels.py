@@ -61,16 +61,31 @@ class CardLabels(BaseModel):
     """"Stop comparing {name}"."""
     clear: str
 
-    # ── the picks tray ──────────────────────────────────────────────────────
+    # ── the cart (the picks tray, CLAUDE.md 36) ─────────────────────────────
     your_picks: str
-    """"Your picks ({count})"."""
+    """"Your cart ({count})"."""
     goes_with: str
     what_goes_with: str
     what_goes_with_product: str
     """"What goes with {name}"."""
     remove_pick: str
-    """"Remove {name} from your picks"."""
+    """"Remove {name} from your cart"."""
     focused_pick: str
+    cart_total: str
+    """"Total {price}" - what the cart comes to, from `cart.totals`."""
+    cart_empty: str
+    quantity: str
+    increase_quantity: str
+    """"One more {name}", for a screen reader."""
+    decrease_quantity: str
+    """"One fewer {name}", for a screen reader."""
+    quantity_limit: str
+    """"Up to {max} of one product"."""
+    add_all_to_cart: str
+    """"Add all to cart · {price}" - a room package's or a seating
+    combination's button, with what the pieces being bought come to."""
+    go_to_cart: str
+    """Opens the store's own cart, where checkout happens."""
 
     # ── a catalogue tile ────────────────────────────────────────────────────
     add: str
@@ -182,6 +197,9 @@ class CardLabels(BaseModel):
     say_compare: str
     say_without: str
     say_take_option: str
+    say_added_to_cart: str
+    """"I've added the {name} to my cart" - the message after "Add to cart"."""
+    say_add_all_to_cart: str
     say_not_option: str
     say_more_seating: str
     say_other_options: str

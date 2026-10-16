@@ -139,6 +139,20 @@ class FinishingTouchesAction(BaseModel):
     kind: Literal["finishing_touches"] = "finishing_touches"
 
 
+class AddRoomToCartAction(BaseModel):
+    """Put the room package's pieces in the cart - its "Add all to cart"
+    button, which shows what they come to before the tap.
+
+    Every piece they are buying, with how many of each; pieces they already
+    own stay out. Named by nothing: the room on record is the one on screen,
+    which `expected_session_revision` makes sure of (CLAUDE.md 36).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["add_to_cart"] = "add_to_cart"
+
+
 BundleActionRequest = Annotated[
     BundleAlternativesAction
     | BundleSwapAction
@@ -148,7 +162,8 @@ BundleActionRequest = Annotated[
     | SwapAlternativesAction
     | SwapDismissAction
     | AddPieceAction
-    | FinishingTouchesAction,
+    | FinishingTouchesAction
+    | AddRoomToCartAction,
     Field(discriminator="kind"),
 ]
 """Any room-edit action, told apart by `kind`."""

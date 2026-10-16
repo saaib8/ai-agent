@@ -35,6 +35,7 @@ from app.schemas.furniture_finder import (
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
 from app.services.card_comparison import CardComparisonService
+from app.services.cart import CartService
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
@@ -371,6 +372,8 @@ def customer_turn_coordinator(
         size=settings.size,
         mixed_types=settings.customer_agent.mixed_types,
         fit_after_pick=settings.customer_agent.fit_after_pick,
+        cart_max_quantity=settings.customer_agent.cart_max_quantity,
+        cart=CartService(repository),
     )
 
 
@@ -510,6 +513,7 @@ def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRunt
         session_store(app_resources),
         app_resources.settings.customer_agent,
         display=product_display_words(app_resources),
+        cart=CartService(repository),
     )
 
 

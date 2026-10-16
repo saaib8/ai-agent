@@ -62,6 +62,7 @@ from app.schemas.agent_decision import (
     ProductInteractionOp,
 )
 from app.schemas.agent_state import (
+    MAX_CART_QUANTITY,
     MAX_EXPLORED,
     MAX_INSIDE_SIZES,
     MAX_ROOM_ANCHORS,
@@ -111,8 +112,10 @@ from app.schemas.agent_updates import (
     SetBundleLineAcquisition,
     SetBundleLineQuantity,
     SetBundleLineStatus,
+    SetCartQuantity,
     SetSemanticIntent,
 )
+from app.schemas.agent_view import CartItemView
 from app.schemas.bundle import (
     BundleOptimizationOutcome,
     BundleOptimizationRequest,
@@ -123,6 +126,7 @@ from app.schemas.bundle import (
 )
 from app.schemas.bundle_action import (
     AddPieceAction,
+    AddRoomToCartAction,
     BundleActionRequest,
     BundleAlternativesAction,
     BundleSwapAction,
@@ -272,6 +276,7 @@ from app.schemas.taste import PendingTaste, TasteQuestionKind
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
     apply_update,
+    cart_quantities,
     commit_search_results,
     record_brief,
     remember_measurements,
@@ -280,6 +285,7 @@ from app.services.agent_view import project_state
 from app.services.bundle_cards import group_bundle_cards
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.bundle_reference import BundleReferenceResolver
+from app.services.cart import CartService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chip_wording import ORDINALS, SPACE_ANY, SPACE_UPTO, Chip, chip
 from app.services.closest_type import ClosestTypeResolver
@@ -1049,6 +1055,7 @@ def _bundle_action_decision(action: BundleActionRequest) -> CustomerAgentDecisio
             | SwapKeepOriginalAction()
             | SwapDismissAction()
             | FinishingTouchesAction()
+            | AddRoomToCartAction()
         ):
             return CustomerAgentDecision(
                 action=AgentAction.ANSWER,
@@ -1204,7 +1211,14 @@ class CustomerTurnCoordinator:
         mixed_types: bool = False,
         fit_after_pick: bool = False,
         product_display: ProductDisplayWords | None = None,
+        cart_max_quantity: int = 10,
+        cart: CartService | None = None,
     ) -> None:
+        self._cart_max_quantity = cart_max_quantity
+        """How many of one product the cart takes (CLAUDE.md 36)."""
+        self._cart = cart
+        """Prices their picks, with how many of each, once the turn is done;
+        None reports no cart."""
         self._product_display = product_display
         """The picks' text, ready to show in the reply's language; None sends
         none."""
@@ -1306,6 +1320,7 @@ class CustomerTurnCoordinator:
         result = await self._with_taste_question(result, turn)
         result = self._with_room_check(result)
         result = await self._with_room_cards(result, turn)
+        result = await self._with_cart(result, turn)
         if result.next_step is not None:
             return result
         capabilities = None
@@ -1323,6 +1338,31 @@ class CustomerTurnCoordinator:
             rooms=self._rooms,
         )
         return result.model_copy(update={"next_step": step}) if step is not None else result
+
+    async def _with_cart(
+        self, result: CustomerTurnResult, turn: CustomerTurnInput
+    ) -> CustomerTurnResult:
+        """The cart after the turn, priced from the picks it read, and what
+        changed since the turn began - so the reply can say what it comes to,
+        and every route that changed it is reported alike (CLAUDE.md 36).
+
+        None wherever the picks are: a turn that could not read them leaves
+        the client's cart as it was.
+        """
+        if self._cart is None or result.picks is None:
+            return result
+        try:
+            cart = await self._cart.view(
+                result.state,
+                result.picks,
+                turn.context,
+                result.reply_language or ReplyLanguage.EN,
+                before=turn.state,
+            )
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("cart_unavailable", store_id=turn.context.store_id)
+            return result
+        return result.model_copy(update={"cart": cart})
 
     async def _with_room_cards(
         self, result: CustomerTurnResult, turn: CustomerTurnInput
@@ -1881,11 +1921,12 @@ class CustomerTurnCoordinator:
         pre_turn = turn.state
 
         visible = await self._visible_cards(turn)
+        cart = await self._cart_items(turn)
         decision = await self._decisions.decide(
             DecisionInput(
                 message=turn.message,
                 conversation=turn.conversation,
-                state_view=project_state(pre_turn, visible),
+                state_view=project_state(pre_turn, visible, cart),
                 # The language its own question to the customer is written in;
                 # None where Arabic replies are off or nothing settled it yet.
                 reply_language=(
@@ -1900,6 +1941,8 @@ class CustomerTurnCoordinator:
             decision, map_proposals(decision.state_proposal, decision.commerce_proposal), pre_turn
         )
         interaction = await self._apply_interaction(decision, pre_turn, turn.context)
+        if decision.add_room_to_cart:
+            interaction = await self._room_into_cart(interaction, turn)
         primary = await self._execute(decision, interaction.state, pre_turn, turn, proposals.update)
 
         # Applied to what the primary action produced, not to the pre-turn
@@ -1994,6 +2037,8 @@ class CustomerTurnCoordinator:
                 primary = await self._add_piece(action, pre_turn, turn)
             case FinishingTouchesAction():
                 primary = await self._finishing_offer(pre_turn, turn) or _expired(pre_turn)
+            case AddRoomToCartAction():
+                primary = await self._add_room_to_cart(pre_turn, turn)
 
         decision = _bundle_action_decision(action)
         final_state = primary.state
@@ -2005,7 +2050,11 @@ class CustomerTurnCoordinator:
             liked=liked,
             decision=decision,
             grounding=self._ground(decision, primary, _Interaction(state=pre_turn), None),
-            selection_added=False,
+            # Only "Add all to cart" adds to the cart from a room card.
+            selection_added=bool(
+                set(final_state.product_interaction.selected_product_ids)
+                - set(pre_turn.product_interaction.selected_product_ids)
+            ),
             bundle_outcome=primary.bundle_outcome,
             bundle_change=primary.bundle_change,
             room_seats=self._room_seats(primary.bundle_outcome),
@@ -2371,6 +2420,7 @@ class CustomerTurnCoordinator:
         """
         if (
             decision.action is not AgentAction.ANSWER
+            or decision.add_room_to_cart
             or primary.chosen_seating is not None
             or primary.clarification is not None
             or primary.failure is not None
@@ -3486,6 +3536,111 @@ class CustomerTurnCoordinator:
             return ()
         return cards_from_candidates(products, presented)
 
+    async def _cart_items(self, turn: CustomerTurnInput) -> tuple[CartItemView, ...]:
+        """Their cart as the decision model may see it - place, name, kind and
+        how many - so "remove the rug" or "make the sofa 2" can name a line.
+
+        Read fresh, like the cards, and never fails the turn: a catalog that
+        could not be read leaves the agent knowing only how many they picked.
+        """
+        interaction = turn.state.product_interaction
+        chosen = interaction.selected_product_ids
+        if not chosen:
+            return ()
+        try:
+            products = await self._hydration.hydrate_ids(chosen, turn.context)
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("cart_items_unavailable", store_id=turn.context.store_id)
+            return ()
+        by_id = {product.product_id: product for product in products}
+        return tuple(
+            CartItemView(
+                pick=position,
+                name=product.name_english.strip() or "product",
+                kind=customer_words_or_none(
+                    product.commerce.subcategory or product.commerce.category
+                ),
+                quantity=interaction.quantity_of(product_id),
+            )
+            for position, product_id in enumerate(chosen, start=1)
+            if (product := by_id.get(product_id)) is not None
+        )
+
+    async def _room_into_cart(
+        self, interaction: _Interaction, turn: CustomerTurnInput
+    ) -> _Interaction:
+        """"Add these all to my cart", typed: the room on record goes in, as
+        the room card's button puts it. Nothing on record leaves the turn as
+        it was, and the reply reads the cart as it stands."""
+        added = await self._with_room_in_cart(interaction.state, turn.context)
+        if added is None:
+            return interaction
+        return replace(interaction, state=added, applied=True)
+
+    async def _with_room_in_cart(
+        self, state: AgentStateV1, context: RetailerContext
+    ) -> AgentStateV1 | None:
+        """The room's pieces to buy, with how many of each, added to their cart.
+
+        Only what they are buying: a piece they already own is not bought
+        again. A product already in the cart keeps the larger of its two
+        quantities, so adding the room twice never doubles it. Read fresh, so a
+        piece that has left the catalog is not added. None when there is no
+        room, nothing in it to buy, or none of it can be read.
+        """
+        room = state.room_project
+        if room is None:
+            return None
+        wanted: dict[int, int] = {}
+        for line in room.bundle_items:
+            if line.acquisition is BundleAcquisition.TO_BUY:
+                wanted[line.product_id] = wanted.get(line.product_id, 0) + line.quantity
+        if not wanted:
+            return None
+        try:
+            products = await self._hydration.hydrate_ids(tuple(wanted), context)
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("room_into_cart_unavailable", store_id=context.store_id)
+            return None
+        available = tuple(product.product_id for product in products)
+        if not available:
+            return None
+        interaction = state.product_interaction
+        in_cart = set(interaction.selected_product_ids)
+        quantities = tuple(
+            SetCartQuantity(
+                product_id=product_id,
+                quantity=min(
+                    max(
+                        interaction.quantity_of(product_id) if product_id in in_cart else 0,
+                        wanted[product_id],
+                    ),
+                    self._cart_max_quantity,
+                ),
+            )
+            for product_id in available
+        )
+        logger.info(
+            "room_added_to_cart",
+            store_id=context.store_id,
+            pieces=len(available),
+            new=len([product_id for product_id in available if product_id not in in_cart]),
+        )
+        return apply_update(
+            state,
+            AgentStateUpdate(
+                product_interaction=ProductInteractionUpdate(
+                    selected_product_ids=AddItems(items=available),
+                    cart_quantities=quantities,
+                )
+            ),
+        )
+
+    async def _add_room_to_cart(self, pre_turn: AgentStateV1, turn: CustomerTurnInput) -> _Primary:
+        """The room card's "Add all to cart", tapped."""
+        added = await self._with_room_in_cart(pre_turn, turn.context)
+        return _Primary(state=added) if added is not None else _expired(pre_turn)
+
     # ── the optional interaction ────────────────────────────────────────────
 
     async def _apply_interaction(
@@ -3504,25 +3659,103 @@ class CustomerTurnCoordinator:
 
         outcome = await self._references.resolve(decision.interaction.reference, pre_turn, context)
         if isinstance(outcome, ReferenceUnresolved):
-            clarification, failure = _reference_outcome(
-                outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
-            )
-            # Value first: the interaction is optional, so a primary action
-            # that does not depend on it still runs (locked M11A).
-            return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
-
-        if not await self._is_the_kind_they_named(decision.interaction, outcome, context):
-            clarification, failure = _reference_outcome(
-                ReferenceFailureReason.KIND_MISMATCH,
-                BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
-            )
-            return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
+            found = await self._named_kind_on_screen(decision.interaction, pre_turn, context)
+            if found is None:
+                clarification, failure = _reference_outcome(
+                    outcome.reason, BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+                )
+                # Value first: the interaction is optional, so a primary action
+                # that does not depend on it still runs (locked M11A).
+                return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
+            outcome = found
+        elif not await self._is_the_kind_they_named(decision.interaction, outcome, context):
+            found = await self._named_kind_on_screen(decision.interaction, pre_turn, context)
+            if found is None:
+                clarification, failure = _reference_outcome(
+                    ReferenceFailureReason.KIND_MISMATCH,
+                    BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
+                )
+                return _Interaction(state=pre_turn, clarification=clarification, failure=failure)
+            outcome = found
 
         update = interaction_update(decision.interaction.op, outcome.product_id, pre_turn)
+        quantity = decision.interaction.quantity
+        if decision.interaction.op is ProductInteractionOp.SELECT and quantity is not None:
+            # "Add two of the third one", "make the rug 3": the cart takes it
+            # up to what it allows, and the reply reads the cart as it is.
+            update = update.model_copy(
+                update={
+                    "cart_quantities": (
+                        SetCartQuantity(
+                            product_id=outcome.product_id,
+                            quantity=min(quantity, self._cart_max_quantity),
+                        ),
+                    )
+                }
+            )
         return _Interaction(
             state=apply_update(pre_turn, AgentStateUpdate(product_interaction=update)),
             applied=True,
         )
+
+    async def _named_kind_on_screen(
+        self,
+        intent: ProductInteractionIntent,
+        pre_turn: AgentStateV1,
+        context: RetailerContext,
+    ) -> ResolvedProductReference | None:
+        """"The first sofa" when the newest cards are not sofas: the card at
+        that position on the newest list still on screen that is one.
+
+        After a pick, what goes with it replaces the list it came from - a
+        floor lamp became card 1 - and "add 2 of the first sofa" could no
+        longer reach the sofas still on their screen, so the agent asked a
+        question it could not offer the answer to (CLAUDE.md 36). The lists
+        are looked at newest first, the one on top included, and only by the
+        position they said; a kind matches itself and the kinds reviewed to do
+        the same job (`compare_groups_v1.yaml`: a sectional is a sofa). None
+        when they named no kind, gave no position on the cards, or no list
+        holds that kind there - and the turn asks, as before.
+        """
+        named = intent.expected_subcategory
+        reference = intent.reference
+        if (
+            named is None
+            or not isinstance(reference, PresentedOrdinal)
+            or not self._taxonomy.is_subcategory(named)
+        ):
+            return None
+        interaction = pre_turn.product_interaction
+        lists = [
+            interaction.presented_product_ids,
+            *(entry.product_ids for entry in reversed(interaction.earlier_lists)),
+        ]
+        at_position = [
+            ids[reference.position - 1] for ids in lists if len(ids) >= reference.position
+        ]
+        if not at_position:
+            return None
+        try:
+            products = await self._hydration.hydrate_ids(
+                tuple(dict.fromkeys(at_position)), context
+            )
+        except _HANDLED_CATALOG_FAILURES:
+            return None
+        kinds = {product.product_id: product.commerce.subcategory for product in products}
+        for product_id in at_position:
+            kind = kinds.get(product_id)
+            if kind == named or (
+                self._compare_groups is not None and self._compare_groups.comparable(kind, named)
+            ):
+                logger.info(
+                    "interaction_kind_found_on_screen",
+                    store_id=context.store_id,
+                    named=named,
+                    actual=kind,
+                    lists_back=at_position.index(product_id),
+                )
+                return ResolvedProductReference(product_id=product_id)
+        return None
 
     async def _is_the_kind_they_named(
         self,
@@ -7719,8 +7952,36 @@ def _with_chosen_combination(
     selected = tuple(
         dict.fromkeys((*picks.selected_product_ids, *(line.product_id for line in chosen.lines)))
     )
+    # Into the cart with how many of each - two of one 4-seater are two -
+    # keeping the larger quantity for a piece already in it (CLAUDE.md 36).
+    wanted: dict[int, int] = {}
+    for line in chosen.lines:
+        wanted[line.product_id] = wanted.get(line.product_id, 0) + line.quantity
+    quantities = cart_quantities(
+        picks.cart_quantities,
+        tuple(
+            SetCartQuantity(
+                product_id=product_id,
+                quantity=min(
+                    max(
+                        picks.quantity_of(product_id)
+                        if product_id in picks.selected_product_ids
+                        else 0,
+                        quantity,
+                    ),
+                    MAX_CART_QUANTITY,
+                ),
+            )
+            for product_id, quantity in wanted.items()
+        ),
+        selected,
+    )
     interaction = ProductInteractionState.model_validate(
-        {**picks.model_dump(), "selected_product_ids": selected}
+        {
+            **picks.model_dump(),
+            "selected_product_ids": selected,
+            "cart_quantities": [line.model_dump() for line in quantities],
+        }
     )
     with_picks = AgentStateV1(
         customer_preferences=state.customer_preferences,

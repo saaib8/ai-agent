@@ -230,8 +230,8 @@ def test_every_reply_carries_its_labels_in_its_language() -> None:
     arabic = _reply(presentation, AR)
     english = _reply(presentation, None)
 
-    assert arabic.labels == LABELS[AR] and arabic.labels.select == "اختيار"
-    assert english.labels == LABELS[EN] and english.labels.select == "Select"
+    assert arabic.labels == LABELS[AR] and arabic.labels.select == "أضف إلى السلة"
+    assert english.labels == LABELS[EN] and english.labels.select == "Add to cart"
     assert english.presentation is not None and english.presentation.products[0].display is not None
     assert english.presentation.products[0].display.price == "6,950 SAR"
 

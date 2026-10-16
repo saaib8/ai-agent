@@ -35,13 +35,13 @@ _SALES_PRODUCT_ACTIONS = frozenset({"goes_with", "companion"})
 def speaker(turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
     """The assistant this turn's reply is shown as."""
     if not turn.conversation.messages:
-        # The first reply greets them and introduces itself as Nora.
-        return AgentPersona.NORA
+        # The first reply greets them and introduces itself as Sara.
+        return AgentPersona.SARA
     if _sells(turn, result):
         return AgentPersona.SALMAN
     if _designs(turn, result):
         return AgentPersona.NORA
-    return AgentPersona.SARAH
+    return AgentPersona.SARA
 
 
 def _sells(turn: CustomerTurnInput, result: CustomerTurnResult) -> bool:

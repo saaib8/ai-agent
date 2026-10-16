@@ -53,8 +53,38 @@ test("a card's words are the server's, placeholders filled", () => {
 
 test('without labels from the server the words are English, as before', () => {
   const words = cardWords(undefined)
-  assert.equal(words.select, 'Select')
-  assert.equal(words.tray.yourPicks(1), 'Your picks (1)')
+  assert.equal(words.select, 'Add to cart')
+  assert.equal(words.selected, 'In cart')
+  assert.equal(words.tray.yourPicks(1), 'Your cart (1)')
+  assert.equal(words.tray.removeName('Oak Bed'), 'Remove Oak Bed from your cart')
+})
+
+test("the cart's words are the server's, placeholders filled", () => {
+  const english = cardWords(null)
+  assert.equal(english.tray.total('14,350 SAR'), 'Total 14,350 SAR')
+  assert.equal(english.tray.empty, 'Your cart is empty')
+  assert.equal(english.tray.quantity, 'Qty')
+  assert.equal(english.tray.increaseName('Oak Bed'), 'One more Oak Bed')
+  assert.equal(english.tray.decreaseName('Oak Bed'), 'One fewer Oak Bed')
+  assert.equal(english.tray.quantityLimit(10), 'Up to 10 of one product')
+  assert.equal(english.room.addAllToCart('7,200 SAR'), 'Add all to cart · 7,200 SAR')
+  // Without a figure the button names no price rather than an empty one.
+  assert.equal(english.room.addAllToCart(null), 'Add all to cart')
+  assert.equal(english.say.addedToCart('Oak Bed'), "I've added the Oak Bed to my cart")
+  assert.equal(english.say.addAllToCart, 'Add all of these to my cart')
+
+  const arabic = cardWords({
+    ...ENGLISH,
+    your_picks: 'سلتك ({count})',
+    cart_total: 'الإجمالي {price}',
+    add_all_to_cart: 'أضف الكل إلى السلة · {price}',
+    say_added_to_cart: 'أضفت هذا إلى سلتي',
+  })
+  assert.equal(arabic.tray.yourPicks(3), 'سلتك (3)')
+  assert.equal(arabic.tray.total('14,350 ريال'), 'الإجمالي 14,350 ريال')
+  assert.equal(arabic.room.addAllToCart('7,200 ريال'), 'أضف الكل إلى السلة · 7,200 ريال')
+  assert.equal(arabic.room.addAllToCart(null), 'أضف الكل إلى السلة')
+  assert.equal(arabic.say.addedToCart('Oak Bed'), 'أضفت هذا إلى سلتي')
 })
 
 test("a room package's words are the server's, placeholders filled", () => {

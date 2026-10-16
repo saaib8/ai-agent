@@ -143,6 +143,12 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # and the store's Arabic name. A lookup over registry data, no catalog
         # access, and nothing it returns is read by a model.
         "product_display",
+        # The cart (CLAUDE.md 36): how many of one product it takes - a
+        # number - and the deterministic service that prices the picks once
+        # the turn is done. It sums prices read through the store-scoped
+        # repository; no model reads a figure it computes.
+        "cart_max_quantity",
+        "cart",
     ]
 
 

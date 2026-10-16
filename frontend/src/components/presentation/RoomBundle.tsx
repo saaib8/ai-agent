@@ -4,6 +4,7 @@ import type {
   CardLabels,
   GroundedBundleItem,
   GroundedBundlePresentation,
+  GroundedBundleTotals,
   RenderView,
 } from '../../api/types'
 import { cardWords, type CardWords } from '../../lib/cardWords'
@@ -36,6 +37,15 @@ interface RoomBundleProps {
   /** Buttons drawn beneath the package - a seating option's choose and
    *  turn-down. */
   actions?: ReactNode
+  /** Present on the current room package only: put every piece being bought
+   *  in the cart, with its quantity. */
+  onAddAllToCart?: () => void
+}
+
+/** What the pieces being bought come to, as the server worded it for the
+ *  reply's language - English figures only from a server that sent none. */
+export function newSpendText(totals: GroundedBundleTotals): string | null {
+  return totals.display?.new_spend ?? money(totals.new_spend_total, totals.currency)
 }
 
 const STATUS_CLASS: Record<BundleStatus, string> = {
@@ -86,6 +96,7 @@ export function RoomBundle({
   hideStatus = false,
   actions,
   labels,
+  onAddAllToCart,
 }: RoomBundleProps) {
   const words = cardWords(labels).room
   const t = room.totals
@@ -95,6 +106,12 @@ export function RoomBundle({
   // them; English figures only from a server that sent none.
   const grand = t.display?.new_spend ?? money(t.new_spend_total, t.currency)
   const budgetLabel = t.display?.budget ?? money(t.budget_max_amount, t.budget_currency)
+  // "Add all to cart" adds the pieces being bought; a room that could not be
+  // built, or holds only pieces they own, has nothing to add.
+  const canAddAll =
+    !!onAddAllToCart &&
+    room.status !== 'infeasible' &&
+    room.items.some((item) => item.acquisition === 'to_buy')
 
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
@@ -195,8 +212,18 @@ export function RoomBundle({
         )}
       </div>
 
-      {actions && (
+      {(actions || canAddAll) && (
         <div className="flex flex-wrap items-center gap-2 border-t border-line bg-canvas/60 px-4 py-3">
+          {canAddAll && (
+            <button
+              onClick={onAddAllToCart}
+              disabled={busy}
+              className="rounded-full bg-ink px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-50"
+              dir="auto"
+            >
+              {words.addAllToCart(newSpendText(t))}
+            </button>
+          )}
           {actions}
         </div>
       )}

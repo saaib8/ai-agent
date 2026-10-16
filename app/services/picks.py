@@ -23,6 +23,7 @@ from collections.abc import Sequence
 
 from app.core.config import CustomerAgentSettings
 from app.core.exceptions import (
+    CartQuantityError,
     PickLimitError,
     PickUnavailableError,
 )
@@ -36,7 +37,9 @@ from app.schemas.agent_updates import (
     ProductInteractionUpdate,
     RemoveItems,
     ReplaceItems,
+    SetCartQuantity,
 )
+from app.schemas.cart import CartQuery, CartResponse, CartView
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import (
     DeselectPickAction,
@@ -45,6 +48,7 @@ from app.schemas.picks import (
     PicksResponse,
     SelectLikedAction,
     SelectPickAction,
+    SetQuantityAction,
     UnlikeAction,
 )
 from app.schemas.product import ProductCandidate
@@ -54,7 +58,9 @@ from app.schemas.resolution import (
     ResolvedProductReference,
 )
 from app.schemas.retailer import RetailerContext
+from app.schemas.session import new_session
 from app.services.agent_state import apply_update
+from app.services.cart import CartService
 from app.services.chat_runtime import commit_state, load_for_turn
 from app.services.hydration import ProductHydrationService
 from app.services.product_display import ProductDisplayWords
@@ -92,7 +98,11 @@ class PicksRuntime:
         sessions: SessionStore,
         settings: CustomerAgentSettings,
         display: ProductDisplayWords | None = None,
+        cart: CartService | None = None,
     ) -> None:
+        self._cart = cart
+        """The picks with how many of each, priced (CLAUDE.md 36); None
+        reports no cart."""
         self._display = display
         """The tray's text, ready to show in the conversation's language."""
         self._arabic_replies = settings.arabic_replies
@@ -100,6 +110,7 @@ class PicksRuntime:
         self._hydration = hydration
         self._sessions = sessions
         self._max_picks = settings.max_picks
+        self._max_quantity = settings.cart_max_quantity
         self._max_likes = settings.max_likes
         self._buttons = settings.designer_led_buttons
 
@@ -155,16 +166,54 @@ class PicksRuntime:
             pick_count=len(picked),
             goes_with=goes_with is not None,
         )
+        language = self._language(final)
+        picks = build_picks(final, products, self._display, language)
         return PicksResponse(
             session_id=request.session_id,
             session_revision=revision,
-            picks=build_picks(final, products, self._display, self._language(final)),
+            picks=picks,
             liked=(
-                build_liked(final, products, self._display, self._language(final))
+                build_liked(final, products, self._display, language)
                 if self._buttons
                 else None
             ),
             goes_with=goes_with,
+            cart=(
+                await self._cart.view(final, picks, context, language, before=state)
+                if self._cart is not None
+                else None
+            ),
+        )
+
+    async def read_cart(self, query: CartQuery, context: RetailerContext) -> CartResponse:
+        """The cart as it stands, read fresh, changing nothing.
+
+        A conversation that has not started - or whose session expired - has
+        an empty cart at revision 0, never an error: a client may ask before
+        the first message.
+        """
+        stored = await self._sessions.load(query.store_id, query.session_id)
+        envelope = stored if stored is not None else new_session()
+        state = envelope.state
+        picked = state.product_interaction.selected_product_ids
+        products = await self._hydration.hydrate_ids(picked, context) if picked else []
+        language = self._language(state)
+        picks = build_picks(state, products, self._display, language)
+        cart = (
+            await self._cart.view(state, picks, context, language)
+            if self._cart is not None
+            else CartView()
+        )
+        logger.info(
+            "cart_read",
+            store_id=context.store_id,
+            lines=len(cart.lines),
+            unavailable=cart.unavailable,
+        )
+        return CartResponse(
+            session_id=query.session_id,
+            session_revision=envelope.session_revision,
+            cart=cart,
         )
 
     @staticmethod
@@ -212,16 +261,18 @@ class PicksRuntime:
                 if len(picked) >= self._max_picks:
                     raise PickLimitError(
                         public_message=(
-                            f"You can keep up to {self._max_picks} picks. "
+                            f"Your cart holds up to {self._max_picks} products. "
                             "Remove one to add another."
                         ),
                     )
                 product_id = outcome.product_id
                 op = ProductInteractionOp.SELECT
+            case SetQuantityAction(pick=pick, quantity=quantity):
+                return self._with_quantity(state, pick, quantity)
             case DeselectPickAction(pick=pick):
                 if pick > len(picked):
                     raise PickUnavailableError(
-                        public_message="That pick is no longer in your picks.",
+                        public_message="That product is no longer in your cart.",
                         reason="pick_out_of_range",
                     )
                 # Removing needs no catalog read: a pick that has left the
@@ -231,6 +282,33 @@ class PicksRuntime:
         return apply_update(
             state,
             AgentStateUpdate(product_interaction=interaction_update(op, product_id, state)),
+        )
+
+    def _with_quantity(
+        self, state: AgentStateV1, pick: int, quantity: int
+    ) -> AgentStateV1 | None:
+        """How many of a cart product, from now on - or None when that is
+        already how many. Needs no catalog read: the cart names the product."""
+        picked = state.product_interaction.selected_product_ids
+        if pick > len(picked):
+            raise PickUnavailableError(
+                public_message="That product is no longer in your cart.",
+                reason="pick_out_of_range",
+            )
+        if quantity > self._max_quantity:
+            raise CartQuantityError(
+                public_message=f"You can add up to {self._max_quantity} of one product."
+            )
+        product_id = picked[pick - 1]
+        if state.product_interaction.quantity_of(product_id) == quantity:
+            return None
+        return apply_update(
+            state,
+            AgentStateUpdate(
+                product_interaction=ProductInteractionUpdate(
+                    cart_quantities=(SetCartQuantity(product_id=product_id, quantity=quantity),)
+                )
+            ),
         )
 
     async def _liked_changed(
@@ -288,7 +366,7 @@ class PicksRuntime:
                 if len(picked) >= self._max_picks:
                     raise PickLimitError(
                         public_message=(
-                            f"You can keep up to {self._max_picks} picks. "
+                            f"Your cart holds up to {self._max_picks} products. "
                             "Remove one to add another."
                         ),
                     )

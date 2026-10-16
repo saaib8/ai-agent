@@ -39,6 +39,7 @@ from app.schemas.agent_turn import (
     CustomerTurnInput,
     CustomerTurnResult,
 )
+from app.schemas.cart import CartView
 from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse
 from app.schemas.conversation import (
     ConversationContext,
@@ -353,7 +354,8 @@ class ChatRuntime:
         picks: tuple[PickView, ...] | None = None,
         reply_language: ReplyLanguage | None = None,
         liked: tuple[LikedView, ...] | None = None,
-        agent: AgentPersona = AgentPersona.SARAH,
+        agent: AgentPersona = AgentPersona.SARA,
+        cart: CartView | None = None,
     ) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
@@ -362,6 +364,7 @@ class ChatRuntime:
             presentation=self._displayed(presentation, reply_language or ReplyLanguage.EN),
             picks=picks,
             liked=liked,
+            cart=cart,
             reply_language=reply_language,
             agent=agent,
             labels=card_labels(reply_language),
@@ -405,6 +408,7 @@ class ChatRuntime:
             result.reply_language,
             result.liked,
             self.agent(turn, result),
+            result.cart,
         )
 
     @staticmethod

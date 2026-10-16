@@ -85,6 +85,14 @@ export interface CardLabels {
   what_goes_with_product: string
   remove_pick: string
   focused_pick: string
+  cart_total: string
+  cart_empty: string
+  quantity: string
+  increase_quantity: string
+  decrease_quantity: string
+  quantity_limit: string
+  add_all_to_cart: string
+  go_to_cart: string
   add: string
   view: string
   room_limit: string
@@ -166,6 +174,8 @@ export interface CardLabels {
   say_compare: string
   say_without: string
   say_take_option: string
+  say_added_to_cart: string
+  say_add_all_to_cart: string
   say_not_option: string
   say_more_seating: string
   say_other_options: string
@@ -534,6 +544,8 @@ export interface ChatResponse {
   picks?: PickView[] | null
   /** Their liked list after this turn; null when unchanged or the buttons are off. */
   liked?: LikedView[] | null
+  /** Their cart after this turn; absent or null means unchanged, as for picks. */
+  cart?: CartView | null
   /** The language this turn was answered in; null where Arabic replies are off. */
   reply_language?: 'en' | 'ar' | null
   /** Which assistant the reply is shown as - a label the server decides. */
@@ -580,6 +592,12 @@ export interface AddPieceAction {
 export interface FinishingTouchesAction {
   kind: 'finishing_touches'
 }
+/** A room package's "Add all to cart": every piece being bought goes in the
+ *  cart with its quantity. Names nothing - the room on record is the one on
+ *  screen, which `expected_session_revision` makes sure of. */
+export interface AddRoomToCartAction {
+  kind: 'add_to_cart'
+}
 
 export type BundleAction =
   | BundleAlternativesAction
@@ -590,6 +608,7 @@ export type BundleAction =
   | SwapDismissAction
   | AddPieceAction
   | FinishingTouchesAction
+  | AddRoomToCartAction
 
 export interface MoreOptionsAction {
   kind: 'more_options'
@@ -714,6 +733,9 @@ export type PickAction =
   | { kind: 'unlike'; liked: number }
   | { kind: 'unlike'; ordinal: number; list_revision: number }
   | { kind: 'select_liked'; liked: number }
+  /** How many of the pick at this place in the cart, from now on (at least
+   *  one; removing it is `deselect`). */
+  | { kind: 'quantity'; pick: number; quantity: number }
 
 export interface PicksRequest {
   session_id: string
@@ -730,6 +752,76 @@ export interface PicksResponse {
   liked?: LikedView[] | null
   /** Set when this tick picked the first of its kind: show what goes with it. */
   goes_with?: number | null
+  /** The cart after this action; null when it could not be read - the client
+   *  keeps the cart it has. */
+  cart?: CartView | null
+}
+
+// ── The cart: the picks with how many of each ───────────────────────────────
+
+/** The product as the store knows it, for copying it into the store's own
+ *  cart. Never sent back: requests name a line by its place (`pick`). */
+export interface CartProductRef {
+  uuid: string
+  salla_id?: string | null
+  url: string
+}
+
+/** One product in the cart and how many, priced fresh from the catalog.
+ *  Amounts are Decimals: a JSON string (or number), parsed only for display. */
+export interface CartLineView {
+  /** Its place in the cart - the same number as its pick, which the picks
+   *  actions (quantity, deselect, goes_with) name. */
+  pick: number
+  quantity: number
+  name_english: string
+  image_url: string
+  unit_price: string | number
+  price_unit: string
+  /** `unit_price` times `quantity`. */
+  line_total: string | number
+  kind?: string | null
+  product: CartProductRef
+  /** Its card text, ready to show in the conversation's language. */
+  display?: ProductDisplay | null
+  /** `line_total` worded in the conversation's language: "7,200 SAR". */
+  line_total_display?: string | null
+}
+
+/** What the cart comes to in one currency; never converted. */
+export interface CartTotal {
+  price_unit: string
+  amount: string | number
+  /** `amount` worded in the conversation's language: "14,350 SAR". */
+  display?: string | null
+}
+
+/** One product whose quantity changed this turn, for the store's own cart. */
+export interface CartChange {
+  product: CartProductRef
+  name: string
+  quantity_before: number
+  quantity_after: number
+}
+
+export interface CartView {
+  lines: CartLineView[]
+  /** How many items, counting quantities: two armchairs and a sofa is 3. */
+  item_count: number
+  /** One total per currency; empty when the cart is. */
+  totals: CartTotal[]
+  /** Products the catalog no longer returns - left out of lines and totals. */
+  unavailable: number
+  /** What this turn changed; empty on a plain read. */
+  changes: CartChange[]
+}
+
+/** `GET /v1/cart`: the cart without a turn of the conversation. */
+export interface CartResponse {
+  session_id: string
+  /** 0 for a conversation that has not started. */
+  session_revision: number
+  cart: CartView
 }
 
 export interface ChatRequest {

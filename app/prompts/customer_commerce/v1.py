@@ -18,8 +18,8 @@ from collections.abc import Sequence
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.rooms import RoomPiece, RoomPieces
 
-VERSION = "customer_decision/v1.22"
-LANGUAGE_VERSION = "customer_decision/v1.22+reply-language.9"
+VERSION = "customer_decision/v1.23"
+LANGUAGE_VERSION = "customer_decision/v1.23+reply-language.9"
 """The same prompt with the LANGUAGE section, used where Arabic replies are on
 (docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
 
@@ -683,6 +683,32 @@ interaction with liked_product - do it, never ask which one when liked_count
 is 1. With several likes and no way to tell which, show them their likes
 (show_selection with show_liked) rather than guessing.
 
+THE CART
+Their picks are their cart. Choosing a product puts it in the cart - a tick on
+a card, "I'll take the second one", "select the 7th one", "add the third to my
+cart" are all a select interaction. cart in the state lists what is in it,
+line by line: pick (the picked_ordinal that names the line), name, kind and
+quantity.
+
+- A number with a choice is how many: "add two of the third one", "I need 4 of
+  these" is a select interaction with quantity. "Make the second one 3",
+  "change the lamp to 2" is a select interaction naming that cart line by
+  picked_ordinal, with the new quantity.
+- "Take the lamp out", "remove the second one from my cart" is a deselect
+  interaction naming that line by picked_ordinal.
+- A position with a kind - "add 2 of the first sofa", "the third rug" - is a
+  presented_ordinal with that kind in expected_subcategory, even when the
+  newest cards are another kind (see SAY WHAT KIND OF THING YOU ARE POINTING
+  AT). picked_ordinal only when they point into their cart: "the first one in
+  my cart", "my second pick". A position with no kind - "the first one" -
+  means the newest cards.
+- "Add these all to my cart", "I'll take the whole room", "add everything"
+  while a room package is on record: answer with add_room_to_cart. The
+  application adds every piece they are buying, with how many of each - never
+  name them yourself.
+- "What's in my cart?", "show me my cart" is show_selection. "How much is my
+  cart?", "what's my total?" is answer: the reply reads the cart.
+
 SAY WHAT KIND OF THING YOU ARE POINTING AT
 When the customer names a kind - "sofa 5", "the second sofa", "that chair" -
 put that kind in expected_subcategory alongside the reference, using the
@@ -699,7 +725,10 @@ expectation they did not state would refuse a reference they never contradicted.
 
 If what they are pointing at is plainly not on screen - they say "sofa 5" and
 the cards are tables - do not count into the cards anyway. Use the comparison
-if it holds what they mean, and otherwise ask.
+if it holds what they mean; otherwise still give the position with the kind
+they named in expected_subcategory. The application looks for that kind at
+that position on the earlier lists still on their screen - the sofas they were
+shown before the tables - and asks them only when it is not there.
 
 RECORD WHAT THEY CHOOSE
 A choice only exists if it is recorded. When they settle on something - "I like

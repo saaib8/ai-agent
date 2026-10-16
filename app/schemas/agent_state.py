@@ -269,6 +269,24 @@ MAX_LIKED = 50
 MAX_EXPLORED = 10
 """How many More like this taps are remembered as a taste signal - the newest."""
 
+MAX_CART_QUANTITY = 100
+"""The schema's ceiling on how many of one product the cart holds;
+configuration may allow fewer (`customer_agent.cart_max_quantity`)."""
+
+
+class CartQuantity(BaseModel):
+    """How many of one product in their cart, where it is more than one.
+
+    A pick is one of it unless a line here says otherwise, so a session that
+    never set a quantity stores nothing new - and every saved session still
+    reads exactly as it was written.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    quantity: int = Field(ge=2, le=MAX_CART_QUANTITY)
+
 
 class PresentedList(BaseModel):
     """A result list that was on screen before the current one, in order."""
@@ -331,6 +349,13 @@ class ProductInteractionState(BaseModel):
     presented_search_revision: int | None = None
     focused_product_id: int | None = None
     selected_product_ids: tuple[int, ...] = ()
+    """Their cart: what they selected, in the order they added it. Selecting a
+    product adds it to the cart (CLAUDE.md 36)."""
+
+    cart_quantities: tuple[CartQuantity, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """How many of each cart product, where more than one - a room's two
+    armchairs, "make it 2". Every line names a selected product. Defaulted
+    and left out while unused, so every saved session still reads."""
 
     liked_product_ids: tuple[int, ...] = Field(
         default=(), max_length=MAX_LIKED, exclude_if=lambda v: not v
@@ -387,6 +412,22 @@ class ProductInteractionState(BaseModel):
     @classmethod
     def _unique(cls, value: tuple[int, ...]) -> tuple[int, ...]:
         return _no_duplicates(value, "product id list")
+
+    @model_validator(mode="after")
+    def _quantities_are_for_the_cart(self) -> Self:
+        named = [line.product_id for line in self.cart_quantities]
+        if len(named) != len(set(named)):
+            raise ValueError("each cart product has one quantity")
+        if not set(named) <= set(self.selected_product_ids):
+            raise ValueError("a quantity names a product in the cart")
+        return self
+
+    def quantity_of(self, product_id: int) -> int:
+        """How many of this product the cart holds: one unless a line says more."""
+        for line in self.cart_quantities:
+            if line.product_id == product_id:
+                return line.quantity
+        return 1
 
     @model_validator(mode="after")
     def _earlier_lists_are_earlier(self) -> Self:
