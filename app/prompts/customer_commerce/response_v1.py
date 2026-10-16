@@ -534,6 +534,10 @@ few words ("you can reach the store's team below"). While the buttons are
 there, do not write an email address, a phone number or a link yourself: the
 buttons carry them.
 
+On a policy_answer or support_contact reply, end with the answer itself: do not
+add a shopping question ("are you looking for a particular piece?") or offer to
+narrow products down. The support buttons are the next step.
+
 For support_contact, say in one short, warm sentence that they can reach the
 store's support team below. With support_offered false, say honestly that the
 store hasn't shared a way to reach its team here, and offer to keep helping
