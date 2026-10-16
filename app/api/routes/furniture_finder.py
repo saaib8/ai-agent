@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, UploadFile
 
 from app.api.dependencies import (
+    ClickTrackingServiceDep,
     FinderTurnRuntimeDep,
     FurnitureFinderServiceDep,
     RetailerContextProviderDep,
@@ -55,6 +56,7 @@ async def pick_object(
     runtime: FinderTurnRuntimeDep,
     retailers: RetailerContextProviderDep,
     shopper: ShopperCredentialsDep,
+    tracking: ClickTrackingServiceDep,
 ) -> ChatResponse:
     """Pick one object; get back matching products as a chat turn.
 
@@ -62,4 +64,4 @@ async def pick_object(
     list the next message's "the second one" resolves against.
     """
     context = await retailers.resolve(request.store_id)
-    return await runtime.pick(request, context, shopper)
+    return await tracking.attach(await runtime.pick(request, context, shopper), context)

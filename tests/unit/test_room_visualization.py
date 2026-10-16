@@ -19,6 +19,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from app.api.dependencies import (
+    click_tracking_service,
     db_session,
     resources,
     retailer_context_provider,
@@ -66,6 +67,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from tests.conftest import build_settings
+from tests.unit.click_ids import no_click_ids
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 
 STORE = 50
@@ -673,6 +675,7 @@ def an_app(runtime: VisualizationTurnRuntime | None = None) -> FastAPI:
     if runtime is not None:
         app.dependency_overrides[visualization_turn_runtime] = lambda: runtime
     app.dependency_overrides[retailer_context_provider] = lambda: FakeRetailers()
+    app.dependency_overrides[click_tracking_service] = no_click_ids
     return app
 
 

@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, UploadFile
 
 from app.api.dependencies import (
+    ClickTrackingServiceDep,
     RetailerContextProviderDep,
     RoomPhotoServiceDep,
     VisualizationTurnRuntimeDep,
@@ -29,10 +30,11 @@ async def visualize_room(
     request: VisualizeRequest,
     runtime: VisualizationTurnRuntimeDep,
     retailers: RetailerContextProviderDep,
+    tracking: ClickTrackingServiceDep,
 ) -> ChatResponse:
     """Render the session's room package from the chosen view, as a chat turn."""
     context = await retailers.resolve(request.store_id)
-    return await runtime.visualize(request, context)
+    return await tracking.attach(await runtime.visualize(request, context), context)
 
 
 @router.post("/room-photos", response_model=RoomPhotoResponse)

@@ -35,6 +35,7 @@ from app.services.chat_runtime import ChatRuntime
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from tests.unit.click_ids import no_click_ids
 from tests.unit.test_chat_api import (
     GRAPH,
     FakeResponses,
@@ -98,6 +99,7 @@ class RoomHarness:
         from app.api.dependencies import (
             chat_graph,
             chat_runtime,
+            click_tracking_service,
             retailer_context_provider,
         )
         from app.api.errors import register_exception_handlers
@@ -110,6 +112,7 @@ class RoomHarness:
         # The real compiled graph: these tests drive the runtime through it.
         app.dependency_overrides[chat_graph] = lambda: GRAPH
         app.dependency_overrides[retailer_context_provider] = lambda: FakeRetailers({STORE})
+        app.dependency_overrides[click_tracking_service] = no_click_ids
         return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
     def room(self) -> RoomProjectState:
@@ -415,6 +418,7 @@ async def test_a_turn_that_failed_before_a_reply_persists_nothing() -> None:
     from app.api.dependencies import (
         chat_graph,
         chat_runtime,
+        click_tracking_service,
         retailer_context_provider,
     )
     from app.api.errors import register_exception_handlers
@@ -426,6 +430,7 @@ async def test_a_turn_that_failed_before_a_reply_persists_nothing() -> None:
     app.dependency_overrides[chat_runtime] = broken_runtime
     app.dependency_overrides[chat_graph] = lambda: GRAPH
     app.dependency_overrides[retailer_context_provider] = lambda: FakeRetailers({STORE})
+    app.dependency_overrides[click_tracking_service] = no_click_ids
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         reply = await client.post("/v1/chat", json=say("furnish my living room"))

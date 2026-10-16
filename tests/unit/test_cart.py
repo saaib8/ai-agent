@@ -215,7 +215,9 @@ async def test_lines_carry_quantities_line_totals_and_the_stores_own_ids() -> No
     ]
     assert cart.lines[0].product.salla_id == "9101"
     assert cart.lines[1].product.salla_id is None
-    assert cart.lines[0].product.url == "https://store.test/p/101"
+    assert cart.lines[0].product.url == (
+        f"https://store.test/p/101?zory_click_id={cart.lines[0].product.uuid}"
+    )
     assert cart.changes == (), "a plain read reports nothing changed"
 
 

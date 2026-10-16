@@ -22,6 +22,7 @@ import pytest_asyncio
 from app.api.dependencies import (
     chat_graph,
     chat_runtime,
+    click_tracking_service,
     retailer_context_provider,
 )
 from app.api.errors import register_exception_handlers
@@ -44,9 +45,11 @@ from app.schemas.product_reference import PresentedOrdinal
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope
 from app.services.chat_runtime import ChatRuntime
+from app.services.click_tracking import ClickTrackingService, tracking_url
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from tests.unit.click_ids import FakeClickIds, no_click_ids
 from tests.unit.test_turn_coordinator import (
     FakeHydration,
     FakePipeline,
@@ -154,8 +157,10 @@ class Harness:
         responses: FakeResponses | None = None,
         retailers: FakeRetailers | None = None,
         arabic_replies: bool = False,
+        click_ids: FakeClickIds | None = None,
     ) -> None:
         self.script = list(decisions)
+        self.click_ids = click_ids
         self.arabic_replies = arabic_replies
         self.sessions = store or FakeSessionStore()
         self.responses = responses or FakeResponses()
@@ -194,6 +199,10 @@ class Harness:
         # The real compiled graph: these tests drive the runtime through it.
         app.dependency_overrides[chat_graph] = lambda: GRAPH
         app.dependency_overrides[retailer_context_provider] = lambda: self.retailers
+        click_ids = self.click_ids
+        app.dependency_overrides[click_tracking_service] = (
+            no_click_ids if click_ids is None else lambda: ClickTrackingService(click_ids)
+        )
         return app
 
 
@@ -248,6 +257,35 @@ async def test_the_reply_carries_the_products_the_application_rendered(
     assert first["presented_ordinal"] == 1
     assert first["price_amount"] is not None
     assert first["product_url"].startswith("https://")
+
+
+async def test_each_card_links_to_its_page_with_the_zory_click_id(client_for: Any) -> None:
+    """The link a customer opens carries the product's public id, attached
+    after the turn, in `product_url` itself - as Zory's own links do."""
+    plain = Harness(a_search())
+    urls = [
+        p["product_url"]
+        for p in (await (await client_for(plain)).post("/v1/chat", json=body("sofas"))).json()[
+            "presentation"
+        ]["products"]
+    ]
+    click_ids = FakeClickIds({url: f"click-{n}" for n, url in enumerate(urls)})
+    harness = Harness(a_search(), click_ids=click_ids)
+
+    payload = (await (await client_for(harness)).post("/v1/chat", json=body("sofas"))).json()
+
+    products = payload["presentation"]["products"]
+    assert [p["product_url"] for p in products] == [
+        tracking_url(url, f"click-{n}") for n, url in enumerate(urls)
+    ]
+    assert [store for _, store in click_ids.lookups] == [STORE]
+
+
+async def test_a_card_whose_page_has_no_click_id_keeps_its_page(client_for: Any) -> None:
+    payload = (
+        await (await client_for(Harness(a_search()))).post("/v1/chat", json=body("sofas"))
+    ).json()
+    assert all("zory_click_id" not in p["product_url"] for p in payload["presentation"]["products"])
 
 
 @pytest.mark.parametrize(

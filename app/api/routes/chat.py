@@ -18,6 +18,7 @@ from fastapi import APIRouter
 from app.api.dependencies import (
     ChatGraphDep,
     ChatRuntimeDep,
+    ClickTrackingServiceDep,
     RetailerContextProviderDep,
 )
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -31,6 +32,7 @@ async def chat(
     graph: ChatGraphDep,
     runtime: ChatRuntimeDep,
     retailers: RetailerContextProviderDep,
+    tracking: ClickTrackingServiceDep,
 ) -> ChatResponse:
     """One customer message, one answer.
 
@@ -40,4 +42,4 @@ async def chat(
     by application code (CLAUDE.md 8, 20.2).
     """
     context = await retailers.resolve(request.store_id)
-    return await graph.run(runtime, request, context)
+    return await tracking.attach(await graph.run(runtime, request, context), context)

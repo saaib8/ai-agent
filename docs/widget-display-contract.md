@@ -236,3 +236,28 @@ Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):
 | Catalogue facets (`catalog_service.facets`) | forwards only `store_id` | forward `language` from the request |
 | Labels | no route | optional: a proxy for `GET /v1/labels?language=` (or rely on chat replies' `labels`) |
 | Cart read | no route | `GET /api/widgets/ai-agent/cart/?session_id=` → `GET /v1/cart` with the scoped session and the token's store (section 6). Cart changes need nothing: they go through picks and chat, which pass answers through as they are |
+
+## 8. Product links carry Zory's click id
+
+Every `product_url` the service returns now carries `zory_click_id=<the product's public
+uuid>` - the same id, in the same field, as every other Zory product link (the main
+backend's `Product.tracking_product_url`). The storefront snippet reads it and reports
+views, add-to-carts and purchases to Zory's analytics (`POST /salla/analytics/events/`),
+so a sale that started in the assistant is counted like any other.
+
+Where: `presentation.products[]`, `presentation.focus`, every room package and seating
+combination piece (`presentation.room.items[]`, `seating_bundles[].items[]`,
+`chosen_seating.items[]`), a render's `presentation.render.items[]`, Browse Catalogue
+`items[]`, and the cart's `lines[].product.url` / `changes[].product.url`.
+
+- **A widget changes nothing to open it:** link to `product_url` (or `product.url`) as
+  today. A page the catalog no longer has, or a reply whose lookup failed, comes back
+  without the id.
+- **Matching by page must drop the id first.** Zory's widget cart and favourites
+  (`core/widget/widget_cart.py`, `widget_favorites.py`) look products up by the exact
+  page: they strip `zory_click_id` before comparing (backend team). A client comparing
+  links itself does the same (the console's room-vs-picture check does).
+
+The id is attached once the reply is finished (`app/services/click_tracking.py`): inside
+the service `product_url` stays the page as stored, no model sees the id, and nothing
+ranked or grounded carries it.

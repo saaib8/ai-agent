@@ -98,6 +98,7 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "ids_for_visual_matches": lambda repo: repo.ids_for_visual_matches(
         ["vector-1"], ["https://example.test/1"], CONTEXT
     ),
+    "click_ids_by_url": lambda repo: repo.click_ids_by_url(["https://example.test/1"], CONTEXT),
     "browse": lambda repo: repo.browse(
         CatalogFilter(name_words=("sofa",), category="seating"), CONTEXT, offset=0, limit=24
     ),
@@ -298,4 +299,10 @@ async def test_the_eligible_pool_cannot_be_asked_for_another_store() -> None:
 async def test_visual_matches_with_nothing_to_look_up_issue_no_query() -> None:
     session = RecordingSession()
     assert await _repository(session).ids_for_visual_matches([], [""], CONTEXT) == ({}, {})
+    assert session.statements == []
+
+
+async def test_click_ids_with_no_pages_issue_no_query() -> None:
+    session = RecordingSession()
+    assert await _repository(session).click_ids_by_url(["", ""], CONTEXT) == {}
     assert session.statements == []

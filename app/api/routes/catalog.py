@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query
 from app.api.dependencies import (
     CatalogServiceDep,
     CatalogVisualizationRuntimeDep,
+    ClickTrackingServiceDep,
     RetailerContextProviderDep,
 )
 from app.schemas.catalog import CatalogFacets, CatalogPage, CatalogQuery, CatalogVisualizeRequest
@@ -28,10 +29,11 @@ async def browse_catalog(
     query: Annotated[CatalogQuery, Query()],
     catalog: CatalogServiceDep,
     retailers: RetailerContextProviderDep,
+    tracking: ClickTrackingServiceDep,
 ) -> CatalogPage:
     """One page of the store's active products, filtered and sorted."""
     context = await retailers.resolve(query.store_id)
-    return await catalog.browse(query, context)
+    return await tracking.attach(await catalog.browse(query, context), context)
 
 
 @router.get("/facets", response_model=CatalogFacets)
@@ -52,7 +54,8 @@ async def visualize_selection(
     request: CatalogVisualizeRequest,
     runtime: CatalogVisualizationRuntimeDep,
     retailers: RetailerContextProviderDep,
+    tracking: ClickTrackingServiceDep,
 ) -> ChatResponse:
     """Render a room from picked products, as a chat turn."""
     context = await retailers.resolve(request.store_id)
-    return await runtime.visualize(request, context)
+    return await tracking.attach(await runtime.visualize(request, context), context)

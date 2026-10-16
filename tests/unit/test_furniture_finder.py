@@ -26,6 +26,7 @@ import pytest
 from app.api.dependencies import (
     chat_graph,
     chat_runtime,
+    click_tracking_service,
     db_session,
     finder_turn_runtime,
     furniture_finder_service,
@@ -84,6 +85,7 @@ from PIL import Image
 from pydantic import SecretStr, ValidationError
 
 from tests.conftest import build_settings
+from tests.unit.click_ids import no_click_ids
 from tests.unit.test_chat_api import GRAPH, FakeRetailers, FakeSessionStore, Harness, a_selection
 
 STORE, OTHER_STORE = 50, 51
@@ -1321,6 +1323,7 @@ def an_app(
         app.dependency_overrides[chat_runtime] = harness._runtime
         app.dependency_overrides[chat_graph] = lambda: GRAPH
     app.dependency_overrides[retailer_context_provider] = lambda: FakeRetailers()
+    app.dependency_overrides[click_tracking_service] = no_click_ids
     return app
 
 
