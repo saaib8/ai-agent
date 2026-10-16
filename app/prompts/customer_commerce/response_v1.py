@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from app.schemas.language import ReplyLanguage
 
-VERSION = "customer_response/v1.33"
-ARABIC_VERSION = "customer_response/v1.33+ar.9"
+VERSION = "customer_response/v1.34"
+ARABIC_VERSION = "customer_response/v1.34+ar.9"
 """The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
 Everything but the language paragraph is shared, so the two cannot drift."""
 
