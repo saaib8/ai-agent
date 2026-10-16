@@ -1231,7 +1231,8 @@ class ResponseInput(BaseModel):
     speaking_as: AgentPersona = AgentPersona.SARA
     """Which assistant this reply is shown as - decided in code from what the
     turn did (`app/services/agent_persona.py`) - so a reply that names itself
-    names the one above it: Sara greets, Salman sells, Nora designs."""
+    names the one above it: Sara greets, Salman sells, Nora designs, and
+    Faysal answers about the store itself where the support agent is on."""
 
 
 ResponseRouting = ResponseGroundingView | DeterministicResponse
