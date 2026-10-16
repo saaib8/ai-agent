@@ -37,9 +37,16 @@ LABELS: Mapping[ReplyLanguage, Mapping[SupportChannel, str]] = MappingProxyType(
 
 
 def channels_for(
-    contacts: SupportContacts, language: ReplyLanguage = ReplyLanguage.EN
+    contacts: SupportContacts,
+    language: ReplyLanguage = ReplyLanguage.EN,
+    *,
+    handover: bool = False,
 ) -> SupportPresentation | None:
-    """The buttons for every contact the store set, WhatsApp first; None for none."""
+    """The buttons for every contact the store set, WhatsApp first; None for none.
+
+    `handover` marks every button as one the platform can send the shopper's
+    request on; the link stays beside it.
+    """
     labels = LABELS[language]
     channels: list[SupportChannelView] = []
     if contacts.whatsapp is not None:
@@ -48,6 +55,7 @@ def channels_for(
                 channel=SupportChannel.WHATSAPP,
                 label=labels[SupportChannel.WHATSAPP],
                 url=f"https://wa.me/{contacts.whatsapp}",
+                handover=handover,
             )
         )
     if contacts.email is not None:
@@ -56,6 +64,7 @@ def channels_for(
                 channel=SupportChannel.EMAIL,
                 label=labels[SupportChannel.EMAIL],
                 url=f"mailto:{quote(contacts.email, safe='@.+-_')}",
+                handover=handover,
             )
         )
     return SupportPresentation(channels=tuple(channels)) if channels else None

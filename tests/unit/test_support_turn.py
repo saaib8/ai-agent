@@ -26,13 +26,14 @@ CONTACTS = SupportContacts(email="support@store.sa", whatsapp="966551234567")
 
 
 class FakeSupport:
-    def __init__(self, contacts: SupportContacts = CONTACTS) -> None:
+    def __init__(self, contacts: SupportContacts = CONTACTS, *, handover: bool = False) -> None:
         self.contacts = contacts
+        self.handover = handover
         self.calls: list[tuple[RetailerContext, bool]] = []
 
     async def offer(self, context: RetailerContext, *, requested: bool = False) -> SupportGrounding:
         self.calls.append((context, requested))
-        return SupportGrounding(contacts=self.contacts, requested=requested)
+        return SupportGrounding(contacts=self.contacts, requested=requested, handover=self.handover)
 
 
 async def test_an_answer_about_the_store_carries_its_support() -> None:
@@ -151,6 +152,22 @@ async def test_the_stores_channels_are_drawn_beneath_the_reply() -> None:
         "mailto:support@store.sa",
     ]
     assert presentation.products == ()
+    assert [c.handover for c in presentation.support.channels] == [False, False]
+
+
+async def test_channels_take_the_shoppers_request_where_the_platform_sends_it() -> None:
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.ANSWER), support=FakeSupport(handover=True)
+    )
+    tapped = _turn(_state(), "Contact support").model_copy(
+        update={"support_action": ContactSupportAction()}
+    )
+
+    presentation = ChatRuntime.presentation(await coordinator.run(tapped))
+
+    assert presentation is not None and presentation.support is not None
+    assert [c.handover for c in presentation.support.channels] == [True, True]
+    assert presentation.support.channels[0].url == "https://wa.me/966551234567"
 
 
 async def test_faysal_adds_no_shopping_question_after_an_answer() -> None:
