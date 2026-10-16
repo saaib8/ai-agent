@@ -157,6 +157,8 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # a typed client; no model reads it, and it never searches.
         "cart_check",
         "store_knowledge",
+        # The store's support contacts, read for the scoped store only.
+        "support",
     ]
 
 

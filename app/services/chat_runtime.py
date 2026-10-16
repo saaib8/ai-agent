@@ -149,6 +149,7 @@ class ChatRuntime:
             bundle_action=request.bundle_action,
             search_action=request.search_action,
             product_action=request.product_action,
+            support_action=request.support_action,
             # Read by the coordinator only where Arabic replies are on.
             locale=request.locale,
         )

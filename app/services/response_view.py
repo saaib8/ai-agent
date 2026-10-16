@@ -161,6 +161,7 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
     if grounding.failure is not None and grounding.failure.code in (
         TurnFailureCode.REQUEST_NOT_UNDERSTOOD,
         TurnFailureCode.STORE_INFO_UNAVAILABLE,
+        TurnFailureCode.STORE_INFO_UNAVAILABLE_WITH_SUPPORT,
     ):
         return False
     return (
