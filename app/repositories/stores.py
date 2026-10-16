@@ -33,6 +33,19 @@ class StoreRepository:
             core_store.c.active_status.is_(True),
         )
 
+    async def salla_store_id(self, store_id: int) -> int | None:
+        """The store's id on Salla when it is an active Salla store - what
+        Salla's storefront API calls it - else None."""
+        statement = select(core_store.c.salla_merchant_id).where(
+            core_store.c.id == store_id,
+            core_store.c.active_status.is_(True),
+            core_store.c.provider == "SALLA",
+            core_store.c.salla_merchant_id.is_not(None),
+        )
+        result = await self._session.execute(statement)
+        value = result.scalar_one_or_none()
+        return int(value) if value is not None else None
+
     async def get_active(self, store_id: int) -> StoreRow | None:
         """The store, if it exists and is active. ``None`` otherwise."""
         result = await self._session.execute(self._active(store_id))

@@ -659,3 +659,327 @@ async def test_the_reply_is_told_what_was_already_in_the_cart() -> None:
     assert facts is not None and not facts.changed
     assert facts.already_there is not None
     assert (facts.already_there.name, facts.already_there.quantity_after) == ("Sofa 102", 2)
+
+
+# ── several at once, a kind alone, and asking before adding ─────────────────
+
+
+def _two_sofas_and_a_lamp() -> AgentStateV1:
+    """Two sofas on screen, the first already chosen and in focus, and a lamp
+    offered beside it as the newest list - the screen after a pick."""
+    from app.schemas.agent_state import ActiveSearchState, PresentedList
+    from app.schemas.discovery import ProductSearchRequest
+
+    return AgentStateV1(
+        active_search=ActiveSearchState(
+            request=ProductSearchRequest(commerce_category="lighting"), revision=2
+        ),
+        product_interaction=ProductInteractionState(
+            presented_product_ids=(20,),
+            presented_search_revision=2,
+            earlier_lists=(PresentedList(revision=1, product_ids=(10, 11)),),
+            selected_product_ids=(10,),
+            focused_product_id=10,
+        ),
+    )
+
+
+async def test_one_message_adds_several() -> None:
+    from app.schemas.agent_decision import CartAddition
+    from app.schemas.resolution import ResolvedProductReference
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    class ByPosition(FakeReferences):
+        async def resolve(self, selector: Any, state: Any, context: Any) -> Any:
+            return ResolvedProductReference(product_id={1: 10, 2: 11}[selector.position])
+
+    decision = CustomerAgentDecision(
+        action=AgentAction.ANSWER,
+        interaction=ProductInteractionIntent(
+            op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=1)
+        ),
+        more_to_add=(CartAddition(reference=PresentedOrdinal(position=2), quantity=2),),
+    )
+    coordinator, _ = _coordinator(
+        decision,
+        references=ByPosition(),
+        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
+    )
+
+    result = await coordinator.run(
+        CustomerTurnInput(
+            message="add the first and second sofa", state=_with_cart(()), context=CONTEXT
+        )
+    )
+
+    interaction = result.state.product_interaction
+    assert interaction.selected_product_ids == (10, 11)
+    assert interaction.quantity_of(11) == 2
+
+
+async def test_the_floor_lamp_is_the_lamp_on_screen_not_the_sofa_in_focus() -> None:
+    from app.schemas.product_reference import FocusedProduct
+    from app.schemas.resolution import ResolvedProductReference
+    from app.taxonomy.compare_groups import load_compare_groups
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    decision = CustomerAgentDecision(
+        action=AgentAction.ANSWER,
+        interaction=ProductInteractionIntent(
+            op=ProductInteractionOp.SELECT,
+            reference=FocusedProduct(),
+            expected_subcategory="floor-lamp",
+        ),
+    )
+    coordinator, _ = _coordinator(
+        decision,
+        references=FakeReferences(default=ResolvedProductReference(product_id=10)),
+        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
+        compare_groups=load_compare_groups(),
+    )
+
+    result = await coordinator.run(
+        CustomerTurnInput(
+            message="sure add the floor lamp in my cart",
+            state=_two_sofas_and_a_lamp(),
+            context=CONTEXT,
+        )
+    )
+
+    assert result.state.product_interaction.selected_product_ids == (10, 20)
+    assert result.grounding.deterministic_clarification is None
+
+
+def _considering(state: AgentStateV1, product_id: int) -> Any:
+    from app.schemas.resolution import ResolvedProductReference
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.ANSWER,
+            interaction=ProductInteractionIntent(
+                op=ProductInteractionOp.CONSIDER, reference=PresentedOrdinal(position=1)
+            ),
+        ),
+        references=FakeReferences(default=ResolvedProductReference(product_id=product_id)),
+        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
+        cart=_cart(),
+    )
+    return coordinator.run(
+        CustomerTurnInput(message="I like this one", state=state, context=CONTEXT)
+    )
+
+
+async def test_liking_a_piece_offers_it_with_the_total_before_adding() -> None:
+    result = await _considering(_two_sofas_and_a_lamp(), 20)
+
+    assert result.state.product_interaction.selected_product_ids == (10,), "nothing added yet"
+    offer = result.cart_offer
+    assert offer is not None
+    # One sofa in the cart at 1,000 and the lamp at 1,000.
+    assert (offer.price, offer.total_if_added) == ("1,000 SAR", "2,000 SAR")
+    assert result.grounding.follow_up_policy.value == "none", "the offer is the only question"
+    assert offer.card is not None and (offer.card.list_revision, offer.card.ordinal) == (2, 1)
+    assert result.next_step is None, "the offer is the turn's question"
+
+
+async def test_liking_a_piece_already_in_the_cart_offers_nothing() -> None:
+    result = await _considering(_two_sofas_and_a_lamp(), 10)
+
+    assert result.cart_offer is None
+
+
+def test_the_offer_chips_add_it_by_its_card() -> None:
+    from app.schemas.card_comparison import CardRef
+    from app.schemas.cart import CartOffer
+    from app.services.cart import cart_offer_choices
+
+    offer = CartOffer(
+        name="Lamp",
+        price="1,000 SAR",
+        price_amount=Decimal(1000),
+        card=CardRef(list_revision=2, ordinal=1),
+    )
+
+    yes, not_now = cart_offer_choices(offer, ReplyLanguage.EN)
+
+    assert yes.product_action is not None and yes.product_action.kind == "add_to_cart"
+    assert yes.product_action.card == offer.card
+    assert yes.value == "Yes, add it to my cart"
+    assert not_now.product_action is None
+
+
+async def test_yes_add_it_puts_the_card_in_the_cart() -> None:
+    from app.schemas.card_comparison import CardRef
+    from app.schemas.product_action import AddToCartAction
+    from app.schemas.resolution import ResolvedProductReference
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    class OnList(FakeReferences):
+        async def resolve_on_list(
+            self, ordinal: int, revision: Any, state: Any, context: Any
+        ) -> Any:
+            return ResolvedProductReference(product_id=20)
+
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.ANSWER),
+        references=OnList(),
+        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
+    )
+
+    result = await coordinator.run(
+        CustomerTurnInput(
+            message="Yes, add it to my cart",
+            state=_two_sofas_and_a_lamp(),
+            context=CONTEXT,
+            product_action=AddToCartAction(card=CardRef(list_revision=2, ordinal=1)),
+        )
+    )
+
+    assert result.state.product_interaction.selected_product_ids == (10, 20)
+    assert result.selection_added
+
+
+async def test_a_refused_add_is_never_called_already_in_the_cart() -> None:
+    from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
+    from app.schemas.resolution import (
+        BlockingClarificationReason,
+        DeterministicClarification,
+    )
+    from app.services.response_view import _cart_facts
+
+    state = _with_cart((101,)).model_copy(
+        update={
+            "product_interaction": _with_cart((101,)).product_interaction.model_copy(
+                update={"focused_product_id": 101}
+            )
+        }
+    )
+    cart = await _cart().view(state, (_pick(1, 101),), CONTEXT, ReplyLanguage.EN)
+    refused = CustomerTurnResult(
+        state=state,
+        decision=_add_first("floor-lamp"),
+        grounding=TurnGrounding(
+            deterministic_clarification=DeterministicClarification(
+                reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
+            )
+        ),
+        cart=cart,
+    )
+
+    facts = _cart_facts(refused)
+
+    assert facts is not None and facts.already_there is None
+
+
+async def test_an_offer_into_an_empty_cart_gives_the_price_alone() -> None:
+    state = _two_sofas_and_a_lamp()
+    empty = state.model_copy(
+        update={
+            "product_interaction": state.product_interaction.model_copy(
+                update={"selected_product_ids": (), "focused_product_id": None}
+            )
+        }
+    )
+
+    result = await _considering(empty, 20)
+
+    assert result.cart_offer is not None
+    assert result.cart_offer.total_if_added is None
+
+
+# ── the cart's limit, however a product is added ────────────────────────────
+
+
+def _full_cart_coordinator(decision: CustomerAgentDecision, references: Any = None) -> Any:
+    from app.schemas.resolution import ResolvedProductReference
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    coordinator, _ = _coordinator(
+        decision,
+        references=references or FakeReferences(default=ResolvedProductReference(product_id=20)),
+        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
+    )
+    coordinator._max_picks = 1  # one product fills it, for the test
+    return coordinator
+
+
+async def test_a_typed_add_meets_the_limit_a_tap_does() -> None:
+    from app.schemas.grounding import TurnFailureCode
+
+    result = await _full_cart_coordinator(_add_first(None, quantity=None)).run(
+        CustomerTurnInput(message="add the lamp", state=_two_sofas_and_a_lamp(), context=CONTEXT)
+    )
+
+    assert result.state.product_interaction.selected_product_ids == (10,)
+    assert result.grounding.failure is not None
+    assert result.grounding.failure.code is TurnFailureCode.CART_FULL
+
+
+async def test_a_product_already_in_a_full_cart_can_still_change_quantity() -> None:
+    from app.schemas.resolution import ResolvedProductReference
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    result = await _full_cart_coordinator(
+        _add_first(None, quantity=3),
+        references=FakeReferences(default=ResolvedProductReference(product_id=10)),
+    ).run(CustomerTurnInput(message="make it 3", state=_two_sofas_and_a_lamp(), context=CONTEXT))
+
+    assert result.state.product_interaction.quantity_of(10) == 3
+    assert result.grounding.failure is None
+
+
+async def test_yes_add_it_meets_the_limit_too() -> None:
+    from app.schemas.card_comparison import CardRef
+    from app.schemas.grounding import TurnFailureCode
+    from app.schemas.product_action import AddToCartAction
+    from app.schemas.resolution import ResolvedProductReference
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    class OnList(FakeReferences):
+        async def resolve_on_list(
+            self, ordinal: int, revision: Any, state: Any, context: Any
+        ) -> Any:
+            return ResolvedProductReference(product_id=20)
+
+    result = await _full_cart_coordinator(
+        CustomerAgentDecision(action=AgentAction.ANSWER), references=OnList()
+    ).run(
+        CustomerTurnInput(
+            message="Yes, add it to my cart",
+            state=_two_sofas_and_a_lamp(),
+            context=CONTEXT,
+            product_action=AddToCartAction(card=CardRef(list_revision=2, ordinal=1)),
+        )
+    )
+
+    assert result.state.product_interaction.selected_product_ids == (10,)
+    assert result.grounding.failure is not None
+    assert result.grounding.failure.code is TurnFailureCode.CART_FULL
+
+
+def test_a_combination_is_capped_at_what_the_cart_takes() -> None:
+    from app.schemas.agent_state import (
+        OfferedCombination,
+        OfferedCombinationLine,
+        SeatingOfferState,
+    )
+    from app.schemas.seating_solution import SeatingShape
+    from app.services.turn_coordinator import _with_chosen_combination
+
+    combination = OfferedCombination(
+        shape=next(iter(SeatingShape)),
+        lines=(OfferedCombinationLine(product_id=101, quantity=3),),
+    )
+    offer = SeatingOfferState(target_seats=9, shown=(combination,))
+
+    chosen = _with_chosen_combination(_with_cart(()), offer, 1, max_quantity=2)
+
+    assert chosen.product_interaction.quantity_of(101) == 2

@@ -445,5 +445,7 @@ def test_interactions_address_products_by_selector(
 def test_detail_is_an_action_not_an_interaction() -> None:
     """It needs fresh hydration and drives the reply, so it is a primary
     action with a reference (locked M11A), not a silent state edit."""
-    assert {o.value for o in ProductInteractionOp} == {"select", "deselect", "focus"}
+    # Consider points at a piece they like, as focus does, and the application
+    # offers it for their cart (CLAUDE.md 36) - a state edit, not a detail.
+    assert {o.value for o in ProductInteractionOp} == {"select", "deselect", "focus", "consider"}
     assert AgentAction.PRODUCT_DETAIL in AgentAction

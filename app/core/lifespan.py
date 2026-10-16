@@ -29,6 +29,7 @@ from app.integrations.pinecone import PineconeSemanticIndex, SemanticIndex
 from app.integrations.postgres import Database
 from app.integrations.product_images import ProductImageFetcher
 from app.integrations.redis import RedisClient
+from app.integrations.salla_storefront import SallaStorefrontClient
 from app.integrations.zory_finder import ZoryFinderClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
@@ -80,6 +81,9 @@ class AppResources:
     # None when Furniture Finder is not configured: the main platform's own
     # finder answers it, so one client is the whole capability.
     zory_finder: ZoryFinderClient | None = None
+    # Salla's public storefront API, asked before a Salla store's cart takes
+    # a product; None when that check is switched off (CLAUDE.md 36).
+    salla: SallaStorefrontClient | None = None
     # Both None when room visualisation is not configured.
     render_generator: ImageGenerator | None = None
     render_photos: ProductImageFetcher | None = None
@@ -216,6 +220,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     zory_finder: ZoryFinderClient | None = None
     if settings.furniture_finder is not None:
         zory_finder = ZoryFinderClient(settings.furniture_finder)
+    salla = SallaStorefrontClient(settings.salla) if settings.salla.check_cart else None
     render_generator: ImageGenerator | None = None
     render_photos: ProductImageFetcher | None = None
     room_checker: OpenAIStructuredClient | None = None
@@ -312,6 +317,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         subcategory_questions=subcategory_questions,
         compare_groups=compare_groups,
         zory_finder=zory_finder,
+        salla=salla,
         render_generator=render_generator,
         render_photos=render_photos,
         room_checker=room_checker,
@@ -327,6 +333,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await embedder.close()
         if zory_finder is not None:
             await zory_finder.close()
+        if salla is not None:
+            await salla.close()
         if room_checker is not None:
             await room_checker.close()
         for closable in closables:

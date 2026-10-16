@@ -43,7 +43,9 @@ def interaction_update(
                 selected_product_ids=AddItems(items=(product_id,)),
                 focused_product_id=product_id,
             )
-        case ProductInteractionOp.FOCUS:
+        case ProductInteractionOp.FOCUS | ProductInteractionOp.CONSIDER:
+            # Considering points at it, as focus does: their yes to adding it
+            # is then "the one in focus" (CLAUDE.md 36).
             return ProductInteractionUpdate(focused_product_id=product_id)
         case ProductInteractionOp.DESELECT:
             orphans_focus = (

@@ -21,13 +21,17 @@ from app.schemas.agent_state import AgentStateV1, ProductInteractionState
 from app.schemas.cart import (
     CartChange,
     CartLineView,
+    CartOffer,
     CartProductRef,
     CartTotal,
     CartView,
 )
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import PickView
+from app.schemas.product_action import AddToCartAction
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
+from app.services.card_labels import card_labels
 from app.services.click_tracking import tracking_url
 from app.services.product_display import arabic_name, price_words
 
@@ -179,4 +183,19 @@ def _change(
         name=name.strip() or identity.name_english.strip() or identity.uuid,
         quantity_before=before,
         quantity_after=after,
+    )
+
+
+def cart_offer_choices(offer: CartOffer, language: ReplyLanguage) -> tuple[ReplyChoice, ...]:
+    """The answers to "Shall I add it to your cart?": a yes that adds it - by
+    its card, or the piece in focus when it is on no list - and a not now that
+    is only words."""
+    labels = card_labels(language)
+    return (
+        ReplyChoice(
+            label=labels.offer_add,
+            value=labels.say_add_it_to_cart,
+            product_action=AddToCartAction(card=offer.card),
+        ),
+        ReplyChoice(label=labels.offer_not_now, value=labels.offer_not_now),
     )

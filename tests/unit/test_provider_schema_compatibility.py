@@ -72,6 +72,8 @@ SELECTOR_SITES = (
     "#/$defs/ProductInteractionIntent/properties/reference",
     "#/$defs/RelativePriceRefinement/properties/reference",
     "#/$defs/DesignAnchorIntent/properties/reference",
+    # The other products one message adds to the cart (CLAUDE.md 36).
+    "#/$defs/CartAddition/properties/reference",
 )
 
 _selector: TypeAdapter[ProductReferenceSelector] = TypeAdapter(ProductReferenceSelector)

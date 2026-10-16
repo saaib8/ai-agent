@@ -71,6 +71,7 @@ from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
+from app.services.store_cart_check import StoreCartCheck
 from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.dimensions import DimensionSemantics
@@ -382,6 +383,8 @@ def customer_turn_coordinator(
         fit_after_pick=settings.customer_agent.fit_after_pick,
         cart_max_quantity=settings.customer_agent.cart_max_quantity,
         cart=CartService(repository),
+        max_picks=settings.customer_agent.max_picks,
+        cart_check=store_cart_check(session, app_resources),
     )
 
 
@@ -505,6 +508,14 @@ def session_store(app_resources: ResourcesDep) -> SessionStore:
 SessionStoreDep = Annotated[SessionStore, Depends(session_store)]
 
 
+def store_cart_check(session: SessionDep, app_resources: ResourcesDep) -> StoreCartCheck | None:
+    """The store's own cart, asked before ours takes more - None where the
+    check is switched off (CLAUDE.md 36)."""
+    if app_resources.salla is None:
+        return None
+    return StoreCartCheck(StoreRepository(session), ProductRepository(session), app_resources.salla)
+
+
 def product_display_words(app_resources: AppResources) -> ProductDisplayWords:
     """Products' text ready to show - name, kind, colour, styles, seats, price,
     size - in the reply's language, from the reviewed registries. Arabic only
@@ -522,6 +533,7 @@ def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRunt
         app_resources.settings.customer_agent,
         display=product_display_words(app_resources),
         cart=CartService(repository),
+        store_check=store_cart_check(session, app_resources),
     )
 
 

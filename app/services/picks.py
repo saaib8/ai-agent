@@ -39,7 +39,7 @@ from app.schemas.agent_updates import (
     ReplaceItems,
     SetCartQuantity,
 )
-from app.schemas.cart import CartQuery, CartResponse, CartView
+from app.schemas.cart import CartQuery, CartRefusalReason, CartResponse, CartView
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import (
     DeselectPickAction,
@@ -66,6 +66,7 @@ from app.services.hydration import ProductHydrationService
 from app.services.product_display import ProductDisplayWords
 from app.services.product_interaction import build_liked, build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
+from app.services.store_cart_check import StoreCartCheck
 
 logger = get_logger(__name__)
 
@@ -99,7 +100,11 @@ class PicksRuntime:
         settings: CustomerAgentSettings,
         display: ProductDisplayWords | None = None,
         cart: CartService | None = None,
+        store_check: StoreCartCheck | None = None,
     ) -> None:
+        self._store_check = store_check
+        """Asks the store's own cart before a tap puts more in ours; None
+        where it is not asked (CLAUDE.md 36)."""
         self._cart = cart
         """The picks with how many of each, priced (CLAUDE.md 36); None
         reports no cart."""
@@ -266,9 +271,10 @@ class PicksRuntime:
                         ),
                     )
                 product_id = outcome.product_id
+                await self._the_store_takes(product_id, 1, context)
                 op = ProductInteractionOp.SELECT
             case SetQuantityAction(pick=pick, quantity=quantity):
-                return self._with_quantity(state, pick, quantity)
+                return await self._with_quantity(state, pick, quantity, context)
             case DeselectPickAction(pick=pick):
                 if pick > len(picked):
                     raise PickUnavailableError(
@@ -284,8 +290,30 @@ class PicksRuntime:
             AgentStateUpdate(product_interaction=interaction_update(op, product_id, state)),
         )
 
-    def _with_quantity(
-        self, state: AgentStateV1, pick: int, quantity: int
+    async def _the_store_takes(
+        self, product_id: int, quantity: int, context: RetailerContext
+    ) -> None:
+        """Refuse a tap the store's own cart would refuse, in words to show."""
+        if self._store_check is None:
+            return
+        refused = (await self._store_check.refusals({product_id: quantity}, context)).get(
+            product_id
+        )
+        if refused is None:
+            return
+        match refused.reason:
+            case CartRefusalReason.OUT_OF_STOCK:
+                message = "That product is out of stock."
+            case CartRefusalReason.OVER_LIMIT:
+                message = (
+                    f"The store takes up to {refused.max_quantity} of this product per order."
+                )
+            case CartRefusalReason.NOT_IN_STORE:
+                message = "That product can't be added to this store's cart."
+        raise PickUnavailableError(public_message=message, reason=str(refused.reason))
+
+    async def _with_quantity(
+        self, state: AgentStateV1, pick: int, quantity: int, context: RetailerContext
     ) -> AgentStateV1 | None:
         """How many of a cart product, from now on - or None when that is
         already how many. Needs no catalog read: the cart names the product."""
@@ -302,6 +330,8 @@ class PicksRuntime:
         product_id = picked[pick - 1]
         if state.product_interaction.quantity_of(product_id) == quantity:
             return None
+        if quantity > state.product_interaction.quantity_of(product_id):
+            await self._the_store_takes(product_id, quantity, context)
         return apply_update(
             state,
             AgentStateUpdate(
@@ -372,6 +402,7 @@ class PicksRuntime:
                     )
                 if not await self._hydration.hydrate_ids((product_id,), context):
                     raise PickUnavailableError(public_message=_GONE, reason="product_unavailable")
+                await self._the_store_takes(product_id, 1, context)
                 return apply_update(
                     state,
                     AgentStateUpdate(

@@ -149,6 +149,13 @@ def test_the_coordinator_depends_only_on_approved_services() -> None:
         # repository; no model reads a figure it computes.
         "cart_max_quantity",
         "cart",
+        # How many products the cart holds, so a typed add meets the limit a
+        # tap does. A number.
+        "max_picks",
+        # Asks the store's own cart (Salla's public storefront API) whether it
+        # takes a product before ours holds it. A deterministic check through
+        # a typed client; no model reads it, and it never searches.
+        "cart_check",
     ]
 
 

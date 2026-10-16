@@ -72,6 +72,8 @@ from app.services.numeric_guard import (
     bundle_stretch_figures,
     cart_counts,
     cart_figures,
+    cart_offer_figures,
+    cart_refusal_counts,
     check_numeric_policy,
     chosen_seating_counts,
     guidance_figures,
@@ -413,6 +415,7 @@ class CustomerResponseGenerator:
                 # they can read, not one we invented (CLAUDE.md 10.2).
                 *picks_counts(result.picks),
                 *cart_counts(result.cart),
+                *cart_refusal_counts(result.cart_refusals),
             ),
             # Figures the customer can read off the cards beside the reply.
             # Repeating one is reporting what is on screen; the guard still
@@ -439,6 +442,7 @@ class CustomerResponseGenerator:
                 # The cart is on screen too: its line totals and what it all
                 # comes to, summed by the application (CLAUDE.md 36).
                 *cart_figures(result.cart),
+                *cart_offer_figures(result.cart_offer),
                 # The lowest real total of each shape a seating question offers.
                 *(seating_figures(view.seating) if view.seating else ()),
                 # The lowest real total that would fill a piece the budget

@@ -86,6 +86,9 @@ class CardLabels(BaseModel):
     combination's button, with what the pieces being bought come to."""
     go_to_cart: str
     """Opens the store's own cart, where checkout happens."""
+    offer_add: str
+    """The yes chip under "Shall I add it to your cart?"."""
+    offer_not_now: str
 
     # ── a catalogue tile ────────────────────────────────────────────────────
     add: str
@@ -200,6 +203,8 @@ class CardLabels(BaseModel):
     say_added_to_cart: str
     """"I've added the {name} to my cart" - the message after "Add to cart"."""
     say_add_all_to_cart: str
+    say_add_it_to_cart: str
+    """The message the yes chip under an offer to add a piece records."""
     say_not_option: str
     say_more_seating: str
     say_other_options: str

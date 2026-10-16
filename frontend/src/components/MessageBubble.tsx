@@ -198,10 +198,19 @@ export function AssistantBubble({
   // are one row under the pick.
   const offering =
     !!focus && !hasProducts && (quickReplies ?? []).some((r) => r.product_action)
-  const textReplies = offering ? [] : (quickReplies ?? []).filter((r) => !r.product_action)
-  const actionReplies = offering
+  // "Shall I add it to your cart?" - Yes and Not now answer the question, so
+  // they stay together beside it, the yes carrying its action.
+  const cartOffer = (quickReplies ?? []).some((r) => r.product_action?.kind === 'add_to_cart')
+  const textReplies = cartOffer
     ? quickReplies ?? []
-    : (quickReplies ?? []).filter((r) => r.product_action)
+    : offering
+      ? []
+      : (quickReplies ?? []).filter((r) => !r.product_action)
+  const actionReplies = cartOffer
+    ? []
+    : offering
+      ? quickReplies ?? []
+      : (quickReplies ?? []).filter((r) => r.product_action)
   const hasComparison = !!presentation?.comparison
   const hasRoom = !!presentation?.room
   const render = presentation?.render ?? null
