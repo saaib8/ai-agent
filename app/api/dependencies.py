@@ -349,7 +349,10 @@ def customer_turn_coordinator(
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         store_knowledge=app_resources.store_knowledge,
         support=(
-            SupportService(SupportContactsRepository(session))
+            SupportService(
+                SupportContactsRepository(session),
+                handover=app_resources.settings.customer_agent.support_handover,
+            )
             if app_resources.settings.customer_agent.support_agent
             else None
         ),

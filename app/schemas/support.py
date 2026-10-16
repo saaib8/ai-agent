@@ -54,6 +54,8 @@ class SupportGrounding(BaseModel):
 
     contacts: SupportContacts = SupportContacts()
     requested: bool = False
+    handover: bool = False
+    """Whether the platform can send the shopper's request on these channels."""
 
 
 class SupportChannelView(BaseModel):
@@ -64,6 +66,10 @@ class SupportChannelView(BaseModel):
     channel: SupportChannel
     label: str = Field(min_length=1, max_length=40)
     url: str = Field(min_length=1, max_length=300)
+    handover: bool = False
+    """Whether the platform can send the shopper's request on this channel to
+    the store's team. A client asks for their number or email first; `url`
+    stays the link to follow when sending is not possible."""
 
 
 class SupportPresentation(BaseModel):

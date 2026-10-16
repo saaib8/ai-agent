@@ -692,6 +692,13 @@ class CustomerAgentSettings(BaseModel):
     (checked at startup). Off by default: replies about the store are shown
     as before and carry no support channels."""
 
+    support_handover: bool = False
+    """Whether the store's support buttons can take the shopper's request: a
+    button marked `handover` asks for their number or email, and the platform
+    sends the request to the store's own WhatsApp or email. Needs
+    `support_agent`. Off by default: each button is a plain link to the store,
+    as before."""
+
     designer_led_buttons: bool = True
     """Three buttons on every card: Select as before, ♡ Like - a silent liked
     list, kept apart from the picks - and More like this, a similarity search

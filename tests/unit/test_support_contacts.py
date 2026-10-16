@@ -69,6 +69,17 @@ def test_no_contacts_draws_no_buttons() -> None:
     assert channels_for(SupportContacts()) is None
 
 
+def test_buttons_take_the_shoppers_request_only_where_handover_is_on() -> None:
+    contacts = SupportContacts(email="help@store.sa", whatsapp="966551234567")
+    plain = channels_for(contacts)
+    handover = channels_for(contacts, handover=True)
+
+    assert plain is not None and handover is not None
+    assert [c.handover for c in plain.channels] == [False, False]
+    assert [c.handover for c in handover.channels] == [True, True]
+    assert handover.channels[0].url == "https://wa.me/966551234567"
+
+
 class _Columns:
     def __init__(self, *names: str) -> None:
         self._names = names
