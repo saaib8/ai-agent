@@ -11,8 +11,11 @@ from __future__ import annotations
 from app.core.exceptions import StoreKnowledgeUnavailableError
 from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
 from app.schemas.grounding import TurnFailureCode
+from app.schemas.response import ResponseGroundingView, ResponseOutcomeKind
 from app.schemas.retailer import RetailerContext
 from app.schemas.support import ContactSupportAction, SupportContacts, SupportGrounding
+from app.services.chat_runtime import ChatRuntime
+from app.services.response_view import route_response
 
 from tests.unit.test_store_info_turn import QUESTION, FakeStoreKnowledge, _asks
 from tests.unit.test_turn_coordinator import _coordinator, _state, _turn
@@ -86,3 +89,63 @@ async def test_without_the_support_agent_nothing_offers_support() -> None:
     result = await coordinator.run(_turn(_state(), QUESTION))
 
     assert result.grounding.support is None
+
+
+async def test_the_answer_says_its_support_is_beneath_it() -> None:
+    coordinator, _ = _coordinator(
+        _asks(), store_knowledge=FakeStoreKnowledge(), support=FakeSupport()
+    )
+
+    view = route_response(await coordinator.run(_turn(_state(), QUESTION))).primary
+
+    assert isinstance(view, ResponseGroundingView)
+    assert view.kind is ResponseOutcomeKind.POLICY_ANSWER
+    assert view.support_offered is True
+
+
+async def test_contact_support_is_its_own_reply() -> None:
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.ANSWER), support=FakeSupport()
+    )
+    tapped = _turn(_state(), "Contact support").model_copy(
+        update={"support_action": ContactSupportAction()}
+    )
+
+    view = route_response(await coordinator.run(tapped)).primary
+
+    assert isinstance(view, ResponseGroundingView)
+    assert view.kind is ResponseOutcomeKind.SUPPORT_CONTACT
+    assert view.support_offered is True
+
+
+async def test_a_store_without_contacts_offers_no_buttons() -> None:
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(action=AgentAction.ANSWER), support=FakeSupport(SupportContacts())
+    )
+    tapped = _turn(_state(), "Contact support").model_copy(
+        update={"support_action": ContactSupportAction()}
+    )
+
+    result = await coordinator.run(tapped)
+    view = route_response(result).primary
+
+    assert isinstance(view, ResponseGroundingView)
+    assert view.support_offered is False
+    presentation = ChatRuntime.presentation(result)
+    assert presentation is None or presentation.support is None
+
+
+async def test_the_stores_channels_are_drawn_beneath_the_reply() -> None:
+    coordinator, _ = _coordinator(
+        _asks(), store_knowledge=FakeStoreKnowledge(), support=FakeSupport()
+    )
+
+    presentation = ChatRuntime.presentation(await coordinator.run(_turn(_state(), QUESTION)))
+
+    assert presentation is not None
+    assert presentation.support is not None
+    assert [c.url for c in presentation.support.channels] == [
+        "https://wa.me/966551234567",
+        "mailto:support@store.sa",
+    ]
+    assert presentation.products == ()

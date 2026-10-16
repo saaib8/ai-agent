@@ -213,6 +213,7 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.POLICY_ANSWER: (
         "I wasn't able to put that answer into words just now."
     ),
+    ResponseOutcomeKind.SUPPORT_CONTACT: "You can reach the store's support team below.",
     ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION: (
         "Could you tell me a little more about what you're after?"
     ),
