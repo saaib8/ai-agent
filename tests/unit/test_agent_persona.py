@@ -141,3 +141,11 @@ def test_the_first_reply_still_greets_as_sara() -> None:
 
 def test_the_next_shopping_turn_is_sara_again() -> None:
     assert speaker(_turn(), _result(), support_agent=True) is SARA
+
+
+def test_the_reply_is_told_it_speaks_as_faysal() -> None:
+    """The label and the reply's own name come from the same call."""
+    result = _result(grounding=_store_answer())
+
+    assert speaker(_turn(), result, support_agent=True) is FAYSAL
+    assert speaker(_turn(), result) is SARA

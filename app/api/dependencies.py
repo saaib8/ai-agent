@@ -492,7 +492,9 @@ def customer_response_generator(
             public_message="The customer agent is not configured.",
         )
     return CustomerResponseGenerator(
-        client, arabic_replies=app_resources.settings.customer_agent.arabic_replies
+        client,
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
+        support_agent=app_resources.settings.customer_agent.support_agent,
     )
 
 
