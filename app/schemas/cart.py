@@ -46,7 +46,8 @@ class CartProductRef(BaseModel):
     product the store did not get from Salla."""
 
     url: str = Field(min_length=1)
-    """Its page on the store."""
+    """Its page on the store, with Zory's `zory_click_id` (the `uuid`) - the
+    link to open (`app/services/click_tracking.py`)."""
 
 
 class CartLineView(BaseModel):

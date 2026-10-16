@@ -9,6 +9,7 @@ the real code.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
@@ -18,6 +19,7 @@ import pytest
 from app.api.dependencies import (
     catalog_service,
     catalog_visualization_runtime,
+    click_tracking_service,
     retailer_context_provider,
 )
 from app.api.errors import register_exception_handlers
@@ -44,6 +46,7 @@ from app.schemas.product import CommerceClassification, ProductRow
 from app.schemas.retailer import RetailerContext
 from app.schemas.visualization import RenderRoomSpec, RenderSource, RenderView, RoomType
 from app.services.catalog import FLOOR_CATEGORIES, CatalogService, catalog_item
+from app.services.click_tracking import ClickTrackingService
 from app.services.room_visualization import CatalogVisualizationRuntime, RoomVisualizer
 from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.registry import load_taxonomy
@@ -52,6 +55,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from tests.conftest import build_settings
+from tests.unit.click_ids import FakeClickIds, no_click_ids
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 from tests.unit.test_room_visualization import (
     FakeCatalog,
@@ -521,7 +525,9 @@ class TestSelectionTurn:
 
 
 def an_app(
-    service: CatalogService | None = None, runtime: CatalogVisualizationRuntime | None = None
+    service: CatalogService | None = None,
+    runtime: CatalogVisualizationRuntime | None = None,
+    click_ids: FakeClickIds | None = None,
 ) -> FastAPI:
     app = FastAPI()
     register_exception_handlers(app)
@@ -531,6 +537,9 @@ def an_app(
     if runtime is not None:
         app.dependency_overrides[catalog_visualization_runtime] = lambda: runtime
     app.dependency_overrides[retailer_context_provider] = lambda: FakeRetailers()
+    app.dependency_overrides[click_tracking_service] = (
+        no_click_ids if click_ids is None else lambda: ClickTrackingService(click_ids)
+    )
     return app
 
 
@@ -546,6 +555,38 @@ class TestRoutes:
         assert reply.status_code == 200
         item = reply.json()["items"][0]
         assert item["footprint_cm2"] == 20900.0 and item["stands_on_floor"] is True
+
+    async def test_a_tile_links_to_its_page_with_the_click_id(self) -> None:
+        service, _ = a_service()
+        click_ids = FakeClickIds({f"https://shop.test/p/{n}": f"click-{n}" for n in range(1, 50)})
+        reply = await call(
+            an_app(service, click_ids=click_ids),
+            "GET",
+            f"/v1/catalog/products?store_id={STORE}&q=sofa",
+        )
+        assert reply.status_code == 200
+        items = reply.json()["items"]
+        assert items and all(
+            re.fullmatch(r"https://shop\.test/p/(\d+)\?zory_click_id=click-\1", item["product_url"])
+            for item in items
+        )
+        assert [store for _, store in click_ids.lookups] == [STORE]
+
+    async def test_a_selection_render_links_its_pieces_with_the_click_id(self) -> None:
+        runtime, _, _ = a_runtime()
+        click_ids = FakeClickIds({f"https://shop.test/p/{n}": f"click-{n}" for n in range(1, 50)})
+        reply = await call(
+            an_app(runtime=runtime, click_ids=click_ids),
+            "POST",
+            "/v1/catalog/visualizations",
+            json=a_request().model_dump(mode="json"),
+        )
+        assert reply.status_code == 200
+        items = reply.json()["presentation"]["render"]["items"]
+        assert items and all(
+            re.fullmatch(r"https://shop\.test/p/(\d+)\?zory_click_id=click-\1", item["product_url"])
+            for item in items
+        )
 
     async def test_facets_come_back(self) -> None:
         service, _ = a_service()

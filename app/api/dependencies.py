@@ -39,6 +39,7 @@ from app.services.cart import CartService
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
+from app.services.click_tracking import ClickTrackingService
 from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
@@ -157,6 +158,13 @@ def product_discovery_service(
 ProductRepositoryDep = Annotated[ProductRepository, Depends(product_repository)]
 RetailerContextProviderDep = Annotated[RetailerContextProvider, Depends(retailer_context_provider)]
 HealthServiceDep = Annotated[HealthService, Depends(health_service)]
+
+
+def click_tracking_service(session: SessionDep) -> ClickTrackingService:
+    return ClickTrackingService(ProductRepository(session))
+
+
+ClickTrackingServiceDep = Annotated[ClickTrackingService, Depends(click_tracking_service)]
 
 
 def controlled_relaxation_service(

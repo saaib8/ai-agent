@@ -796,6 +796,30 @@ class ProductRepository:
                 by_url.setdefault(row.product_url, row.id)
         return by_vector, by_url
 
+    async def click_ids_by_url(
+        self, product_urls: Sequence[str], context: RetailerContext
+    ) -> dict[str, str]:
+        """Each in-scope product page's public id (`core_product.uuid`), keyed
+        by the page - what a card's link carries as `zory_click_id`.
+
+        Read only once a response is finished, so the id never travels through
+        ranking, grounding or a prompt (as with :meth:`store_identities`).
+        Where two rows share a page the lowest id wins.
+        """
+        urls = sorted({u for u in product_urls if u})
+        if not urls:
+            return {}
+        statement = (
+            select(core_product.c.uuid, core_product.c.product_url)
+            .where(*self._scope_clauses(context), core_product.c.product_url.in_(urls))
+            .order_by(core_product.c.id)
+        )
+        result = await self._session.execute(statement)
+        click_ids: dict[str, str] = {}
+        for row in result:
+            click_ids.setdefault(row.product_url, str(row.uuid))
+        return click_ids
+
     # ── Browse Catalogue ────────────────────────────────────────────────────
 
     def _browse_clauses(
