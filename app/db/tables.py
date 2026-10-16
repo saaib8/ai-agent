@@ -45,6 +45,11 @@ core_store = Table(
     # storefront API, which the cart asks before adding (CLAUDE.md 36).
     Column("provider", String(255), nullable=False),
     Column("salla_merchant_id", Integer, nullable=True),
+    # The store's own customer support, set by its owner on the platform. Read
+    # only by `SupportContactsRepository`, and only where the support agent is
+    # on - so a catalog without the columns runs exactly as before.
+    Column("support_email", String(254), nullable=True),
+    Column("support_whatsapp", String(15), nullable=True),
 )
 
 core_product = Table(
@@ -94,6 +99,10 @@ core_product = Table(
 # Commerce columns this service requires the live catalog to have. Verified at
 # startup (see app/db/catalog_schema.py). `material` is NOT here: it is
 # deferred, and nothing may depend on it.
+SUPPORT_CONTACT_COLUMNS: frozenset[str] = frozenset({"support_email", "support_whatsapp"})
+"""What the support agent reads from ``core_store``, checked at startup where it
+is on."""
+
 REQUIRED_COMMERCE_COLUMNS: frozenset[str] = frozenset(
     {
         "commerce_category",
