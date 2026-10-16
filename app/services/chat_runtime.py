@@ -287,7 +287,9 @@ class ChatRuntime:
             # The store's own support, drawn from its contacts - never from
             # the reply, which only points to it.
             support=(
-                channels_for(grounding.support.contacts, language)
+                channels_for(
+                    grounding.support.contacts, language, handover=grounding.support.handover
+                )
                 if grounding.support is not None
                 else None
             ),

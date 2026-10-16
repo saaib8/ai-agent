@@ -23,8 +23,10 @@ logger = get_logger(__name__)
 class SupportService:
     """The store's support contacts for one turn. Holds no state between turns."""
 
-    def __init__(self, contacts: SupportContactsRepository) -> None:
+    def __init__(self, contacts: SupportContactsRepository, *, handover: bool = False) -> None:
         self._contacts = contacts
+        self._handover = handover
+        """Whether the platform can send the shopper's request to the store."""
 
     async def offer(self, context: RetailerContext, *, requested: bool = False) -> SupportGrounding:
         """The store's support, as this turn offers it.
@@ -49,7 +51,7 @@ class SupportService:
             email=contacts.email is not None,
             whatsapp=contacts.whatsapp is not None,
         )
-        return SupportGrounding(contacts=contacts, requested=requested)
+        return SupportGrounding(contacts=contacts, requested=requested, handover=self._handover)
 
 
 __all__ = ["SupportService"]

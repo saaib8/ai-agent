@@ -238,8 +238,10 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         # Whether results carry removable chips and a pre-filled Narrow down.
         "designer_led_brief",
         "designer_led_buttons",
-        # Whether a turn about the store is Faysal's, with its support channels.
+        # Whether a turn about the store is Faysal's, with its support channels,
+        # and whether they take the shopper's request to the store.
         "support_agent",
+        "support_handover",
         "designer_direction",
         "designer_taste",
         "designer_space_fit",
