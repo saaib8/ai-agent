@@ -57,6 +57,7 @@ from app.schemas.session import SessionEnvelope, new_session
 from app.services.agent_persona import speaker
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.card_labels import card_labels
+from app.services.cart import cart_offer_choices
 from app.services.cross_sell import companion_choices
 from app.services.next_step import asks_its_own_question
 from app.services.product_brief import opening_asked, record_asked
@@ -201,7 +202,9 @@ class ChatRuntime:
         # Chips are worded in the turn's language; which chips, and what they
         # do, never depend on it.
         language = result.reply_language or ReplyLanguage.EN
-        if result.swap_offer is not None:
+        if result.cart_offer is not None:
+            choices = cart_offer_choices(result.cart_offer, language)
+        elif result.swap_offer is not None:
             choices = swap_offer_choices(result.swap_offer, language)
         elif result.room_question is not None:
             choices = room_answer_choices(result.room_question, language)

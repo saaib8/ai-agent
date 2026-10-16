@@ -212,6 +212,11 @@ class ProductInteractionOp(StrEnum):
     SELECT = "select"
     DESELECT = "deselect"
     FOCUS = "focus"
+    CONSIDER = "consider"
+    """They like it but did not ask for it in their cart - "I like the fifth
+    one", "this one is lovely". The application points at it and asks whether
+    to add it, with what their cart would then come to (CLAUDE.md 36); their
+    yes is a select."""
 
 
 class ProductInteractionIntent(BaseModel):
@@ -253,6 +258,22 @@ class ProductInteractionIntent(BaseModel):
     and one already in the cart keeps how many it has. The application caps it
     at what the cart takes (CLAUDE.md 36).
     """
+
+
+MAX_MORE_TO_ADD = 9
+"""Products beyond the first one message may add - a whole page of cards."""
+
+
+class CartAddition(BaseModel):
+    """One more product the same message puts in the cart - "add the first
+    and second", "add both" - named the way the interaction's own is."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reference: ProductReferenceSelector
+    expected_subcategory: str | None = Field(default=None, min_length=1)
+    """What kind they named for it, checked as the interaction's is."""
+    quantity: int | None = Field(default=None, ge=1, le=MAX_CART_QUANTITY)
 
 
 class BundleInteractionOp(StrEnum):
@@ -914,6 +935,12 @@ class CustomerAgentDecision(BaseModel):
     One per turn: two identity-changing edits from a single decision would need
     an order, and nothing establishes one.
     """
+
+    more_to_add: tuple[CartAddition, ...] = Field(default=(), max_length=MAX_MORE_TO_ADD)
+    """The other products one message adds to the cart, when it adds several -
+    "add the first and second sofa", "add both", "add all of these". The first
+    goes in interaction as a select, the rest here, each named and checked like
+    it. Only beside a select; empty otherwise."""
 
     add_room_to_cart: bool = False
     """They asked to put the whole room package in their cart - "add these

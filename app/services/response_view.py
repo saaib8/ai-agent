@@ -35,6 +35,8 @@ from app.schemas.response import (
     CartChangeFactView,
     CartFactsView,
     CartLineFactView,
+    CartOfferFactView,
+    CartRefusalFactView,
     ChosenSeatingPieceView,
     ChosenSeatingView,
     DeterministicResponse,
@@ -57,6 +59,7 @@ from app.schemas.screen import CustomerVisibleScreenView
 from app.schemas.seating_solution import SeatingSolution, SeatingSolutionOutcome
 from app.services.bundle_presentation import build_bundle_presentation
 from app.services.cross_sell import MAX_COMPANION_CHIPS
+from app.services.product_display import arabic_name
 from app.services.screen_view import screen_from_presentation
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.briefs import OPENING_QUESTIONS
@@ -827,6 +830,28 @@ def _cart_facts(result: CustomerTurnResult | None) -> CartFactsView | None:
         ),
         changed=bool(cart.changes),
         already_there=_already_in_cart(result),
+        refused=tuple(
+            CartRefusalFactView(
+                name=(
+                    refusal.name_english
+                    if (result.reply_language or ReplyLanguage.EN) is ReplyLanguage.EN
+                    else arabic_name(refusal.name_english, refusal.name_arabic)
+                ),
+                reason=refusal.reason.value,
+                kept=refusal.kept,
+                max_quantity=refusal.max_quantity,
+            )
+            for refusal in result.cart_refusals
+        ),
+        offer=(
+            CartOfferFactView(
+                name=result.cart_offer.name,
+                price=result.cart_offer.price,
+                total_if_added=result.cart_offer.total_if_added,
+            )
+            if result.cart_offer is not None
+            else None
+        ),
         changes=tuple(
             CartChangeFactView(
                 name=change.name,
@@ -848,7 +873,11 @@ def _already_in_cart(result: CustomerTurnResult) -> CartChangeFactView | None:
     cart, intent = result.cart, result.decision.interaction
     if cart is None or cart.changes or intent is None:
         return None
-    if intent.op is not ProductInteractionOp.SELECT:
+    if result.grounding.deterministic_clarification is not None or result.grounding.failure:
+        # The select was refused - the kind did not match, the card was gone -
+        # so the piece in focus is not what they asked for.
+        return None
+    if intent.op not in (ProductInteractionOp.SELECT, ProductInteractionOp.CONSIDER):
         return None
     interaction = result.state.product_interaction
     focused = interaction.focused_product_id
@@ -922,6 +951,8 @@ _NOTICE_FOR_OP = {
     ProductInteractionOp.SELECT: SideEffectNotice.SELECTION_NOT_UPDATED,
     ProductInteractionOp.DESELECT: SideEffectNotice.SELECTION_NOT_REMOVED,
     ProductInteractionOp.FOCUS: SideEffectNotice.FOCUS_NOT_CHANGED,
+    # Considering points at a piece, as focus does.
+    ProductInteractionOp.CONSIDER: SideEffectNotice.FOCUS_NOT_CHANGED,
 }
 """Total over the interaction operations, so a new one cannot silently fall
 through to no notice at all."""

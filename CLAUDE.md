@@ -2818,12 +2818,36 @@ keeps a cart of its own.
   since the turn began (`changes`). Every chat reply and every picks answer carries
   it; `GET /v1/cart` reads it without a turn.
 - **Changing it.** `POST /v1/picks` takes `quantity` (1..`cart_max_quantity`)
-  beside `select` / `deselect`; at most `max_picks` products by tap. A typed
+  beside `select` / `deselect`. At most `max_picks` products however they are
+  added - a tap (`pick_limit`), a typed add or an offer's yes (`CART_FULL`, a
+  fixed reply); a product already in the cart only changes quantity. A typed
   choice with a number carries `ProductInteractionIntent.quantity` ("add two of
   the third one", "make the second one 3"); `add_room_to_cart` and the room
   card's `bundle_action` `add_to_cart` add every piece being bought with its
   quantity - owned pieces stay out, and a product already in the cart keeps the
   larger quantity, so adding twice never doubles it.
+- **Liking is not adding.** "I like the fifth one" is a `consider`
+  interaction: the piece is focused and offered - "It's 3,302 SAR, which would
+  bring your cart to 9,604 SAR. Shall I add it to your cart?" - with Yes (a
+  `product_action` `add_to_cart` naming its card) and Not now. The price and
+  that total are summed in code (`CartOffer`). An explicit "add it", "I'll take
+  it", a tap, or their yes is a select.
+- **Several at once and kinds alone.** "Add the first and second sofa" is one
+  select plus `more_to_add`. A position or a kind they name finds its card on
+  the lists still on screen, newest first, when the newest cards are another
+  kind - "the first sofa" under suggestions, "the floor lamp" beside the sofa in
+  focus - with a sectional counting as a sofa (`compare_groups_v1.yaml`).
+- **The store's own cart is asked first.** On a Salla store
+  (`core_store.provider` SALLA with its Salla id) every product about to enter
+  the cart, or rise in quantity, is put to Salla's public storefront API
+  (`app/integrations/salla_storefront.py`, keyless, `Store-Identifier` = the
+  store's Salla id) by `StoreCartCheck`: not this store's (404/410, or no Salla
+  id), out of stock, or past one order's `max_quantity` - and the cart holds only
+  what Salla's would. A typed choice is asked before it is recorded (so nothing
+  goes with a refused piece); every other route - a room, a combination, an
+  offer's yes - after the turn, before the reply; a tap before it applies
+  (`pick_unavailable` with the reason). The reply is told (`cart.refused`). A
+  Salla that cannot be asked never refuses. `salla.check_cart` switches it off.
 - **The agent reads it.** The decision model sees `cart` (place, name, kind,
   quantity - no price, no id), so a line is named by `picked_ordinal`. The reply
   sees `CartFactsView`: counts, quantities, whether the turn changed it, and its

@@ -95,6 +95,11 @@ class TurnFailureCode(StrEnum):
     NOTHING_LIKED = "nothing_liked"
     """They asked to see what they liked, and nothing is on their liked list."""
 
+    CART_FULL = "cart_full"
+    """They asked to add a product and their cart already holds as many as it
+    takes (`customer_agent.max_picks`) - typed, tapped or from an offer alike
+    (CLAUDE.md 36). A whole room or seating combination is added whole."""
+
     REQUEST_NOT_UNDERSTOOD = "request_not_understood"
     """The turn could not be turned into anything we can act on.
 

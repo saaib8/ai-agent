@@ -230,6 +230,8 @@ def already_asks(result: CustomerTurnResult) -> bool:
         result.room_question is not None
         or result.product_brief is not None
         or result.swap_offer is not None
+        # "Shall I add it to your cart?" with its Yes and Not now (CLAUDE.md 36).
+        or result.cart_offer is not None
         or result.seating_solution is not None
         or result.companions
         or result.finishing_pieces

@@ -64,6 +64,9 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
     TurnFailureCode.CARD_NOT_ON_SCREEN: (
         "That card isn't on screen any more - try it from the latest results."
     ),
+    TurnFailureCode.CART_FULL: (
+        "Your cart is full - remove a product from it to add another."
+    ),
     TurnFailureCode.NOTHING_LIKED: (
         "You haven't liked anything yet - tap the heart on a card to keep the "
         "pieces whose look you like."

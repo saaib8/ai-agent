@@ -184,11 +184,29 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
 - Draw the tray from `cart.lines`: `display.name`, `display.price` (each),
   `line_total_display`, and a − / + stepper. Totals: `cart_total` ("Total {price}")
   with each `totals[].display` - one per currency, never added together.
+- **The agent asks Salla first.** On a Salla store, before a product enters our cart
+  (or its quantity rises) the agent checks Salla's storefront: a product that is not
+  this store's, out of stock, or past one order's limit is never put in our cart -
+  the reply says why, and a tap gets `409 pick_unavailable` with words to show
+  ("That product can't be added to this store's cart.", "That product is out of
+  stock.", "The store takes up to 3 of this product per order."). So Salla refusing
+  at `addItem` is now rare (a colour or size skipped, stock that moved) - still undo it.
+- **The cart holds 10 products** however they are added: a tap past it is refused
+  (`pick_limit`); a typed add or an offer's yes gets the reply "Your cart is full -
+  remove a product from it to add another." and changes nothing.
 - **Changing it:** `POST /v1/picks` with `{"kind":"quantity","pick":N,"quantity":Q}`
   (1..`cart_max_quantity`, default 10 - else 422 `cart_quantity`), `{"kind":"deselect","pick":N}`
   to remove, `{"kind":"select","ordinal":N,"list_revision":R}` to add a card (cart
   full - default 10 products - is 422 `pick_limit`). After a new pick the widget
   opens the turn as before (`goes_with`), now with `say_added_to_cart` as the message.
+- **"I like the fifth one" asks first.** The reply offers it - its price and what the
+  cart would then come to - with two chips in `presentation.choices`: Yes
+  (`offer_add`, carrying `product_action: {"kind":"add_to_cart","card":{...}}`) and
+  Not now (`offer_not_now`, words only). Send a chip's `product_action` with its
+  `value` as the message, as for any chip; the yes adds it and answers like a tap
+  (the pick and what goes with it). `card` may be null: the piece in focus.
+- **Favourites are `liked` only.** `picks` are the cart now: draw them as "in cart",
+  never as favourites.
 - **Add all:** a room package's button is `add_all_to_cart` ("Add all to cart · {price}",
   `{price}` = the room's `totals.display.new_spend`) and sends a chat turn with
   `bundle_action: {"kind": "add_to_cart"}` and `say_add_all_to_cart` as the message -
@@ -196,7 +214,12 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
   seating combination's button uses the same label with its own total and sends the
   existing `search_action` `combination` / `choose`.
 - **Copying into the store's cart (Salla).** Only the storefront page can write the
-  shopper's cart. For each entry in `cart.changes`:
+  shopper's cart. Sync from the whole cart, not only from `changes`: a reply that
+  never reached the page (Stop, a dropped connection, a closed tab) still changed our
+  cart, and its `changes` are gone. Keep what you last put into Salla per product
+  (`product.uuid` → quantity, in `sessionStorage`), and on every `cart` you receive
+  make Salla match `cart.lines`; `changes` is then only a hint for messages. Each
+  difference is handled like a change:
   1. quantity went up: `POST /api/widgets/cart/salla-item/` (Zory, widget session) with
      `{"product": change.product.uuid, "quantity": quantity_after - quantity_before}`
      (`"salla_product_id": change.product.salla_id` names it as well).

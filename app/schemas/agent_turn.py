@@ -29,7 +29,7 @@ from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage
 from app.schemas.agent_view import AgentStateView
 from app.schemas.bundle import BundleOptimizationOutcome
 from app.schemas.bundle_action import BundleActionRequest
-from app.schemas.cart import CartView
+from app.schemas.cart import CartOffer, CartRefusal, CartView
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.conversation import ConversationContext
 from app.schemas.design import DesignGuidance
@@ -443,8 +443,17 @@ class CustomerTurnResult(BaseModel):
 
     cart: CartView | None = None
     """Their cart after the turn: the picks with how many of each, the totals,
-    and what this turn changed (CLAUDE.md 36). Built by the runtime from
-    `picks` once the turn is done; None wherever `picks` is."""
+    and what this turn changed (CLAUDE.md 36). Built from `picks` once the turn
+    is done; None wherever `picks` is."""
+
+    cart_refusals: tuple[CartRefusal, ...] = ()
+    """What this turn asked for that the store's own cart would not take - not
+    in the store, out of stock, past one order's limit - and so ours did not
+    either (CLAUDE.md 36)."""
+
+    cart_offer: CartOffer | None = None
+    """The piece they liked, offered for their cart with what it would then
+    come to - asked before anything is added (CLAUDE.md 36)."""
 
     focus: GroundedProduct | None = None
     """The pick the customer asked about, drawn above what goes with it.

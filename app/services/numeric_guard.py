@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from app.core.numbers import parse_stated_amount
-from app.schemas.cart import CartView
+from app.schemas.cart import CartOffer, CartRefusal, CartView
 from app.schemas.design import DesignGuidance
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.picks import PickView
@@ -241,6 +241,30 @@ def cart_figures(cart: CartView | None) -> tuple[Decimal, ...]:
         # The numbers in a changed product's name ("6 Seater"), as the reply
         # may name it - the same allowance the picks' names have.
         *(Decimal(n) for change in cart.changes for n in _NAME_NUMBER.findall(change.name)),
+    )
+
+
+def cart_offer_figures(offer: CartOffer | None) -> tuple[Decimal, ...]:
+    """An offer's price and what the cart would come to with it - summed by
+    the application, given to the reply to say (CLAUDE.md 36) - and the
+    numbers in the product's name."""
+    if offer is None:
+        return ()
+    return (
+        offer.price_amount,
+        *((offer.total_if_added_amount,) if offer.total_if_added_amount is not None else ()),
+        *(Decimal(n) for n in _NAME_NUMBER.findall(offer.name)),
+    )
+
+
+def cart_refusal_counts(refusals: Sequence[CartRefusal]) -> tuple[int, ...]:
+    """What the store's cart would take of each refused product - "the store
+    takes up to 3 per order" - counted by the application."""
+    return tuple(
+        count
+        for refusal in refusals
+        for count in (refusal.kept, refusal.max_quantity)
+        if count is not None
     )
 
 

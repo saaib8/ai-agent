@@ -740,6 +740,22 @@ class AwsSettings(BaseModel):
     secret_name: str = ""
 
 
+class SallaSettings(BaseModel):
+    """Salla's public storefront API, asked before a product goes in the cart
+    of a store that sells on Salla (CLAUDE.md 36): is it this store's, is it in
+    stock, and how many may one order take. Keyless - the store is named by
+    its Salla id - and never a reason to refuse a cart when Salla is slow."""
+
+    check_cart: bool = True
+    """Off, the cart takes any catalogue product, as before."""
+
+    storefront_url: str = "https://api.salla.dev/store/v1"
+    timeout_s: float = Field(default=4.0, gt=0, le=20)
+    cache_ttl_s: int = Field(default=60, ge=0, le=3600)
+    """How long one product's answer is reused. Stock moves slowly; a turn
+    adding a room asks once per piece."""
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix=ENV_PREFIX,
@@ -776,6 +792,7 @@ class Settings(BaseSettings):
     # And again: without it the Visualize route refuses and nothing else changes.
     visualization: VisualizationSettings | None = None
     catalog: CatalogSettings = CatalogSettings()
+    salla: SallaSettings = SallaSettings()
     observability: ObservabilitySettings = ObservabilitySettings()
     aws: AwsSettings = AwsSettings()
 

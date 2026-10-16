@@ -21,10 +21,12 @@ cart (`pick`), as a pick is (CLAUDE.md 20.2).
 from __future__ import annotations
 
 from decimal import Decimal
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.agent_state import MAX_CART_QUANTITY
+from app.schemas.card_comparison import CardRef
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 from app.schemas.product import ProductDisplay
 
@@ -124,6 +126,57 @@ class CartView(BaseModel):
     changes: tuple[CartChange, ...] = ()
     """What this turn changed, oldest line first. Empty when nothing changed,
     and always empty on a plain read of the cart."""
+
+
+class CartOffer(BaseModel):
+    """A piece they liked, offered for their cart before it goes in - "Shall I
+    add it? Your cart would come to 9,604 SAR" (CLAUDE.md 36).
+
+    Application-only: the reply is given a worded projection of it, and the
+    chips name the card, never the product.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1)
+    """In the conversation's language."""
+    price: str = Field(min_length=1)
+    """Its price, worded: "3,302 SAR"."""
+    price_amount: Decimal
+    total_if_added: str | None = None
+    """What the cart would come to with one of it, worded; None when the cart
+    holds another currency and no single total exists."""
+    total_if_added_amount: Decimal | None = None
+    card: CardRef | None = None
+    """Where it is on screen, for the "Yes, add it" chip; None when it is not
+    on a list still on screen - the chip then sends words."""
+
+
+class CartRefusalReason(StrEnum):
+    """Why the store's own cart would not take a product as asked."""
+
+    NOT_IN_STORE = "not_in_store"
+    """The store's cart does not know it: another store's product, one the
+    store removed, or one added to the catalogue by hand."""
+
+    OUT_OF_STOCK = "out_of_stock"
+    OVER_LIMIT = "over_limit"
+    """More than one order may take; the cart keeps the most it may."""
+
+
+class CartRefusal(BaseModel):
+    """A product this turn asked for that the store's cart would not take as
+    asked, so ours did not either (CLAUDE.md 36). Application-only: the reply
+    is given its words."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name_english: str = Field(min_length=1)
+    name_arabic: str | None = None
+    reason: CartRefusalReason
+    kept: int = Field(ge=0)
+    """How many the cart now holds of it - 0 when it is not in it."""
+    max_quantity: int | None = Field(default=None, ge=1)
 
 
 class CartResponse(BaseModel):

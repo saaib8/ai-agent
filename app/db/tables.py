@@ -41,6 +41,10 @@ core_store = Table(
     Column("name_english", String(255), nullable=False),
     Column("name_arabic", String(255), nullable=True),
     Column("active_status", Boolean, nullable=False),
+    # Where the store sells. A Salla store's own id names it to Salla's
+    # storefront API, which the cart asks before adding (CLAUDE.md 36).
+    Column("provider", String(255), nullable=False),
+    Column("salla_merchant_id", Integer, nullable=True),
 )
 
 core_product = Table(

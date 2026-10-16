@@ -129,12 +129,28 @@ class MoreLikeThisAction(BaseModel):
         return self
 
 
+class AddToCartAction(BaseModel):
+    """Put a product in the cart as a turn of the conversation - the "Yes, add
+    it" chip under an offer to add the piece they liked (CLAUDE.md 36).
+
+    Named by its card when it is on screen; with no card, the piece in focus -
+    the one the offer was about. Then the pick is answered as a tap is: its
+    card, and what goes with it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["add_to_cart"] = "add_to_cart"
+    card: CardRef | None = None
+
+
 ProductActionRequest = Annotated[
     GoesWithPickAction
     | ComparePicksAction
     | CompareCardsAction
     | CompanionAction
-    | MoreLikeThisAction,
+    | MoreLikeThisAction
+    | AddToCartAction,
     Field(discriminator="kind"),
 ]
 """Any screen-driven product action, told apart by `kind`."""

@@ -581,6 +581,33 @@ class CartChangeFactView(BaseModel):
     quantity_after: int = Field(ge=0)
 
 
+class CartOfferFactView(BaseModel):
+    """A piece they liked, not yet in their cart, to offer adding - its price
+    and what the cart would then come to, both summed and worded by the
+    application, so sayable exactly as given."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1)
+    price: str = Field(min_length=1)
+    total_if_added: str | None = None
+    """None when the cart holds another currency and no single total exists."""
+
+
+class CartRefusalFactView(BaseModel):
+    """A product they asked for that the store's own cart would not take as
+    asked - so it is not in their cart, or is in it only up to one order's
+    limit (CLAUDE.md 36)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1)
+    reason: Literal["not_in_store", "out_of_stock", "over_limit"]
+    kept: int = Field(ge=0)
+    """How many the cart now holds of it - 0 when none."""
+    max_quantity: int | None = Field(default=None, ge=1)
+
+
 class CartFactsView(BaseModel):
     """Their cart after this turn, worked out by the application from prices
     read just now (CLAUDE.md 36). Every figure here is on the cart shown
@@ -606,6 +633,14 @@ class CartFactsView(BaseModel):
     """What this turn changed, product by product: from 0 is added, to 0 is
     removed. Without it a reply guessed which sofa it had taken out - and named
     the one still in the cart."""
+
+    refused: tuple[CartRefusalFactView, ...] = ()
+    """What the store's own cart would not take this turn: never call any of
+    these added beyond `kept`."""
+
+    offer: CartOfferFactView | None = None
+    """They liked a piece and did not ask for it in their cart: ask whether to
+    add it, with its price and what the cart would come to (CLAUDE.md 36)."""
 
     already_there: CartChangeFactView | None = None
     """The product they asked to add, when it was already in the cart with

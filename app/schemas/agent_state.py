@@ -445,7 +445,10 @@ class ProductInteractionState(BaseModel):
 
         Selected and compared products count as known: a customer may reach
         one by a path other than the current result list, so neither is
-        required to be a subset of what is presented.
+        required to be a subset of what is presented. So do the cards of the
+        earlier lists still on screen: "I like the second sofa" under the
+        suggestions for another piece points at a sofa they can still see
+        (CLAUDE.md 36). A new search lets go of any focus not chosen.
         """
         if self.focused_product_id is None:
             return self
@@ -453,6 +456,7 @@ class ProductInteractionState(BaseModel):
             set(self.presented_product_ids)
             | set(self.selected_product_ids)
             | set(self.compared_product_ids)
+            | {product_id for entry in self.earlier_lists for product_id in entry.product_ids}
         )
         if self.focused_product_id not in known:
             raise ValueError("focused_product_id must be a presented or selected product")

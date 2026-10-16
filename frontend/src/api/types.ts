@@ -93,6 +93,8 @@ export interface CardLabels {
   quantity_limit: string
   add_all_to_cart: string
   go_to_cart: string
+  offer_add: string
+  offer_not_now: string
   add: string
   view: string
   room_limit: string
@@ -176,6 +178,7 @@ export interface CardLabels {
   say_take_option: string
   say_added_to_cart: string
   say_add_all_to_cart: string
+  say_add_it_to_cart: string
   say_not_option: string
   say_more_seating: string
   say_other_options: string
@@ -677,6 +680,9 @@ export type ProductAction =
   | { kind: 'companion'; category: string; subcategory: string }
   | { kind: 'more_like_this'; card: { list_revision: number; ordinal: number } }
   | { kind: 'more_like_this'; liked: number }
+  /** "Yes, add it" under an offer to add a piece they liked: its card, or the
+   *  piece in focus when the card is null. */
+  | { kind: 'add_to_cart'; card?: { list_revision: number; ordinal: number } | null }
 
 /** A ready answer to tap; when it carries an action, tapping runs it. */
 export interface ReplyChoice {

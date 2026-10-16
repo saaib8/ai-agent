@@ -155,6 +155,10 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         # The picks with how many of each, priced, and what the turn changed
         # (CLAUDE.md 36).
         "cart",
+        # A piece they liked, offered for the cart with what it would come to.
+        "cart_offer",
+        # What the store's own cart would not take this turn, and why.
+        "cart_refusals",
         "focus",
         "companions",
         # A finished room's missing pieces, asked about when they want a

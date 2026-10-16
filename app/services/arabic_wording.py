@@ -55,6 +55,9 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "left your current choice as it is.": (
             "وجدت بدائل، لكن لا يصلح أيٌّ منها مع بقية الغرفة، لذلك أبقيت اختيارك الحالي كما هو."
         ),
+        "Your cart is full - remove a product from it to add another.": (
+            "سلتك ممتلئة - أزل منتجًا منها لتضيف آخر."
+        ),
         "That card isn't on screen any more - try it from the latest results.": (
             "لم تعد هذه البطاقة معروضة - جرّبها من أحدث النتائج."
         ),
