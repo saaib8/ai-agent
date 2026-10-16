@@ -76,6 +76,7 @@ from app.services.seating_presentation import (
     present_seating_solution,
     seating_choices,
 )
+from app.services.support_channels import channels_for
 from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.briefs import BriefQuestionKind
 
@@ -283,6 +284,13 @@ class ChatRuntime:
                 else None
             ),
             swap_context=result.swap_context,
+            # The store's own support, drawn from its contacts - never from
+            # the reply, which only points to it.
+            support=(
+                channels_for(grounding.support.contacts, language)
+                if grounding.support is not None
+                else None
+            ),
         )
         return None if built.is_empty() else built
 

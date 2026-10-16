@@ -162,6 +162,9 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "the results.": (
             "لنجد القطعة المناسبة لك. اختر ما يهمك من الخيارات أدناه - أو انتقل مباشرة إلى النتائج."
         ),
+        "You can reach the store's support team below.": (
+            "يمكنك التواصل مع فريق دعم المتجر أدناه."
+        ),
         "I wasn't able to put that answer into words just now.": (
             "لم أتمكن من صياغة تلك الإجابة الآن."
         ),

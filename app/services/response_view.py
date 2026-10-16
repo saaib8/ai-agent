@@ -171,6 +171,7 @@ def _has_primary_outcome(result: CustomerTurnResult) -> bool:
         or grounding.comparison is not None
         or bool(grounding.design_guidance)
         or grounding.store_knowledge is not None
+        or grounding.support is not None
         or result.bundle_outcome is not None
         or result.bundle_change is not None
         or result.decision.action is AgentAction.ANSWER
@@ -256,6 +257,17 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             guidance=grounding.design_guidance,
         )
 
+    support = grounding.support
+    offered = support is not None and support.contacts.any
+    if support is not None and support.requested:
+        # They asked to reach the shop's support: its channels are the answer.
+        return _view(
+            ResponseOutcomeKind.SUPPORT_CONTACT,
+            clarification,
+            result=result,
+            support_offered=offered,
+        )
+
     if grounding.store_knowledge is not None:
         # A question about the shop, answered from its own documents. Like
         # design advice, it is what they asked even with cards still on screen.
@@ -265,6 +277,7 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             result=result,
             policy_question=grounding.store_knowledge.question,
             policy_passages=grounding.store_knowledge.passages,
+            support_offered=offered,
         )
 
     if grounding.comparison is not None:
