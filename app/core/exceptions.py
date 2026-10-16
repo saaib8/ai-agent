@@ -483,3 +483,15 @@ class CartQuantityError(InvalidRequestError):
 
     code = "cart_quantity"
     public_message = "That's more of one product than the cart takes."
+
+
+# ── Support ─────────────────────────────────────────────────────────────────
+
+
+class SupportHandoverOffError(ZoryError):
+    """The platform asked for a conversation to hand to the store's support
+    where `customer_agent.support_handover` is off."""
+
+    code = "support_handover_off"
+    http_status = HTTPStatus.NOT_FOUND
+    public_message = "Sending a request to the store's support is not available here."
