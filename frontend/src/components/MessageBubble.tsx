@@ -22,7 +22,7 @@ import type {
   GridSelection,
   SearchRefineControls,
 } from './presentation/ProductGrid'
-import { RoomBundle } from './presentation/RoomBundle'
+import { RoomBundle, newSpendText } from './presentation/RoomBundle'
 import { RoomRender } from './presentation/RoomRender'
 import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
@@ -91,7 +91,7 @@ export function ZoryAvatar() {
   )
 }
 
-/** The assistant a reply is shown as: Sarah, Salman or Nora. */
+/** The assistant a reply is shown as: Sara, Salman or Nora. */
 export function AgentAvatar({ agent }: { agent?: string | null }) {
   const look = agentLook(agent)
   return (
@@ -131,6 +131,8 @@ interface AssistantBubbleProps {
   onVisualizeInRoom?: (file: File | null) => void
   /** The room photo the session keeps, to show beside that button. */
   roomPhotoPreview?: string | null
+  /** Present on the current room package only: put its pieces in the cart. */
+  onAddRoomToCart?: () => void
   /** Present while this turn's render can be drawn again from another view. */
   onRerender?: (view: RenderView, viewLabel: string) => void
   /** A catalogue render: reopen the catalogue with its pieces. */
@@ -168,6 +170,7 @@ export function AssistantBubble({
   onVisualize,
   onVisualizeInRoom,
   roomPhotoPreview = null,
+  onAddRoomToCart,
   onRerender,
   onEditSelection,
   renderOutdated = false,
@@ -310,6 +313,7 @@ export function AssistantBubble({
             onVisualize={onVisualize}
             onVisualizeInRoom={onVisualizeInRoom}
             roomPhotoPreview={roomPhotoPreview}
+            onAddAllToCart={onAddRoomToCart}
           />
         )}
         {render && (
@@ -348,7 +352,7 @@ export function AssistantBubble({
                         disabled={!!busy}
                         className="rounded-full bg-ink px-3.5 py-1.5 text-sm font-medium text-white transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {roomWords.chooseThis}
+                        {roomWords.addAllToCart(newSpendText(bundle.totals))}
                       </button>
                       <button
                         onClick={() => onCombination('dismiss', index + 1)}

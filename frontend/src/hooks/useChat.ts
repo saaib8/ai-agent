@@ -10,6 +10,7 @@ import {
 } from '../api/client'
 import type {
   BundleAction,
+  CartView,
   CatalogSelection,
   ChatResponse,
   ErrorBody,
@@ -80,6 +81,9 @@ export interface UseChat {
   revision: number | null
   /** The customer's picks, as the server last reported them. */
   picks: PickView[]
+  /** Their cart - the picks with how many of each and what they come to - as
+   *  the server last reported it; null until a reply or a tick carries one. */
+  cart: CartView | null
   /** A tick or untick is in flight: the session is being written. */
   picking: boolean
   /** Why the last tick was refused, in the server's words; cleared by the next. */
@@ -153,6 +157,7 @@ export function useChat(): UseChat {
   const [activity, setActivity] = useState<Activity>(null)
   const [revision, setRevision] = useState<number | null>(null)
   const [picks, setPicks] = useState<PickView[]>([])
+  const [cart, setCart] = useState<CartView | null>(null)
   const [picking, setPicking] = useState(false)
   const [picksError, setPicksError] = useState<string | null>(null)
   const [liked, setLiked] = useState<LikedView[] | null>(null)
@@ -218,6 +223,8 @@ export function useChat(): UseChat {
     // The server is the source of truth for what is picked; absent means the
     // turn did not report picks, so the tray stays as it is.
     if (data.picks) setPicks(data.picks)
+    // The cart likewise: absent means unchanged.
+    if (data.cart) setCart(data.cart)
     if (data.liked) setLiked(data.liked)
     const id = nextId()
     setTurns((prev) => [...prev, { kind: 'assistant', id, data, selection }])
@@ -279,6 +286,8 @@ export function useChat(): UseChat {
       revisionRef.current = result.data.session_revision
       setRevision(result.data.session_revision)
       setPicks(result.data.picks)
+      // Null when the server could not read the cart: keep the one we have.
+      if (result.data.cart) setCart(result.data.cart)
       if (result.data.liked) setLiked(result.data.liked)
       return result.data
     }
@@ -479,6 +488,7 @@ export function useChat(): UseChat {
     setTurns([])
     setRevision(null)
     setPicks([])
+    setCart(null)
     setPicksError(null)
     setLiked(null)
     setLikeQueue([])
@@ -495,6 +505,7 @@ export function useChat(): UseChat {
     activity,
     revision,
     picks,
+    cart,
     picking,
     picksError,
     liked,

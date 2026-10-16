@@ -59,7 +59,7 @@ Explicitly out of scope for initial V1 unless requested later:
 - S3/raw conversation archive
 - WhatsApp
 - Voice
-- Cart/checkout/payment integration
+- Checkout/payment integration (the cart is in - section 36)
 - Post-purchase support
 - Visualization/image-generation pipeline
 - Furniture Finder / image similarity UX expansion
@@ -2364,6 +2364,8 @@ At minimum:
 - `GET /health`
 - `POST /v1/chat`
 
+The cart adds one read: `GET /v1/cart` (section 36).
+
 A chat request should carry only what V1 actually needs, conceptually:
 
 ```json
@@ -2381,21 +2383,23 @@ Once `store_id` is resolved into request context, downstream agents/tools must c
 Design the response so structured product/bundle data can coexist with assistant text; do not encode UI as arbitrary LLM-generated HTML.
 
 **Each reply names the assistant it is shown as** (`ChatResponse.agent`):
-`sarah` (shopping - the session's own voice), `salman` (sales) or `nora`
+`sara` (shopping - the session's own voice), `salman` (sales) or `nora`
 (interior design). A label only: one assistant answers every turn, with one set
 of prompts and services; nothing routes on it. It is decided in code from what
-the turn did (`app/services/agent_persona.py`), never by a model:
+the turn did (`app/services/agent_persona.py`), never by a model, and the reply
+is told it (`ResponseInput.speaking_as`) so a reply that names itself names the
+one it is shown under:
 
-- **Nora** - the session's first reply (it greets and introduces itself as
-  Nora), design answers, and the room being designed: its questions, its
-  package, and a piece swapped for another of its kind.
+- **Sara** - the session's first reply (it greets and introduces itself as
+  Sara), product discovery, Furniture Finder, the cart, room visualisation
+  (every render), and everything else.
 - **Salman** - cross-sell (a pick shown with what goes with it, the kinds
   offered, a companion tapped), an up-sell (`commercial_reason: upsell`), and a
   room's money side: an over-budget swap and its answers, cheaper pieces, and
   finishing touches offered or added. Sales outranks design on a turn that is
   both.
-- **Sarah** - product discovery, Furniture Finder, room visualisation (every
-  render), and everything else.
+- **Nora** - design answers, and the room being designed: its questions, its
+  package, and a piece swapped for another of its kind.
 
 **The server words what a client shows around products, in the reply's
 language** - so a store's widget, like the console, shows it as it is and keeps
@@ -2794,4 +2798,42 @@ Customer
 ```
 
 Only two reasoning agents exist in V1. Everything else is a service/tool unless requirements later justify another reasoning boundary.
+
+---
+
+## 36. The Cart
+
+**Select means add to cart.** The picks are the customer's cart: every way of
+selecting - a card's button, a typed "add the 7th one" or "I'll take it", a
+seating combination chosen, a room package's "Add all to cart", a typed "add
+these all to my cart" - adds to `selected_product_ids`, and how many of each
+lives beside it in `cart_quantities` (only where more than one; a product that
+leaves the cart takes its quantity with it). One list, one reducer: no route
+keeps a cart of its own.
+
+- **The server owns the cart and prices it fresh.** `CartService`
+  (`app/services/cart.py`) builds `CartView` from the picks just read: each
+  line's quantity and line total, one total per currency (never converted), the
+  products the catalog no longer returns counted but not priced, and what changed
+  since the turn began (`changes`). Every chat reply and every picks answer carries
+  it; `GET /v1/cart` reads it without a turn.
+- **Changing it.** `POST /v1/picks` takes `quantity` (1..`cart_max_quantity`)
+  beside `select` / `deselect`; at most `max_picks` products by tap. A typed
+  choice with a number carries `ProductInteractionIntent.quantity` ("add two of
+  the third one", "make the second one 3"); `add_room_to_cart` and the room
+  card's `bundle_action` `add_to_cart` add every piece being bought with its
+  quantity - owned pieces stay out, and a product already in the cart keeps the
+  larger quantity, so adding twice never doubles it.
+- **The agent reads it.** The decision model sees `cart` (place, name, kind,
+  quantity - no price, no id), so a line is named by `picked_ordinal`. The reply
+  sees `CartFactsView`: counts, quantities, whether the turn changed it, and its
+  totals - summed by the application and worded, and so sayable exactly as given
+  (the numeric guard admits the cart's figures as it admits the tray's).
+- **The store's own cart is the widget's to fill.** Only the storefront page can
+  write a shopper's cart (on Salla, `salla.cart.addItem`), so each line names its
+  product the way the store knows it (`product`: uuid, Salla id, url) and
+  `changes` says what to copy across (docs/widget-display-contract.md 6). Requests
+  still never carry a product id.
+- **Not an order.** Nothing is bought, reserved or paid for here; checkout
+  happens on the store.
 

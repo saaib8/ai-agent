@@ -248,4 +248,6 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         # Whether a bed picked asks the room's size, and a mattress after it
         # comes in the bed's size.
         "fit_after_pick",
+        # The cart: how many of one product it takes (CLAUDE.md 36).
+        "cart_max_quantity",
     }

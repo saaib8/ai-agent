@@ -27,6 +27,7 @@ from app.schemas.agent_state import (
     AgentStateV1,
     BundleItemState,
     BundleItemStatus,
+    CartQuantity,
     CustomerPreferenceState,
     DerivedCommerceState,
     PresentedList,
@@ -54,6 +55,7 @@ from app.schemas.agent_updates import (
     SetBundleLineAcquisition,
     SetBundleLineQuantity,
     SetBundleLineStatus,
+    SetCartQuantity,
     SetSemanticIntent,
     apply_items,
 )
@@ -143,6 +145,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
                 else None
             ),
             selected_product_ids=interaction.selected_product_ids,
+            cart_quantities=interaction.cart_quantities,
             liked_product_ids=interaction.liked_product_ids,
             explored_product_ids=interaction.explored_product_ids,
             # Carried across the new results deliberately. A comparison stays
@@ -331,12 +334,14 @@ def _interaction(
         focus = update.focused_product_id
     else:
         focus = current.focused_product_id
+    selected = apply_items(current.selected_product_ids, update.selected_product_ids)
     return ProductInteractionState(
         presented_product_ids=current.presented_product_ids,
         presented_search_revision=current.presented_search_revision,
         earlier_lists=current.earlier_lists,
         focused_product_id=focus,
-        selected_product_ids=apply_items(current.selected_product_ids, update.selected_product_ids),
+        selected_product_ids=selected,
+        cart_quantities=cart_quantities(current.cart_quantities, update.cart_quantities, selected),
         liked_product_ids=apply_items(current.liked_product_ids, update.liked_product_ids),
         explored_product_ids=apply_items(
             current.explored_product_ids, update.explored_product_ids
@@ -354,6 +359,28 @@ def _interaction(
             if update.compared_product_ids is None
             else current.presented_search_revision
         ),
+    )
+
+
+def cart_quantities(
+    current: Sequence[CartQuantity],
+    changes: Sequence[SetCartQuantity],
+    selected: Sequence[int],
+) -> tuple[CartQuantity, ...]:
+    """The cart's quantities after these changes, for the products still in it.
+
+    A change of one clears the line, since one is what a pick without a line
+    already means; a product that left the cart takes its quantity with it, so
+    adding it again starts from one.
+    """
+    quantities = {line.product_id: line.quantity for line in current}
+    for change in changes:
+        quantities[change.product_id] = change.quantity
+    in_cart = set(selected)
+    return tuple(
+        CartQuantity(product_id=product_id, quantity=quantity)
+        for product_id, quantity in quantities.items()
+        if product_id in in_cart and quantity > 1
     )
 
 

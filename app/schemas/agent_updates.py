@@ -28,7 +28,12 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
-from app.schemas.agent_state import MAX_ROOM_WORDS, BundleItemStatus, PurchaseStage
+from app.schemas.agent_state import (
+    MAX_CART_QUANTITY,
+    MAX_ROOM_WORDS,
+    BundleItemStatus,
+    PurchaseStage,
+)
 from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority
 from app.schemas.discovery import PriceConstraint, ProductSearchRequest, SeatingCapacityConstraint
 from app.schemas.geometry import RoomGeometry
@@ -133,6 +138,16 @@ class ActiveSearchUpdate(BaseModel):
     semantic_intent: SemanticIntentUpdate | None = None
 
 
+class SetCartQuantity(BaseModel):
+    """How many of one cart product. One is the default, so setting one
+    clears any larger quantity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    quantity: int = Field(ge=1, le=MAX_CART_QUANTITY)
+
+
 class ProductInteractionUpdate(BaseModel):
     """Focus and selection only.
 
@@ -149,6 +164,12 @@ class ProductInteractionUpdate(BaseModel):
     selected_product_ids: ProductIdListUpdate | None = None
     liked_product_ids: ProductIdListUpdate | None = None
     explored_product_ids: ProductIdListUpdate | None = None
+
+    cart_quantities: tuple[SetCartQuantity, ...] = ()
+    """How many of each named cart product, from now on. Products not named
+    keep theirs. Applied after the selection changes, so a product added in
+    the same update may be given its quantity here; a product no longer in
+    the cart loses its quantity with it."""
 
     compared_product_ids: tuple[int, ...] | None = None
     """The comparison now on screen, in column order, replacing any before it.

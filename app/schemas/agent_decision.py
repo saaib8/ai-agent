@@ -27,7 +27,12 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from app.schemas.acquisition import BundleAcquisition
-from app.schemas.agent_state import MAX_ROOM_WORDS, MAX_SEMANTIC_INTENT_CHARS, PurchaseStage
+from app.schemas.agent_state import (
+    MAX_CART_QUANTITY,
+    MAX_ROOM_WORDS,
+    MAX_SEMANTIC_INTENT_CHARS,
+    PurchaseStage,
+)
 from app.schemas.bundle_reference import (
     BundleReferenceSelector,
     DesignNeedCategoryMatch,
@@ -239,6 +244,14 @@ class ProductInteractionIntent(BaseModel):
     Validated against the approved taxonomy by the layer that holds the
     registry, exactly as every other model-supplied commerce value is
     (CLAUDE.md 14.3).
+    """
+
+    quantity: int | None = Field(default=None, ge=1, le=MAX_CART_QUANTITY)
+    """How many of it they want in their cart, when they said a number - "add
+    two of the third one", "make the rug 3", "I need 4 of these chairs". With
+    select only. None when they said no number: a new product goes in once,
+    and one already in the cart keeps how many it has. The application caps it
+    at what the cart takes (CLAUDE.md 36).
     """
 
 
@@ -901,6 +914,13 @@ class CustomerAgentDecision(BaseModel):
     One per turn: two identity-changing edits from a single decision would need
     an order, and nothing establishes one.
     """
+
+    add_room_to_cart: bool = False
+    """They asked to put the whole room package in their cart - "add these
+    all to my cart", "I'll take the whole room", "add everything". With answer.
+    A flag, never the products: which pieces they are buying, and how many of
+    each, is the application's to read from the room on record; pieces they
+    already own are left out (CLAUDE.md 36)."""
 
     anchor_picks: bool = False
     """They asked to build the room around the products they have picked -

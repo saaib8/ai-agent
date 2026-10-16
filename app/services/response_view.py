@@ -32,6 +32,9 @@ from app.schemas.product_brief import BriefMode
 from app.schemas.resolution import DeterministicClarification
 from app.schemas.response import (
     BundleGroundingView,
+    CartChangeFactView,
+    CartFactsView,
+    CartLineFactView,
     ChosenSeatingPieceView,
     ChosenSeatingView,
     DeterministicResponse,
@@ -665,6 +668,7 @@ def _view(
         seats_for=_seats_for(result),
         picked_kind=_picked_kind(result),
         selection_changed=_selection_changed(result),
+        cart=_cart_facts(result),
         seating_requirement_known=_seating_known(result),
         chosen_seating=_chosen_seating(result),
         design_direction=result.direction if result else None,
@@ -804,6 +808,61 @@ def _selection_changed(result: CustomerTurnResult | None) -> bool:
     route recorded it.
     """
     return result is not None and result.selection_added
+
+
+def _cart_facts(result: CustomerTurnResult | None) -> CartFactsView | None:
+    """Their cart as the reply may speak of it: counts, worded totals and what
+    changed - the figures the cart beside the reply already shows."""
+    if result is None or result.cart is None:
+        return None
+    cart = result.cart
+    return CartFactsView(
+        item_count=cart.item_count,
+        totals=tuple(
+            total.display or f"{total.amount.normalize():f} {total.price_unit}"
+            for total in cart.totals
+        ),
+        lines=tuple(
+            CartLineFactView(kind=line.kind, quantity=line.quantity) for line in cart.lines
+        ),
+        changed=bool(cart.changes),
+        already_there=_already_in_cart(result),
+        changes=tuple(
+            CartChangeFactView(
+                name=change.name,
+                quantity_before=change.quantity_before,
+                quantity_after=change.quantity_after,
+            )
+            for change in cart.changes
+        ),
+        added=sum(1 for change in cart.changes if change.quantity_before == 0),
+    )
+
+
+def _already_in_cart(result: CustomerTurnResult) -> CartChangeFactView | None:
+    """The product a select pointed at, when the cart already held it as asked.
+
+    A select focuses what it names, so the focus after the turn is that
+    product; its line is found by its place in the cart, as the lines are
+    numbered."""
+    cart, intent = result.cart, result.decision.interaction
+    if cart is None or cart.changes or intent is None:
+        return None
+    if intent.op is not ProductInteractionOp.SELECT:
+        return None
+    interaction = result.state.product_interaction
+    focused = interaction.focused_product_id
+    if focused is None or focused not in interaction.selected_product_ids:
+        return None
+    pick = interaction.selected_product_ids.index(focused) + 1
+    line = next((line for line in cart.lines if line.pick == pick), None)
+    if line is None:
+        return None
+    return CartChangeFactView(
+        name=line.display.name if line.display else line.name_english,
+        quantity_before=line.quantity,
+        quantity_after=line.quantity,
+    )
 
 
 def _chosen_seating(result: CustomerTurnResult | None) -> ChosenSeatingView | None:

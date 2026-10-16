@@ -3,6 +3,7 @@ import type {
   BriefAnswerAction,
   BriefChip,
   BundleAction,
+  CartView,
   CatalogSelection,
   FinderObject,
   GroundedBundlePresentation,
@@ -22,6 +23,7 @@ import { ErrorCard } from './ErrorCard'
 import { AssistantBubble, UserBubble, ZoryAvatar } from './MessageBubble'
 import { PhotoTurn } from './PhotoTurn'
 import { PicksTray } from './PicksTray'
+import type { CartLineRef } from './PicksTray'
 import type { CheckedCard } from '../lib/compare'
 import { cardWords, latestLabels } from '../lib/cardWords'
 import { TypingIndicator } from './TypingIndicator'
@@ -56,6 +58,8 @@ interface ChatPanelProps {
   onRerenderInRoom: (roomPhotoId: string) => void
   /** The room photo the session keeps, as a picture to show. */
   roomPhotoPreview: string | null
+  /** Put the current room package's pieces in the cart. */
+  onAddRoomToCart: () => void
   onOpenCatalog: () => void
   /** Draw a catalogue selection again, from another view. */
   onRerenderSelection: (selection: CatalogSelection, view: RenderView, viewLabel: string) => void
@@ -63,14 +67,18 @@ interface ChatPanelProps {
   onEditSelection: (selection: CatalogSelection, view: RenderView) => void
   /** The customer's picks, as the server last reported them. */
   picks: PickView[]
+  /** Their cart, as the server last reported it; null until one arrives. */
+  cart: CartView | null
   /** A tick is being saved; the session is busy. */
   picking: boolean
   picksError: string | null
   /** Tick or untick a card on the result list it belongs to. */
   onTogglePick: (product: GroundedProduct, listRevision: number) => void
-  onRemovePick: (pick: PickView) => void
+  onRemovePick: (pick: CartLineRef) => void
   /** Show what goes with a pick. */
-  onGoesWith: (pick: PickView) => void
+  onGoesWith: (pick: CartLineRef) => void
+  /** How many of a line in the cart, from now on. */
+  onCartQuantity: (line: CartLineRef, quantity: number) => void
   /** Their liked list; null while unknown or when the buttons are off. */
   liked: LikedView[] | null
   /** ♡ taps not yet saved, by `list_revision:ordinal`. */
@@ -129,15 +137,18 @@ export function ChatPanel({
   onVisualizeInRoom,
   onRerenderInRoom,
   roomPhotoPreview,
+  onAddRoomToCart,
   onOpenCatalog,
   onRerenderSelection,
   onEditSelection,
   picks,
+  cart,
   picking,
   picksError,
   onTogglePick,
   onRemovePick,
   onGoesWith,
+  onCartQuantity,
   liked,
   pendingLikes,
   onToggleLike,
@@ -404,6 +415,7 @@ export function ChatPanel({
                     quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
                     onQuickReply={onChoice}
                     latest={turn.id === lastAssistantId}
+                    onAddRoomToCart={turn.id === currentRoomId ? onAddRoomToCart : undefined}
                     {...visualizeProps(
                       turn.data.presentation?.room ?? null,
                       turn.data.presentation?.render ?? null,
@@ -458,10 +470,12 @@ export function ChatPanel({
       />
       <PicksTray
         picks={picks}
+        cart={cart}
         busy={busy}
         error={picksError}
         onRemove={onRemovePick}
         onGoesWith={onGoesWith}
+        onQuantity={onCartQuantity}
         labels={latestLabels(turns)}
       />
       <Composer

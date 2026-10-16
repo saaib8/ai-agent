@@ -331,8 +331,24 @@ async def test_the_model_receives_only_the_locked_response_input() -> None:
         "conversation",
         "grounding",
         "follow_up_allowed",
+        # Which assistant the reply is shown as, so it names itself as that
+        # one - a label decided in code, not a fact or an id.
+        "speaking_as",
     }
     assert client.calls[0]["schema"] is CustomerResponse
+
+
+async def test_the_reply_is_told_which_assistant_it_is() -> None:
+    """The first reply greets as Sara, so it must know it is Sara - a reply
+    shown under one name used to introduce itself as another."""
+    from app.schemas.agent_persona import AgentPersona
+
+    client = FakeClient(SAFE)
+
+    await _generate(client, TurnGrounding(search=_search(3)), action=AgentAction.SEARCH)
+
+    sent = ResponseInput.model_validate_json(client.calls[0]["user_input"])
+    assert sent.speaking_as is AgentPersona.SARA
 
 
 @pytest.mark.parametrize(

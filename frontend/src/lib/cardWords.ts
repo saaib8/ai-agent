@@ -13,8 +13,8 @@ import type { Turn } from '../hooks/useChat'
 
 /** What the server sends when it sends nothing else: English. */
 export const ENGLISH: CardLabels = {
-  select: 'Select',
-  selected: 'Selected',
+  select: 'Add to cart',
+  selected: 'In cart',
   more_like_this: 'More like this',
   not_this_one: 'Not this one',
   compare: 'Compare',
@@ -34,12 +34,20 @@ export const ENGLISH: CardLabels = {
   compare_one_more: 'Check one more of the same kind',
   stop_comparing: 'Stop comparing {name}',
   clear: 'Clear',
-  your_picks: 'Your picks ({count})',
+  your_picks: 'Your cart ({count})',
   goes_with: 'Goes with',
   what_goes_with: 'What goes with it',
   what_goes_with_product: 'What goes with {name}',
-  remove_pick: 'Remove {name} from your picks',
+  remove_pick: 'Remove {name} from your cart',
   focused_pick: 'The pick "it" refers to',
+  cart_total: 'Total {price}',
+  cart_empty: 'Your cart is empty',
+  quantity: 'Qty',
+  increase_quantity: 'One more {name}',
+  decrease_quantity: 'One fewer {name}',
+  quantity_limit: 'Up to {max} of one product',
+  add_all_to_cart: 'Add all to cart · {price}',
+  go_to_cart: 'Go to cart',
   add: 'Add',
   view: 'View',
   room_limit: 'A room can show up to {max} products',
@@ -121,6 +129,8 @@ export const ENGLISH: CardLabels = {
   say_compare: 'Compare these products: {names}',
   say_without: 'Without {name}',
   say_take_option: "I'll take option {number}",
+  say_added_to_cart: "I've added the {name} to my cart",
+  say_add_all_to_cart: 'Add all of these to my cart',
   say_not_option: 'Not option {number}',
   say_more_seating: 'Show me more seating options',
   say_other_options: 'Show me other {name} options',
@@ -230,6 +240,14 @@ export interface CardWords {
     goesWithName: (name: string) => string
     removeName: (name: string) => string
     focused: string
+    /** One line per currency: "Total 14,350 SAR". */
+    total: (price: string) => string
+    empty: string
+    quantity: string
+    increaseName: (name: string) => string
+    decreaseName: (name: string) => string
+    quantityLimit: (max: number) => string
+    goToCart: string
   }
   compareBar: {
     title: string
@@ -249,6 +267,8 @@ export interface CardWords {
     yourSeating: string
     seatingOption: (position: number) => string
     chooseThis: string
+    /** "Add all to cart · 7,200 SAR"; without a price, just "Add all to cart". */
+    addAllToCart: (price: string | null) => string
     notThisOption: string
     moreOptions: string
     status: Record<BundleStatus, string>
@@ -313,6 +333,8 @@ export interface CardWords {
   /** What a tapped button puts on the customer's side and sends as the message. */
   say: {
     like: (name: string) => string
+    addedToCart: (name: string) => string
+    addAllToCart: string
     notThisOne: (name: string) => string
     whatGoesWith: (name: string) => string
     moreLike: (name: string) => string
@@ -413,6 +435,12 @@ function fill(template: string, values: Record<string, string | number>): string
   )
 }
 
+/** A label with its `{price}` taken out, and the separator before it:
+ *  "Add all to cart · {price}" → "Add all to cart". */
+function withoutPrice(template: string): string {
+  return template.replace(/[\s·:\-–—]*\{price\}/g, '').trim()
+}
+
 /** The words for a reply - the server's labels, or English without them. */
 export function cardWords(labels: CardLabels | null | undefined): CardWords {
   const l = labels ?? ENGLISH
@@ -445,6 +473,13 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
       goesWithName: (name) => fill(l.what_goes_with_product, { name }),
       removeName: (name) => fill(l.remove_pick, { name }),
       focused: l.focused_pick,
+      total: (price) => fill(l.cart_total, { price }),
+      empty: l.cart_empty,
+      quantity: l.quantity,
+      increaseName: (name) => fill(l.increase_quantity, { name }),
+      decreaseName: (name) => fill(l.decrease_quantity, { name }),
+      quantityLimit: (max) => fill(l.quantity_limit, { max }),
+      goToCart: l.go_to_cart,
     },
     compareBar: {
       title: l.compare_title,
@@ -464,6 +499,8 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
       yourSeating: l.your_seating,
       seatingOption: (number) => fill(l.seating_option, { number }),
       chooseThis: l.choose_this,
+      addAllToCart: (price) =>
+        price != null ? fill(l.add_all_to_cart, { price }) : withoutPrice(l.add_all_to_cart),
       notThisOption: l.not_this_option,
       moreOptions: l.more_options,
       status: {
@@ -537,6 +574,8 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
     },
     say: {
       like: (name) => fill(l.say_like, { name }),
+      addedToCart: (name) => fill(l.say_added_to_cart, { name }),
+      addAllToCart: l.say_add_all_to_cart,
       notThisOne: (name) => fill(l.say_not_this_one, { name }),
       whatGoesWith: (name) => fill(l.say_what_goes_with, { name }),
       moreLike: (name) => fill(l.say_more_like, { name }),

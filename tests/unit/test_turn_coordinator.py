@@ -262,6 +262,10 @@ def _action_reads(parts: dict[str, Any], state: AgentStateV1) -> list[list[int]]
     a reply can name them instead of guessing (M19 2). Both happen whatever
     the turn goes on to do, so both are subtracted.
 
+    A third comes with the cart: beside the cards, before the decision, the
+    products in their cart, so "remove the rug" can name its line
+    (CLAUDE.md 36). Context too, and subtracted the same way.
+
     Matched by their exact arguments, so a genuine second read of the same
     products would still be visible.
     """
@@ -270,6 +274,8 @@ def _action_reads(parts: dict[str, Any], state: AgentStateV1) -> list[list[int]]
     if screen and calls and calls[0] == screen:
         calls.pop(0)
     chosen = list(state.product_interaction.selected_product_ids)
+    if chosen and calls and calls[0] == chosen:
+        calls.pop(0)
     if chosen and calls and calls[-1] == chosen:
         calls.pop()
     return calls

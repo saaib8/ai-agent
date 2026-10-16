@@ -81,6 +81,7 @@ def _repository(session: RecordingSession) -> ProductRepository:
 # name -> a call that exercises the method against the recording session.
 PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "get_by_ids": lambda repo: repo.get_by_ids([1, 2], CONTEXT),
+    "store_identities": lambda repo: repo.store_identities([1, 2], CONTEXT),
     "count_active": lambda repo: repo.count_active(CONTEXT),
     "search": lambda repo: repo.search(
         ProductSearchRequest(commerce_category="seating"), CONTEXT, limit=10

@@ -643,7 +643,7 @@ class TestTurn:
 
         assert reply.session_revision == 2
         assert reply.response.message == "Here's your bedroom, at eye level."
-        assert reply.agent is AgentPersona.SARAH, "room visualisation is Sarah's"
+        assert reply.agent is AgentPersona.SARA, "room visualisation is Sara's"
         assert reply.presentation is not None and reply.presentation.render is not None
         saved = sessions.saved[(STORE, SESSION)]
         assert saved.state == state, "a picture is not a fact about the room"

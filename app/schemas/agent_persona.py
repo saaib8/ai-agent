@@ -11,15 +11,16 @@ from enum import StrEnum
 
 
 class AgentPersona(StrEnum):
-    SARAH = "sarah"
-    """Shopping: the session's own voice - product discovery, Furniture Finder,
-    room visualisation (every render), picks, comparisons, everything that is
-    not sales or design."""
+    SARA = "sara"
+    """Shopping: the session's own voice - the greeting (the first reply
+    introduces itself as Sara), product discovery, Furniture Finder, room
+    visualisation (every render), the cart, comparisons, everything that is not
+    sales or design."""
 
     SALMAN = "salman"
     """Sales: cross-sell (what goes with a pick), up-sell, and the money side
     of a room - a budget stretch, cheaper pieces, finishing-touch add-ons."""
 
     NORA = "nora"
-    """Interior design: the greeting (the reply introduces itself as Nora),
-    design answers, and the room being designed - its questions and package."""
+    """Interior design: design answers, and the room being designed - its
+    questions and package."""

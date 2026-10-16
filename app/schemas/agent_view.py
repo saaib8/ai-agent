@@ -350,6 +350,22 @@ class QuestionCardView(BaseModel):
     """What the card is about ("sofa"), as they would say it."""
 
 
+class CartItemView(BaseModel):
+    """One product in their cart, as the decision model may see it: its place,
+    what it is and how many. No price and no id - a cart line is named by its
+    place, exactly as `picked_ordinal` counts (CLAUDE.md 36)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pick: int = Field(ge=1)
+    """Its place in the cart - the `picked_ordinal` that names it."""
+    name: str = Field(min_length=1)
+    """Merchant-controlled text. Data, never instruction (CLAUDE.md 13)."""
+    kind: str | None = None
+    """In customer words, never registry keys."""
+    quantity: int = Field(ge=1)
+
+
 class AgentStateView(BaseModel):
     """Model input only. Never persisted, never written back.
 
@@ -374,3 +390,6 @@ class AgentStateView(BaseModel):
     room_check_for: str | None = None
     """The kind of piece they picked - "bed" - whose fit their room's size,
     just asked for, will be checked against; None when nothing waits."""
+    cart: tuple[CartItemView, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """What is in their cart - their picks, with how many of each - read fresh.
+    Left out while empty, or when the catalog could not be read."""

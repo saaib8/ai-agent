@@ -69,6 +69,12 @@ reply's** labels for things outside a reply (tray, compare bar, catalogue).
 
 Before the first reply: `GET /v1/labels?language=ar` (or `en`) returns the same object.
 
+**Which assistant a reply is from:** `agent` is `sara` (shopping, and the greeting on
+the first reply), `salman` (sales) or `nora` (interior design). `sara` was `sarah`
+until 2026-10-16 - map `sara` to "Sara" / "سارة" and its photo, and treat `sarah` the
+same while an old reply may still be on screen. The reply's own words introduce it
+by that name.
+
 ## 3. Browse Catalogue takes `language`
 
 `GET /v1/catalog/products?...&language=ar` → tiles' `display` in Arabic.
@@ -148,7 +154,75 @@ session it already verified, on both calls:
 - A malformed header is refused with 422 before anything runs.
 
 
-## 6. Gateway (Zory backend `core/ai_agent/`) - what to check
+## 6. The cart - "Add to cart" and the store's own cart
+
+**Select now means Add to cart.** The picks tray is the cart (CLAUDE.md 36): the
+card button (`select` = "Add to cart", `selected` = "In cart"), a typed "add the
+7th one", a seating combination's button and a room package's "Add all to cart"
+all put products in the same list, with how many of each. The ai-agent keeps the
+cart in the conversation; the widget copies every change into the store's own cart.
+
+**Where the cart comes from.** Every chat reply and every `POST /v1/picks` answer
+carries `cart` (absent = unchanged, as for `picks`); `GET /v1/cart?session_id=&store_id=`
+reads it without a turn (an unstarted session is an empty cart at revision 0).
+
+```json
+"cart": {
+  "lines": [{"pick": 1, "quantity": 2, "name_english": "...", "image_url": "...",
+             "unit_price": "3600.00", "price_unit": "SAR", "line_total": "7200.00",
+             "kind": "armchair", "display": {"name": "...", "price": "3,600 SAR"},
+             "line_total_display": "7,200 SAR",
+             "product": {"uuid": "...", "salla_id": "1660240108", "url": "https://..."}}],
+  "item_count": 3,
+  "totals": [{"price_unit": "SAR", "amount": "11200.00", "display": "11,200 SAR"}],
+  "unavailable": 0,
+  "changes": [{"product": {"uuid": "...", "salla_id": "1660240108", "url": "..."},
+               "name": "...", "quantity_before": 0, "quantity_after": 2}]
+}
+```
+
+- Draw the tray from `cart.lines`: `display.name`, `display.price` (each),
+  `line_total_display`, and a − / + stepper. Totals: `cart_total` ("Total {price}")
+  with each `totals[].display` - one per currency, never added together.
+- **Changing it:** `POST /v1/picks` with `{"kind":"quantity","pick":N,"quantity":Q}`
+  (1..`cart_max_quantity`, default 10 - else 422 `cart_quantity`), `{"kind":"deselect","pick":N}`
+  to remove, `{"kind":"select","ordinal":N,"list_revision":R}` to add a card (cart
+  full - default 10 products - is 422 `pick_limit`). After a new pick the widget
+  opens the turn as before (`goes_with`), now with `say_added_to_cart` as the message.
+- **Add all:** a room package's button is `add_all_to_cart` ("Add all to cart · {price}",
+  `{price}` = the room's `totals.display.new_spend`) and sends a chat turn with
+  `bundle_action: {"kind": "add_to_cart"}` and `say_add_all_to_cart` as the message -
+  every piece being bought, with its quantity; pieces they already own stay out. A
+  seating combination's button uses the same label with its own total and sends the
+  existing `search_action` `combination` / `choose`.
+- **Copying into the store's cart (Salla).** Only the storefront page can write the
+  shopper's cart. For each entry in `cart.changes`:
+  1. quantity went up: `POST /api/widgets/cart/salla-item/` (Zory, widget session) with
+     `{"product": change.product.uuid, "quantity": quantity_after - quantity_before}`
+     (`"salla_product_id": change.product.salla_id` names it as well).
+     It checks the product is this store's and in stock (409 `out_of_stock`), and
+     returns `cart_item` plus any `options` the product needs.
+     If `requires_options`, ask the shopper and fill `cart_item.options` as
+     `{<option id>: <value id>}`. Then call `salla.cart.addItem(cart_item)`.
+     Several changes at once ("Add all to cart") go in one call:
+     `{"items": [{"product": ..., "quantity": ...}, ...]}` (up to 20). The answer has a
+     result per item in the same order (`ok: true` with the fields above, or `ok: false`
+     with `code`/`detail`/`detail_arabic`), `cart_items` - the ready ones, to hand
+     `salla.cart.addItem` one by one - and `all_ready`. Take each `ok: false` item back
+     out of our cart (step 3). The batch form is Zory commit `7c8f46a` ("mutiple-cart"),
+     on `stage`; it reaches stageapi once that is on `release-branch`.
+  2. quantity went down or to 0: update or remove that product's line in the Salla
+     cart (Twilight's cart item calls, matched by `salla_id`).
+  3. if Salla refuses (out of stock, a required option skipped), take it back out of
+     our cart: `{"kind":"deselect","pick":N}` (or a `quantity` back down) - so the
+     agent never believes in a line the store's cart does not have.
+  A store that is not on Salla answers `cart_supported: false`: keep our cart as the
+  shopper's list and link each line to `product.url`. `go_to_cart` labels a link to
+  the store's own cart page (Salla: `/cart`), where checkout happens.
+- The cart lives as long as the conversation (`ZORY_SESSION__TTL_S`); the store's
+  own cart outlives it.
+
+## 7. Gateway (Zory backend `core/ai_agent/`) - what to check
 
 Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):
 
@@ -161,3 +235,4 @@ Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):
 | Catalogue products (`catalog_service.products`) | forwards only `CATALOG_FILTERS` | add `"language"` to `CATALOG_FILTERS` (`constants.py`) |
 | Catalogue facets (`catalog_service.facets`) | forwards only `store_id` | forward `language` from the request |
 | Labels | no route | optional: a proxy for `GET /v1/labels?language=` (or rely on chat replies' `labels`) |
+| Cart read | no route | `GET /api/widgets/ai-agent/cart/?session_id=` → `GET /v1/cart` with the scoped session and the token's store (section 6). Cart changes need nothing: they go through picks and chat, which pass answers through as they are |

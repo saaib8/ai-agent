@@ -28,6 +28,7 @@ from app.schemas.agent_turn import CustomerResponse, RoomSwapContext
 from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.card_labels import CardLabels
+from app.schemas.cart import CartView
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
@@ -327,12 +328,17 @@ class ChatResponse(BaseModel):
     """Their liked list after this turn, in the order they liked them. None
     means unchanged, or the buttons are switched off."""
 
+    cart: CartView | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Their cart after this turn - the picks with how many of each, the
+    totals, and what this turn changed for the store's own cart
+    (CLAUDE.md 36). None means unchanged, as for `picks`."""
+
     reply_language: ReplyLanguage | None = None
     """The language this reply is in, so a client can set the page direction.
     None where Arabic replies are off: English, as always."""
 
-    agent: AgentPersona = AgentPersona.SARAH
-    """Which assistant the reply is shown as: Sarah (shopping), Salman (sales)
+    agent: AgentPersona = AgentPersona.SARA
+    """Which assistant the reply is shown as: Sara (shopping), Salman (sales)
     or Nora (interior design). A label only - one assistant answers every turn;
     decided in code from what the turn did (`app/services/agent_persona.py`)."""
 

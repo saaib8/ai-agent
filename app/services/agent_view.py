@@ -35,6 +35,7 @@ from app.schemas.agent_view import (
     ActiveSearchView,
     AgentStateView,
     CapacityView,
+    CartItemView,
     DesignNeedReferenceView,
     DimensionView,
     PlanarView,
@@ -58,7 +59,9 @@ from app.taxonomy.words import customer_words, customer_words_or_none
 
 
 def project_state(
-    state: AgentStateV1, cards: Sequence[PresentedCardView] = ()
+    state: AgentStateV1,
+    cards: Sequence[PresentedCardView] = (),
+    cart: Sequence[CartItemView] = (),
 ) -> AgentStateView:
     """The model-safe view of one conversation's memory.
 
@@ -71,6 +74,8 @@ def project_state(
 
     Omitted means nothing is on screen, or the catalog could not be read. Both
     fail the same safe way: the agent talks about no card in particular.
+
+    `cart` is their cart, read fresh by the caller for the same reason.
     """
     return AgentStateView(
         active_search=_active_search(state.active_search),
@@ -87,6 +92,7 @@ def project_state(
             if (check := awaiting_room_check(state)) is not None
             else None
         ),
+        cart=tuple(cart),
     )
 
 

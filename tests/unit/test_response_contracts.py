@@ -1312,6 +1312,11 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # described. A bool - no product, no value.
         "best_match_first",
         "selection_changed",
+        # Their cart (CLAUDE.md 36): counts, kinds and quantities, whether
+        # this turn changed it, and its totals - summed by the application
+        # from prices read this turn and already worded, like an over-budget
+        # swap's figures. No product, no id, no price of its own.
+        "cart",
         "seating_requirement_known",
         "follow_up_goal",
         "was_relaxed",

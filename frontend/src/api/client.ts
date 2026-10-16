@@ -1,4 +1,5 @@
 import type {
+  CartResponse,
   CatalogFacets,
   CatalogPage,
   CatalogQuery,
@@ -170,6 +171,18 @@ export async function postCatalogVisualize(
 export async function postPicks(base: string, body: PicksRequest): Promise<Fetched<PicksResponse>> {
   return postJson<PicksResponse>(base, '/v1/picks', body, (p) =>
     typeof p === 'object' && p !== null && 'picks' in p,
+  )
+}
+
+/** The cart for one conversation, priced fresh: an empty cart (revision 0)
+ *  for a session that has not started. Reading changes nothing. */
+export async function getCart(
+  base: string,
+  sessionId: string,
+  storeId: number,
+): Promise<Fetched<CartResponse>> {
+  return getJson<CartResponse>(base, '/v1/cart', { session_id: sessionId, store_id: storeId }, (p) =>
+    typeof p === 'object' && p !== null && 'cart' in p,
   )
 }
 

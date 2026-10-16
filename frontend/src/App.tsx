@@ -9,7 +9,6 @@ import type {
   FinderObject,
   GroundedProduct,
   LikedView,
-  PickView,
   ProductAction,
   RenderRoomSpec,
   RenderView,
@@ -18,6 +17,7 @@ import { getCompareGroups } from './api/client'
 import { CatalogDialog } from './components/catalog/CatalogDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
+import type { CartLineRef } from './components/PicksTray'
 import { TopNav } from './components/TopNav'
 import { cardWords, latestLabels } from './lib/cardWords'
 import { productText } from './lib/productWords'
@@ -223,12 +223,12 @@ export default function App() {
         { kind: 'select', ordinal, list_revision: listRevision },
         config.config,
       )
-      // Every new pick comes into the conversation as a turn of its own: its
-      // card, and what goes with it when anything does.
+      // Every new pick - "Add to cart" - comes into the conversation as a turn
+      // of its own: its card, and what goes with it when anything does.
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
-        void chat.send(say.like(chosen.name_english), config.config, {
+        void chat.send(say.addedToCart(chosen.name_english), config.config, {
           product: { kind: 'goes_with', pick: chosen.pick },
         })
       }
@@ -272,7 +272,7 @@ export default function App() {
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
-        void chat.send(say.like(chosen.name_english), config.config, {
+        void chat.send(say.addedToCart(chosen.name_english), config.config, {
           product: { kind: 'goes_with', pick: chosen.pick },
         })
       }
@@ -304,15 +304,25 @@ export default function App() {
   )
 
   const handleRemovePick = useCallback(
-    (pick: PickView) => {
+    (pick: CartLineRef) => {
       if (chat.sending || chat.picking) return
       void chat.changePicks({ kind: 'deselect', pick: pick.pick }, config.config)
     },
     [chat, config.config],
   )
 
+  // − / + on a cart line. Silent, like a tick: the cart comes back, and a
+  // refusal (over the per-product limit) shows in the tray in the server's words.
+  const handleCartQuantity = useCallback(
+    (line: CartLineRef, quantity: number) => {
+      if (chat.sending || chat.picking || quantity < 1) return
+      void chat.changePicks({ kind: 'quantity', pick: line.pick, quantity }, config.config)
+    },
+    [chat, config.config],
+  )
+
   const handleGoesWith = useCallback(
-    (pick: PickView) => {
+    (pick: CartLineRef) => {
       if (chat.sending || chat.picking) return
       setSwap(null)
       void chat.send(say.whatGoesWith(pick.name_english), config.config, {
@@ -397,6 +407,14 @@ export default function App() {
     },
     [chat, config.config, say],
   )
+
+  // A room package's "Add all to cart": a structured room action, sent as a
+  // turn like Swap, so the reply says what was added and carries the cart.
+  const handleAddRoomToCart = useCallback(() => {
+    if (chat.sending || chat.picking) return
+    setSwap(null)
+    void chat.send(say.addAllToCart, config.config, { bundle: { kind: 'add_to_cart' } })
+  }, [chat, config.config, say])
 
   const handleCombination = useCallback(
     (op: 'choose' | 'dismiss' | 'more', position: number | null) => {
@@ -645,15 +663,18 @@ export default function App() {
           onVisualizeInRoom={(file) => void handleVisualizeInRoom(file)}
           onRerenderInRoom={(photoId) => void handleRerenderInRoom(photoId)}
           roomPhotoPreview={roomPhoto?.previewUrl ?? null}
+          onAddRoomToCart={handleAddRoomToCart}
           onOpenCatalog={() => setCatalogStep('browse')}
           onRerenderSelection={handleRerenderSelection}
           onEditSelection={handleEditSelection}
           picks={chat.picks}
+          cart={chat.cart}
           picking={chat.picking}
           picksError={chat.picksError}
           onTogglePick={handleTogglePick}
           onRemovePick={handleRemovePick}
           onGoesWith={handleGoesWith}
+          onCartQuantity={handleCartQuantity}
           liked={chat.liked}
           pendingLikes={chat.pendingLikes}
           onToggleLike={handleToggleLike}

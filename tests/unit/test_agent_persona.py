@@ -1,8 +1,8 @@
 """Which assistant a reply is shown as (`ChatResponse.agent`).
 
-A label decided in code from what the turn did: Nora greets and designs,
-Salman sells - cross-sell, up-sell, a room's money side - and Sarah shops
-through everything else. One assistant answers every turn behind them.
+A label decided in code from what the turn did: Sara greets and shops
+through everything that is not sales or design, Salman sells - cross-sell,
+up-sell, a room's money side - and Nora designs. One assistant answers every turn behind them.
 """
 
 from __future__ import annotations
@@ -30,12 +30,12 @@ from app.taxonomy.rooms import PieceTier
 
 from tests.unit.test_turn_coordinator import CONTEXT
 
-NORA, SALMAN, SARAH = AgentPersona.NORA, AgentPersona.SALMAN, AgentPersona.SARAH
+NORA, SALMAN, SARA = AgentPersona.NORA, AgentPersona.SALMAN, AgentPersona.SARA
 
 HISTORY = ConversationContext(
     messages=(
         ConversationMessage(role=ConversationRole.USER, content="hi"),
-        ConversationMessage(role=ConversationRole.ASSISTANT, content="Hello, I'm Nora."),
+        ConversationMessage(role=ConversationRole.ASSISTANT, content="Hello, I'm Sara."),
     )
 )
 
@@ -67,12 +67,12 @@ def _room() -> RoomBundle:
     return RoomBundle(status=BundleStatus.COMPLETE, new_spend_total=Decimal(0), currency="SAR")
 
 
-def test_the_first_reply_greets_as_nora() -> None:
-    assert speaker(_turn(first=True), _result()) is NORA
+def test_the_first_reply_greets_as_sara() -> None:
+    assert speaker(_turn(first=True), _result()) is SARA
 
 
-def test_sarah_shops_through_everything_else() -> None:
-    assert speaker(_turn(), _result()) is SARAH
+def test_sara_shops_through_everything_else() -> None:
+    assert speaker(_turn(), _result()) is SARA
 
 
 def test_an_upsell_is_salman() -> None:
