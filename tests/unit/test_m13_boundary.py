@@ -277,6 +277,9 @@ def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
         "bundle_action",
         "search_action",
         "product_action",
+        # "Contact support": carries nothing but its kind; the channels come
+        # from the scoped store's own contacts (CLAUDE.md 3.6, 8).
+        "support_action",
         # The storefront's language, for a turn nothing in the conversation
         # decided. Per turn and never stored (docs/arabic-replies-plan.md).
         "locale",

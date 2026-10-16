@@ -80,6 +80,10 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "Sorry, I can't reach the store's information right now. Please try again in a "
         "moment, and feel free to ask me about any product meanwhile."
     ),
+    TurnFailureCode.STORE_INFO_UNAVAILABLE_WITH_SUPPORT: (
+        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "moment, or contact the store's support team below."
+    ),
     TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE: (
         "I wasn't able to answer that one just now. Please try again in a "
         "moment."

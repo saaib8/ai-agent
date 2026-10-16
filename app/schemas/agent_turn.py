@@ -57,7 +57,7 @@ from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingBundle, SeatingSolution
 from app.schemas.store_knowledge import StoreKnowledgeGrounding
-from app.schemas.support import SupportGrounding
+from app.schemas.support import SupportActionRequest, SupportGrounding
 from app.schemas.text_choice import (
     TextReplyChoice,
     require_a_question,
@@ -99,6 +99,11 @@ class CustomerTurnInput(BaseModel):
     """A screen-driven action on the customer's picks - ask about one, compare
     two, or show a companion a chip offered. Deterministic, like the others:
     no decision model runs (CLAUDE.md 3.6)."""
+
+    support_action: SupportActionRequest | None = None
+    """The shopper asked to reach the store's support. Deterministic: no
+    decision model runs, and the channels come from the store's own contacts
+    (CLAUDE.md 3.6)."""
 
     locale: ReplyLanguage | None = None
     """The storefront's language, answering a turn nothing in the conversation

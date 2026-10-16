@@ -79,6 +79,11 @@ ARABIC: Mapping[str, str] = MappingProxyType(
             "عذرًا، لا أستطيع الوصول إلى معلومات المتجر حاليًا. يُرجى المحاولة بعد قليل،"
             " ويسعدني مساعدتك في أي منتج خلال ذلك."
         ),
+        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "moment, or contact the store's support team below.": (
+            "عذرًا، لا أستطيع الوصول إلى معلومات المتجر حاليًا. يُرجى المحاولة بعد قليل،"
+            " أو التواصل مع فريق دعم المتجر أدناه."
+        ),
         "I wasn't able to answer that one just now. Please try again in a moment.": (
             "لم أتمكن من الإجابة عن ذلك الآن. يُرجى المحاولة مرة أخرى بعد قليل."
         ),

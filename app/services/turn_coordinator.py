@@ -277,6 +277,7 @@ from app.schemas.seating_solution import (
     SeatingSolutionOutcome,
 )
 from app.schemas.store_knowledge import StoreKnowledgeGrounding
+from app.schemas.support import SupportGrounding
 from app.schemas.taste import PendingTaste, TasteQuestionKind
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
@@ -336,6 +337,7 @@ from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlann
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.store_cart_check import CartCheck, StoreCartCheck
 from app.services.store_knowledge import StoreKnowledgeService
+from app.services.support import SupportService
 from app.services.taste import learned_taste
 from app.services.taste_question import NEITHER, choose_question, on_screen
 from app.services.taste_question import answer as taste_answer
@@ -500,6 +502,9 @@ class _Primary:
 
     store_knowledge: StoreKnowledgeGrounding | None = None
     """What the store's own documents say about a question about the store."""
+
+    support: SupportGrounding | None = None
+    """The store's own support, offered beside a turn about the store."""
 
     bundle_outcome: BundleOptimizationOutcome | None = None
     bundle_change: BundleInteractionOp | None = None
@@ -1254,7 +1259,11 @@ class CustomerTurnCoordinator:
         max_picks: int = 10,
         cart_check: StoreCartCheck | None = None,
         store_knowledge: StoreKnowledgeService | None = None,
+        support: SupportService | None = None,
     ) -> None:
+        self._support = support
+        """Faysal's side of a turn: the store's own support contacts. None
+        where the support agent is off, in which case no turn offers them."""
         self._store_knowledge = store_knowledge
         """The store's own documents. None where they are not configured, in
         which case the decision is never offered a store question."""
@@ -2054,6 +2063,7 @@ class CustomerTurnCoordinator:
             turn.bundle_action is None
             and turn.search_action is None
             and turn.product_action is None
+            and turn.support_action is None
         )
         return typed and exc.context.get("stage") not in ("decision", "interpretation")
 
@@ -2064,7 +2074,39 @@ class CustomerTurnCoordinator:
             return await self._run_search_action(turn, turn.search_action)
         if turn.product_action is not None:
             return await self._run_product_action(turn, turn.product_action)
+        if turn.support_action is not None:
+            return await self._run_support_action(turn)
         return await self._run_decided_turn(turn)
+
+    async def _run_support_action(self, turn: CustomerTurnInput) -> CustomerTurnResult:
+        """The shopper asked to reach the store's support: its channels, no model.
+
+        Sent by a "Contact support" button or by the platform, so the hand-over
+        never depends on how a question was worded (CLAUDE.md 3.6). Nothing in
+        the session changes. Where the support agent is off there are no
+        channels to offer, and the reply says the store cannot be reached here.
+        """
+        decision = CustomerAgentDecision(
+            action=AgentAction.ANSWER,
+            commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+            follow_up_policy=FollowUpPolicy.NONE,
+        )
+        support = (
+            await self._support.offer(turn.context, requested=True)
+            if self._support is not None
+            else SupportGrounding(requested=True)
+        )
+        primary = _Primary(state=turn.state, support=support)
+        kinds, picks, liked = await self._selection_facts(turn.state, turn)
+        return CustomerTurnResult(
+            state=turn.state,
+            selected_kinds=kinds,
+            picks=picks,
+            liked=liked,
+            decision=decision,
+            grounding=self._ground(decision, primary, _Interaction(state=turn.state), None),
+            selection_added=False,
+        )
 
     def _not_understood(
         self, turn: CustomerTurnInput, exc: LLMResponseInvalidError
@@ -2094,6 +2136,8 @@ class CustomerTurnCoordinator:
                 if turn.search_action is not None
                 else "product"
                 if turn.product_action is not None
+                else "support"
+                if turn.support_action is not None
                 else None
             ),
         )
@@ -4280,21 +4324,26 @@ class CustomerTurnCoordinator:
         Scope is the request's RetailerContext and nothing the model wrote:
         the decision restates the question, it never names a store.
         """
+        found: StoreKnowledgeGrounding | None = None
         if self._store_knowledge is None:
             logger.info("store_info_not_configured", store_id=turn.context.store_id)
-            return _Primary(
-                state=working,
-                failure=TurnFailure(code=TurnFailureCode.STORE_INFO_UNAVAILABLE),
+        else:
+            try:
+                found = await self._store_knowledge.lookup(turn.context, question)
+            except IntegrationUnavailableError:
+                logger.warning("store_info_unavailable", store_id=turn.context.store_id)
+        # Faysal offers the store's own support beside every answer about the
+        # store, and in place of one that could not be looked up.
+        support = await self._support.offer(turn.context) if self._support is not None else None
+        if found is None:
+            reachable = support is not None and support.contacts.any
+            code = (
+                TurnFailureCode.STORE_INFO_UNAVAILABLE_WITH_SUPPORT
+                if reachable
+                else TurnFailureCode.STORE_INFO_UNAVAILABLE
             )
-        try:
-            found = await self._store_knowledge.lookup(turn.context, question)
-        except IntegrationUnavailableError:
-            logger.warning("store_info_unavailable", store_id=turn.context.store_id)
-            return _Primary(
-                state=working,
-                failure=TurnFailure(code=TurnFailureCode.STORE_INFO_UNAVAILABLE),
-            )
-        return _Primary(state=working, store_knowledge=found)
+            return _Primary(state=working, failure=TurnFailure(code=code), support=support)
+        return _Primary(state=working, store_knowledge=found, support=support)
 
     async def _show_selection(
         self, working: AgentStateV1, turn: CustomerTurnInput, *, liked: bool = False
@@ -8243,6 +8292,7 @@ class CustomerTurnCoordinator:
             failure=failure,
             design_guidance=primary.design_guidance,
             store_knowledge=primary.store_knowledge,
+            support=primary.support,
             design_handoff_requested=primary.design_handoff,
             follow_up_policy=(
                 FollowUpPolicy.NONE if asking or failure is not None else decision.follow_up_policy
