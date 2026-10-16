@@ -32,6 +32,7 @@ from app.schemas.product_action import AddToCartAction
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
 from app.services.card_labels import card_labels
+from app.services.click_tracking import tracking_url
 from app.services.product_display import arabic_name, price_words
 
 logger = get_logger(__name__)
@@ -164,7 +165,7 @@ def _ref(identity: StoreProductIdentity) -> CartProductRef:
     return CartProductRef(
         uuid=identity.uuid,
         salla_id=identity.salla_product_id,
-        url=identity.product_url,
+        url=tracking_url(identity.product_url, identity.uuid),
     )
 
 

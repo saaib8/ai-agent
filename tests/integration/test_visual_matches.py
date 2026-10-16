@@ -17,6 +17,7 @@ from app.db.tables import core_product, core_store
 from app.integrations.postgres import Database
 from app.repositories.products import ProductRepository
 from app.schemas.retailer import RetailerContext
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 pytestmark = pytest.mark.integration
@@ -102,3 +103,29 @@ async def test_vectors_resolve_only_to_products_this_store_sells(
     # vec-12 is inactive, vec-20 and sofa-21 belong to store B.
     assert by_vector == {"vec-10": 10, "vec-11": 11}
     assert by_url == {"https://example.test/10": 10, "https://shop/sofa-11": 11}
+
+
+async def test_click_ids_are_the_public_ids_of_this_stores_pages(
+    database: Database, seeded: None, writable_engine: AsyncEngine
+) -> None:
+    async with writable_engine.connect() as connection:
+        uuids = {
+            row.id: str(row.uuid)
+            for row in await connection.execute(select(core_product.c.id, core_product.c.uuid))
+        }
+    async with database.session() as session:
+        click_ids = await ProductRepository(session).click_ids_by_url(
+            [
+                "https://example.test/10",
+                "https://shop/sofa-11",
+                "https://example.test/12",
+                "https://shop/sofa-21",
+                "https://shop/missing",
+            ],
+            RetailerContext(store_id=STORE_A),
+        )
+    # 12 is inactive and sofa-21 is store B's: neither gets a click id here.
+    assert click_ids == {
+        "https://example.test/10": uuids[10],
+        "https://shop/sofa-11": uuids[11],
+    }

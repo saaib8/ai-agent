@@ -496,13 +496,28 @@ export function ChatPanel({
 function roomKey(room: GroundedBundlePresentation): string {
   const units = new Map<string, number>()
   for (const item of room.items) {
-    units.set(item.product_url, (units.get(item.product_url) ?? 0) + item.quantity)
+    const page = productPage(item.product_url)
+    units.set(page, (units.get(page) ?? 0) + item.quantity)
   }
   return signature(units)
 }
 
 function renderKey(render: RoomRenderPresentation): string {
-  return signature(new Map(render.items.map((item) => [item.product_url, item.quantity])))
+  return signature(
+    new Map(render.items.map((item) => [productPage(item.product_url), item.quantity])),
+  )
+}
+
+/** The page without Zory's click id, so two replies name a product alike
+ * whether or not each one's link carries it. */
+function productPage(url: string): string {
+  try {
+    const parsed = new URL(url)
+    parsed.searchParams.delete('zory_click_id')
+    return parsed.toString()
+  } catch {
+    return url
+  }
 }
 
 function signature(units: Map<string, number>): string {
