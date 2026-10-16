@@ -126,6 +126,10 @@ class TurnFailureCode(StrEnum):
     else, because a guessed policy is worse than none.
     """
 
+    STORE_INFO_UNAVAILABLE_WITH_SUPPORT = "store_info_unavailable_with_support"
+    """The same outage where the store has support contacts: its channels are
+    beneath the reply, so it points to them instead of leaving them waiting."""
+
     DESIGN_ADVICE_UNAVAILABLE = "design_advice_unavailable"
     """A design *question* went unanswered.
 

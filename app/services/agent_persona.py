@@ -2,7 +2,8 @@
 did, never by a model, so the same turn always carries the same name.
 
 Sales first, then design, then shopping: a room's over-budget swap is a room
-turn and a sales turn, and the money is what it is about.
+turn and a sales turn, and the money is what it is about. Where the support
+agent is on, a turn about the store itself is Faysal's before any of them.
 """
 
 from __future__ import annotations
@@ -32,16 +33,26 @@ _SALES_PRODUCT_ACTIONS = frozenset({"goes_with", "companion"})
 """What goes with a pick: the offer, and a kind tapped from it."""
 
 
-def speaker(turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
+def speaker(
+    turn: CustomerTurnInput, result: CustomerTurnResult, *, support_agent: bool = False
+) -> AgentPersona:
     """The assistant this turn's reply is shown as."""
     if not turn.conversation.messages:
         # The first reply greets them and introduces itself as Sara.
         return AgentPersona.SARA
+    if support_agent and _supports(result):
+        return AgentPersona.FAYSAL
     if _sells(turn, result):
         return AgentPersona.SALMAN
     if _designs(turn, result):
         return AgentPersona.NORA
     return AgentPersona.SARA
+
+
+def _supports(result: CustomerTurnResult) -> bool:
+    """A turn about the store itself: its documents, or its support team."""
+    grounding = result.grounding
+    return grounding.store_knowledge is not None or grounding.support is not None
 
 
 def _sells(turn: CustomerTurnInput, result: CustomerTurnResult) -> bool:

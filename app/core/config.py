@@ -683,6 +683,15 @@ class CustomerAgentSettings(BaseModel):
     neither is asked, and the next taste question is asked instead. A space
     they give in words ("my wall is 300 cm") is still used exactly as before."""
 
+    support_agent: bool = False
+    """Faysal, the store's support: a reply about the store itself - answered
+    from its documents, or a problem only it can solve - is shown as Faysal,
+    with the store's own support channels beneath it, and a tapped "Contact
+    support" opens them with no model involved. Needs `store_knowledge` for
+    the documents, and the platform's support columns on `core_store`
+    (checked at startup). Off by default: replies about the store are shown
+    as before and carry no support channels."""
+
     designer_led_buttons: bool = True
     """Three buttons on every card: Select as before, ♡ Like - a silent liked
     list, kept apart from the picks - and More like this, a similarity search

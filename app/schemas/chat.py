@@ -37,6 +37,7 @@ from app.schemas.product_action import ProductActionRequest
 from app.schemas.product_brief import BriefChip, ProductBrief
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.search_action import SearchActionRequest
+from app.schemas.support import SupportActionRequest, SupportPresentation
 from app.schemas.visualization import RoomRenderPresentation
 
 MAX_MESSAGE_CHARS = 2000
@@ -95,6 +96,13 @@ class ChatRequest(BaseModel):
     server-side (CLAUDE.md 3.6, 20.2).
     """
 
+    support_action: SupportActionRequest | None = None
+    """The shopper asked to reach the store's own support - a "Contact support"
+    button, or the platform sending them there. Deterministic like the others:
+    no decision model runs, and the store's channels come from its own
+    contacts (CLAUDE.md 3.6). Refused where the support agent is off.
+    """
+
     locale: ReplyLanguage | None = None
     """The storefront's language, when it has one. It answers only a turn
     nothing in the conversation decided - a first message such as "3000" - and
@@ -145,7 +153,12 @@ class ChatRequest(BaseModel):
         """
         carried = [
             action
-            for action in (self.bundle_action, self.search_action, self.product_action)
+            for action in (
+                self.bundle_action,
+                self.search_action,
+                self.product_action,
+                self.support_action,
+            )
             if action is not None
         ]
         if len(carried) > 1:
@@ -280,6 +293,11 @@ class ChatPresentation(BaseModel):
     which is what keeps a room edit from cross-selling a piece it already holds
     (CLAUDE.md 27)."""
 
+    support: SupportPresentation | None = None
+    """The store's own support channels beneath the reply - WhatsApp, email -
+    on a turn about the store, built from the contacts its owner set. Never
+    written by a model."""
+
     def is_empty(self) -> bool:
         """Whether there is anything to draw.
 
@@ -298,6 +316,7 @@ class ChatPresentation(BaseModel):
             and not self.choices
             and self.piece_picker is None
             and self.brief is None
+            and self.support is None
         )
 
 
@@ -338,9 +357,11 @@ class ChatResponse(BaseModel):
     None where Arabic replies are off: English, as always."""
 
     agent: AgentPersona = AgentPersona.SARA
-    """Which assistant the reply is shown as: Sara (shopping), Salman (sales)
-    or Nora (interior design). A label only - one assistant answers every turn;
-    decided in code from what the turn did (`app/services/agent_persona.py`)."""
+    """Which assistant the reply is shown as: Sara (shopping), Salman (sales),
+    Nora (interior design) or Faysal (the store's support, where
+    `customer_agent.support_agent` is on). A label only - one assistant answers
+    every turn; decided in code from what the turn did
+    (`app/services/agent_persona.py`)."""
 
     labels: CardLabels | None = Field(default=None, exclude_if=lambda v: v is None)
     """The words a client draws around the products - card buttons, the picks

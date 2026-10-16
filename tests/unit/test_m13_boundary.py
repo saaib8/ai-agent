@@ -108,7 +108,8 @@ def test_the_runtime_holds_only_the_four_things_it_sequences() -> None:
     The domain engine, the wording layer, the session store and the policy that
     bounds them - and, for display only, the cards' text in the reply's
     language: a lookup over reviewed registry data that reads no catalog and
-    decides nothing. A
+    decides nothing - and whether a turn about the store is labelled Faysal,
+    a flag read by the persona label alone. A
     repository, a taxonomy or a provider client appearing here would mean
     orchestration had started doing the work it orchestrates.
     """
@@ -116,7 +117,14 @@ def test_the_runtime_holds_only_the_four_things_it_sequences() -> None:
         name for name in inspect.signature(ChatRuntime.__init__).parameters if name != "self"
     ]
 
-    assert parameters == ["coordinator", "responses", "sessions", "settings", "display"]
+    assert parameters == [
+        "coordinator",
+        "responses",
+        "sessions",
+        "settings",
+        "display",
+        "support_agent",
+    ]
 
 
 def test_the_runtime_exposes_the_five_phases_a_graph_sequences() -> None:
@@ -269,6 +277,9 @@ def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
         "bundle_action",
         "search_action",
         "product_action",
+        # "Contact support": carries nothing but its kind; the channels come
+        # from the scoped store's own contacts (CLAUDE.md 3.6, 8).
+        "support_action",
         # The storefront's language, for a turn nothing in the conversation
         # decided. Per turn and never stored (docs/arabic-replies-plan.md).
         "locale",

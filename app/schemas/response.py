@@ -141,6 +141,13 @@ class ResponseOutcomeKind(StrEnum):
     (CLAUDE.md 3.3).
     """
 
+    SUPPORT_CONTACT = "support_contact"
+    """They asked to reach the shop's own support team - a tapped "Contact
+    support". Words and no cards: the shop's channels are drawn beneath the
+    reply when it has any, and the reply points to them; with none, it says
+    the shop has not shared a way to reach it here.
+    """
+
     DETERMINISTIC_CLARIFICATION = "deterministic_clarification"
 
 
@@ -1066,6 +1073,11 @@ class ResponseGroundingView(BaseModel):
     """What the shop's own documents say about it - the only thing a
     `POLICY_ANSWER` may be written from. Empty: they do not say."""
 
+    support_offered: bool = False
+    """The shop's own support channels - WhatsApp, email - are drawn beneath
+    this reply. It may point to them; it never writes an address, a number or
+    a link itself. Only on `POLICY_ANSWER` and `SUPPORT_CONTACT`."""
+
     screen: CustomerVisibleScreenView = CustomerVisibleScreenView()
     """What the customer is looking at while they read this reply.
 
@@ -1143,6 +1155,11 @@ class ResponseGroundingView(BaseModel):
             raise ValueError("a policy answer carries its question, and only it does")
         if self.policy_passages and self.kind is not ResponseOutcomeKind.POLICY_ANSWER:
             raise ValueError("only a policy answer is written from the shop's documents")
+        if self.support_offered and self.kind not in (
+            ResponseOutcomeKind.POLICY_ANSWER,
+            ResponseOutcomeKind.SUPPORT_CONTACT,
+        ):
+            raise ValueError("only an answer about the shop offers its support")
 
         if self.kind is ResponseOutcomeKind.ZERO_RESULTS and self.presented_count:
             raise ValueError("a zero-result search presents nothing")
@@ -1214,7 +1231,8 @@ class ResponseInput(BaseModel):
     speaking_as: AgentPersona = AgentPersona.SARA
     """Which assistant this reply is shown as - decided in code from what the
     turn did (`app/services/agent_persona.py`) - so a reply that names itself
-    names the one above it: Sara greets, Salman sells, Nora designs."""
+    names the one above it: Sara greets, Salman sells, Nora designs, and
+    Faysal answers about the store itself where the support agent is on."""
 
 
 ResponseRouting = ResponseGroundingView | DeterministicResponse

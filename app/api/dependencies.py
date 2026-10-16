@@ -26,6 +26,7 @@ from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
+from app.repositories.support_contacts import SupportContactsRepository
 from app.schemas.furniture_finder import (
     WIDGET_KEY_PATTERN,
     WIDGET_SESSION_PATTERN,
@@ -72,6 +73,7 @@ from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.store_cart_check import StoreCartCheck
+from app.services.support import SupportService
 from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.dimensions import DimensionSemantics
@@ -346,6 +348,11 @@ def customer_turn_coordinator(
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         store_knowledge=app_resources.store_knowledge,
+        support=(
+            SupportService(SupportContactsRepository(session))
+            if app_resources.settings.customer_agent.support_agent
+            else None
+        ),
         briefs=(
             ProductBriefBuilder(
                 repository,
@@ -485,7 +492,9 @@ def customer_response_generator(
             public_message="The customer agent is not configured.",
         )
     return CustomerResponseGenerator(
-        client, arabic_replies=app_resources.settings.customer_agent.arabic_replies
+        client,
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
+        support_agent=app_resources.settings.customer_agent.support_agent,
     )
 
 
@@ -580,6 +589,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         session_store(app_resources),
         app_resources.settings.session,
         display=product_display_words(app_resources),
+        support_agent=app_resources.settings.customer_agent.support_agent,
     )
 
 

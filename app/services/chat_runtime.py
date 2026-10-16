@@ -76,6 +76,7 @@ from app.services.seating_presentation import (
     present_seating_solution,
     seating_choices,
 )
+from app.services.support_channels import channels_for
 from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.briefs import BriefQuestionKind
 
@@ -106,7 +107,11 @@ class ChatRuntime:
         sessions: SessionStore,
         settings: SessionSettings,
         display: ProductDisplayWords | None = None,
+        *,
+        support_agent: bool = False,
     ) -> None:
+        self._support_agent = support_agent
+        """Whether a turn about the store is shown as Faysal."""
         self._coordinator = coordinator
         self._responses = responses
         self._sessions = sessions
@@ -145,6 +150,7 @@ class ChatRuntime:
             bundle_action=request.bundle_action,
             search_action=request.search_action,
             product_action=request.product_action,
+            support_action=request.support_action,
             # Read by the coordinator only where Arabic replies are on.
             locale=request.locale,
         )
@@ -278,6 +284,13 @@ class ChatRuntime:
                 else None
             ),
             swap_context=result.swap_context,
+            # The store's own support, drawn from its contacts - never from
+            # the reply, which only points to it.
+            support=(
+                channels_for(grounding.support.contacts, language)
+                if grounding.support is not None
+                else None
+            ),
         )
         return None if built.is_empty() else built
 
@@ -379,10 +392,9 @@ class ChatRuntime:
         """Every product and room piece with its text in the reply's language."""
         return displayed(presentation, self._display, language)
 
-    @staticmethod
-    def agent(turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
+    def agent(self, turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
         """Which assistant the reply is shown as - a label decided in code."""
-        return speaker(turn, result)
+        return speaker(turn, result, support_agent=self._support_agent)
 
     # ── the whole exchange ──────────────────────────────────────────────────
 

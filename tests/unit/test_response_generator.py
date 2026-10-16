@@ -759,8 +759,9 @@ def test_the_generator_holds_only_a_provider_client() -> None:
     ]
 
     # Plus whether Arabic replies are on: a flag that picks a prompt, not a
-    # collaborator (docs/arabic-replies-plan.md).
-    assert parameters == ["client", "arabic_replies"]
+    # collaborator (docs/arabic-replies-plan.md) - and whether a turn about the
+    # store speaks as Faysal: a flag the persona label reads, not a collaborator.
+    assert parameters == ["client", "arabic_replies", "support_agent"]
 
 
 def test_the_generator_requests_no_tools() -> None:
