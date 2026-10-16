@@ -291,6 +291,48 @@ class PineconeSettings(BaseModel):
         return self.namespace_template.format(store_id=store_id)
 
 
+class StoreKnowledgeSettings(BaseModel):
+    """The store's own documents, as the main platform indexed them.
+
+    Absent when store knowledge is not configured: the agent then never asks
+    for it and answers exactly as before. The platform writes these passages -
+    delivery, returns, warranty, payment, contact details - into its own
+    namespace per store; this service only reads them (CLAUDE.md 4, 16).
+
+    Its own block rather than more fields on `PineconeSettings`: product
+    ranking and store documents are different data in different namespaces,
+    and either can be configured without the other.
+    """
+
+    api_key: SecretStr
+    index_name: str = Field(min_length=1)
+
+    namespace_template: str = "knowledge-store-{store_id}"
+    """Apart from the product namespaces (`store-{store_id}`), so a product
+    score never meets a passage. Derived from RetailerContext only, never from
+    a customer message or a model's output (CLAUDE.md 20.2)."""
+
+    top_k: int = Field(default=6, ge=1, le=20)
+    """Passages read per question - enough for a policy split across pages,
+    few enough that the reply is written from what is relevant."""
+
+    min_score: float = Field(default=0.3, ge=0.0, le=1.0)
+    """Below this a passage is not about the question, and is not shown to the
+    reply at all; none left means the documents do not say."""
+
+    max_passage_chars: int = Field(default=1500, ge=100, le=4000)
+
+    @field_validator("namespace_template")
+    @classmethod
+    def _requires_store_id(cls, value: str) -> str:
+        if "{store_id}" not in value:
+            raise ValueError("store_knowledge namespace_template must contain '{store_id}'")
+        return value
+
+    def namespace_for(self, store_id: int) -> str:
+        return self.namespace_template.format(store_id=store_id)
+
+
 class FurnitureFinderSettings(BaseModel):
     """Photo-based product finding, answered by the main platform's own finder.
 
@@ -789,6 +831,8 @@ class Settings(BaseSettings):
     # Optional for the same reason: without it the finder routes refuse and
     # everything else is unaffected.
     furniture_finder: FurnitureFinderSettings | None = None
+    # And again: without it the agent never looks in the store's documents.
+    store_knowledge: StoreKnowledgeSettings | None = None
     # And again: without it the Visualize route refuses and nothing else changes.
     visualization: VisualizationSettings | None = None
     catalog: CatalogSettings = CatalogSettings()
@@ -914,6 +958,10 @@ class Settings(BaseSettings):
             "environment": str(self.environment),
             "semantic_ranking_configured": self.pinecone is not None,
             "pinecone_index": self.pinecone.index_name if self.pinecone else None,
+            "store_knowledge_configured": self.store_knowledge is not None,
+            "store_knowledge_index": (
+                self.store_knowledge.index_name if self.store_knowledge else None
+            ),
             "embedding_model": self.llm.embedding_model,
             "service_name": self.service_name,
             "api_prefix": self.api.prefix,

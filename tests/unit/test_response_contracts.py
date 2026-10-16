@@ -413,6 +413,9 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # the application's; nothing was searched, so there is nothing to find.
         "goes_with_offer",
         "design_advice",
+        # A question about the shop itself, answered from its own documents -
+        # which passages is the application's; the reply only words them.
+        "policy_answer",
         # M17: the customer's own choices, shown again. Not a search - nothing
         # was looked for, so the reply must not describe finding anything.
         "selection",
@@ -1361,6 +1364,10 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "shopping_room",
         "seats_for",
         "guidance",
+        # A question about the shop and what its own documents say: the shop's
+        # words with their title and page - no id, no score, no store.
+        "policy_question",
+        "policy_passages",
         "screen",
         "clarification_reason",
         "reference_reason",

@@ -468,6 +468,7 @@ def _coordinator(
     mixed_types: bool = False,
     fit_after_pick: bool = False,
     cart: Any = None,
+    store_knowledge: Any = None,
 ) -> tuple[CustomerTurnCoordinator, dict[str, Any]]:
     taxonomy = load_taxonomy()
     attributes = load_catalog_attributes()
@@ -519,6 +520,7 @@ def _coordinator(
         mixed_types=mixed_types,
         fit_after_pick=fit_after_pick,
         cart=cart,
+        store_knowledge=store_knowledge,
     )
     return coordinator, parts
 

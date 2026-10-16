@@ -30,8 +30,10 @@ from app.integrations.postgres import Database
 from app.integrations.product_images import ProductImageFetcher
 from app.integrations.redis import RedisClient
 from app.integrations.salla_storefront import SallaStorefrontClient
+from app.integrations.store_knowledge import PineconeKnowledgeIndex
 from app.integrations.zory_finder import ZoryFinderClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
+from app.services.store_knowledge import StoreKnowledgeService
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.briefs import Briefs, load_briefs
 from app.taxonomy.compare_groups import CompareGroups, load_compare_groups
@@ -65,6 +67,9 @@ class AppResources:
     # deployment without them constructs exactly as it did before.
     embedder: OpenAIQueryEmbedder | None = None
     semantic_index: SemanticIndex | None = None
+    # None when store knowledge is not configured: the agent then never looks
+    # in the store's documents and answers exactly as before.
+    store_knowledge: StoreKnowledgeService | None = None
     # None when the Customer Agent's decision step is not configured. A second
     # client rather than a second parameter: the model identifier is fixed at
     # construction, and one client per process is what CLAUDE.md 24 requires -
@@ -207,6 +212,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.pinecone is not None and settings.llm.embedding_model:
         embedder = OpenAIQueryEmbedder(settings.llm)
         semantic_index = PineconeSemanticIndex(settings.pinecone)
+    store_knowledge: StoreKnowledgeService | None = None
+    knowledge_embedder: OpenAIQueryEmbedder | None = None
+    if settings.store_knowledge is not None and settings.llm.embedding_model:
+        # The same embedding model the platform indexed the passages with;
+        # its own client only when semantic ranking has none to share.
+        shared = embedder
+        if shared is None:
+            shared = knowledge_embedder = OpenAIQueryEmbedder(settings.llm)
+        store_knowledge = StoreKnowledgeService(
+            shared,
+            PineconeKnowledgeIndex(settings.store_knowledge),
+            settings.store_knowledge,
+        )
     decision_model = settings.customer_agent.decision_model
     if decision_model:
         decision_llm = OpenAIStructuredClient(
@@ -283,6 +301,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         index=settings.pinecone.index_name if settings.pinecone else None,
     )
     logger.info(
+        "store_knowledge_configured",
+        enabled=store_knowledge is not None,
+        index=settings.store_knowledge.index_name if settings.store_knowledge else None,
+    )
+    logger.info(
         "furniture_finder_configured",
         enabled=zory_finder is not None,
         upstream=settings.furniture_finder.zory_base_url if settings.furniture_finder else None,
@@ -303,6 +326,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         llm=llm_client,
         embedder=embedder,
         semantic_index=semantic_index,
+        store_knowledge=store_knowledge,
         decision_llm=decision_llm,
         response_llm=response_llm,
         design_llm=design_llm,
@@ -331,6 +355,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         if embedder is not None:
             await embedder.close()
+        if knowledge_embedder is not None:
+            await knowledge_embedder.close()
         if zory_finder is not None:
             await zory_finder.close()
         if salla is not None:
