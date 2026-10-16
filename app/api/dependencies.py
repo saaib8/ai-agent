@@ -580,6 +580,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         session_store(app_resources),
         app_resources.settings.session,
         display=product_display_words(app_resources),
+        support_agent=app_resources.settings.customer_agent.support_agent,
     )
 
 

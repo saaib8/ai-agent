@@ -106,7 +106,11 @@ class ChatRuntime:
         sessions: SessionStore,
         settings: SessionSettings,
         display: ProductDisplayWords | None = None,
+        *,
+        support_agent: bool = False,
     ) -> None:
+        self._support_agent = support_agent
+        """Whether a turn about the store is shown as Faysal."""
         self._coordinator = coordinator
         self._responses = responses
         self._sessions = sessions
@@ -379,10 +383,9 @@ class ChatRuntime:
         """Every product and room piece with its text in the reply's language."""
         return displayed(presentation, self._display, language)
 
-    @staticmethod
-    def agent(turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
+    def agent(self, turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
         """Which assistant the reply is shown as - a label decided in code."""
-        return speaker(turn, result)
+        return speaker(turn, result, support_agent=self._support_agent)
 
     # ── the whole exchange ──────────────────────────────────────────────────
 

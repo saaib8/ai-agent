@@ -338,9 +338,11 @@ class ChatResponse(BaseModel):
     None where Arabic replies are off: English, as always."""
 
     agent: AgentPersona = AgentPersona.SARA
-    """Which assistant the reply is shown as: Sara (shopping), Salman (sales)
-    or Nora (interior design). A label only - one assistant answers every turn;
-    decided in code from what the turn did (`app/services/agent_persona.py`)."""
+    """Which assistant the reply is shown as: Sara (shopping), Salman (sales),
+    Nora (interior design) or Faysal (the store's support, where
+    `customer_agent.support_agent` is on). A label only - one assistant answers
+    every turn; decided in code from what the turn did
+    (`app/services/agent_persona.py`)."""
 
     labels: CardLabels | None = Field(default=None, exclude_if=lambda v: v is None)
     """The words a client draws around the products - card buttons, the picks
