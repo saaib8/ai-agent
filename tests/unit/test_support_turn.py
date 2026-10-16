@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from app.core.exceptions import StoreKnowledgeUnavailableError
 from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
+from app.schemas.agent_turn import CustomerResponse
 from app.schemas.grounding import TurnFailureCode
 from app.schemas.response import ResponseGroundingView, ResponseOutcomeKind
 from app.schemas.retailer import RetailerContext
 from app.schemas.support import ContactSupportAction, SupportContacts, SupportGrounding
 from app.services.chat_runtime import ChatRuntime
+from app.services.response_generator import _ends_on_a_question
 from app.services.response_view import route_response
 
 from tests.unit.test_store_info_turn import QUESTION, FakeStoreKnowledge, _asks
@@ -149,3 +151,25 @@ async def test_the_stores_channels_are_drawn_beneath_the_reply() -> None:
         "mailto:support@store.sa",
     ]
     assert presentation.products == ()
+
+
+async def test_faysal_adds_no_shopping_question_after_an_answer() -> None:
+    """Even with products shown earlier, an answer about the store ends on the
+    answer: the support channels are its next step, not "narrow these down"."""
+    coordinator, _ = _coordinator(
+        _asks(), store_knowledge=FakeStoreKnowledge(), support=FakeSupport()
+    )
+    base = _state()
+    shopping = base.model_copy(
+        update={
+            "product_interaction": base.product_interaction.model_copy(
+                update={"presented_product_ids": (20, 21)}
+            )
+        }
+    )
+
+    result = await coordinator.run(_turn(shopping, QUESTION))
+    answer = CustomerResponse(message="Delivery to Jeddah takes 4 to 7 working days.")
+
+    assert result.next_step is None
+    assert _ends_on_a_question(answer, result) == answer

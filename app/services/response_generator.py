@@ -119,7 +119,8 @@ def _ends_on_a_question(
     """
     # A turn with its own question - a question card, a room question, cards of
     # what goes with a pick - already leaves them something to answer on screen.
-    if already_asks(result):
+    # So does Faysal's: the store's support channels are beneath the reply.
+    if already_asks(result) or result.grounding.support is not None:
         return response
     as_written = response
     if closes_on_a_question(response.message, response.follow_up_question):
