@@ -57,6 +57,7 @@ from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingBundle, SeatingSolution
 from app.schemas.store_knowledge import StoreKnowledgeGrounding
+from app.schemas.support import SupportGrounding
 from app.schemas.text_choice import (
     TextReplyChoice,
     require_a_question,
@@ -179,6 +180,12 @@ class TurnGrounding(BaseModel):
     documents were searched and say nothing about it - answered honestly,
     never filled in.
     """
+
+    support: SupportGrounding | None = None
+    """The store's own support, offered beside this reply: with an answer from
+    its documents, when they could not be read, or because the shopper asked
+    to reach it. None where the support agent is off or the turn is not
+    about the store."""
 
     design_handoff_requested: bool = False
     """The turn **asked** for interior-design reasoning.

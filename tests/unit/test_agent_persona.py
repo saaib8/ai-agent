@@ -25,12 +25,15 @@ from app.schemas.conversation import ConversationContext, ConversationMessage, C
 from app.schemas.design import DesignGuidance, GuidanceTopic
 from app.schemas.product_action import GoesWithPickAction
 from app.schemas.room_opener import RoomPieceOffer
+from app.schemas.store_knowledge import StoreKnowledgeGrounding
+from app.schemas.support import SupportGrounding
 from app.services.agent_persona import speaker
 from app.taxonomy.rooms import PieceTier
 
 from tests.unit.test_turn_coordinator import CONTEXT
 
 NORA, SALMAN, SARA = AgentPersona.NORA, AgentPersona.SALMAN, AgentPersona.SARA
+FAYSAL = AgentPersona.FAYSAL
 
 HISTORY = ConversationContext(
     messages=(
@@ -106,3 +109,35 @@ def test_the_room_and_design_answers_are_nora() -> None:
     assert speaker(_turn(), _result(grounding=TurnGrounding(design_guidance=(guidance,)))) is NORA
     swap_a_piece = _turn(bundle_action=BundleAlternativesAction(bundle_ordinal=2))
     assert speaker(swap_a_piece, _result()) is NORA
+
+
+def _store_answer() -> TurnGrounding:
+    return TurnGrounding(
+        store_knowledge=StoreKnowledgeGrounding(question="How long is delivery to Jeddah?")
+    )
+
+
+def test_a_turn_about_the_store_is_faysal_where_the_support_agent_is_on() -> None:
+    assert speaker(_turn(), _result(grounding=_store_answer()), support_agent=True) is FAYSAL
+    supported = TurnGrounding(support=SupportGrounding(requested=True))
+    assert speaker(_turn(), _result(grounding=supported), support_agent=True) is FAYSAL
+
+
+def test_faysal_outranks_sales_on_a_turn_about_the_store() -> None:
+    result = _result(CommercialReason.UPSELL, grounding=_store_answer())
+
+    assert speaker(_turn(), result, support_agent=True) is FAYSAL
+
+
+def test_without_the_support_agent_a_turn_about_the_store_is_as_before() -> None:
+    assert speaker(_turn(), _result(grounding=_store_answer())) is SARA
+
+
+def test_the_first_reply_still_greets_as_sara() -> None:
+    result = _result(grounding=_store_answer())
+
+    assert speaker(_turn(first=True), result, support_agent=True) is SARA
+
+
+def test_the_next_shopping_turn_is_sara_again() -> None:
+    assert speaker(_turn(), _result(), support_agent=True) is SARA
