@@ -74,8 +74,10 @@ ARABIC: Mapping[str, str] = MappingProxyType(
             "عذرًا، لم أفهم ذلك تمامًا. جرّب أن تصيغه بطريقة أخرى - مثلًا نوع القطعة"
             " التي تبحث عنها، أو ما تودّ تغييره فيما تراه أمامك."
         ),
-        "I couldn't look that up just now. Please try again in a moment.": (
-            "لم أتمكن من البحث عن ذلك الآن. يُرجى المحاولة مرة أخرى بعد قليل."
+        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "moment, and feel free to ask me about any product meanwhile.": (
+            "عذرًا، لا أستطيع الوصول إلى معلومات المتجر حاليًا. يُرجى المحاولة بعد قليل،"
+            " ويسعدني مساعدتك في أي منتج خلال ذلك."
         ),
         "I wasn't able to answer that one just now. Please try again in a moment.": (
             "لم أتمكن من الإجابة عن ذلك الآن. يُرجى المحاولة مرة أخرى بعد قليل."
