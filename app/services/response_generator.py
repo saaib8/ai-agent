@@ -74,6 +74,7 @@ from app.services.numeric_guard import (
     cart_figures,
     cart_offer_figures,
     cart_refusal_counts,
+    cart_refusal_figures,
     check_numeric_policy,
     chosen_seating_counts,
     guidance_figures,
@@ -92,6 +93,7 @@ from app.services.response_wording import (
     BUNDLE_KEPT_WORDING,
     BUNDLE_UNAVAILABLE_WORDING,
     BUNDLE_UNLOCKED_WORDING,
+    CART_REFUSED_WORDING,
     DESIGN_HANDOFF_WORDING,
     DETERMINISTIC_FALLBACK,
     FAILURE_WORDING,
@@ -443,6 +445,7 @@ class CustomerResponseGenerator:
                 # comes to, summed by the application (CLAUDE.md 36).
                 *cart_figures(result.cart),
                 *cart_offer_figures(result.cart_offer),
+                *cart_refusal_figures(result.cart_refusals),
                 # The lowest real total of each shape a seating question offers.
                 *(seating_figures(view.seating) if view.seating else ()),
                 # The lowest real total that would fill a piece the budget
@@ -474,7 +477,7 @@ class CustomerResponseGenerator:
             request, allowance=allowance, refs=refs, language=language
         )
         if response is None:
-            return _say(_fallback(view), language), calls, True
+            return _fallback(view, language), calls, True
         # A reply that asks its own question - "shall I show you the cheapest?"
         # - keeps it: the summary called for it, and its own choices answer it
         # (`asks_its_own_question`). Only a reply that asks nothing gets the next
@@ -506,7 +509,7 @@ class CustomerResponseGenerator:
             language=language,
         )
         if response is None:
-            return _say(_fallback(view), language), calls, True
+            return _fallback(view, language), calls, True
         return response, calls, False
 
     # ── the call, and the one retry it may earn ─────────────────────────────
@@ -716,11 +719,23 @@ def _say(sentence: str, language: ReplyLanguage) -> CustomerResponse:
     return _reply(in_language(sentence, language))
 
 
-def _fallback(view: ResponseGroundingView) -> str:
-    """This outcome's fixed sentence, with the status or outcome it needs."""
-    return fallback_for(
-        view.kind,
-        view.bundle.status if view.bundle else None,
-        view.seating.outcome if view.seating else None,
-        view.room_question.question if view.room_question else None,
+def _fallback(view: ResponseGroundingView, language: ReplyLanguage) -> CustomerResponse:
+    """This outcome's fixed sentence, with the status or outcome it needs -
+    led by what the store's cart refused, which no fallback may leave unsaid."""
+    sentence = in_language(
+        fallback_for(
+            view.kind,
+            view.bundle.status if view.bundle else None,
+            view.seating.outcome if view.seating else None,
+            view.room_question.question if view.room_question else None,
+        ),
+        language,
     )
+    cart = view.cart
+    if cart is None or not cart.refused:
+        return _reply(sentence)
+    refused = in_language(CART_REFUSED_WORDING[cart.changed], language)
+    # A plain answer had nothing else to say: the refusal is the answer.
+    if view.kind is ResponseOutcomeKind.ANSWER:
+        return _reply(refused)
+    return _reply(compose(refused, sentence))

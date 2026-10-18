@@ -173,7 +173,20 @@ SIDE_NOTICE_WORDING: dict[SideEffectNotice, str] = {
     SideEffectNotice.FOCUS_NOT_CHANGED: "I wasn't able to switch to that product.",
 }
 
-ROOM_QUESTION_DEFAULT = "Let's design your room. What would you like to spend on it overall?"
+CART_REFUSED_WORDING: dict[bool, str] = {
+    False: "The store's cart couldn't take that, so your cart hasn't changed.",
+    True: (
+        "I've updated your cart, but the store's cart couldn't take everything "
+        "you asked for, so I've left out what it refused."
+    ),
+}
+"""What a fallen-back reply still says when the store's cart refused a piece,
+keyed by whether the turn changed the cart (CLAUDE.md 36). Without it, a room
+whose pieces Salla refused fell back to "I'm not able to answer that just now"
+and the customer never learned why nothing was added. No product name and no
+figure: the cart beside it shows what is in it."""
+
+ROOM_QUESTION_DEFAULT ="Let's design your room. What would you like to spend on it overall?"
 
 FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
     ResponseOutcomeKind.ANSWER: "I'm not able to answer that just now.",

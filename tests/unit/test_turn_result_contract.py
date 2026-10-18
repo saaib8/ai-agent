@@ -159,6 +159,9 @@ def test_a_turn_result_holds_exactly_these_things() -> None:
         "cart_offer",
         # What the store's own cart would not take this turn, and why.
         "cart_refusals",
+        # What they asked to add that the cart already held, so the reply
+        # names exactly those.
+        "already_in_cart",
         "focus",
         "companions",
         # A finished room's missing pieces, asked about when they want a
