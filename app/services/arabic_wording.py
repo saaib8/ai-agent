@@ -124,6 +124,13 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "I wasn't able to switch to that product.": "لم أتمكن من الانتقال إلى هذا المنتج.",
         # ── when a reply could not be written ──────────────────────────────
         "I'm not able to answer that just now.": "لا أستطيع الإجابة عن ذلك الآن.",
+        "The store's cart couldn't take that, so your cart hasn't changed.": (
+            "لم تقبل سلة المتجر ذلك، لذا لم تتغير سلتك."
+        ),
+        (
+            "I've updated your cart, but the store's cart couldn't take everything "
+            "you asked for, so I've left out what it refused."
+        ): "حدّثت سلتك، لكن سلة المتجر لم تقبل كل ما طلبته، فتركت ما رفضته.",
         "Here's what I found.": "إليك ما وجدته.",
         "I couldn't find anything that matches all of that together. Tell me which part "
         "matters least - the budget, the size or the colour - and I'll widen that one.": (

@@ -639,26 +639,19 @@ async def test_the_reply_is_told_what_was_already_in_the_cart() -> None:
     from app.services.response_view import _cart_facts
 
     state = _with_cart((101, 102), {102: 2})
-    state = state.model_copy(
-        update={
-            "product_interaction": state.product_interaction.model_copy(
-                update={"focused_product_id": 102}
-            )
-        }
-    )
     cart = await _cart().view(state, (_pick(1, 101), _pick(2, 102)), CONTEXT, ReplyLanguage.EN)
     asked_again = CustomerTurnResult(
         state=state,
         decision=_add_first("sofa"),
         grounding=TurnGrounding(),
         cart=cart,
+        already_in_cart=(102,),
     )
 
     facts = _cart_facts(asked_again)
 
     assert facts is not None and not facts.changed
-    assert facts.already_there is not None
-    assert (facts.already_there.name, facts.already_there.quantity_after) == ("Sofa 102", 2)
+    assert [(f.name, f.quantity_after) for f in facts.already_there] == [("Sofa 102", 2)]
 
 
 # ── several at once, a kind alone, and asking before adding ─────────────────
@@ -873,7 +866,7 @@ async def test_a_refused_add_is_never_called_already_in_the_cart() -> None:
 
     facts = _cart_facts(refused)
 
-    assert facts is not None and facts.already_there is None
+    assert facts is not None and facts.already_there == ()
 
 
 async def test_an_offer_into_an_empty_cart_gives_the_price_alone() -> None:

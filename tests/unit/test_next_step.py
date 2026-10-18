@@ -94,6 +94,30 @@ def test_picks_without_a_new_second_option_offer_what_goes_with_them() -> None:
     assert "Design a room around my picks" in [chip.label for chip in step.chips]
 
 
+def test_a_fresh_list_is_narrowed_or_paged_even_with_a_cart() -> None:
+    """ "Show me tables" with a sofa in the cart: the new cards come first -
+    narrow them down or see more - and what goes with the cart waits for a
+    turn that shows no new list."""
+    from tests.unit.test_response_generator import _search
+
+    picks = (_pick(1, "sofa"),)
+
+    step = next_step(
+        _result(picks=picks, grounding=TurnGrounding(search=_search(3))), COMPLEMENTS
+    )
+
+    assert step is not None and step.kind is NextStepKind.KEEP_BROWSING
+    assert [chip.label for chip in step.chips] == ["Show me more", "Narrow them down"]
+
+
+def test_with_nothing_in_the_cart_results_are_narrowed_or_paged() -> None:
+    from tests.unit.test_response_generator import _search
+
+    step = next_step(_result(grounding=TurnGrounding(search=_search(3))), COMPLEMENTS)
+
+    assert step is not None and step.kind is NextStepKind.KEEP_BROWSING
+
+
 def test_a_pick_with_no_pairings_is_never_offered_an_empty_goes_with() -> None:
     """A floor lamp has no reviewed companions: offering "what goes with it"
     would come back empty, so the chips offer a room and more browsing."""

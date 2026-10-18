@@ -257,6 +257,19 @@ def cart_offer_figures(offer: CartOffer | None) -> tuple[Decimal, ...]:
     )
 
 
+def cart_refusal_figures(refusals: Sequence[CartRefusal]) -> tuple[Decimal, ...]:
+    """The numbers in a refused product's name ("Floor Lamp 2.25m"), as the
+    reply names it to say the store would not take it. Without this, a room
+    whose lamp Salla refused was refused twice and fell back to a sentence that
+    never said why the cart had not changed."""
+    return tuple(
+        Decimal(n)
+        for refusal in refusals
+        for name in (refusal.name_english, refusal.name_arabic or "")
+        for n in _NAME_NUMBER.findall(name)
+    )
+
+
 def cart_refusal_counts(refusals: Sequence[CartRefusal]) -> tuple[int, ...]:
     """What the store's cart would take of each refused product - "the store
     takes up to 3 per order" - counted by the application."""

@@ -642,10 +642,10 @@ class CartFactsView(BaseModel):
     """They liked a piece and did not ask for it in their cart: ask whether to
     add it, with its price and what the cart would come to (CLAUDE.md 36)."""
 
-    already_there: CartChangeFactView | None = None
-    """The product they asked to add, when it was already in the cart with
-    that many and so nothing changed. Without it a reply explained the
-    unchanged cart by saying it could not tell which sofa they meant."""
+    already_there: tuple[CartChangeFactView, ...] = ()
+    """What they asked to add that was already in the cart with that many, so
+    nothing changed for it. Without it a reply explained the unchanged cart by
+    saying it could not tell which sofa they meant."""
 
     added: int = Field(default=0, ge=0)
     """How many products this turn put in the cart that were not in it."""

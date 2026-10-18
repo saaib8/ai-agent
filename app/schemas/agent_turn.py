@@ -451,6 +451,10 @@ class CustomerTurnResult(BaseModel):
     in the store, out of stock, past one order's limit - and so ours did not
     either (CLAUDE.md 36)."""
 
+    already_in_cart: tuple[int, ...] = ()
+    """What they asked this turn to add that the cart already held, as many as
+    asked - so the reply says so by name, and never of anything else."""
+
     cart_offer: CartOffer | None = None
     """The piece they liked, offered for their cart with what it would then
     come to - asked before anything is added (CLAUDE.md 36)."""

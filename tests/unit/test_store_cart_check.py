@@ -363,3 +363,112 @@ async def test_liking_a_sofa_on_an_earlier_list_offers_it() -> None:
     assert result.state.product_interaction.focused_product_id == 11
     assert result.cart_offer is not None
     assert result.cart_offer.card is not None and result.cart_offer.card.list_revision == 1
+
+
+async def test_one_refused_does_not_stop_the_others_and_already_is_named_exactly() -> None:
+    """ "Add the first and third sofa": the first is not the store's, the
+    third is already in the cart - each is said of itself, never of the piece
+    last in focus."""
+    from app.schemas.agent_decision import CartAddition
+
+    class ByPosition(FakeReferences):
+        async def resolve(self, selector: Any, state: Any, context: Any) -> Any:
+            return ResolvedProductReference(product_id={1: 11, 3: 10}[selector.position])
+
+    coordinator, _ = _coordinator(
+        CustomerAgentDecision(
+            action=AgentAction.ANSWER,
+            interaction=ProductInteractionIntent(
+                op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=1)
+            ),
+            more_to_add=(CartAddition(reference=PresentedOrdinal(position=3)),),
+        ),
+        references=ByPosition(),
+        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
+        cart=_cart(),
+    )
+    coordinator._cart_check = Refuses({11: (CartRefusalReason.NOT_IN_STORE, 0, None)})  # type: ignore[assignment]
+
+    result = await coordinator.run(
+        CustomerTurnInput(
+            message="add the first and third sofa",
+            state=_two_sofas_and_a_lamp(),
+            context=CONTEXT,
+        )
+    )
+
+    assert [r.name_english for r in result.cart_refusals] == ["Product 11"]
+    assert result.already_in_cart == (10,), "the third was looked at, and it is already in"
+
+
+# ── what a refused room says ────────────────────────────────────────────────
+
+
+def test_the_reply_may_name_a_refused_piece_with_the_numbers_in_its_name() -> None:
+    """A room's lamp "Floor Lamp 2.25m" refused by Salla: the reply naming it
+    was refused twice for "2.25" and fell back to a sentence saying nothing."""
+    from app.schemas.cart import CartRefusal
+    from app.services.numeric_guard import (
+        build_allowance,
+        cart_refusal_counts,
+        cart_refusal_figures,
+        check_numeric_policy,
+    )
+
+    refused = (
+        CartRefusal(
+            name_english="Black LED Floor Lamp 2.25m",
+            reason=CartRefusalReason.NOT_IN_STORE,
+            kept=0,
+        ),
+    )
+    allowance = build_allowance(
+        "Add all of these to my cart",
+        counts=cart_refusal_counts(refused),
+        figures=cart_refusal_figures(refused),
+    )
+
+    named = "The Black LED Floor Lamp 2.25m isn't available in this store's cart."
+    invented = "It would have cost 900 SAR."
+    assert check_numeric_policy(message=named, follow_up_question=None, allowance=allowance) is None
+    assert (
+        check_numeric_policy(message=invented, follow_up_question=None, allowance=allowance)
+        is not None
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "changed", "expected"),
+    [
+        ("answer", False, "The store's cart couldn't take that, so your cart hasn't changed."),
+        (
+            "product_detail",
+            True,
+            "I've updated your cart, but the store's cart couldn't take everything you "
+            "asked for, so I've left out what it refused. Here are the details for that one.",
+        ),
+    ],
+)
+def test_a_fallen_back_reply_still_says_what_the_store_refused(
+    kind: str, changed: bool, expected: str
+) -> None:
+    from app.schemas.language import ReplyLanguage
+    from app.schemas.response import (
+        CartFactsView,
+        CartRefusalFactView,
+        ResponseGroundingView,
+        ResponseOutcomeKind,
+    )
+    from app.services.response_generator import _fallback
+
+    view = ResponseGroundingView(
+        kind=ResponseOutcomeKind(kind),
+        cart=CartFactsView(
+            item_count=3,
+            changed=changed,
+            refused=(CartRefusalFactView(name="Rug", reason="not_in_store", kept=0),),
+        ),
+    )
+
+    assert _fallback(view, ReplyLanguage.EN).message == expected
+    assert _fallback(view.model_copy(update={"cart": None}), ReplyLanguage.EN).message != expected

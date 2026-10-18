@@ -597,6 +597,17 @@ reading, so neither becomes a question.
 """
 
 
+def _already_holds(intent: ProductInteractionIntent, product_id: int, state: AgentStateV1) -> bool:
+    """A select - or a "consider", which offers nothing for it - of a product
+    the cart already holds, as many as it asks for."""
+    interaction = state.product_interaction
+    return (
+        intent.op in (ProductInteractionOp.SELECT, ProductInteractionOp.CONSIDER)
+        and product_id in interaction.selected_product_ids
+        and (intent.quantity is None or intent.quantity == interaction.quantity_of(product_id))
+    )
+
+
 def _refusal_of(check: CartCheck, kept: int) -> CartRefusal:
     return CartRefusal(
         name_english=check.name_english,
@@ -1198,6 +1209,8 @@ class _Interaction:
     refusals: tuple[CartRefusal, ...] = ()
     """What the store's own cart would not take, asked before the choice was
     recorded - so nothing goes with a piece the store will not sell."""
+    already: tuple[int, ...] = ()
+    """What they asked to add that the cart already held as asked."""
 
 
 class CustomerTurnCoordinator:
@@ -2167,6 +2180,7 @@ class CustomerTurnCoordinator:
             decision=decision,
             grounding=grounding,
             cart_refusals=interaction.refusals,
+            already_in_cart=interaction.already,
             selection_added=bool(
                 set(final_state.product_interaction.selected_product_ids)
                 - set(pre_turn.product_interaction.selected_product_ids)
@@ -3916,11 +3930,17 @@ class CustomerTurnCoordinator:
             decision.interaction, resolved.product_id, pre_turn, context
         )
         refusals: tuple[CartRefusal, ...] = (refusal,) if refusal is not None else ()
-        if first is None:
-            return _Interaction(state=pre_turn, refusals=refusals)
-        state = self._interacted(first, resolved.product_id, pre_turn)
+        already: tuple[int, ...] = ()
+        state = pre_turn
+        applied = False
+        if first is not None:
+            if _already_holds(first, resolved.product_id, state):
+                already = (resolved.product_id,)
+            state = self._interacted(first, resolved.product_id, state)
+            applied = True
         if decision.interaction.op is not ProductInteractionOp.SELECT:
-            return _Interaction(state=state, applied=True)
+            return _Interaction(state=state, applied=applied)
+        # One refused by the store does not stop the others they named.
         for addition in decision.more_to_add:
             # "Add the first and second sofa": each resolved against the
             # screen they saw, each added to the cart the last one left.
@@ -3936,24 +3956,30 @@ class CustomerTurnCoordinator:
                 # could not be found.
                 return _Interaction(
                     state=state,
-                    applied=True,
+                    applied=applied,
                     clarification=more.clarification,
                     failure=more.failure,
+                    refusals=refusals,
+                    already=already,
                 )
             if self._cart_is_full(intent, more.product_id, state):
                 # What fitted stays in; the reply says the cart is full.
                 return _Interaction(
                     state=state,
-                    applied=True,
+                    applied=applied,
                     failure=TurnFailure(code=TurnFailureCode.CART_FULL),
                     refusals=refusals,
+                    already=already,
                 )
             taken, refusal = await self._as_the_store_would(intent, more.product_id, state, context)
             if refusal is not None:
                 refusals = (*refusals, refusal)
             if taken is not None:
+                if _already_holds(taken, more.product_id, state):
+                    already = (*already, more.product_id)
                 state = self._interacted(taken, more.product_id, state)
-        return _Interaction(state=state, applied=True, refusals=refusals)
+                applied = True
+        return _Interaction(state=state, applied=applied, refusals=refusals, already=already)
 
     async def _as_the_store_would(
         self,

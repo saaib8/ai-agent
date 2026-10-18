@@ -864,34 +864,29 @@ def _cart_facts(result: CustomerTurnResult | None) -> CartFactsView | None:
     )
 
 
-def _already_in_cart(result: CustomerTurnResult) -> CartChangeFactView | None:
-    """The product a select pointed at, when the cart already held it as asked.
-
-    A select focuses what it names, so the focus after the turn is that
-    product; its line is found by its place in the cart, as the lines are
-    numbered."""
-    cart, intent = result.cart, result.decision.interaction
-    if cart is None or cart.changes or intent is None:
-        return None
-    if result.grounding.deterministic_clarification is not None or result.grounding.failure:
-        # The select was refused - the kind did not match, the card was gone -
-        # so the piece in focus is not what they asked for.
-        return None
-    if intent.op not in (ProductInteractionOp.SELECT, ProductInteractionOp.CONSIDER):
-        return None
-    interaction = result.state.product_interaction
-    focused = interaction.focused_product_id
-    if focused is None or focused not in interaction.selected_product_ids:
-        return None
-    pick = interaction.selected_product_ids.index(focused) + 1
-    line = next((line for line in cart.lines if line.pick == pick), None)
-    if line is None:
-        return None
-    return CartChangeFactView(
-        name=line.display.name if line.display else line.name_english,
-        quantity_before=line.quantity,
-        quantity_after=line.quantity,
-    )
+def _already_in_cart(result: CustomerTurnResult) -> tuple[CartChangeFactView, ...]:
+    """What they asked to add that the cart already held - named from the
+    products the turn's selects resolved to, never from whatever was last in
+    focus. Its line is found by its place in the cart, as lines are numbered."""
+    cart = result.cart
+    if cart is None or not result.already_in_cart:
+        return ()
+    selected = result.state.product_interaction.selected_product_ids
+    by_pick = {line.pick: line for line in cart.lines}
+    facts = []
+    for product_id in result.already_in_cart:
+        if product_id not in selected:
+            continue
+        line = by_pick.get(selected.index(product_id) + 1)
+        if line is not None:
+            facts.append(
+                CartChangeFactView(
+                    name=line.display.name if line.display else line.name_english,
+                    quantity_before=line.quantity,
+                    quantity_after=line.quantity,
+                )
+            )
+    return tuple(facts)
 
 
 def _chosen_seating(result: CustomerTurnResult | None) -> ChosenSeatingView | None:

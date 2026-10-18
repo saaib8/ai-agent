@@ -135,9 +135,18 @@ def next_step(
         # Beside cards of what goes with their pick, "what goes with it?"
         # would offer the very thing on screen (CLAUDE.md 10.4).
         active = result.state.active_search
-        showing_what_goes_with = bool(
-            grounding.search is not None and grounding.search.products
-        ) and (result.focus is not None or (active is not None and active.ordered_by_pick))
+        showing_results = bool(grounding.search is not None and grounding.search.products)
+        showing_what_goes_with = showing_results and (
+            result.focus is not None or (active is not None and active.ordered_by_pick)
+        )
+        if showing_results and not showing_what_goes_with:
+            # A fresh list of their own asking - "show me tables" with a sofa
+            # in the cart - is narrowed or paged first; what goes with the
+            # cart is offered on the turns that show no new list.
+            return NextStep(
+                kind=NextStepKind.KEEP_BROWSING,
+                chips=_chips(language, Chip.SHOW_MORE, Chip.NARROW_DOWN),
+            )
         goes_with = None if showing_what_goes_with else _goes_with_pick(picks, complements)
         kind = NextStepKind.AFTER_PICKS if goes_with else NextStepKind.ROOM_AROUND_PICKS
         return NextStep(kind=kind, chips=_picks_chips(goes_with, language))
