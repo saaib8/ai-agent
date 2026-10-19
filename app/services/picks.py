@@ -61,7 +61,7 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.session import new_session
 from app.services.agent_state import apply_update
 from app.services.cart import CartService
-from app.services.chat_runtime import commit_state, load_for_turn
+from app.services.chat_runtime import commit_state, load_for_turn, with_the_shoppers_cart
 from app.services.hydration import ProductHydrationService
 from app.services.product_display import ProductDisplayWords
 from app.services.product_interaction import build_liked, build_picks, interaction_update
@@ -198,7 +198,12 @@ class PicksRuntime:
         the first message.
         """
         stored = await self._sessions.load(query.store_id, query.session_id)
-        envelope = stored if stored is not None else new_session()
+        envelope = await with_the_shoppers_cart(
+            self._sessions,
+            query.store_id,
+            query.session_id,
+            stored if stored is not None else new_session(),
+        )
         state = envelope.state
         picked = state.product_interaction.selected_product_ids
         products = await self._hydration.hydrate_ids(picked, context) if picked else []

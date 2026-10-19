@@ -324,8 +324,9 @@ def test_history_is_bounded_without_a_model() -> None:
 
 
 def test_no_arbitrary_redis_access_is_exposed() -> None:
-    """Sessions are the only thing this service stores in Redis, and the store
-    offers two operations. There is no general key tool an agent could reach."""
+    """Sessions - and the shopper's cart kept beside them (CLAUDE.md 36) - are
+    the only things this service stores in Redis, and the store offers three
+    named operations. There is no general key tool an agent could reach."""
     public = [
         name
         for name, _ in inspect.getmembers(
@@ -335,7 +336,7 @@ def test_no_arbitrary_redis_access_is_exposed() -> None:
         if not name.startswith("_")
     ]
 
-    assert sorted(public) == ["load", "save_if_revision"]
+    assert sorted(public) == ["load", "save_if_revision", "shopper_cart"]
 
 
 def test_the_session_key_is_built_in_exactly_one_place() -> None:

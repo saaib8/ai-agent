@@ -544,6 +544,14 @@ still ends without a question, the next step's fixed, digit-free question is
 added after the number check. The counts the picks tray shows ("your 2 sofa sets")
 may be said.
 
+**"Narrow these down, or see more?" only beside a list.** It is offered when
+this reply shows results, or is only words about the cards still on screen
+("which do you recommend?"). A turn that acted on the cart - added, removed,
+changed how many, added a room - or asked about it (`cart_question`: "what's
+my total?"), and a store answer, never get it, however long a list has stayed
+on screen behind them: they close on the cart's step, or with nothing picked
+on the open question.
+
 ### 10.3 A room is built from the pieces they chose
 
 Which pieces a room may hold is reviewed domain data
@@ -2863,6 +2871,14 @@ keeps a cart of its own.
   A turn whose only news is that one piece was refused closes on more like it
   (`after_refusal`: "Show similar ones" from its card, "Keep browsing") - never
   on narrowing a list from turns ago that is no longer beside the reply.
+- **The cart is the shopper's, not one chat's.** The platform names the
+  shopper at the front of every conversation id (`<16 hex>.<the widget's id>`).
+  Every saved turn keeps that shopper's cart beside their conversations
+  (`session.shopper_cart_ttl_s`, seven days), and every conversation they load
+  - a new chat, or one they come back to - holds it (`app/services/shopper_cart.py`),
+  so "what's in my cart?" answers the same in every chat. An id naming no
+  shopper (the console, direct calls) keeps its own cart. A change made only on
+  the store's own cart page never reaches us; that needs the widget.
 - **The agent reads it.** The decision model sees `cart` (place, name, kind,
   quantity - no price, no id), so a line is named by `picked_ordinal`. The reply
   sees `CartFactsView`: counts, quantities, whether the turn changed it, and its

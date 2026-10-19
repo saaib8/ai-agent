@@ -146,6 +146,13 @@ class SessionSettings(BaseModel):
     timeouts on `RedisSettings`: those bound reaching Redis at all, this bounds
     a single session operation once connected."""
 
+    shopper_cart_ttl_s: int = Field(default=604_800, ge=0, le=2_592_000)
+    """How long a shopper's cart outlives their conversations (seven days by
+    default), so a new chat - the widget's "New chat", or a conversation that
+    expired - starts with what they already added (CLAUDE.md 36). Kept for the
+    shopper the platform names at the front of a conversation id; an id with
+    no shopper keeps its cart to itself. 0 switches it off."""
+
 
 class ApiSettings(BaseModel):
     prefix: str = "/v1"

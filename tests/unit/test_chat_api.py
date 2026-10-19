@@ -34,6 +34,7 @@ from app.core.exceptions import (
     StoreNotFoundError,
 )
 from app.orchestration.graph import ChatGraphRunner
+from app.repositories.sessions import shopper_of
 from app.schemas.agent_decision import (
     AgentAction,
     CustomerAgentDecision,
@@ -43,7 +44,7 @@ from app.schemas.agent_decision import (
 from app.schemas.agent_turn import CustomerResponse
 from app.schemas.product_reference import PresentedOrdinal
 from app.schemas.retailer import RetailerContext
-from app.schemas.session import SessionEnvelope
+from app.schemas.session import SessionEnvelope, ShopperCart
 from app.services.chat_runtime import ChatRuntime
 from app.services.click_tracking import ClickTrackingService, tracking_url
 from fastapi import FastAPI
@@ -81,6 +82,7 @@ class FakeSessionStore:
 
     def __init__(self, error: Exception | None = None) -> None:
         self.saved: dict[tuple[int, str], SessionEnvelope] = {}
+        self.carts: dict[tuple[int, str], ShopperCart] = {}
         self.error = error
         self.loads = 0
         self.saves = 0
@@ -105,7 +107,18 @@ class FakeSessionStore:
         if stored_revision != expected_revision:
             return False
         self.saved[(store_id, session_id)] = envelope
+        shopper = shopper_of(session_id)
+        if shopper is not None:
+            interaction = envelope.state.product_interaction
+            self.carts[(store_id, shopper)] = ShopperCart(
+                selected_product_ids=interaction.selected_product_ids,
+                cart_quantities=interaction.cart_quantities,
+            )
         return True
+
+    async def shopper_cart(self, store_id: int, session_id: str) -> ShopperCart | None:
+        shopper = shopper_of(session_id)
+        return self.carts.get((store_id, shopper)) if shopper is not None else None
 
 
 class FakeResponses:

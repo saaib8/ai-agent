@@ -76,6 +76,7 @@ from app.services.seating_presentation import (
     present_seating_solution,
     seating_choices,
 )
+from app.services.shopper_cart import with_shopper_cart
 from app.services.support_channels import channels_for
 from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.briefs import BriefQuestionKind
@@ -457,6 +458,20 @@ class ChatRuntime:
         )
 
 
+async def with_the_shoppers_cart(
+    sessions: SessionStore, store_id: int, session_id: str, envelope: SessionEnvelope
+) -> SessionEnvelope:
+    """`envelope` holding its shopper's cart: the cart is the shopper's, not
+    this chat's, so a new chat starts with it and a resumed one sees what
+    another chat changed (CLAUDE.md 36). Unchanged where the id names no
+    shopper or none is kept."""
+    cart = await sessions.shopper_cart(store_id, session_id)
+    state = with_shopper_cart(
+        envelope.state, cart, new_conversation=envelope.session_revision == 0
+    )
+    return envelope if state is envelope.state else envelope.model_copy(update={"state": state})
+
+
 async def load_for_turn(
     sessions: SessionStore,
     *,
@@ -477,7 +492,9 @@ async def load_for_turn(
     nothing (M13 34).
     """
     stored = await sessions.load(store_id, session_id)
-    envelope = stored if stored is not None else new_session()
+    envelope = await with_the_shoppers_cart(
+        sessions, store_id, session_id, stored if stored is not None else new_session()
+    )
 
     if expected_revision is not None and expected_revision != envelope.session_revision:
         logger.info(
