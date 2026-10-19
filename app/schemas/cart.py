@@ -178,6 +178,9 @@ class CartRefusal(BaseModel):
     kept: int = Field(ge=0)
     """How many the cart now holds of it - 0 when it is not in it."""
     max_quantity: int | None = Field(default=None, ge=1)
+    card: CardRef | None = None
+    """Its card on a list still on screen, when it has one - so the next step
+    can offer more like it from that card rather than a list long gone."""
 
 
 class CartResponse(BaseModel):

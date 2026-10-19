@@ -205,6 +205,12 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
   Not now (`offer_not_now`, words only). Send a chip's `product_action` with its
   `value` as the message, as for any chip; the yes adds it and answers like a tap
   (the pick and what goes with it). `card` may be null: the piece in focus.
+- **A piece the store refused offers similar ones.** When the store's cart would not
+  take the one piece they asked for and the turn did nothing else, the reply ends on
+  "Would you like to see similar ones instead?" with two chips: Show similar ones
+  (carrying `product_action: {"kind":"more_like_this","card":{...}}`, or none - then
+  the piece in focus) and Keep browsing (words only). Like the offer's Yes / Not now,
+  draw them together beside the question - never under "also goes well with it".
 - **Favourites are `liked` only.** `picks` are the cart now: draw them as "in cart",
   never as favourites.
 - **Add all:** a room package's button is `add_all_to_cart` ("Add all to cart · {price}",

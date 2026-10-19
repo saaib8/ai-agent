@@ -43,6 +43,10 @@ class NextStepKind(StrEnum):
     KEEP_BROWSING = "keep_browsing"
     """Products on screen and nothing asked about them yet."""
 
+    AFTER_REFUSAL = "after_refusal"
+    """The store's cart would not take the one piece they asked for, and the
+    turn did nothing else: more like it, or something else (CLAUDE.md 36)."""
+
     TASTE_WHICH = "taste_which"
     """Which of two cards feels more like them - taste, never a pick (phase 5)."""
 
@@ -72,10 +76,11 @@ QUESTIONS: dict[NextStepKind, str] = {
     NextStepKind.ROOM_AROUND_PICKS: (
         "Shall I design a room around your picks, or would you like to keep browsing?"
     ),
-    NextStepKind.AFTER_DETAIL: "Would you like to add it to your picks, or see what goes with it?",
+    NextStepKind.AFTER_DETAIL: "Would you like to add it to your cart, or see what goes with it?",
     NextStepKind.AFTER_COMPARISON: "Which one are you leaning towards?",
     NextStepKind.AFTER_ROOM: "Would you like to swap any piece, or add a finishing touch?",
     NextStepKind.KEEP_BROWSING: "Would you like to narrow these down, or see more options?",
+    NextStepKind.AFTER_REFUSAL: "Would you like to see similar ones instead?",
     NextStepKind.TASTE_WHICH: "Which of these two feels more like you?",
     NextStepKind.TASTE_STYLE: "Which style feels right to you?",
     NextStepKind.TASTE_AVOID: "Is there anything you'd rather avoid?",

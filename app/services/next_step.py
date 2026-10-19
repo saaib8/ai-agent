@@ -27,10 +27,11 @@ from app.schemas.agent_decision import BlockingClarificationReason
 from app.schemas.agent_turn import CustomerResponse, CustomerTurnResult
 from app.schemas.bundle import RoomBundle
 from app.schemas.bundle_action import FinishingTouchesAction
+from app.schemas.cart import CartRefusal
 from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep, NextStepKind
 from app.schemas.picks import PickView
-from app.schemas.product_action import GoesWithPickAction
+from app.schemas.product_action import GoesWithPickAction, MoreLikeThisAction
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerCatalogCapabilities
 from app.schemas.text_choice import closes_on_a_question
@@ -111,6 +112,23 @@ def next_step(
     # without answers - still ends on this step's chips (CLAUDE.md 10.2).
     picks = result.picks or ()
 
+    refused = _refused_alone(result)
+    if refused is not None:
+        # Narrowing or paging a list from turns ago would offer what is no
+        # longer beside the reply: more like the piece they wanted is.
+        return NextStep(
+            kind=NextStepKind.AFTER_REFUSAL,
+            chips=(
+                chip(
+                    Chip.SHOW_SIMILAR,
+                    language,
+                    product_action=(
+                        MoreLikeThisAction(card=refused.card) if refused.card else None
+                    ),
+                ),
+                chip(Chip.KEEP_BROWSING, language),
+            ),
+        )
     if grounding.comparison is not None:
         return NextStep(
             kind=NextStepKind.AFTER_COMPARISON,
@@ -247,6 +265,23 @@ def already_asks(result: CustomerTurnResult) -> bool:
         or grounding.clarification is not None
         or grounding.deterministic_clarification is not None
     )
+
+
+def _refused_alone(result: CustomerTurnResult) -> CartRefusal | None:
+    """The one piece the store's cart would not take at all, on a turn that did
+    nothing else - no new cards, no change to the cart (CLAUDE.md 36)."""
+    if len(result.cart_refusals) != 1 or result.cart_refusals[0].kept:
+        return None
+    grounding = result.grounding
+    if (
+        (grounding.search is not None and grounding.search.products)
+        or grounding.comparison is not None
+        or grounding.product_detail is not None
+        or result.bundle_outcome is not None
+        or (result.cart is not None and result.cart.changes)
+    ):
+        return None
+    return result.cart_refusals[0]
 
 
 def _goes_with_pick(

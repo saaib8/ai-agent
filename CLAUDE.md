@@ -2848,6 +2848,9 @@ keeps a cart of its own.
   offer's yes - after the turn, before the reply; a tap before it applies
   (`pick_unavailable` with the reason). The reply is told (`cart.refused`). A
   Salla that cannot be asked never refuses. `salla.check_cart` switches it off.
+  A turn whose only news is that one piece was refused closes on more like it
+  (`after_refusal`: "Show similar ones" from its card, "Keep browsing") - never
+  on narrowing a list from turns ago that is no longer beside the reply.
 - **The agent reads it.** The decision model sees `cart` (place, name, kind,
   quantity - no price, no id), so a line is named by `picked_ordinal`. The reply
   sees `CartFactsView`: counts, quantities, whether the turn changed it, and its
