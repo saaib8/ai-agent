@@ -7,9 +7,9 @@ product of another store's, one out of stock, more than one order may take
 Salla's storefront API is asked, and the cart holds only what the store's cart
 will.
 
-Deterministic, and quiet when it cannot tell: a store not on Salla is not
-asked, and a Salla that does not answer leaves the cart as the turn made it -
-the widget's copy into Salla still has the last word.
+Deterministic: a store not on Salla is not asked, and a Salla that does not
+answer even when asked again keeps the product out (`unconfirmed`) rather than
+let our cart hold what the store's may not.
 """
 
 from __future__ import annotations
@@ -58,10 +58,13 @@ class StoreCartCheck:
         stores: StoreRepository,
         products: ProductRepository,
         salla: SallaStorefrontClient,
+        *,
+        refuse_unconfirmed: bool = True,
     ) -> None:
         self._stores = stores
         self._products = products
         self._salla = salla
+        self._refuse_unconfirmed = refuse_unconfirmed
 
     async def refusals(
         self, wanted: Mapping[int, int], context: RetailerContext
@@ -88,7 +91,9 @@ class StoreCartCheck:
         )
         refused: dict[int, CartCheck] = {}
         for (product_id, quantity, identity), answer in zip(asked, answers, strict=True):
-            check = _refusal(identity, quantity, answer)
+            check = _refusal(
+                identity, quantity, answer, refuse_unconfirmed=self._refuse_unconfirmed
+            )
             if check is not None:
                 refused[product_id] = check
         if refused:
@@ -109,10 +114,17 @@ class StoreCartCheck:
 
 
 def _refusal(
-    identity: StoreProductIdentity, quantity: int, answer: SallaProduct | None
+    identity: StoreProductIdentity,
+    quantity: int,
+    answer: SallaProduct | None,
+    *,
+    refuse_unconfirmed: bool,
 ) -> CartCheck | None:
-    """Why the store's cart will not take `quantity` of it, or None when it will
-    - or when Salla could not tell, which is never a refusal."""
+    """Why the store's cart will not take `quantity` of it, or None when it will.
+
+    Salla unable to tell, even after asking again, is a refusal of its own
+    (`unconfirmed`) where `refuse_unconfirmed` is on: what our cart holds that
+    Salla's never took is a line the widget cannot take back."""
 
     def check(takes: int, reason: CartRefusalReason, limit: int | None = None) -> CartCheck:
         return CartCheck(
@@ -126,7 +138,7 @@ def _refusal(
         )
 
     if answer is None:
-        return None
+        return check(0, CartRefusalReason.UNCONFIRMED) if refuse_unconfirmed else None
     if not answer.in_store:
         return check(0, CartRefusalReason.NOT_IN_STORE)
     if not answer.available:

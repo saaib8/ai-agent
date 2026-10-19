@@ -2867,8 +2867,12 @@ keeps a cart of its own.
   goes with a refused piece); every other route - a room, a combination, an
   offer's yes - after the turn, before the reply; a tap before it applies
   (`pick_unavailable` with the reason). The reply is told (`cart.refused`). A
-  Salla that cannot be asked never refuses. `salla.check_cart` switches it off.
-  A turn whose only news is that one piece was refused closes on more like it
+  timeout, a dropped connection or a busy Salla (429, 5xx) is asked again
+  (`salla.retries`); a product Salla still could not confirm stays out
+  (`unconfirmed`: "I couldn't check it with the store just now"), never
+  promised - the widget cannot take back what Salla's own cart then refuses
+  (`salla.refuse_unconfirmed`). `salla.check_cart` switches the check off.
+  A turn whose only news is that one piece was refused (not merely unconfirmed) closes on more like it
   (`after_refusal`: "Show similar ones" from its card, "Keep browsing") - never
   on narrowing a list from turns ago that is no longer beside the reply.
 - **The cart is the shopper's, not one chat's.** The platform names the

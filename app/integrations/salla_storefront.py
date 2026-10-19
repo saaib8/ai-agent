@@ -8,6 +8,7 @@ the cart down, and the widget's own copy into Salla has the last word.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 
@@ -19,6 +20,9 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 _MAX_CACHED = 5000
+
+_MOMENTARY = frozenset({429, 500, 502, 503, 504})
+"""Salla busy or failing for a moment: asked again, never read as an answer."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +48,8 @@ class SallaStorefrontClient:
             base_url=settings.storefront_url, timeout=settings.timeout_s, transport=transport
         )
         self._ttl_s = settings.cache_ttl_s
+        self._retries = settings.retries
+        self._backoff_s = settings.retry_backoff_s
         self._cache: dict[tuple[int, str], tuple[float, SallaProduct]] = {}
 
     async def close(self) -> None:
@@ -66,13 +72,28 @@ class SallaStorefrontClient:
         return answer
 
     async def _ask(self, salla_store_id: int, salla_product_id: str) -> SallaProduct | None:
-        try:
-            response = await self._client.get(
-                f"/products/{salla_product_id}/details",
-                headers={"Store-Identifier": str(salla_store_id), "Accept": "application/json"},
-            )
-        except httpx.HTTPError as exc:
-            logger.warning("salla_storefront_unreachable", error=exc.__class__.__name__)
+        response = None
+        for attempt in range(self._retries + 1):
+            if attempt:
+                await asyncio.sleep(self._backoff_s * attempt)
+            try:
+                response = await self._client.get(
+                    f"/products/{salla_product_id}/details",
+                    headers={
+                        "Store-Identifier": str(salla_store_id),
+                        "Accept": "application/json",
+                    },
+                )
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "salla_storefront_unreachable", error=exc.__class__.__name__, attempt=attempt
+                )
+                response = None
+                continue
+            if response.status_code not in _MOMENTARY:
+                break
+            logger.warning("salla_storefront_busy", status=response.status_code, attempt=attempt)
+        if response is None:
             return None
         if response.status_code in (404, 410):
             return SallaProduct(in_store=False, available=False, max_quantity=None)

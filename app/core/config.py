@@ -809,13 +809,26 @@ class SallaSettings(BaseModel):
     """Salla's public storefront API, asked before a product goes in the cart
     of a store that sells on Salla (CLAUDE.md 36): is it this store's, is it in
     stock, and how many may one order take. Keyless - the store is named by
-    its Salla id - and never a reason to refuse a cart when Salla is slow."""
+    its Salla id. A product Salla could not confirm is not put in the cart: the
+    widget cannot take it back out when Salla's own cart refuses it."""
 
     check_cart: bool = True
     """Off, the cart takes any catalogue product, as before."""
 
     storefront_url: str = "https://api.salla.dev/store/v1"
     timeout_s: float = Field(default=4.0, gt=0, le=20)
+    retries: int = Field(default=2, ge=0, le=3)
+    """Asked again this many times after a timeout, a dropped connection, or
+    Salla saying it is busy or failing (429, 5xx) - a passing hiccup must not
+    decide what goes in a cart."""
+
+    retry_backoff_s: float = Field(default=0.25, ge=0, le=2)
+    """The pause before the first retry; each later one waits that much longer."""
+
+    refuse_unconfirmed: bool = True
+    """A product Salla could not confirm, even after the retries, stays out of
+    the cart and the reply says it could not be checked. Off, it goes in as
+    before - and may then be missing from the store's own cart."""
     cache_ttl_s: int = Field(default=60, ge=0, le=3600)
     """How long one product's answer is reused. Stock moves slowly; a turn
     adding a room asks once per piece."""
