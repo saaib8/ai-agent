@@ -191,24 +191,73 @@ async def test_specific_preference_question_is_not_replaced_by_generic_next_step
 
 
 def test_existing_products_keep_browsing_context_on_an_answer_turn() -> None:
-    result = _result(TurnGrounding())
-    interaction = result.state.product_interaction.model_copy(
+    """ "Which one do you recommend?" - words about the cards still on screen."""
+    from app.schemas.agent_turn import PresentedCardView
+
+    result = _with_a_remembered_list(_result(TurnGrounding())).model_copy(
         update={
-            "presented_product_ids": (10, 11),
-        }
-    )
-    result = result.model_copy(
-        update={
-            "state": result.state.model_copy(
-                update={
-                    "product_interaction": interaction,
-                }
+            "still_on_screen": (
+                PresentedCardView(presented_ordinal=1, name="Sofa"),
+                PresentedCardView(presented_ordinal=2, name="Sectional"),
             )
         }
     )
     step = next_step(result, None)
     assert step is not None
     assert step.kind is NextStepKind.KEEP_BROWSING
+
+
+def test_a_list_only_remembered_is_never_offered_to_narrow_down() -> None:
+    """The screenshots: "remove the l-shape" and "what is in my cart?" closed
+    on "narrow these down, or see more?" beside no list - the session only
+    remembered one from turns ago. A turn that shows no list and talks about
+    none ends on the open question instead."""
+    from app.schemas.grounding import SelectionGrounding
+
+    remembered = _with_a_remembered_list(_result(TurnGrounding()))
+    # "What is in my cart?" with nothing in it: their picks shown, and none.
+    cart_question = _with_a_remembered_list(_result(TurnGrounding(selection=SelectionGrounding())))
+
+    for result in (remembered, cart_question):
+        step = next_step(result, None)
+        assert step is not None
+        assert step.kind is NextStepKind.START, step.kind
+
+
+@pytest.mark.parametrize(
+    "decision_fields",
+    [
+        {"cart_question": True},  # "what's my total?"
+        {"add_room_to_cart": True},  # "add all of these to my cart"
+    ],
+)
+def test_words_about_the_cart_are_never_offered_to_narrow_a_list(
+    decision_fields: dict[str, object],
+) -> None:
+    """Even with cards still on screen, a turn about the cart closes on the
+    cart's step or the open question - never "narrow these down"."""
+    from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
+    from app.schemas.agent_turn import PresentedCardView
+
+    result = _with_a_remembered_list(_result(TurnGrounding())).model_copy(
+        update={
+            "decision": CustomerAgentDecision(action=AgentAction.ANSWER, **decision_fields),
+            "still_on_screen": (PresentedCardView(presented_ordinal=1, name="Sofa"),),
+        }
+    )
+
+    step = next_step(result, None)
+    assert step is not None
+    assert step.kind is NextStepKind.START
+
+
+def _with_a_remembered_list(result):  # type: ignore[no-untyped-def]
+    interaction = result.state.product_interaction.model_copy(
+        update={"presented_product_ids": (10, 11)}
+    )
+    return result.model_copy(
+        update={"state": result.state.model_copy(update={"product_interaction": interaction})}
+    )
 
 
 @pytest.mark.parametrize("language", list(ReplyLanguage))

@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.rooms import RoomPiece, RoomPieces
 
-VERSION = "customer_decision/v1.24"
+VERSION = "customer_decision/v1.25"
 LANGUAGE_VERSION = "customer_decision/v1.24+reply-language.9"
 """The same prompt with the LANGUAGE section, used where Arabic replies are on
 (docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
@@ -722,7 +722,8 @@ quantity.
   application adds every piece they are buying, with how many of each - never
   name them yourself.
 - "What's in my cart?", "show me my cart" is show_selection. "How much is my
-  cart?", "what's my total?" is answer: the reply reads the cart.
+  cart?", "what's my total?" is answer with cart_question: the reply reads the
+  cart.
 
 SAY WHAT KIND OF THING YOU ARE POINTING AT
 When the customer names a kind - "sofa 5", "the second sofa", "that chair" -

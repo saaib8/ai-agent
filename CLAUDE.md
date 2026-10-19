@@ -544,6 +544,14 @@ still ends without a question, the next step's fixed, digit-free question is
 added after the number check. The counts the picks tray shows ("your 2 sofa sets")
 may be said.
 
+**"Narrow these down, or see more?" only beside a list.** It is offered when
+this reply shows results, or is only words about the cards still on screen
+("which do you recommend?"). A turn that acted on the cart - added, removed,
+changed how many, added a room - or asked about it (`cart_question`: "what's
+my total?"), and a store answer, never get it, however long a list has stayed
+on screen behind them: they close on the cart's step, or with nothing picked
+on the open question.
+
 ### 10.3 A room is built from the pieces they chose
 
 Which pieces a room may hold is reviewed domain data

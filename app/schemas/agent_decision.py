@@ -1042,6 +1042,11 @@ class CustomerAgentDecision(BaseModel):
     Read only on a search.
     """
 
+    cart_question: bool = False
+    """With answer: they asked about their cart itself - what it comes to,
+    what is in it - rather than the cards on screen. The reply reads the cart,
+    and the turn is never closed by offering to narrow a list (CLAUDE.md 36)."""
+
     fit_question: bool = False
     """They asked whether a piece fits - their room, a wall, through a door:
     "will the second one fit?", "which of these go through my door?". With

@@ -23,7 +23,7 @@ decision model reads like any typed message.
 from __future__ import annotations
 
 from app.prompts.visualization.v1 import ROOM_TYPES
-from app.schemas.agent_decision import BlockingClarificationReason
+from app.schemas.agent_decision import BlockingClarificationReason, ProductInteractionOp
 from app.schemas.agent_turn import CustomerResponse, CustomerTurnResult
 from app.schemas.bundle import RoomBundle
 from app.schemas.bundle_action import FinishingTouchesAction
@@ -175,10 +175,13 @@ def next_step(
         kind = NextStepKind.AFTER_PICKS if goes_with else NextStepKind.ROOM_AROUND_PICKS
         return NextStep(kind=kind, chips=_picks_chips(goes_with, language))
     liked_on_screen = grounding.selection is not None and grounding.selection.liked
-    if not liked_on_screen and (
-        (grounding.search is not None and grounding.search.products)
-        or result.state.product_interaction.presented_product_ids
-    ):
+    # "Narrow these down, or see more?" is about a list beside the reply: one
+    # this turn shows, or the cards it is talking about (`still_on_screen`). A
+    # list the session only remembers - behind a cart change, a cart question,
+    # a store answer - is not what they are looking at, so it is never offered
+    # for one (CLAUDE.md 10.2).
+    showing_results = bool(grounding.search is not None and grounding.search.products)
+    if not liked_on_screen and (showing_results or _about_the_list(result)):
         return NextStep(
             kind=NextStepKind.KEEP_BROWSING,
             chips=_chips(language, Chip.SHOW_MORE, Chip.NARROW_DOWN),
@@ -277,6 +280,32 @@ def already_asks(result: CustomerTurnResult) -> bool:
         or result.finishing_pieces
         or grounding.clarification is not None
         or grounding.deterministic_clarification is not None
+    )
+
+
+def _about_the_list(result: CustomerTurnResult) -> bool:
+    """Words about the cards still on screen - "which do you recommend?" - and
+    nothing else. A turn that acted on the cart (added, removed, changed how
+    many) or asked about it is about the cart, and a store answer is about the
+    store, however long a list has stayed on screen behind them."""
+    decision = result.decision
+    grounding = result.grounding
+    interaction = decision.interaction
+    acted_on_cart = (
+        (
+            interaction is not None
+            and interaction.op in (ProductInteractionOp.SELECT, ProductInteractionOp.DESELECT)
+        )
+        or bool(decision.more_to_add)
+        or decision.add_room_to_cart
+        or (result.cart is not None and bool(result.cart.changes))
+    )
+    return bool(
+        result.still_on_screen
+        and not acted_on_cart
+        and not decision.cart_question
+        and grounding.store_knowledge is None
+        and grounding.support is None
     )
 
 

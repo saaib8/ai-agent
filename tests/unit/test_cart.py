@@ -976,3 +976,40 @@ def test_a_combination_is_capped_at_what_the_cart_takes() -> None:
     chosen = _with_chosen_combination(_with_cart(()), offer, 1, max_quantity=2)
 
     assert chosen.product_interaction.quantity_of(101) == 2
+
+
+async def test_removing_the_last_piece_never_offers_to_narrow_a_list_from_before() -> None:
+    """The screenshot: "remove l-shape from my cart" - the cart empties and the
+    lamps from an earlier turn are only remembered, so the reply must not close
+    on "narrow these down, or see more?" (CLAUDE.md 10.2)."""
+    from app.schemas.next_step import NextStepKind
+    from app.schemas.product_reference import PresentedOrdinal
+    from app.schemas.resolution import ResolvedProductReference
+
+    from tests.unit.test_turn_coordinator import FakeReferences
+
+    decision = CustomerAgentDecision(
+        action=AgentAction.ANSWER,
+        interaction=ProductInteractionIntent(
+            op=ProductInteractionOp.DESELECT, reference=PresentedOrdinal(position=1)
+        ),
+    )
+    coordinator, _ = _coordinator(
+        decision,
+        references=FakeReferences(default=ResolvedProductReference(product_id=10)),
+        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
+        cart=_cart(),
+    )
+
+    result = await coordinator.run(
+        CustomerTurnInput(
+            message="remove the sofa from my cart",
+            state=_two_sofas_and_a_lamp(),
+            context=CONTEXT,
+        )
+    )
+
+    assert result.state.product_interaction.selected_product_ids == ()
+    assert result.state.product_interaction.presented_product_ids == (20,), "still remembered"
+    assert result.next_step is not None
+    assert result.next_step.kind is NextStepKind.START
