@@ -398,6 +398,26 @@ export interface ChatPresentation {
    *  `swap` for that piece rather than picking a fresh product — which is what
    *  keeps a room edit from cross-selling a piece it already holds. */
   swap_context?: RoomSwapContext | null
+  /** The store's own support channels beneath a reply about the store. */
+  support?: SupportPresentation | null
+}
+
+export type SupportChannel = 'whatsapp' | 'email'
+
+/** One way to reach the store's support team, built by the server from the
+ *  contacts the store's owner set - never by a model. */
+export interface SupportChannelView {
+  channel: SupportChannel
+  /** The channel's name in the reply's language. */
+  label: string
+  /** `https://wa.me/<number>` or `mailto:<address>`. */
+  url: string
+  /** Whether the platform can send the shopper's request on this channel. */
+  handover?: boolean
+}
+
+export interface SupportPresentation {
+  channels: SupportChannelView[]
 }
 
 export interface RoomSwapContext {
