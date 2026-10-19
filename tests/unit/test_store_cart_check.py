@@ -24,8 +24,11 @@ from app.schemas.agent_decision import (
     ProductInteractionOp,
 )
 from app.schemas.agent_turn import CustomerTurnInput
+from app.schemas.card_comparison import CardRef
 from app.schemas.cart import CartRefusalReason
+from app.schemas.next_step import NextStepKind
 from app.schemas.picks import PicksRequest, SelectPickAction, SetQuantityAction
+from app.schemas.product_action import MoreLikeThisAction
 from app.schemas.product_reference import PresentedOrdinal
 from app.schemas.resolution import ResolvedProductReference
 from app.schemas.retailer import RetailerContext
@@ -265,6 +268,14 @@ async def test_a_typed_add_the_store_refuses_never_stays_in_the_cart() -> None:
     assert not result.selection_added
     assert result.cart is not None and result.cart.changes == ()
     assert refuses.asked == [{20: 1}], "asked once, before the choice was recorded"
+    # The next step is more like the lamp, from its card - never "narrow these
+    # down" for a list the reply is not beside.
+    assert result.cart_refusals[0].card == CardRef(list_revision=2, ordinal=1)
+    assert result.next_step is not None
+    assert result.next_step.kind is NextStepKind.AFTER_REFUSAL
+    assert result.next_step.chips[0].product_action == MoreLikeThisAction(
+        card=CardRef(list_revision=2, ordinal=1)
+    )
 
 
 async def test_more_than_one_order_takes_is_kept_at_the_limit() -> None:

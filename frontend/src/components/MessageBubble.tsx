@@ -198,15 +198,19 @@ export function AssistantBubble({
   // are one row under the pick.
   const offering =
     !!focus && !hasProducts && (quickReplies ?? []).some((r) => r.product_action)
-  // "Shall I add it to your cart?" - Yes and Not now answer the question, so
-  // they stay together beside it, the yes carrying its action.
-  const cartOffer = (quickReplies ?? []).some((r) => r.product_action?.kind === 'add_to_cart')
-  const textReplies = cartOffer
+  // "Shall I add it to your cart?" (Yes / Not now) and, after the store
+  // refused a piece, "see similar ones instead?" (Show similar ones / Keep
+  // browsing) - their chips answer the question, so they stay together beside
+  // it, the one carrying an action included. Never "also goes well with it".
+  const answersQuestion = (quickReplies ?? []).some(
+    (r) => r.product_action?.kind === 'add_to_cart' || r.product_action?.kind === 'more_like_this',
+  )
+  const textReplies = answersQuestion
     ? quickReplies ?? []
     : offering
       ? []
       : (quickReplies ?? []).filter((r) => !r.product_action)
-  const actionReplies = cartOffer
+  const actionReplies = answersQuestion
     ? []
     : offering
       ? quickReplies ?? []

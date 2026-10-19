@@ -213,8 +213,8 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "Shall I design a room around your picks, or would you like to keep browsing?": (
             "هل أصمّم غرفة حول اختياراتك، أم تودّ مواصلة التصفح؟"
         ),
-        "Would you like to add it to your picks, or see what goes with it?": (
-            "هل تودّ إضافته إلى اختياراتك، أم رؤية ما يتناسب معه؟"
+        "Would you like to add it to your cart, or see what goes with it?": (
+            "هل تودّ إضافته إلى سلتك، أم رؤية ما يتناسب معه؟"
         ),
         "Which one are you leaning towards?": "إلى أيّها تميل أكثر؟",
         "Which of these two feels more like you?": "أيّ هاتين القطعتين أقرب إلى ذوقك؟",
@@ -230,6 +230,7 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "Would you like to narrow these down, or see more options?": (
             "هل تودّ تضييق هذه الخيارات، أم رؤية المزيد؟"
         ),
+        "Would you like to see similar ones instead?": "هل تودّ رؤية منتجات مشابهة بدلًا منه؟",
         "What would you like to do next?": "ماذا تودّ أن نفعل بعد ذلك؟",
     }
 )

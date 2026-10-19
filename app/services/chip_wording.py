@@ -128,8 +128,8 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
             AR: ChipText("تابع التصفح", "أرني شيئًا آخر"),
         },
         Chip.ADD_TO_PICKS: {
-            EN: ChipText("Add it to my picks", "Add this one to my picks"),
-            AR: ChipText("أضفه إلى اختياراتي", "أضف هذا إلى اختياراتي"),
+            EN: ChipText("Add it to my cart", "Add this one to my cart"),
+            AR: ChipText("أضفه إلى سلتي", "أضف هذا إلى سلتي"),
         },
         Chip.WHAT_GOES_WITH_IT: {
             EN: ChipText("What goes with it", "What goes with this one?"),

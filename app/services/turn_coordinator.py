@@ -608,13 +608,14 @@ def _already_holds(intent: ProductInteractionIntent, product_id: int, state: Age
     )
 
 
-def _refusal_of(check: CartCheck, kept: int) -> CartRefusal:
+def _refusal_of(check: CartCheck, kept: int, interaction: ProductInteractionState) -> CartRefusal:
     return CartRefusal(
         name_english=check.name_english,
         name_arabic=check.name_arabic,
         reason=check.reason,
         kept=kept,
         max_quantity=check.max_quantity,
+        card=_card_on_screen(interaction, check.product_id),
     )
 
 
@@ -1465,7 +1466,7 @@ class CustomerTurnCoordinator:
                 )
             )
             state = apply_update(state, AgentStateUpdate(product_interaction=update))
-            refusals.append(_refusal_of(check, keep))
+            refusals.append(_refusal_of(check, keep, state.product_interaction))
         kinds, picks, liked = await self._selection_facts(state, turn)
         refused_urls = {check.product_url for check in refused.values() if check.takes == 0}
         anchor_refused = result.focus is not None and result.focus.product_url in refused_urls
@@ -1521,7 +1522,12 @@ class CustomerTurnCoordinator:
             # Never offered when the store's cart would refuse it: the reply
             # says why instead of asking.
             return result.model_copy(
-                update={"cart_refusals": (*result.cart_refusals, _refusal_of(refused, 0))}
+                update={
+                    "cart_refusals": (
+                        *result.cart_refusals,
+                        _refusal_of(refused, 0, interaction),
+                    )
+                }
             )
         name = (
             self._product_display.product(product, language).name
@@ -4011,8 +4017,10 @@ class CustomerTurnCoordinator:
             return intent, None
         keep = max(refused.takes, had)
         if keep == 0:
-            return None, _refusal_of(refused, 0)
-        return intent.model_copy(update={"quantity": keep}), _refusal_of(refused, keep)
+            return None, _refusal_of(refused, 0, interaction)
+        return intent.model_copy(update={"quantity": keep}), _refusal_of(
+            refused, keep, interaction
+        )
 
     async def _resolved_interaction(
         self,

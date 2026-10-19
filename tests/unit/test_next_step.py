@@ -118,6 +118,67 @@ def test_with_nothing_in_the_cart_results_are_narrowed_or_paged() -> None:
     assert step is not None and step.kind is NextStepKind.KEEP_BROWSING
 
 
+def _refused(card: Any = None, kept: int = 0) -> Any:
+    from app.schemas.cart import CartRefusal, CartRefusalReason
+
+    return CartRefusal(
+        name_english="Modern Boucle 3-Seater Sofa - White",
+        reason=CartRefusalReason.NOT_IN_STORE,
+        kept=kept,
+        card=card,
+    )
+
+
+def test_a_refused_add_offers_more_like_it_never_a_list_from_turns_ago() -> None:
+    """The screenshot: a sofa's details, "add this to my cart", and the store
+    would not take it. The white sofas two turns back were still remembered as
+    on screen, so the reply closed on "narrow these down, or see more?" beside
+    no list at all."""
+    from app.schemas.agent_state import ActiveSearchState, ProductInteractionState
+    from app.schemas.card_comparison import CardRef
+    from app.schemas.discovery import ProductSearchRequest
+    from app.schemas.product_action import MoreLikeThisAction
+
+    card = CardRef(list_revision=1, ordinal=5)
+    result = _result(cart_refusals=(_refused(card),)).model_copy(
+        update={
+            "state": AgentStateV1(
+                active_search=ActiveSearchState(
+                    request=ProductSearchRequest(commerce_category="seating"), revision=1
+                ),
+                product_interaction=ProductInteractionState(
+                    presented_product_ids=(1, 2, 3, 4, 5), presented_search_revision=1
+                ),
+            )
+        }
+    )
+
+    step = next_step(result, COMPLEMENTS)
+
+    assert step is not None and step.kind is NextStepKind.AFTER_REFUSAL
+    assert [chip.label for chip in step.chips] == ["Show similar ones", "Keep browsing"]
+    assert step.chips[0].product_action == MoreLikeThisAction(card=card)
+
+
+def test_a_refused_piece_on_no_list_is_offered_similar_ones_in_words() -> None:
+    step = next_step(_result(cart_refusals=(_refused(),)), COMPLEMENTS)
+
+    assert step is not None and step.kind is NextStepKind.AFTER_REFUSAL
+    assert step.chips[0].product_action is None
+
+
+def test_a_refusal_beside_new_cards_or_a_kept_quantity_keeps_the_usual_step() -> None:
+    """Paging new cards is still the step beside them, and a piece kept at the
+    store's limit is in the cart - nothing to replace."""
+    from tests.unit.test_response_generator import _search
+
+    beside_cards = _result(cart_refusals=(_refused(),), grounding=TurnGrounding(search=_search(3)))
+    kept_at_limit = _result(cart_refusals=(_refused(kept=3),), picks=(_pick(1, "sofa"),))
+
+    assert _kind(beside_cards) is NextStepKind.KEEP_BROWSING
+    assert _kind(kept_at_limit) is not NextStepKind.AFTER_REFUSAL
+
+
 def test_a_pick_with_no_pairings_is_never_offered_an_empty_goes_with() -> None:
     """A floor lamp has no reviewed companions: offering "what goes with it"
     would come back empty, so the chips offer a room and more browsing."""
