@@ -108,10 +108,14 @@ HISTORY = ConversationContext(
 )
 
 
-async def _stored(sessions: FakeSessionStore, state: AgentStateV1) -> SessionEnvelope:
+async def _stored(
+    sessions: FakeSessionStore, state: AgentStateV1, *, session_id: str = SESSION
+) -> SessionEnvelope:
     fresh = new_session()
     envelope = fresh.advanced(state=state, conversation=HISTORY)
-    assert await sessions.save_if_revision(STORE, SESSION, expected_revision=0, envelope=envelope)
+    assert await sessions.save_if_revision(
+        STORE, session_id, expected_revision=0, envelope=envelope
+    )
     return envelope
 
 

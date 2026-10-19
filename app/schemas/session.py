@@ -29,7 +29,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.schemas.agent_state import AgentStateV1
+from app.schemas.agent_state import AgentStateV1, CartQuantity
 from app.schemas.conversation import ConversationContext
 
 SESSION_ENVELOPE_VERSION = "session_v1"
@@ -116,3 +116,18 @@ def new_session() -> SessionEnvelope:
         state=AgentStateV1(),
         conversation=ConversationContext(),
     )
+
+
+class ShopperCart(BaseModel):
+    """A shopper's cart in one store, kept beside their conversations.
+
+    The cart belongs to the shopper, not to one chat: a new conversation starts
+    with it and every saved turn rewrites it, so "what's in my cart?" answers
+    the same in every chat they open (CLAUDE.md 36). References and quantities
+    only, exactly as the agent state holds them - prices are always read fresh.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    selected_product_ids: tuple[int, ...] = ()
+    cart_quantities: tuple[CartQuantity, ...] = ()

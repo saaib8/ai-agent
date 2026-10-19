@@ -37,7 +37,8 @@ from app.core.exceptions import (
     SessionStoreUnavailableError,
 )
 from app.core.logging import get_logger
-from app.schemas.session import SessionEnvelope
+from app.schemas.agent_state import AgentStateV1
+from app.schemas.session import SessionEnvelope, ShopperCart
 
 logger = get_logger(__name__)
 
@@ -53,6 +54,20 @@ glob character would match patterns nobody intended. Refusing the input is one
 rule; escaping correctly everywhere a key is built is several, and only one of
 them has to be missed.
 """
+
+
+SHOPPER_CART_KEY_TEMPLATE = "zory:store:{store_id}:shopper:{shopper}:cart"
+
+_SHOPPER = re.compile(r"\A([0-9a-f]{16})\.")
+"""The shopper the platform names at the front of every conversation id it
+sends: the first sixteen hex characters of the shopper's own opaque key, a dot,
+then the widget's id for the chat. The console and direct calls name none."""
+
+
+def shopper_of(session_id: str) -> str | None:
+    """The shopper a conversation id names, or None when it names none."""
+    match = _SHOPPER.match(session_id)
+    return match.group(1) if match else None
 
 
 def session_key(store_id: int, session_id: str) -> str:
@@ -149,7 +164,58 @@ class SessionStore:
             session_revision=envelope.session_revision,
             ttl_s=ttl,
         )
+        await self._remember_cart(store_id, session_id, envelope.state)
         return True
+
+    # ── the shopper's cart, beside their conversations ──────────────────────
+
+    async def shopper_cart(self, store_id: int, session_id: str) -> ShopperCart | None:
+        """The cart this conversation's shopper last had in this store, or None.
+
+        None also when the id names no shopper, the feature is off, or the
+        record cannot be read: a convenience never fails a turn, and the
+        conversation then keeps its own cart as before (CLAUDE.md 36).
+        """
+        shopper = shopper_of(session_id)
+        if shopper is None or self._settings.shopper_cart_ttl_s == 0:
+            return None
+        key = SHOPPER_CART_KEY_TEMPLATE.format(store_id=store_id, shopper=shopper)
+        try:
+            raw = await self._read(key)
+        except SessionStoreUnavailableError:
+            logger.warning("shopper_cart_unavailable", store_id=store_id)
+            return None
+        if raw is None:
+            return None
+        try:
+            return ShopperCart.model_validate_json(raw)
+        except ValidationError:
+            logger.warning("shopper_cart_unreadable", store_id=store_id)
+            return None
+
+    async def _remember_cart(self, store_id: int, session_id: str, state: AgentStateV1) -> None:
+        """Keep the cart this turn committed for the shopper's next chat.
+
+        After the session's own write, and never able to undo it: a turn the
+        customer was told about stays committed even if this write fails.
+        """
+        shopper = shopper_of(session_id)
+        ttl = self._settings.shopper_cart_ttl_s
+        if shopper is None or ttl == 0:
+            return
+        interaction = state.product_interaction
+        cart = ShopperCart(
+            selected_product_ids=interaction.selected_product_ids,
+            cart_quantities=interaction.cart_quantities,
+        )
+        key = SHOPPER_CART_KEY_TEMPLATE.format(store_id=store_id, shopper=shopper)
+        try:
+            async with asyncio.timeout(self._settings.operation_timeout_s):
+                await self._client.set(key, cart.model_dump_json(), ex=ttl)
+        except (TimeoutError, RedisError) as exc:
+            logger.warning(
+                "shopper_cart_not_saved", store_id=store_id, error_type=type(exc).__name__
+            )
 
     # ── the parts that touch Redis or JSON ──────────────────────────────────
 

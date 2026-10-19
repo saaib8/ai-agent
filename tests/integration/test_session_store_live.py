@@ -333,3 +333,68 @@ async def test_a_brand_new_session_is_revision_zero_and_empty() -> None:
     assert fresh.session_revision == 0
     assert fresh.state == AgentStateV1()
     assert fresh.conversation.messages == ()
+
+
+# ── the shopper's cart, beside their conversations (CLAUDE.md 36) ───────────
+
+SHOPPER_CHAT = "0123456789abcdef.web-first"
+SHOPPER_NEW_CHAT = "0123456789abcdef.web-second"
+
+
+def _a_cart() -> AgentStateV1:
+    from app.schemas.agent_state import CartQuantity, ProductInteractionState
+
+    return AgentStateV1(
+        product_interaction=ProductInteractionState(
+            selected_product_ids=(11, 12),
+            cart_quantities=(CartQuantity(product_id=11, quantity=3),),
+        )
+    )
+
+
+async def _save(
+    store: SessionStore, session_id: str, state: AgentStateV1, store_id: int = STORE
+) -> None:
+    envelope = new_session().advanced(state=state, conversation=ConversationContext())
+    assert await store.save_if_revision(
+        store_id, session_id, expected_revision=0, envelope=envelope
+    )
+
+
+async def test_a_saved_turn_keeps_the_cart_for_the_shoppers_next_chat(
+    store: SessionStore, client: Redis
+) -> None:
+    await _save(store, SHOPPER_CHAT, _a_cart())
+
+    cart = await store.shopper_cart(STORE, SHOPPER_NEW_CHAT)
+
+    assert cart is not None
+    assert cart.selected_product_ids == (11, 12)
+    assert [(q.product_id, q.quantity) for q in cart.cart_quantities] == [(11, 3)]
+    key = f"zory:store:{STORE}:shopper:0123456789abcdef:cart"
+    assert 0 < await client.ttl(key) <= 604_800
+
+
+async def test_the_cart_is_kept_per_store_and_shopper_and_only_for_named_shoppers(
+    store: SessionStore,
+) -> None:
+    await _save(store, SHOPPER_CHAT, _a_cart())
+    await _save(store, SESSION, _a_cart())
+
+    assert await store.shopper_cart(OTHER_STORE, SHOPPER_NEW_CHAT) is None
+    assert await store.shopper_cart(STORE, "fedcba9876543210.web-first") is None
+    assert await store.shopper_cart(STORE, SESSION) is None, "an id naming no shopper keeps its own"
+
+
+async def test_switched_off_no_cart_is_kept(client: Redis) -> None:
+    store = SessionStore(client, SessionSettings(ttl_s=60, shopper_cart_ttl_s=0))
+    await _save(store, SHOPPER_CHAT, _a_cart())
+
+    assert await store.shopper_cart(STORE, SHOPPER_NEW_CHAT) is None
+    assert not await client.keys("zory:store:*:shopper:*")
+
+
+async def test_an_unreadable_cart_is_no_cart(store: SessionStore, client: Redis) -> None:
+    await client.set(f"zory:store:{STORE}:shopper:0123456789abcdef:cart", "{not json")
+
+    assert await store.shopper_cart(STORE, SHOPPER_NEW_CHAT) is None
