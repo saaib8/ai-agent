@@ -34,6 +34,7 @@ from app.prompts.customer_commerce.v1 import (
     FIT_AFTER_PICK_SUFFIX,
     LANGUAGE_VERSION,
     MIXED_TYPES_SUFFIX,
+    STORE_KNOWLEDGE_SUFFIX,
     VERSION,
     build_correction,
     build_instructions,
@@ -46,6 +47,7 @@ from app.schemas.agent_decision import (
     with_fit_after_pick,
     with_mixed_types,
     with_reply_language,
+    with_store_knowledge,
 )
 from app.schemas.agent_turn import DecisionInput
 from app.taxonomy.attributes import CatalogAttributes
@@ -76,6 +78,12 @@ def _language_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentD
 def _mixed_types_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
     """The schema with `only_asked_type` shown, built once per schema."""
     return with_mixed_types(schema)
+
+
+@cache
+def _store_knowledge_schema(schema: type[CustomerAgentDecision]) -> type[CustomerAgentDecision]:
+    """The schema with `policy_question` shown, built once per schema."""
+    return with_store_knowledge(schema)
 
 
 @cache
@@ -110,6 +118,7 @@ class CustomerAgentDecisionService:
         reply_language: bool = False,
         mixed_types: bool = False,
         fit_after_pick: bool = False,
+        store_knowledge: bool = False,
     ) -> None:
         """`attributes` restricts every colour and style the model can write.
 
@@ -121,8 +130,9 @@ class CustomerAgentDecisionService:
         instructions explain, and the schema carry, the two language fields.
         `mixed_types` is whether a sofa search also shows sofa sets and
         sectionals: only then do they explain, and the schema carry,
-        `only_asked_type`. Off, the model is asked exactly what it was asked
-        before.
+        `only_asked_type`. `store_knowledge` is whether the store's own
+        documents can be searched: only then is `policy_question` explained and
+        carried. Off, the model is asked exactly what it was asked before.
         """
         self._client = client
         self._instructions = build_instructions(
@@ -131,6 +141,7 @@ class CustomerAgentDecisionService:
             reply_language=reply_language,
             mixed_types=mixed_types,
             fit_after_pick=fit_after_pick,
+            store_knowledge=store_knowledge,
         )
         schema: type[CustomerAgentDecision] = (
             _constrained_schema(attributes) if attributes is not None else CustomerAgentDecision
@@ -139,10 +150,14 @@ class CustomerAgentDecisionService:
             schema = _language_schema(schema)
         if mixed_types:
             schema = _mixed_types_schema(schema)
+        if store_knowledge:
+            schema = _store_knowledge_schema(schema)
         self._schema = _within_name_limit(_piece_fit_schema(schema) if fit_after_pick else schema)
         version = LANGUAGE_VERSION if reply_language else VERSION
         if mixed_types:
             version += MIXED_TYPES_SUFFIX
+        if store_knowledge:
+            version += STORE_KNOWLEDGE_SUFFIX
         self._version = version + FIT_AFTER_PICK_SUFFIX if fit_after_pick else version
 
     async def decide(
@@ -222,6 +237,7 @@ class CustomerAgentDecisionService:
             follow_up_goal=str(decision.follow_up_goal) if decision.follow_up_goal else None,
             blocking_clarification=decision.clarification is not None,
             only_asked_type=decision.only_asked_type,
+            policy_question=decision.policy_question is not None,
             has_interaction=decision.interaction is not None,
             has_new_search=decision.new_search is not None,
             has_refinement=decision.refinement is not None,

@@ -76,6 +76,10 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "for example, the kind of piece you're after, or what you'd like to "
         "change about what you're looking at."
     ),
+    TurnFailureCode.STORE_INFO_UNAVAILABLE: (
+        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "moment, and feel free to ask me about any product meanwhile."
+    ),
     TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE: (
         "I wasn't able to answer that one just now. Please try again in a "
         "moment."
@@ -213,6 +217,9 @@ FALLBACK_WORDING: dict[ResponseOutcomeKind, str] = {
         "straight to the results."
     ),
     ResponseOutcomeKind.DESIGN_ADVICE: (
+        "I wasn't able to put that answer into words just now."
+    ),
+    ResponseOutcomeKind.POLICY_ANSWER: (
         "I wasn't able to put that answer into words just now."
     ),
     ResponseOutcomeKind.DETERMINISTIC_CLARIFICATION: (

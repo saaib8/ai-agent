@@ -56,6 +56,7 @@ from app.schemas.room_opener import RoomCardChoice, RoomPieceOffer, RoomQuestion
 from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingBundle, SeatingSolution
+from app.schemas.store_knowledge import StoreKnowledgeGrounding
 from app.schemas.text_choice import (
     TextReplyChoice,
     require_a_question,
@@ -169,6 +170,14 @@ class TurnGrounding(BaseModel):
 
     It is design knowledge, true of rooms in general and of none in particular.
     Nothing here is a claim about a product, a price or this retailer's stock.
+    """
+
+    store_knowledge: StoreKnowledgeGrounding | None = None
+    """What the store's own documents say about the question they asked.
+
+    The only source a reply about the store may use. No passages means the
+    documents were searched and say nothing about it - answered honestly,
+    never filled in.
     """
 
     design_handoff_requested: bool = False

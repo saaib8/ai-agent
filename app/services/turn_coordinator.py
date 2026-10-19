@@ -276,6 +276,7 @@ from app.schemas.seating_solution import (
     SeatingSolution,
     SeatingSolutionOutcome,
 )
+from app.schemas.store_knowledge import StoreKnowledgeGrounding
 from app.schemas.taste import PendingTaste, TasteQuestionKind
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
@@ -334,6 +335,7 @@ from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SEATING_CATEGORY, SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.store_cart_check import CartCheck, StoreCartCheck
+from app.services.store_knowledge import StoreKnowledgeService
 from app.services.taste import learned_taste
 from app.services.taste_question import NEITHER, choose_question, on_screen
 from app.services.taste_question import answer as taste_answer
@@ -495,6 +497,9 @@ class _Primary:
     design_handoff: bool = False
     design_guidance: tuple[DesignGuidance, ...] = ()
     """The specialist's answer to a design question. Words, never products."""
+
+    store_knowledge: StoreKnowledgeGrounding | None = None
+    """What the store's own documents say about a question about the store."""
 
     bundle_outcome: BundleOptimizationOutcome | None = None
     bundle_change: BundleInteractionOp | None = None
@@ -1262,7 +1267,11 @@ class CustomerTurnCoordinator:
         cart: CartService | None = None,
         max_picks: int = 10,
         cart_check: StoreCartCheck | None = None,
+        store_knowledge: StoreKnowledgeService | None = None,
     ) -> None:
+        self._store_knowledge = store_knowledge
+        """The store's own documents. None where they are not configured, in
+        which case the decision is never offered a store question."""
         self._cart_check = cart_check
         """Asks the store's own cart before ours holds more - None where the
         store's cart is not asked (CLAUDE.md 36)."""
@@ -4259,6 +4268,8 @@ class CustomerTurnCoordinator:
                 # time from what is really missing (CLAUDE.md 10.1).
                 asked = await self._room_question(apply_update(working, proposals), turn)
                 return asked if asked is not None else _Primary(state=working)
+            case AgentAction.ANSWER if decision.policy_question is not None:
+                return await self._store_info(decision.policy_question, working, turn)
             case AgentAction.ANSWER | AgentAction.CLARIFY:
                 return _Primary(state=working)
             case AgentAction.BUNDLE_REFINE:
@@ -4289,6 +4300,35 @@ class CustomerTurnCoordinator:
                 return await self._show_selection(
                     working, turn, liked=decision.show_liked and self._designer_led_buttons
                 )
+
+    async def _store_info(
+        self, question: str, working: AgentStateV1, turn: CustomerTurnInput
+    ) -> _Primary:
+        """A question about the store, looked up in the store's own documents.
+
+        No catalog, no search, no products: how long delivery takes is the
+        store's policy, not a product fact. The passages found are the only
+        source the reply may answer from; none found is answered as "the
+        store has not said", never with a guess (CLAUDE.md 3.3).
+
+        Scope is the request's RetailerContext and nothing the model wrote:
+        the decision restates the question, it never names a store.
+        """
+        if self._store_knowledge is None:
+            logger.info("store_info_not_configured", store_id=turn.context.store_id)
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=TurnFailureCode.STORE_INFO_UNAVAILABLE),
+            )
+        try:
+            found = await self._store_knowledge.lookup(turn.context, question)
+        except IntegrationUnavailableError:
+            logger.warning("store_info_unavailable", store_id=turn.context.store_id)
+            return _Primary(
+                state=working,
+                failure=TurnFailure(code=TurnFailureCode.STORE_INFO_UNAVAILABLE),
+            )
+        return _Primary(state=working, store_knowledge=found)
 
     async def _show_selection(
         self, working: AgentStateV1, turn: CustomerTurnInput, *, liked: bool = False
@@ -8236,6 +8276,7 @@ class CustomerTurnCoordinator:
             deterministic_clarification=deterministic,
             failure=failure,
             design_guidance=primary.design_guidance,
+            store_knowledge=primary.store_knowledge,
             design_handoff_requested=primary.design_handoff,
             follow_up_policy=(
                 FollowUpPolicy.NONE if asking or failure is not None else decision.follow_up_policy

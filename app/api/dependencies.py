@@ -274,6 +274,7 @@ def customer_agent_decision_service(
         reply_language=app_resources.settings.customer_agent.arabic_replies,
         mixed_types=app_resources.settings.customer_agent.mixed_types,
         fit_after_pick=app_resources.settings.customer_agent.fit_after_pick,
+        store_knowledge=app_resources.store_knowledge is not None,
     )
 
 
@@ -344,6 +345,7 @@ def customer_turn_coordinator(
         closest_type=ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
         complements=app_resources.complements,
         companion_search=CompanionSearchBuilder(app_resources.attributes),
+        store_knowledge=app_resources.store_knowledge,
         briefs=(
             ProductBriefBuilder(
                 repository,
