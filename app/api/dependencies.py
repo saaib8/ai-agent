@@ -74,6 +74,7 @@ from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.store_cart_check import StoreCartCheck
 from app.services.support import SupportService
+from app.services.support_handover import SupportHandoverService
 from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.dimensions import DimensionSemantics
@@ -349,7 +350,10 @@ def customer_turn_coordinator(
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         store_knowledge=app_resources.store_knowledge,
         support=(
-            SupportService(SupportContactsRepository(session))
+            SupportService(
+                SupportContactsRepository(session),
+                handover=app_resources.settings.customer_agent.support_handover,
+            )
             if app_resources.settings.customer_agent.support_agent
             else None
         ),
@@ -517,6 +521,20 @@ def session_store(app_resources: ResourcesDep) -> SessionStore:
 
 
 SessionStoreDep = Annotated[SessionStore, Depends(session_store)]
+
+
+def support_handover_service(
+    sessions: SessionStoreDep, app_resources: ResourcesDep
+) -> SupportHandoverService | None:
+    """What the store's support is handed; None where the platform does not send it."""
+    if not app_resources.settings.customer_agent.support_handover:
+        return None
+    return SupportHandoverService(sessions)
+
+
+SupportHandoverServiceDep = Annotated[
+    SupportHandoverService | None, Depends(support_handover_service)
+]
 
 
 def store_cart_check(session: SessionDep, app_resources: ResourcesDep) -> StoreCartCheck | None:

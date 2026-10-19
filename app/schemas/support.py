@@ -18,9 +18,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.furniture_finder import SESSION_ID_PATTERN
+
 MAX_EMAIL_CHARS = 254
 WHATSAPP_PATTERN = r"^[1-9][0-9]{7,14}$"
 """A number in international form, digits only, as the platform stores it."""
+HANDOVER_MESSAGES = 6
+"""How many of the shopper's own messages a request to the store carries."""
+HANDOVER_MESSAGE_CHARS = 500
+"""Each message is cut to this many characters; the store reads it on a phone."""
 
 
 class SupportChannel(StrEnum):
@@ -54,6 +60,8 @@ class SupportGrounding(BaseModel):
 
     contacts: SupportContacts = SupportContacts()
     requested: bool = False
+    handover: bool = False
+    """Whether the platform can send the shopper's request on these channels."""
 
 
 class SupportChannelView(BaseModel):
@@ -64,6 +72,10 @@ class SupportChannelView(BaseModel):
     channel: SupportChannel
     label: str = Field(min_length=1, max_length=40)
     url: str = Field(min_length=1, max_length=300)
+    handover: bool = False
+    """Whether the platform can send the shopper's request on this channel to
+    the store's team. A client asks for their number or email first; `url`
+    stays the link to follow when sending is not possible."""
 
 
 class SupportPresentation(BaseModel):
@@ -91,7 +103,31 @@ SupportActionRequest = ContactSupportAction
 """Every support action a client may send. One today."""
 
 
+class SupportHandoverRequest(BaseModel):
+    """Which conversation the platform is handing to the store's support."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
+    store_id: int = Field(ge=1)
+
+
+class SupportHandover(BaseModel):
+    """What the store's team is told the shopper said, oldest first.
+
+    The shopper's own messages only - never the assistant's replies, which
+    the store did not write and cannot stand behind. Empty for a conversation
+    that has not started or has expired.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    messages: tuple[str, ...] = Field(default=(), max_length=HANDOVER_MESSAGES)
+
+
 __all__ = [
+    "HANDOVER_MESSAGES",
+    "HANDOVER_MESSAGE_CHARS",
     "MAX_EMAIL_CHARS",
     "WHATSAPP_PATTERN",
     "ContactSupportAction",
@@ -100,5 +136,7 @@ __all__ = [
     "SupportChannelView",
     "SupportContacts",
     "SupportGrounding",
+    "SupportHandover",
+    "SupportHandoverRequest",
     "SupportPresentation",
 ]
