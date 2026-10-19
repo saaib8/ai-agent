@@ -19,6 +19,7 @@ from app.schemas.bundle import BundleStatus, RoomBundle
 from app.schemas.bundle_action import (
     BundleActionRequest,
     BundleAlternativesAction,
+    BundleRemoveAction,
     BundleSwapAction,
     SwapAlternativesAction,
     SwapConfirmAction,
@@ -26,6 +27,7 @@ from app.schemas.bundle_action import (
     SwapDismissAction,
     SwapKeepOriginalAction,
 )
+from app.schemas.bundle_reference import BundleItemOrdinal
 from app.schemas.discovery import PriceConstraint
 from app.schemas.reply_choice import ReplyChoice
 from app.services.room_presentation import swap_offer_choices
@@ -48,6 +50,19 @@ def test_an_alternatives_action_also_stands_in_for_a_valid_decision() -> None:
 
     assert decision.action is AgentAction.BUNDLE_REFINE
     assert decision.bundle_interaction is not None
+
+
+def test_a_remove_action_stands_in_for_removing_the_role_of_that_card() -> None:
+    decision = _bundle_action_decision(BundleRemoveAction(bundle_ordinal=2))
+
+    assert decision.action is AgentAction.BUNDLE_REFINE
+    assert decision.bundle_interaction is not None
+    assert decision.bundle_interaction.op is BundleInteractionOp.REMOVE_NEED
+    assert decision.bundle_interaction.selector == BundleItemOrdinal(ordinal=2)
+    assert isinstance(
+        TypeAdapter(BundleActionRequest).validate_python({"kind": "remove", "bundle_ordinal": 2}),
+        BundleRemoveAction,
+    )
 
 
 def test_the_action_union_discriminates_by_kind() -> None:

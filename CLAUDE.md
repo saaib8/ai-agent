@@ -469,6 +469,11 @@ with the `room_kind` and records each answer (`room_budget`, `room_pieces` or
 question the model writes anyway (`missing_room_requirements`) is replaced by
 the application's own.
 
+**An amount said without a currency is in the store's** when its catalog
+prices in exactly one: the decision model is told it (`catalog_currency`) and
+writes it, a currency question it asks anyway is corrected once, and a room
+budget still without one takes it. Only a store with several currencies asks.
+
 **Each question is asked at most once** (`questions_asked` in session state).
 If they answer partly, ignore it, or say to get on with it ("just design it":
 `room_skip_questions`), the room is built from what is known - the usual
@@ -623,6 +628,13 @@ for (to buy, not locked) becomes a chip (`room_cards`), numbered as the room's
 cards are and named by the room registry (by type for seating). A chip is that
 piece's Swap button: `list_alternatives` for its ordinal, and the console
 enters swap mode, so picking an option replaces the piece.
+
+**Each piece has a Remove button beside Swap.** It sends `bundle_action`
+`remove` with the piece's ordinal - exactly what "remove the second one" typed
+does: the card is resolved to the role it fills and the role leaves the plan.
+Only that piece goes: every other piece stays the product it is (each role one
+product fills is pinned to it, as for a finishing touch), and the totals are
+worked out again without it.
 
 ### 10.4 The card for a product search
 

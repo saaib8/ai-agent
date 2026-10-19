@@ -707,6 +707,35 @@ async def test_a_visible_card_names_the_role_it_fills() -> None:
     assert 10 not in [i.product_id for i in after.bundle_items]
 
 
+async def test_the_remove_button_takes_out_the_role_its_card_fills() -> None:
+    """The room card's Remove button is "remove the first one" typed: the card
+    is resolved to its role, and the role goes, the rest chosen again."""
+    from app.schemas.bundle_action import BundleRemoveAction
+
+    state = a_room(
+        needs=(need("lighting", "floor-lamp"), need()),
+        lines=(line(10, need_index=1), line(11, need_index=0)),
+    )
+    coordinator, _ = _coordinator(
+        intent(BundleInteractionOp.LOCK),
+        hydration=FakeHydration(available=(10, 11, 77)),
+        optimizer=FakeOptimizer(chosen(11, need_index=1)),
+    )
+
+    result = await coordinator.run(
+        CustomerTurnInput(
+            message="Remove the sofa from the room",
+            state=state,
+            context=CONTEXT,
+            bundle_action=BundleRemoveAction(bundle_ordinal=1),
+        )
+    )
+
+    after = room(result.state)
+    assert [n.commerce_category for n in after.design_needs] == ["lighting"]
+    assert 10 not in [i.product_id for i in after.bundle_items]
+
+
 async def test_a_card_filling_two_roles_is_not_guessed_between() -> None:
     """One product can fill two roles, and removing "it" is then two answers.
 

@@ -109,6 +109,7 @@ interface AssistantBubbleProps {
   busy?: boolean
   /** Start swapping a room piece: opens the alternatives picker for that role. */
   onSwapStart?: (bundleOrdinal: number, role: string) => void
+  onRemovePiece?: (bundleOrdinal: number, role: string) => void
   /** Present only while choosing a replacement: turns product cards into pickers. */
   pick?: { role: string; onPick: (alternativeOrdinal: number) => void }
   /** Present only on the latest search grid: "different options" and per-card exclude. */
@@ -159,6 +160,7 @@ export function AssistantBubble({
   data,
   busy,
   onSwapStart,
+  onRemovePiece,
   pick,
   refine,
   selection,
@@ -322,6 +324,7 @@ export function AssistantBubble({
             room={presentation!.room!}
             labels={data.labels}
             onSwapStart={onSwapStart}
+            onRemovePiece={onRemovePiece}
             busy={busy}
             onVisualize={onVisualize}
             onVisualizeInRoom={onVisualizeInRoom}

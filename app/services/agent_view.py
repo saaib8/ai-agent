@@ -62,6 +62,7 @@ def project_state(
     state: AgentStateV1,
     cards: Sequence[PresentedCardView] = (),
     cart: Sequence[CartItemView] = (),
+    catalog_currency: str | None = None,
 ) -> AgentStateView:
     """The model-safe view of one conversation's memory.
 
@@ -93,6 +94,7 @@ def project_state(
             else None
         ),
         cart=tuple(cart),
+        catalog_currency=catalog_currency,
     )
 
 

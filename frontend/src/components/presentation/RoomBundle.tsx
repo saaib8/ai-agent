@@ -9,7 +9,7 @@ import type {
 } from '../../api/types'
 import { cardWords, type CardWords } from '../../lib/cardWords'
 import { humanise, money, toNumber } from '../../lib/format'
-import { ImageIcon, SwapIcon, UploadIcon } from '../icons'
+import { CloseIcon, ImageIcon, SwapIcon, UploadIcon } from '../icons'
 import { ViewPicker } from './ViewPicker'
 
 interface RoomBundleProps {
@@ -17,6 +17,9 @@ interface RoomBundleProps {
   /** Start swapping this piece: opens the alternatives picker for its role.
    *  Called with the piece's card position and its role in customer words. */
   onSwapStart?: (bundleOrdinal: number, role: string) => void
+  /** Take this piece out of the room. Called with its card position and its
+   *  role in customer words. */
+  onRemovePiece?: (bundleOrdinal: number, role: string) => void
   /** A turn is in flight — disable per-item actions. */
   busy?: boolean
   /** Present on the current package only: render it from a camera view. */
@@ -88,6 +91,7 @@ function BudgetBar({ spend, budget, within }: { spend: number; budget: number; w
 export function RoomBundle({
   room,
   onSwapStart,
+  onRemovePiece,
   busy = false,
   onVisualize,
   onVisualizeInRoom,
@@ -162,6 +166,17 @@ export function RoomBundle({
                     >
                       <SwapIcon size={12} />
                       {words.swap}
+                    </button>
+                  )}
+                  {onRemovePiece && (
+                    <button
+                      onClick={() => onRemovePiece(item.grounding_ref, humanise(kind ?? 'item'))}
+                      disabled={busy}
+                      aria-label={words.removePiece(kindText ?? humanise('item'))}
+                      className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[11px] font-medium text-muted transition hover:border-ink hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <CloseIcon size={12} />
+                      {words.remove}
                     </button>
                   )}
                 </div>

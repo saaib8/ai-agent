@@ -111,6 +111,8 @@ export interface CardLabels {
   already_owned: string
   swap: string
   swap_piece: string
+  remove: string
+  remove_piece: string
   each: string
   new_spend: string
   budget_up_to: string
@@ -182,6 +184,7 @@ export interface CardLabels {
   say_not_option: string
   say_more_seating: string
   say_other_options: string
+  say_remove_piece: string
   say_use_option: string
   say_visualize_room: string
   say_place_room: string
@@ -571,6 +574,14 @@ export interface BundleSwapAction {
   alternative_ordinal: number
 }
 
+/** A room piece's Remove button: that piece leaves the room, exactly as typed
+ *  "remove the second one" would take it out. */
+export interface BundleRemoveAction {
+  kind: 'remove'
+  /** Position of the room piece to remove (1-based). */
+  bundle_ordinal: number
+}
+
 /** The yes/no answers to an over-budget swap, each an action with no argument:
  *  they answer the held offer the server remembers, not a piece on screen. */
 export interface SwapConfirmAction {
@@ -605,6 +616,7 @@ export interface AddRoomToCartAction {
 export type BundleAction =
   | BundleAlternativesAction
   | BundleSwapAction
+  | BundleRemoveAction
   | SwapConfirmAction
   | SwapDeclineAction
   | SwapAlternativesAction

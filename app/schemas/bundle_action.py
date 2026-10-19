@@ -153,9 +153,24 @@ class AddRoomToCartAction(BaseModel):
     kind: Literal["add_to_cart"] = "add_to_cart"
 
 
+class BundleRemoveAction(BaseModel):
+    """Take one piece out of the room - its "Remove" button, beside Swap.
+
+    `bundle_ordinal` is the piece's position among the room cards. Exactly
+    what "remove the second one" typed does: the piece's role leaves the
+    plan and the rest of the room is chosen again around what stays.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["remove"] = "remove"
+    bundle_ordinal: int = Field(ge=1)
+
+
 BundleActionRequest = Annotated[
     BundleAlternativesAction
     | BundleSwapAction
+    | BundleRemoveAction
     | SwapConfirmAction
     | SwapDeclineAction
     | SwapKeepOriginalAction

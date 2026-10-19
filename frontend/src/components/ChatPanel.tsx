@@ -47,6 +47,7 @@ interface ChatPanelProps {
   /** The role being swapped, when a swap is in progress; drives the picker. */
   swapRole: string | null
   onSwapStart: (bundleOrdinal: number, role: string) => void
+  onRemovePiece: (bundleOrdinal: number, role: string) => void
   onPickAlternative: (alternativeOrdinal: number) => void
   onShowMoreOptions: () => void
   onExcludeProduct: (product: GroundedProduct) => void
@@ -130,6 +131,7 @@ export function ChatPanel({
   onPickObject,
   swapRole,
   onSwapStart,
+  onRemovePiece,
   onPickAlternative,
   onShowMoreOptions,
   onExcludeProduct,
@@ -391,6 +393,7 @@ export function ChatPanel({
                     revealedLen={turn.id === revealTurnId ? revealedLen : undefined}
                     revealing={turn.id === revealTurnId && revealing}
                     onSwapStart={onSwapStart}
+                    onRemovePiece={onRemovePiece}
                     pick={
                       turn.id === lastAssistantId && swapRole
                         ? { role: swapRole, onPick: onPickAlternative }

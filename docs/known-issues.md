@@ -1947,3 +1947,44 @@ which now pin every piece - CLAUDE.md 10.3).
   what changed.
 
 **Reported:** found while testing the finishing-touch fix (2026-10-10).
+
+## 30. "My budget is 15k" was never recorded, and the room came to 18,350 SAR without a word
+
+**Status:** Fixed 2026-10-19 on `fix/room-budget-and-remove`: a room budget
+said without a currency takes the store's, when its catalog prices in exactly
+one (`_room_budget_in_store_currency`); a store with several still asks. The
+decision model is also told the store's currency (`catalog_currency`), since it
+was found asking "Which currency is the 15k in?" itself; a currency question
+it asks anyway is corrected once. The other two proposals below remain open.
+
+**Seen:** a living room. Asked for the budget, the customer said "my budget is
+15k"; the reply said "That gives me a clear budget to design around" and moved
+on to the pieces, seats (10) and colour (beige). The room was built from 12
+pieces totalling 18,350 SAR - a 4-seater sofa, a 6-seat corner set, an
+armchair, a 4,950 SAR console and the rest - and the reply said nothing about
+the total or a budget.
+
+**Cause:** the saved session has `room_project.budget: null` and `budget` in
+`questions_asked`.
+- "15k" carries no currency. `proposal_mapping._budget` never assumes one, so
+  the figure is held back and `MISSING_PRICE_CURRENCY` is raised instead.
+- That clarification lost to the turn's own room question (pieces): the
+  primary action's question outranks a proposal's (`_ground`), and one question
+  is asked per turn. The currency was never asked.
+- The budget question is marked asked, so it is never asked again (CLAUDE.md
+  10.1), and the room was built with no budget: the optimiser had nothing to
+  stay under, so nothing was over, and nothing was said.
+- The reply writer still said "a clear budget", because the customer's words
+  were in front of it - not because one was recorded.
+
+The store's currency is already used for a bare amount on the AI sales agent's
+path (`customer_agent.agent_turns`, off by default), but not on this one.
+
+**Proposed fix (for the owner to decide):**
+- A room budget said without a currency takes the store's single currency, as
+  the agent path does; ask only when the store prices in more than one.
+- Never mark the budget question asked while no budget is recorded.
+- When a room is built with no budget, or over the one recorded, say so with
+  the real total, and offer to trim (optional pieces first).
+
+**Reported:** by the user (2026-10-19).

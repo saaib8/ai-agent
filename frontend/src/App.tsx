@@ -408,6 +408,19 @@ export default function App() {
     [chat, config.config, say],
   )
 
+  // A room piece's Remove: a structured room action, sent as a turn like Swap,
+  // so the room is chosen again without it and the reply says what changed.
+  const handleRemovePiece = useCallback(
+    (bundleOrdinal: number, role: string) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(say.removePiece(role), config.config, {
+        bundle: { kind: 'remove', bundle_ordinal: bundleOrdinal },
+      })
+    },
+    [chat, config.config, say],
+  )
+
   // A room package's "Add all to cart": a structured room action, sent as a
   // turn like Swap, so the reply says what was added and carries the cart.
   const handleAddRoomToCart = useCallback(() => {
@@ -656,6 +669,7 @@ export default function App() {
           onPickObject={handlePickObject}
           swapRole={swap?.role ?? null}
           onSwapStart={handleSwapStart}
+          onRemovePiece={handleRemovePiece}
           onPickAlternative={handlePickAlternative}
           onShowMoreOptions={handleShowMoreOptions}
           onExcludeProduct={handleExcludeProduct}

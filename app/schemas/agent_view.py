@@ -393,3 +393,6 @@ class AgentStateView(BaseModel):
     cart: tuple[CartItemView, ...] = Field(default=(), exclude_if=lambda v: not v)
     """What is in their cart - their picks, with how many of each - read fresh.
     Left out while empty, or when the catalog could not be read."""
+    catalog_currency: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The one currency the store prices in, when it prices in exactly one:
+    an amount said without a currency is in it."""
