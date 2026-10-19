@@ -27,6 +27,7 @@ import { RoomRender } from './presentation/RoomRender'
 import { PiecePicker } from './PiecePicker'
 import { QuickReplies } from './QuickReplies'
 import { RawJson } from './RawJson'
+import { SupportChannels } from './SupportChannels'
 import { cardWords } from '../lib/cardWords'
 import { agentLook } from '../lib/agents'
 
@@ -260,6 +261,8 @@ export function AssistantBubble({
             <div className="text-sm leading-relaxed text-ink">{response.follow_up_question}</div>
           </div>
         )}
+
+        <SupportChannels support={presentation?.support} />
 
         {textReplies.length > 0 && onQuickReply && (
           <QuickReplies
