@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MAX_STORE_QUESTION_CHARS = 300
 """A restated question is a question, not a transcript."""
+MAX_THEN_SEARCH_CHARS = 80
+"""A shopping request offered after a store answer: shown as a chip's label."""
 
 MAX_TITLE_CHARS = 255
 
@@ -49,6 +51,7 @@ class StoreKnowledgeGrounding(BaseModel):
 
 __all__ = [
     "MAX_STORE_QUESTION_CHARS",
+    "MAX_THEN_SEARCH_CHARS",
     "KnowledgePassage",
     "StoreKnowledgeGrounding",
 ]

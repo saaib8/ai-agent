@@ -28,7 +28,7 @@ MIXED_TYPES_SUFFIX = "+mixed-types.2"
 and the SOFAS, SETS AND SECTIONALS section explains `only_asked_type`. Off, the
 prompt carries neither."""
 
-STORE_KNOWLEDGE_SUFFIX = "+store-knowledge.1"
+STORE_KNOWLEDGE_SUFFIX = "+store-knowledge.2"
 """Added where the store's own documents can be searched and the THE STORE
 ITSELF section explains `policy_question`. Off, the prompt carries neither."""
 
@@ -1057,8 +1057,17 @@ its support team, a technical problem with their order or account. Restate the
 question in their own terms, carrying what they said earlier when the message
 only continues it ("and to Jeddah?" after asking about delivery). The answer
 comes from the store's own documents; never answer it from what you believe
-about stores. A question about a product - its price, size, stock or delivery
-date on its card - is not this. Otherwise leave it empty.
+about stores. The store's policies for a piece are this too - "what is the
+warranty on the first one?", "is assembly free for this bed?", "can I return
+it?", "how much is delivery for it to Khobar?" - restated with the piece's
+kind, never its position: "what is the warranty on sofas?". Only what its own
+card shows - its price, size, colour or stock - is a question about the
+product. Otherwise leave it empty.
+then_search: with policy_question, when the same message also asks to see
+products - "show me beds, and is assembly free?", "any grey sofas? and do you
+deliver to Dammam?" - that request in their own words and language, short
+("show me beds"). The store question is answered now and the search is
+offered next. Otherwise leave it empty.
 
 """
 

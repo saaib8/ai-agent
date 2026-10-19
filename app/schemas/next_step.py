@@ -43,6 +43,10 @@ class NextStepKind(StrEnum):
     KEEP_BROWSING = "keep_browsing"
     """Products on screen and nothing asked about them yet."""
 
+    AFTER_STORE_ANSWER = "after_store_answer"
+    """A store question answered, and products asked for in the same message:
+    those products, one tap away, as their own words."""
+
     AFTER_REFUSAL = "after_refusal"
     """The store's cart would not take the one piece they asked for, and the
     turn did nothing else: more like it, or something else (CLAUDE.md 36)."""
@@ -81,6 +85,7 @@ QUESTIONS: dict[NextStepKind, str] = {
     NextStepKind.AFTER_ROOM: "Would you like to swap any piece, or add a finishing touch?",
     NextStepKind.KEEP_BROWSING: "Would you like to narrow these down, or see more options?",
     NextStepKind.AFTER_REFUSAL: "Would you like to see similar ones instead?",
+    NextStepKind.AFTER_STORE_ANSWER: "Shall I show you those now?",
     NextStepKind.TASTE_WHICH: "Which of these two feels more like you?",
     NextStepKind.TASTE_STYLE: "Which style feels right to you?",
     NextStepKind.TASTE_AVOID: "Is there anything you'd rather avoid?",

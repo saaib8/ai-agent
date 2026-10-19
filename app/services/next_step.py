@@ -87,8 +87,9 @@ def next_step(
     if result.grounding.support is not None:
         # Faysal's turn: the store's support channels are its next step, and
         # a shopping question beside an answer about the store reads as if
-        # they had not been heard.
-        return None
+        # they had not been heard - unless they asked for products in the
+        # same message, which are then one tap away, in their own words.
+        return _after_store_answer(result.decision.then_search)
     if asks_for_product_type(result) and capabilities is not None:
         chips = _piece_chips(capabilities, language, taxonomy)
         if chips:
@@ -184,6 +185,13 @@ def next_step(
         )
     # An open question, with no chips: what they want is theirs to say.
     return NextStep(kind=NextStepKind.START)
+
+
+def _after_store_answer(then_search: str | None) -> NextStep | None:
+    if then_search is None:
+        return None
+    asked = ReplyChoice(label=then_search, value=then_search)
+    return NextStep(kind=NextStepKind.AFTER_STORE_ANSWER, chips=(asked,))
 
 
 def _piece_chips(
