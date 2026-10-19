@@ -66,6 +66,8 @@ export const ENGLISH: CardLabels = {
   already_owned: 'already owned',
   swap: 'Swap',
   swap_piece: 'Swap the {name}',
+  remove: 'Remove',
+  remove_piece: 'Remove the {name}',
   each: '{price} ea',
   new_spend: 'New spend',
   budget_up_to: 'Budget ≤ {price}',
@@ -137,6 +139,7 @@ export const ENGLISH: CardLabels = {
   say_not_option: 'Not option {number}',
   say_more_seating: 'Show me more seating options',
   say_other_options: 'Show me other {name} options',
+  say_remove_piece: 'Remove the {name} from the room',
   say_use_option: 'Use option {number} for the {name}',
   say_visualize_room: 'Visualize my room — {view} view',
   say_place_room: 'Place my room package in my room',
@@ -279,6 +282,8 @@ export interface CardWords {
     alreadyOwned: string
     swap: string
     swapPiece: (kind: string) => string
+    remove: string
+    removePiece: (kind: string) => string
     each: (price: string) => string
     newSpend: string
     budget: (price: string, exclusive: boolean) => string
@@ -348,6 +353,7 @@ export interface CardWords {
     notOption: (number: number) => string
     moreSeating: string
     otherOptions: (role: string) => string
+    removePiece: (role: string) => string
     useOption: (number: number, role: string) => string
     visualizeRoom: (view: string) => string
     placeRoom: string
@@ -515,6 +521,8 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
       alreadyOwned: l.already_owned,
       swap: l.swap,
       swapPiece: (kind) => fill(l.swap_piece, { name: kind }),
+      remove: l.remove,
+      removePiece: (kind) => fill(l.remove_piece, { name: kind }),
       each: (price) => fill(l.each, { price }),
       newSpend: l.new_spend,
       budget: (price, exclusive) => fill(exclusive ? l.budget_under : l.budget_up_to, { price }),
@@ -589,6 +597,7 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
       notOption: (number) => fill(l.say_not_option, { number }),
       moreSeating: l.say_more_seating,
       otherOptions: (role) => fill(l.say_other_options, { name: role }),
+      removePiece: (role) => fill(l.say_remove_piece, { name: role }),
       useOption: (number, role) => fill(l.say_use_option, { number, name: role }),
       visualizeRoom: (view) => fill(l.say_visualize_room, { view }),
       placeRoom: l.say_place_room,

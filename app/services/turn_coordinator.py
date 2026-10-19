@@ -129,6 +129,7 @@ from app.schemas.bundle_action import (
     AddRoomToCartAction,
     BundleActionRequest,
     BundleAlternativesAction,
+    BundleRemoveAction,
     BundleSwapAction,
     FinishingTouchesAction,
     SwapAlternativesAction,
@@ -1085,6 +1086,16 @@ def _bundle_action_decision(action: BundleActionRequest) -> CustomerAgentDecisio
                     op=BundleInteractionOp.REPLACE_PRODUCT,
                     selector=BundleItemOrdinal(ordinal=action.bundle_ordinal),
                     replacement=BundleReplacementIntent(mode=BundleReplacementMode.ALTERNATIVE),
+                ),
+            )
+        case BundleRemoveAction():
+            # The Remove button: "remove the second one", typed, exactly.
+            return CustomerAgentDecision(
+                action=AgentAction.BUNDLE_REFINE,
+                commercial_reason=CommercialReason.CUSTOMER_REQUEST,
+                bundle_interaction=BundleInteractionIntent(
+                    op=BundleInteractionOp.REMOVE_NEED,
+                    selector=BundleItemOrdinal(ordinal=action.bundle_ordinal),
                 ),
             )
         case SwapAlternativesAction():
@@ -2127,11 +2138,12 @@ class CustomerTurnCoordinator:
 
         visible = await self._visible_cards(turn)
         cart = await self._cart_items(turn)
+        currency = await self._store_currency(turn.context)
         decision = await self._decisions.decide(
             DecisionInput(
                 message=turn.message,
                 conversation=turn.conversation,
-                state_view=project_state(pre_turn, visible, cart),
+                state_view=project_state(pre_turn, visible, cart, currency),
                 # The language its own question to the customer is written in;
                 # None where Arabic replies are off or nothing settled it yet.
                 reply_language=(
@@ -2141,6 +2153,10 @@ class CustomerTurnCoordinator:
             problems=problems,
         )
         decision = self._answers_room_check(decision, pre_turn)
+        if currency is not None and _asks_for_a_currency(decision) and not problems:
+            # The store has one currency: asking which is a misreading, corrected once.
+            raise LLMResponseInvalidError(reason="currency asked: the store has one")
+        decision = self._room_budget_in_store_currency(decision, currency)
 
         proposals = self._with_room_pieces(
             decision, map_proposals(decision.state_proposal, decision.commerce_proposal), pre_turn
@@ -2230,6 +2246,10 @@ class CustomerTurnCoordinator:
                 primary = await self._list_alternatives(action, pre_turn, turn)
             case BundleSwapAction():
                 primary = await self._apply_swap(action, pre_turn, turn)
+            case BundleRemoveAction():
+                primary = await self._bundle_refine(
+                    _bundle_action_decision(action), pre_turn, pre_turn, turn
+                )
             case SwapConfirmAction():
                 primary = await self._confirm_swap(pre_turn, turn)
             case SwapDeclineAction():
@@ -3796,6 +3816,42 @@ class CustomerTurnCoordinator:
             return ()
         return cards_from_candidates(products, presented)
 
+    async def _store_currency(self, context: RetailerContext) -> str | None:
+        """The one currency the store prices in, or None when it prices in
+        several, none cleanly, or the catalog cannot be read."""
+        try:
+            return (await self._capabilities.overview(context)).currency
+        except _HANDLED_CATALOG_FAILURES:
+            logger.warning("store_currency_unavailable", store_id=context.store_id)
+            return None
+
+    @staticmethod
+    def _room_budget_in_store_currency(
+        decision: CustomerAgentDecision, currency: str | None
+    ) -> CustomerAgentDecision:
+        """A room budget said without a currency - "my budget is 15k" - in the
+        store's own, when its catalog prices in exactly one.
+
+        A store with several currencies, or none read cleanly, keeps the
+        figure unrecorded and asks which was meant, as before.
+        """
+        proposal = decision.state_proposal
+        budget = proposal.room_budget if proposal is not None else None
+        if (
+            currency is None
+            or proposal is None
+            or budget is None
+            or (budget.currency or "").strip()
+        ):
+            return decision
+        return decision.model_copy(
+            update={
+                "state_proposal": proposal.model_copy(
+                    update={"room_budget": budget.model_copy(update={"currency": currency})}
+                )
+            }
+        )
+
     async def _cart_items(self, turn: CustomerTurnInput) -> tuple[CartItemView, ...]:
         """Their cart as the decision model may see it - place, name, kind and
         how many - so "remove the rug" or "make the sofa 2" can name a line.
@@ -4620,7 +4676,9 @@ class CustomerTurnCoordinator:
         )
         self._log_refinement(turn, intent.op, working, staged)
 
-        refreshed = await self._reoptimise(staged, turn)
+        # Only that piece goes: everything else stays the product it is, as
+        # chosen before the removal cleared the room's lines.
+        refreshed = await self._reoptimise(staged, turn, keep_chosen_from=working.room_project)
         if isinstance(refreshed, _Primary):
             return replace(refreshed, state=staged, bundle_change=intent.op)
         return _Primary(
@@ -4677,6 +4735,7 @@ class CustomerTurnCoordinator:
         *,
         override: DesignNeedSearchOverride | None = None,
         released_need_id: int | None = None,
+        keep_chosen_from: RoomProjectState | None = None,
     ) -> _Reoptimised | _Primary:
         """Discover every current role afresh and choose the whole room again.
 
@@ -4688,6 +4747,10 @@ class CustomerTurnCoordinator:
 
         The plan is the customer's existing one - no specialist is consulted,
         because substituting a product does not change what the room needs.
+
+        `keep_chosen_from` holds every role to the product it had in that room -
+        a piece taken out changes nothing else - by pinning each role one
+        product filled, as a finishing touch does. Locked pieces need no pin.
 
         Returns a `_Primary` when the turn should stop there: an unreachable
         catalog or an unverifiable lock is reported, not worked around.
@@ -4717,14 +4780,16 @@ class CustomerTurnCoordinator:
                 catalog_capabilities=capabilities,
             )
             overrides = (
-                {}
-                if override is None
-                else {
-                    position: override
-                    for position, need in enumerate(room.design_needs)
-                    if need.need_id == override.need_id
-                }
+                _kept_as_chosen(keep_chosen_from, room) if keep_chosen_from is not None else {}
             )
+            if override is not None:
+                overrides.update(
+                    {
+                        position: override
+                        for position, need in enumerate(room.design_needs)
+                        if need.need_id == override.need_id
+                    }
+                )
             discovery = await self._design_discovery.discover(
                 request, plan, turn.context, overrides=overrides
             )
@@ -8554,6 +8619,40 @@ def _room_seating_wishes(room: RoomProjectState) -> SeatingRequirements:
         wished_colors=wished(AttributeFamily.COLOR),
         wished_styles=wished(AttributeFamily.STYLE),
     )
+
+
+_CURRENCY_QUESTIONS = frozenset(
+    {
+        BlockingClarificationReason.MISSING_PRICE_CURRENCY,
+        BlockingClarificationReason.MISSING_REFINEMENT_CURRENCY,
+    }
+)
+
+
+def _asks_for_a_currency(decision: CustomerAgentDecision) -> bool:
+    return (
+        decision.clarification is not None
+        and decision.clarification.reason in _CURRENCY_QUESTIONS
+    )
+
+
+def _kept_as_chosen(
+    chosen: RoomProjectState, room: RoomProjectState
+) -> dict[int, DesignNeedSearchOverride]:
+    """Each of `room`'s roles that one unlocked product filled in `chosen`,
+    pinned to it, by the role's position in `room`'s plan. A role filled by
+    several products is left free."""
+    products: dict[int, set[int]] = {}
+    for line in chosen.bundle_items:
+        if line.need_id is not None and line.status is not BundleItemStatus.LOCKED:
+            products.setdefault(line.need_id, set()).add(line.product_id)
+    return {
+        position: DesignNeedSearchOverride(
+            need_id=need.need_id, forced_product_id=next(iter(products[need.need_id]))
+        )
+        for position, need in enumerate(room.design_needs)
+        if len(products.get(need.need_id, ())) == 1
+    }
 
 
 @dataclass(frozen=True, slots=True)

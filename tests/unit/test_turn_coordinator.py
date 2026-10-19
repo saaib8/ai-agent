@@ -310,10 +310,19 @@ class FakeCapabilities:
         self,
         pairs: tuple[tuple[str, str | None], ...] = (("seating", "sofa"),),
         error: Exception | None = None,
+        currency: str | None = None,
     ) -> None:
         self.pairs = pairs
         self.error = error
+        self.currency = currency
         self.calls: list[Any] = []
+
+    async def overview(self, context: Any) -> Any:
+        if self.error is not None:
+            raise self.error
+        from app.schemas.catalog_overview import CatalogOverview
+
+        return CatalogOverview(store_id=context.store_id, currency=self.currency)
 
     async def capabilities(self, context: Any) -> Any:
         self.calls.append(context)

@@ -18,8 +18,8 @@ from collections.abc import Sequence
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.rooms import RoomPiece, RoomPieces
 
-VERSION = "customer_decision/v1.23"
-LANGUAGE_VERSION = "customer_decision/v1.23+reply-language.9"
+VERSION = "customer_decision/v1.24"
+LANGUAGE_VERSION = "customer_decision/v1.24+reply-language.9"
 """The same prompt with the LANGUAGE section, used where Arabic replies are on
 (docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
 
@@ -485,8 +485,11 @@ that much" limits the sofa; "my budget for the living room is that much" limits
 everything in the room together. The same figure means two different things,
 and only the second belongs to the room.
 
-An explicit amount they stated may become an absolute refinement. Do not invent
-a currency they did not say; currency inheritance is decided later.
+An explicit amount they stated may become an absolute refinement. An amount
+said without a currency - "15k", "under 3000" - is in catalog_currency when the
+state gives one: write that currency, and never ask which currency they meant.
+Without catalog_currency, Do not invent a currency they did not say; currency
+inheritance is decided later.
 
 A comparative price - "cheaper than the second one", "20% cheaper than that",
 "more expensive than the beige one" - is a relative refinement pointing at a
@@ -1158,6 +1161,12 @@ _PROBLEMS: tuple[tuple[str, str], ...] = (
         "or more. A piece for one person is its own kind of product, such as a "
         "single-seater sofa or an armchair: set taxonomy_change_requested to "
         "change the product type instead, and leave the seat count out.",
+    ),
+    (
+        "currency asked",
+        "You asked which currency an amount is in, but the store prices in one "
+        "currency, given as catalog_currency. An amount said without a currency is "
+        "in it: write that currency and do not ask.",
     ),
     (
         "room geometry invalid",

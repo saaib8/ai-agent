@@ -113,6 +113,9 @@ class CardLabels(BaseModel):
     swap: str
     swap_piece: str
     """"Swap the {name}" - the piece's kind, for a screen reader."""
+    remove: str
+    remove_piece: str
+    """"Remove the {name}" - the piece's kind, for a screen reader."""
     each: str
     """"{price} ea" - one piece's price beside the line's."""
     new_spend: str
@@ -208,6 +211,8 @@ class CardLabels(BaseModel):
     say_not_option: str
     say_more_seating: str
     say_other_options: str
+    say_remove_piece: str
+    """The message a room piece's Remove button records."""
     say_use_option: str
     say_visualize_room: str
     say_place_room: str
