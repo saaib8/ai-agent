@@ -244,6 +244,7 @@ ARABIC: Mapping[str, str] = MappingProxyType(
             "هل تودّ تضييق هذه الخيارات، أم رؤية المزيد؟"
         ),
         "Would you like to see similar ones instead?": "هل تودّ رؤية منتجات مشابهة بدلًا منه؟",
+        "Shall I show you those now?": "هل أعرضها لك الآن؟",
         "What would you like to do next?": "ماذا تودّ أن نفعل بعد ذلك؟",
     }
 )

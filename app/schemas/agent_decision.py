@@ -58,7 +58,7 @@ from app.schemas.refinement import (
     SemanticIntentRefinement,
 )
 from app.schemas.seating_solution import SeatingAnswer
-from app.schemas.store_knowledge import MAX_STORE_QUESTION_CHARS
+from app.schemas.store_knowledge import MAX_STORE_QUESTION_CHARS, MAX_THEN_SEARCH_CHARS
 from app.schemas.text_choice import TextReplyChoice, require_a_question, validate_text_choices
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.briefs import BriefQuestionKind
@@ -980,6 +980,16 @@ class CustomerAgentDecision(BaseModel):
     model believes about stores. Left out of the model's response schema
     unless store knowledge is on (`with_store_knowledge`)."""
 
+    then_search: SkipJsonSchema[str | None] = Field(
+        default=None, min_length=1, max_length=MAX_THEN_SEARCH_CHARS
+    )
+    """The shopping request made in the same message as a question about the
+    store - "show me beds" in "show me beds, and is assembly free?" - in the
+    customer's own words. Only with policy_question: the store question is
+    answered, and this is offered as the next step, one tap away, run as an
+    ordinary message. Left out of the model's response schema unless store
+    knowledge is on (`with_store_knowledge`)."""
+
     only_asked_type: SkipJsonSchema[bool] = False
     """They want the type they named and nothing beside it - "just sofas",
     "only regular sofas", "a simple sofa, not a set". On a search or a
@@ -1184,6 +1194,8 @@ class CustomerAgentDecision(BaseModel):
             raise ValueError("a question about the store is an answer")
         if self.policy_question is not None and self.narrow_by is not None:
             raise ValueError("a question about the store narrows nothing on screen")
+        if self.then_search is not None and self.policy_question is None:
+            raise ValueError("a search offered after an answer needs the store question")
 
     def _check_reference_payloads(self) -> None:
         if self.action is AgentAction.PRODUCT_DETAIL and self.reference is None:
@@ -1442,6 +1454,10 @@ def with_store_knowledge(schema: type[CustomerAgentDecision]) -> type[CustomerAg
         policy_question=(
             str | None,
             Field(default=None, min_length=1, max_length=MAX_STORE_QUESTION_CHARS),
+        ),
+        then_search=(
+            str | None,
+            Field(default=None, min_length=1, max_length=MAX_THEN_SEARCH_CHARS),
         ),
     )
 

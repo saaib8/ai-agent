@@ -37,11 +37,13 @@ def speaker(
     turn: CustomerTurnInput, result: CustomerTurnResult, *, support_agent: bool = False
 ) -> AgentPersona:
     """The assistant this turn's reply is shown as."""
-    if not turn.conversation.messages:
-        # The first reply greets them and introduces itself as Sara.
-        return AgentPersona.SARA
     if support_agent and _supports(result):
+        # A question about the store is Faysal's even as their first message:
+        # the reply then greets them as Faysal.
         return AgentPersona.FAYSAL
+    if not turn.conversation.messages:
+        # Every other first reply greets them and introduces itself as Sara.
+        return AgentPersona.SARA
     if _sells(turn, result):
         return AgentPersona.SALMAN
     if _designs(turn, result):

@@ -133,10 +133,16 @@ def test_without_the_support_agent_a_turn_about_the_store_is_as_before() -> None
     assert speaker(_turn(), _result(grounding=_store_answer())) is SARA
 
 
-def test_the_first_reply_still_greets_as_sara() -> None:
+def test_a_first_message_about_the_store_is_faysals() -> None:
     result = _result(grounding=_store_answer())
 
-    assert speaker(_turn(first=True), result, support_agent=True) is SARA
+    assert speaker(_turn(first=True), result, support_agent=True) is FAYSAL
+
+
+def test_without_the_support_agent_the_first_reply_is_still_sara() -> None:
+    result = _result(grounding=_store_answer())
+
+    assert speaker(_turn(first=True), result) is SARA
 
 
 def test_the_next_shopping_turn_is_sara_again() -> None:
