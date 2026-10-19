@@ -53,9 +53,10 @@ SALLA_STORE = 306242292
 # ── Salla's storefront API ──────────────────────────────────────────────────
 
 
-def _salla(handler: Any, *, ttl: int = 60) -> SallaStorefrontClient:
+def _salla(handler: Any, *, ttl: int = 60, retries: int = 2) -> SallaStorefrontClient:
     return SallaStorefrontClient(
-        SallaSettings(cache_ttl_s=ttl), transport=httpx.MockTransport(handler)
+        SallaSettings(cache_ttl_s=ttl, retries=retries, retry_backoff_s=0),
+        transport=httpx.MockTransport(handler),
     )
 
 
@@ -93,7 +94,7 @@ async def test_out_of_stock_and_not_in_the_store() -> None:
     )
 
 
-async def test_a_salla_that_cannot_be_asked_is_unknown_never_a_refusal() -> None:
+async def test_a_salla_that_cannot_be_asked_even_again_is_unknown() -> None:
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("slow", request=request)
 
@@ -102,6 +103,43 @@ async def test_a_salla_that_cannot_be_asked_is_unknown_never_a_refusal() -> None
 
     assert await _salla(down).product(SALLA_STORE, "123") is None
     assert await _salla(broken).product(SALLA_STORE, "123") is None
+
+
+async def test_a_momentary_failure_is_asked_again_and_the_answer_used() -> None:
+    """The screenshot: on stage the rug's answer did not come back, so it went
+    in the cart though Salla refuses it. A hiccup is now asked again."""
+    calls: list[int] = []
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("slow", request=request)
+        if len(calls) == 2:
+            return httpx.Response(429, text="busy")
+        return httpx.Response(410, text="gone")
+
+    answer = await _salla(flaky).product(SALLA_STORE, "1351484480")
+
+    assert answer == SallaProduct(in_store=False, available=False, max_quantity=None)
+    assert len(calls) == 3
+
+
+async def test_an_answer_is_never_asked_again_and_the_retries_are_bounded() -> None:
+    calls: list[int] = []
+
+    def gone(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(404, text="no")
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(502, text="bad gateway")
+
+    assert (await _salla(gone).product(SALLA_STORE, "1")).in_store is False  # type: ignore[union-attr]
+    assert len(calls) == 1, "a refusal is an answer"
+    calls.clear()
+    assert await _salla(failing, retries=1).product(SALLA_STORE, "2") is None
+    assert len(calls) == 2
 
 
 async def test_a_product_is_asked_once_within_the_cache_time() -> None:
@@ -200,7 +238,19 @@ async def test_each_reason_the_store_refuses() -> None:
         2: (CartRefusalReason.NOT_IN_STORE, 0),
         3: (CartRefusalReason.OUT_OF_STOCK, 0),
         4: (CartRefusalReason.NOT_IN_STORE, 0),
-    }, "5 could not be asked, so it is not refused"
+        5: (CartRefusalReason.UNCONFIRMED, 0),
+    }, "5 could not be asked, so it is kept out rather than promised"
+
+
+async def test_switched_off_an_unconfirmed_product_goes_in_as_before() -> None:
+    check = StoreCartCheck(
+        cast(StoreRepository, Stores(SALLA_STORE)),
+        cast(ProductRepository, Identities({5: "55"})),
+        cast(SallaStorefrontClient, Answers({"55": None})),
+        refuse_unconfirmed=False,
+    )
+
+    assert await check.refusals({5: 1}, CONTEXT) == {}
 
 
 async def test_a_store_not_on_salla_is_never_asked() -> None:
@@ -483,3 +533,38 @@ def test_a_fallen_back_reply_still_says_what_the_store_refused(
 
     assert _fallback(view, ReplyLanguage.EN).message == expected
     assert _fallback(view.model_copy(update={"cart": None}), ReplyLanguage.EN).message != expected
+
+
+async def test_a_typed_add_salla_could_not_confirm_stays_out_and_is_never_called_unavailable() -> (
+    None
+):
+    from app.schemas.next_step import NextStepKind
+
+    refuses = Refuses({20: (CartRefusalReason.UNCONFIRMED, 0, None)})
+
+    result = await _adding(20, refuses).run(
+        CustomerTurnInput(message="add the lamp", state=_two_sofas_and_a_lamp(), context=CONTEXT)
+    )
+
+    assert result.state.product_interaction.selected_product_ids == (10,)
+    assert [(r.name_english, r.reason) for r in result.cart_refusals] == [
+        ("Product 20", CartRefusalReason.UNCONFIRMED)
+    ]
+    assert result.next_step is None or result.next_step.kind is not NextStepKind.AFTER_REFUSAL
+
+
+async def test_a_tap_salla_could_not_confirm_says_to_try_again() -> None:
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state(picks=()))
+    runtime = _runtime(sessions)
+    runtime._store_check = Refuses({101: (CartRefusalReason.UNCONFIRMED, 0, None)})  # type: ignore[assignment]
+
+    with pytest.raises(PickUnavailableError) as raised:
+        await runtime.apply(
+            PicksRequest(session_id="sess-1", store_id=STORE, action=SelectPickAction(ordinal=1)),
+            CONTEXT,
+        )
+
+    assert raised.value.public_message == (
+        "I couldn't check that with the store just now. Please try again."
+    )

@@ -542,7 +542,12 @@ def store_cart_check(session: SessionDep, app_resources: ResourcesDep) -> StoreC
     check is switched off (CLAUDE.md 36)."""
     if app_resources.salla is None:
         return None
-    return StoreCartCheck(StoreRepository(session), ProductRepository(session), app_resources.salla)
+    return StoreCartCheck(
+        StoreRepository(session),
+        ProductRepository(session),
+        app_resources.salla,
+        refuse_unconfirmed=app_resources.settings.salla.refuse_unconfirmed,
+    )
 
 
 def product_display_words(app_resources: AppResources) -> ProductDisplayWords:

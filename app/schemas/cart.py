@@ -164,6 +164,10 @@ class CartRefusalReason(StrEnum):
     OVER_LIMIT = "over_limit"
     """More than one order may take; the cart keeps the most it may."""
 
+    UNCONFIRMED = "unconfirmed"
+    """Salla could not be asked, even after asking again: it may well take it,
+    but nothing goes in the cart the store's own cart has not confirmed."""
+
 
 class CartRefusal(BaseModel):
     """A product this turn asked for that the store's cart would not take as

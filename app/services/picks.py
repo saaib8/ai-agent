@@ -315,6 +315,8 @@ class PicksRuntime:
                 )
             case CartRefusalReason.NOT_IN_STORE:
                 message = "That product can't be added to this store's cart."
+            case CartRefusalReason.UNCONFIRMED:
+                message = "I couldn't check that with the store just now. Please try again."
         raise PickUnavailableError(public_message=message, reason=str(refused.reason))
 
     async def _with_quantity(

@@ -619,7 +619,7 @@ class CartRefusalFactView(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(min_length=1)
-    reason: Literal["not_in_store", "out_of_stock", "over_limit"]
+    reason: Literal["not_in_store", "out_of_stock", "over_limit", "unconfirmed"]
     kept: int = Field(ge=0)
     """How many the cart now holds of it - 0 when none."""
     max_quantity: int | None = Field(default=None, ge=1)

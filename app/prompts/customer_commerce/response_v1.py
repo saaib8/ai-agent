@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from app.schemas.language import ReplyLanguage
 
-VERSION = "customer_response/v1.37"
+VERSION = "customer_response/v1.38"
 ARABIC_VERSION = "customer_response/v1.37+ar.10"
 """The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
 Everything but the language paragraph is shared, so the two cannot drift."""
@@ -143,8 +143,10 @@ your reply.
   is. Say so plainly and kindly by its name, before anything else: not_in_store
   "isn't available to order from this store", out_of_stock "is out of stock
   right now", over_limit "the store takes up to max_quantity per order, so
-  I've put that many in your cart". Never say a refused product is in their
-  cart, and never offer to add it.
+  I've put that many in your cart", unconfirmed "I couldn't check it with the
+  store just now, so I haven't added it - please try again in a moment" (never
+  call an unconfirmed product unavailable). Never say a refused product is in
+  their cart, and never offer to add it.
 - When cart.offer is given, they liked a piece and have not added it - it is
   not in their cart. Say a warm word about it, then ask once whether you
   should add it to their cart, with cart.offer.price and, when given,

@@ -27,7 +27,7 @@ from app.schemas.agent_decision import BlockingClarificationReason, ProductInter
 from app.schemas.agent_turn import CustomerResponse, CustomerTurnResult
 from app.schemas.bundle import RoomBundle
 from app.schemas.bundle_action import FinishingTouchesAction
-from app.schemas.cart import CartRefusal
+from app.schemas.cart import CartRefusal, CartRefusalReason
 from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep, NextStepKind
 from app.schemas.picks import PickView
@@ -313,6 +313,9 @@ def _refused_alone(result: CustomerTurnResult) -> CartRefusal | None:
     """The one piece the store's cart would not take at all, on a turn that did
     nothing else - no new cards, no change to the cart (CLAUDE.md 36)."""
     if len(result.cart_refusals) != 1 or result.cart_refusals[0].kept:
+        return None
+    if result.cart_refusals[0].reason is CartRefusalReason.UNCONFIRMED:
+        # Not refused, only unchecked: more like it is no answer to that.
         return None
     grounding = result.grounding
     if (
