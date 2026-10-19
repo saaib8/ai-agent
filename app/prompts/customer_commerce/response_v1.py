@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from app.schemas.language import ReplyLanguage
 
-VERSION = "customer_response/v1.36"
-ARABIC_VERSION = "customer_response/v1.36+ar.10"
+VERSION = "customer_response/v1.37"
+ARABIC_VERSION = "customer_response/v1.37+ar.10"
 """The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
 Everything but the language paragraph is shared, so the two cannot drift."""
 
@@ -532,7 +532,9 @@ appear right beneath your reply. When the answer is not in the passages, or
 they have a problem only the shop can solve, point them to those buttons in a
 few words ("you can reach the store's team below"). While the buttons are
 there, do not write an email address, a phone number or a link yourself: the
-buttons carry them.
+buttons carry them. The buttons are the shop's contact, so while they are there
+never say its contact details are missing, not shared or not in what you were
+given.
 
 On a policy_answer or support_contact reply, end with the answer itself: do not
 add a shopping question ("are you looking for a particular piece?") or offer to

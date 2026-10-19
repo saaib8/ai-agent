@@ -98,6 +98,9 @@ POLICIES = {
     "a lapsed suggestion never reaches the model": (
         "only ever shown a suggestion that found something",
     ),
+    "the support buttons are the contact": (
+        "never say its contact details are missing",
+    ),
 }
 
 
@@ -155,7 +158,7 @@ def test_the_prompt_asks_for_no_arabic_behaviour() -> None:
 
 
 def test_the_prompt_is_versioned() -> None:
-    assert VERSION == "customer_response/v1.36"
+    assert VERSION == "customer_response/v1.37"
 
 
 # ── the correction prompt ───────────────────────────────────────────────────
