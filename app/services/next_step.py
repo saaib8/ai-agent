@@ -84,6 +84,11 @@ def next_step(
 ) -> NextStep | None:
     """Offer a next step, or chips answering the existing product-type question."""
     language = result.reply_language or ReplyLanguage.EN
+    if result.grounding.support is not None:
+        # Faysal's turn: the store's support channels are its next step, and
+        # a shopping question beside an answer about the store reads as if
+        # they had not been heard.
+        return None
     if asks_for_product_type(result) and capabilities is not None:
         chips = _piece_chips(capabilities, language, taxonomy)
         if chips:

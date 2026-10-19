@@ -121,7 +121,8 @@ def _ends_on_a_question(
     """
     # A turn with its own question - a question card, a room question, cards of
     # what goes with a pick - already leaves them something to answer on screen.
-    if already_asks(result):
+    # So does Faysal's: the store's support channels are beneath the reply.
+    if already_asks(result) or result.grounding.support is not None:
         return response
     as_written = response
     if closes_on_a_question(response.message, response.follow_up_question):
@@ -228,9 +229,18 @@ error still propagates - this is not a universal wrapper (CLAUDE.md 21).
 class CustomerResponseGenerator:
     """One finished turn in, one customer-safe reply out."""
 
-    def __init__(self, client: StructuredLLMClient, *, arabic_replies: bool = False) -> None:
+    def __init__(
+        self,
+        client: StructuredLLMClient,
+        *,
+        arabic_replies: bool = False,
+        support_agent: bool = False,
+    ) -> None:
         self._client = client
         self._arabic_replies = arabic_replies
+        self._support_agent = support_agent
+        """Whether a turn about the store is shown, and so introduces itself,
+        as Faysal - the same switch the label reads."""
         """Off, every reply is written with the English instructions, exactly
         as before, whatever a session stored while it was on."""
         # Built once: a prompt is chosen per turn, never assembled per turn.
@@ -396,7 +406,7 @@ class CustomerResponseGenerator:
             conversation=turn.conversation,
             grounding=view,
             follow_up_allowed=route.follow_up_allowed,
-            speaking_as=speaker(turn, result),
+            speaking_as=speaker(turn, result, support_agent=self._support_agent),
         )
         allowance = build_allowance(
             turn.message,
@@ -503,7 +513,7 @@ class CustomerResponseGenerator:
             conversation=turn.conversation,
             grounding=view,
             follow_up_allowed=follow_up_allowed,
-            speaking_as=speaker(turn, result),
+            speaking_as=speaker(turn, result, support_agent=self._support_agent),
         )
         response, calls = await self._call_and_validate(
             request,

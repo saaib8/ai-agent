@@ -26,3 +26,8 @@ test('Sara and Salman share an initial, so their colours differ', () => {
   assert.equal(AGENTS.sara.initial, AGENTS.salman.initial)
   assert.notEqual(AGENTS.sara.avatar, AGENTS.salman.avatar)
 })
+
+test('Faysal, the store support assistant, has a look of his own', () => {
+  assert.equal(agentLook('faysal').name, 'Faysal')
+  assert.notEqual(AGENTS.faysal.avatar, AGENTS.sara.avatar)
+})

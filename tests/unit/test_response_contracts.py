@@ -416,6 +416,9 @@ def test_the_model_facing_enum_excludes_the_bypassed_branches() -> None:
         # A question about the shop itself, answered from its own documents -
         # which passages is the application's; the reply only words them.
         "policy_answer",
+        # They asked to reach the shop's support: its channels are drawn by
+        # the application; the reply only points to them.
+        "support_contact",
         # M17: the customer's own choices, shown again. Not a search - nothing
         # was looked for, so the reply must not describe finding anything.
         "selection",
@@ -1368,6 +1371,9 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         # words with their title and page - no id, no score, no store.
         "policy_question",
         "policy_passages",
+        # Whether the shop's support buttons are beneath the reply - a flag,
+        # never the addresses or numbers they carry.
+        "support_offered",
         "screen",
         "clarification_reason",
         "reference_reason",

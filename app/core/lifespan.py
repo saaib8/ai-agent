@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import LLMSettings, Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
-from app.db.catalog_schema import verify_commerce_schema
+from app.db.catalog_schema import verify_commerce_schema, verify_support_schema
 from app.integrations.embeddings import OpenAIQueryEmbedder
 from app.integrations.image_generation import (
     FallbackImageGenerator,
@@ -134,8 +134,9 @@ def design_llm_settings(settings: Settings) -> LLMSettings | None:
     )
 
 
-async def _check_catalog_schema(database: Database) -> None:
-    """Verify the live catalog has the commerce columns this service requires.
+async def _check_catalog_schema(database: Database, *, support: bool = False) -> None:
+    """Verify the live catalog has the commerce columns this service requires,
+    and the store's support columns where the support agent reads them.
 
     A reachable catalog missing a required column is a deployment error and
     raises, failing startup. An *unreachable* catalog is not treated as a schema
@@ -144,6 +145,8 @@ async def _check_catalog_schema(database: Database) -> None:
     try:
         async with database.engine.connect() as connection:
             await verify_commerce_schema(connection)
+            if support:
+                await verify_support_schema(connection)
     except (SQLAlchemyError, OSError) as exc:
         # `OSError` as well as SQLAlchemy's own: asyncpg raises a bare
         # ConnectionRefusedError when nothing is listening, and SQLAlchemy does
@@ -348,7 +351,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         empty_room_generator=empty_room_generator,
     )
 
-    await _check_catalog_schema(database)
+    await _check_catalog_schema(database, support=settings.customer_agent.support_agent)
     logger.info("service_started")
     try:
         yield

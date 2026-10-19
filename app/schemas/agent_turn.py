@@ -57,6 +57,7 @@ from app.schemas.screen import PresentedCardView
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.seating_solution import SeatingBundle, SeatingSolution
 from app.schemas.store_knowledge import StoreKnowledgeGrounding
+from app.schemas.support import SupportActionRequest, SupportGrounding
 from app.schemas.text_choice import (
     TextReplyChoice,
     require_a_question,
@@ -98,6 +99,11 @@ class CustomerTurnInput(BaseModel):
     """A screen-driven action on the customer's picks - ask about one, compare
     two, or show a companion a chip offered. Deterministic, like the others:
     no decision model runs (CLAUDE.md 3.6)."""
+
+    support_action: SupportActionRequest | None = None
+    """The shopper asked to reach the store's support. Deterministic: no
+    decision model runs, and the channels come from the store's own contacts
+    (CLAUDE.md 3.6)."""
 
     locale: ReplyLanguage | None = None
     """The storefront's language, answering a turn nothing in the conversation
@@ -179,6 +185,12 @@ class TurnGrounding(BaseModel):
     documents were searched and say nothing about it - answered honestly,
     never filled in.
     """
+
+    support: SupportGrounding | None = None
+    """The store's own support, offered beside this reply: with an answer from
+    its documents, when they could not be read, or because the shopper asked
+    to reach it. None where the support agent is off or the turn is not
+    about the store."""
 
     design_handoff_requested: bool = False
     """The turn **asked** for interior-design reasoning.

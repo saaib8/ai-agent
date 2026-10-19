@@ -24,3 +24,8 @@ class AgentPersona(StrEnum):
     NORA = "nora"
     """Interior design: design answers, and the room being designed - its
     questions and package."""
+
+    FAYSAL = "faysal"
+    """Support: the store itself - its delivery, returns, warranty and payment,
+    answered from its own documents - and the hand-over to the store's own
+    support team. Only where `customer_agent.support_agent` is on."""
