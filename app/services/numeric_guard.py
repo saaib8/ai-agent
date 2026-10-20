@@ -46,6 +46,7 @@ from app.schemas.response import (
 )
 from app.schemas.screen import CustomerVisibleScreenView
 from app.schemas.store_knowledge import KnowledgePassage
+from app.services.written_numbers import written_figures
 
 ResponseNumericAllowance = frozenset[str]
 """Canonical numeric tokens generated prose may contain.
@@ -376,9 +377,17 @@ def policy_figures(passages: Sequence[KnowledgePassage]) -> tuple[Decimal, ...]:
     Sayable because the shop wrote them and the reply repeats them; read with
     the same lexical reader as everything else, so nothing is derived here.
     A figure no passage states - a fee, a time the documents never give - is
-    still refused (CLAUDE.md 3.3).
+    still refused (CLAUDE.md 3.3). A figure the shop wrote in words or as a
+    "k" amount ("fourteen days", "over 10k") is stated too (`written_figures`).
     """
-    return tuple(Decimal(token) for passage in passages for token in numbers_in(passage.text))
+    return tuple(
+        figure
+        for passage in passages
+        for figure in (
+            *(Decimal(token) for token in numbers_in(passage.text)),
+            *written_figures(passage.text),
+        )
+    )
 
 
 def stated_figures(request: ProductSearchRequest) -> tuple[Decimal, ...]:
