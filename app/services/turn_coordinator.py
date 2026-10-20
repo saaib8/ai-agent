@@ -6739,15 +6739,18 @@ class CustomerTurnCoordinator:
         if anchored.stop is not None:
             return replace(anchored.stop, state=state, proposals_applied=True)
 
-        product = anchored.product or await self._settled_product(pre_turn, turn)
+        product = anchored.product
         if product is None:
-            # A finished room is something to complement: "add a finishing
-            # touch" with no piece named is the button's answer - Nora's
-            # finishing touch, shown, with the other pieces as chips.
+            # No piece named, and a room being designed: "what would finish
+            # the room?" is the room's finishing touch - Nora's, shown, with
+            # the other pieces as chips - never the one product that happens
+            # to be in their cart, which may be from another room entirely.
             shown = await self._show_finishing(state, turn)
             if shown is not None:
                 # Built on `state`, which already holds this turn's proposals.
                 return replace(shown, proposals_applied=True)
+            product = await self._settled_product(pre_turn, turn)
+        if product is None:
             # Nothing to complement. Asking the specialist what goes with
             # nothing in particular is a different question.
             return _Primary(
