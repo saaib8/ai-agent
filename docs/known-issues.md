@@ -1993,8 +1993,9 @@ path (`customer_agent.agent_turns`, off by default), but not on this one.
 
 **Status:** Fixed 2026-10-20 on `feat/room-cart-goes-with`. The session keeps
 the swap (`room_swap`: the piece, the room's revision, the options search)
-while the room and that search are unchanged - paging included - and every
-reply says so (`swap_context`). A choice of one of its options - typed, or
+while the room is unchanged and the search is still for that kind of piece -
+paged or narrowed ("cheaper ones", "only grey") alike, the room's own pieces
+always left out - and every reply says so (`swap_context`). A choice of one of its options - typed, or
 "Take the first" after comparing them - swaps it into the room, never the
 cart. Swap options carry Compare, keep "Use this ..." through a comparison,
 and never include what the room already holds (the piece being swapped first).
