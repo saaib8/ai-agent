@@ -2025,3 +2025,25 @@ server.
   are still on screen.
 
 **Reported:** by the user (2026-10-20).
+
+## 32. "What would finish the room?" suggested nightstands for a bed in the cart, not the room
+
+**Status:** Fixed 2026-10-20 on `feat/room-cart-goes-with`: with no piece
+named and a room being designed, the room's finishing touch comes first
+(`_complement`); a lone product in the cart is the anchor only when no room is.
+
+**Seen:** in the store's widget, a bed already in the cart (from an earlier
+chat - the cart is the shopper's), a living room being designed: the room's
+"Add a finishing touch" chip showed nightstands.
+
+**Cause:**
+- The widget sent the chip's words only (`"What would finish the room?"`),
+  without its `bundle_action` `finishing_touches`, so the words were read by the
+  decision model instead of acting exactly.
+- That typed path took the one product in the cart - the bed - as the piece
+  to complement before looking at the room being designed.
+
+**Widget, still to do:** send each chip's `bundle_action` / `product_action` /
+`search_action` with its words, as the console does.
+
+**Reported:** by the user (2026-10-20).
