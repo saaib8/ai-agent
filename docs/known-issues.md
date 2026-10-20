@@ -1988,3 +1988,39 @@ path (`customer_agent.agent_turns`, off by default), but not on this one.
   the real total, and offer to trim (optional pieces first).
 
 **Reported:** by the user (2026-10-19).
+
+## 31. Swapping a room piece offers no Compare, and a choice after comparing goes to the cart
+
+**Status:** Fixed 2026-10-20 on `feat/room-cart-goes-with`. The session keeps
+the swap (`room_swap`: the piece, the room's revision, the options search)
+while the room and that search are unchanged - paging included - and every
+reply says so (`swap_context`). A choice of one of its options - typed, or
+"Take the first" after comparing them - swaps it into the room, never the
+cart. Swap options carry Compare, keep "Use this ..." through a comparison,
+and never include what the room already holds (the piece being swapped first).
+
+**Seen:** a room package on screen, Swap tapped on a piece: the options came
+with "Use this sofa" only - no Compare. Typing "compare these" did compare
+them, but choosing one afterwards ("Take the first", or typed) put it in the
+cart instead of swapping it into the room.
+
+**Cause:** a swap in progress is known only to the console, never to the
+server.
+- The console hides every card button but "Use this …" on swap options
+  (`ProductCard` pick mode), Compare included.
+- The server returns which piece the options are for (`swap_context`) but does
+  not keep it in the session. The console holds it and drops it on any typed
+  message, so a typed "compare these" ends the swap.
+- After that the options are an ordinary list: "Take the first" is a select,
+  and a select goes into the cart.
+
+**Proposed fix (for the owner to decide):**
+- Keep the swap in the session (which room piece, which list of options) until
+  the options leave the screen or a piece is chosen.
+- Show Compare on swap options; the comparison's "Take the first" / "Take the
+  second", a typed "I'll take the second", or "Use this …" on the comparison
+  all swap that option into the room, never into the cart.
+- Keep the console's swap mode across a typed message while the same options
+  are still on screen.
+
+**Reported:** by the user (2026-10-20).

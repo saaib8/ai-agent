@@ -78,6 +78,7 @@ from app.schemas.agent_state import (
     ProductInteractionState,
     RoomCheck,
     RoomProjectState,
+    RoomSwapState,
     SavedMeasurements,
     SeatingOfferState,
     SwapBudgetOfferStage,
@@ -1135,6 +1136,67 @@ def _room_piece_offers(pieces: Iterable[RoomPiece]) -> tuple[CompanionOffer, ...
     return _offers(tuple(c for c in companions if c is not None))
 
 
+def _swap_is_live(state: AgentStateV1, swap: RoomSwapState) -> bool:
+    """The swap's options are still the ones on screen, for the same room:
+    the options search is the active one and the room has not changed."""
+    room = state.room_project
+    active = state.active_search
+    return (
+        room is not None
+        and not room.in_cart
+        and room.bundle_revision == swap.bundle_revision
+        and active is not None
+        # Paging leaves out what was seen, and is still the same options.
+        and active.request.model_copy(update={"exclude_product_ids": ()})
+        == swap.request.model_copy(update={"exclude_product_ids": ()})
+    )
+
+
+def _with_room_swap(primary: _Primary, bundle_ordinal: int | None) -> AgentStateV1:
+    """The state after a turn that showed options for a room piece: the swap
+    remembered, so choosing one of them later swaps it into the room."""
+    state = primary.state
+    active = state.active_search
+    if (
+        bundle_ordinal is None
+        or primary.search is None
+        or not primary.search.products
+        or active is None
+    ):
+        return state
+    return state.model_copy(
+        update={
+            "room_swap": RoomSwapState(
+                bundle_ordinal=bundle_ordinal,
+                role=customer_words(active.request.commerce_subcategory)
+                if active.request.commerce_subcategory
+                else customer_words(active.request.commerce_category),
+                bundle_revision=_bundle_revision(state),
+                request=active.request,
+            )
+        }
+    )
+
+
+def _with_live_swap(result: CustomerTurnResult) -> CustomerTurnResult:
+    """Every reply says which piece is being swapped while the swap is live,
+    so its options stay options; a swap that is no longer live is forgotten."""
+    swap = result.state.room_swap
+    if swap is None:
+        return result
+    if not _swap_is_live(result.state, swap):
+        return result.model_copy(
+            update={"state": result.state.model_copy(update={"room_swap": None})}
+        )
+    if result.swap_context is not None:
+        return result
+    return result.model_copy(
+        update={
+            "swap_context": RoomSwapContext(bundle_ordinal=swap.bundle_ordinal, role=swap.role)
+        }
+    )
+
+
 def _finishing_need(piece: RoomPiece, need: DesignCategoryNeed | None) -> DesignCategoryNeed:
     """The search for one finishing piece: Nora's need for it where she gave
     one, never a seat count nobody stated."""
@@ -1515,6 +1577,7 @@ class CustomerTurnCoordinator:
         result = await self._run_turn(turn)
         if started is not None:
             result = self._with_language(result, started, stored, turn.context.store_id)
+        result = _with_live_swap(result)
         result = await self._with_narrow_down(result, turn)
         result = await self._with_taste_question(result, turn)
         result = self._with_room_check(result)
@@ -1524,6 +1587,7 @@ class CustomerTurnCoordinator:
         for_room = picked_for_room(turn.state, result.state)
         if for_room is not None:
             result = result.model_copy(update={"picks_for_room": for_room})
+
         if result.next_step is not None or result.cart_offer is not None:
             # An offer to add the piece they liked is the turn's question.
             return result
@@ -2343,6 +2407,17 @@ class CustomerTurnCoordinator:
             decision, map_proposals(decision.state_proposal, decision.commerce_proposal), pre_turn
         )
         interaction = await self._apply_interaction(decision, pre_turn, turn.context)
+        swapped = await self._chosen_for_swap(pre_turn, interaction, turn)
+        if swapped is not None:
+            # One of the options for a room piece being swapped: it goes into
+            # the room in that piece's place, never into the cart (CLAUDE.md 27).
+            assert pre_turn.room_swap is not None
+            interaction = _Interaction(state=pre_turn)
+            decision = _bundle_action_decision(
+                BundleSwapAction(
+                    bundle_ordinal=pre_turn.room_swap.bundle_ordinal, alternative_ordinal=1
+                )
+            )
         if decision.add_room_to_cart:
             interaction = await self._room_into_cart(interaction, turn)
         finished_room = (
@@ -2352,8 +2427,10 @@ class CustomerTurnCoordinator:
             # Closed as it stands: nothing the decision proposed about the room
             # may bring it back on record.
             finished_room = replace(finished_room, proposals_applied=True)
-        primary = finished_room or await self._execute(
-            decision, interaction.state, pre_turn, turn, proposals.update
+        primary = (
+            swapped
+            or finished_room
+            or await self._execute(decision, interaction.state, pre_turn, turn, proposals.update)
         )
 
         # Applied to what the primary action produced, not to the pre-turn
@@ -2479,7 +2556,14 @@ class CustomerTurnCoordinator:
                 primary = await self._add_room_to_cart(pre_turn, turn)
 
         decision = _bundle_action_decision(action)
-        final_state = primary.state
+        final_state = _with_room_swap(
+            primary,
+            action.bundle_ordinal
+            if isinstance(action, BundleAlternativesAction) and not refused
+            else primary.swap_context.bundle_ordinal
+            if primary.swap_context is not None
+            else None,
+        )
         kinds, picks, liked = await self._selection_facts(final_state, turn)
         result = CustomerTurnResult(
             state=final_state,
@@ -3499,8 +3583,20 @@ class CustomerTurnCoordinator:
                 update={"request": resolved.request.model_copy(update={"price": price_ceiling})}
             )
         # The room's own piece: its alternatives, and every page of them, keep
-        # to its type (CLAUDE.md 10.12).
+        # to its type (CLAUDE.md 10.12) - and never offer what the room already
+        # holds, the piece being swapped first among them.
         resolved = _one_type(resolved)
+        resolved = resolved.model_copy(
+            update={
+                "request": resolved.request.model_copy(
+                    update={
+                        "exclude_product_ids": tuple(
+                            dict.fromkeys(line.product_id for line in room.bundle_items)
+                        )
+                    }
+                )
+            }
+        )
         composed = self._composer.seed_new_task(
             resolved,
             room_preferences=room.design_preferences,
@@ -4454,6 +4550,35 @@ class CustomerTurnCoordinator:
             design_handoff=False,
             proposals_applied=False,
         )
+
+    async def _chosen_for_swap(
+        self, pre_turn: AgentStateV1, interaction: _Interaction, turn: CustomerTurnInput
+    ) -> _Primary | None:
+        """A product this turn chose - typed, or "Take the first" after a
+        comparison - swapped into the room piece whose options are on screen.
+
+        Only while that swap is still live (`_swap_is_live`), and only for one
+        product that piece could take; anything else is an ordinary choice.
+        """
+        swap = pre_turn.room_swap
+        room = pre_turn.room_project
+        if swap is None or room is None or not _swap_is_live(pre_turn, swap):
+            return None
+        before = set(pre_turn.product_interaction.selected_product_ids)
+        chosen = [
+            product_id
+            for product_id in interaction.state.product_interaction.selected_product_ids
+            if product_id not in before
+        ]
+        if len(chosen) != 1:
+            return None
+        need_id = await self._resolve_swap_need(swap.bundle_ordinal, pre_turn, turn)
+        if isinstance(need_id, _Primary):
+            return None
+        if not await self._is_product_for_need(need_id, chosen[0], room, turn.context):
+            return None
+        logger.info("swap_option_chosen", store_id=turn.context.store_id)
+        return await self._swap_into_role(swap.bundle_ordinal, need_id, chosen[0], pre_turn, turn)
 
     async def _room_chips(
         self, state: AgentStateV1, turn: CustomerTurnInput, *, shown: str
@@ -9188,6 +9313,7 @@ def _with_offer(state: AgentStateV1, offer: SeatingOfferState) -> AgentStateV1:
         seating_offer=offer,
         swap_budget_offer=state.swap_budget_offer,
         finished_rooms=state.finished_rooms,
+        room_swap=state.room_swap,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
@@ -9278,6 +9404,7 @@ def _with_chosen_combination(
         seating_offer=offer.model_copy(update={"chosen": chosen}),
         swap_budget_offer=state.swap_budget_offer,
         finished_rooms=state.finished_rooms,
+        room_swap=state.room_swap,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,

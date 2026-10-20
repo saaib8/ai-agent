@@ -189,6 +189,11 @@ export function ChatPanel({
   // The picker only lives on the most recent assistant turn: older product
   // grids are history and must not sprout "Use this" buttons.
   const lastAssistantId = [...turns].reverse().find((t) => t.kind === 'assistant')?.id
+  // A piece's options stay pickable while it is swapped, even after a
+  // comparison of them: the latest reply that showed cards.
+  const swapOptionsId = [...turns]
+    .reverse()
+    .find((t) => t.kind === 'assistant' && (t.data.presentation?.products?.length ?? 0) > 0)?.id
   const addToRoomPick = (piece: string) => ({
     role: piece,
     adds: true,
@@ -410,13 +415,13 @@ export function ChatPanel({
                     onSwapStart={onSwapStart}
                     onRemovePiece={onRemovePiece}
                     pick={
-                      turn.id !== lastAssistantId
-                        ? undefined
-                        : swapRole
+                      swapRole
+                        ? turn.id === swapOptionsId
                           ? { role: swapRole, onPick: onPickAlternative }
-                          : turn.data.presentation?.room_addition
-                            ? addToRoomPick(turn.data.presentation.room_addition)
-                            : undefined
+                          : undefined
+                        : turn.id === lastAssistantId && turn.data.presentation?.room_addition
+                          ? addToRoomPick(turn.data.presentation.room_addition)
+                          : undefined
                     }
                     refine={
                       turn.id === lastAssistantId
