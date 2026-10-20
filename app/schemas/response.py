@@ -1071,7 +1071,9 @@ class ResponseGroundingView(BaseModel):
 
     policy_passages: tuple[KnowledgePassage, ...] = ()
     """What the shop's own documents say about it - the only thing a
-    `POLICY_ANSWER` may be written from. Empty: they do not say."""
+    `POLICY_ANSWER` may be written from. Empty: they do not say. On a
+    `SUPPORT_CONTACT` with no channels set, the documents' own contact
+    details, so the reply can give them rather than say there are none."""
 
     support_offered: bool = False
     """The shop's own support channels - WhatsApp, email - are drawn beneath
@@ -1153,8 +1155,11 @@ class ResponseGroundingView(BaseModel):
 
         if (self.kind is ResponseOutcomeKind.POLICY_ANSWER) != (self.policy_question is not None):
             raise ValueError("a policy answer carries its question, and only it does")
-        if self.policy_passages and self.kind is not ResponseOutcomeKind.POLICY_ANSWER:
-            raise ValueError("only a policy answer is written from the shop's documents")
+        if self.policy_passages and self.kind not in (
+            ResponseOutcomeKind.POLICY_ANSWER,
+            ResponseOutcomeKind.SUPPORT_CONTACT,
+        ):
+            raise ValueError("only an answer about the shop is written from its documents")
         if self.support_offered and self.kind not in (
             ResponseOutcomeKind.POLICY_ANSWER,
             ResponseOutcomeKind.SUPPORT_CONTACT,

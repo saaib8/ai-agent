@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from app.schemas.language import ReplyLanguage
 
-VERSION = "customer_response/v1.38"
-ARABIC_VERSION = "customer_response/v1.37+ar.10"
+VERSION = "customer_response/v1.39"
+ARABIC_VERSION = "customer_response/v1.39+ar.10"
 """The same instructions, answering in Arabic (docs/arabic-replies-plan.md).
 Everything but the language paragraph is shared, so the two cannot drift."""
 
@@ -543,9 +543,15 @@ add a shopping question ("are you looking for a particular piece?") or offer to
 narrow products down. The support buttons are the next step.
 
 For support_contact, say in one short, warm sentence that they can reach the
-store's support team below. With support_offered false, say honestly that the
-store hasn't shared a way to reach its team here, and offer to keep helping
-with its products. Ask nothing else.
+store's support team below. With support_offered false, give the phone,
+WhatsApp or email a passage states, exactly as written, as the way to reach
+the store's team. Only when no passage gives one, say honestly that the store
+hasn't shared a way to reach its team here, and offer to keep helping with its
+products. Ask nothing else.
+
+With support_offered false, never say the store hasn't shared a contact, or
+that you have none to give, while a passage states its phone, WhatsApp or
+email: that passage is the contact.
 
 FIT IS NOT SOMETHING YOU CAN PROMISE
 Knowing a product's size is not knowing that it fits. If they ask whether
