@@ -212,6 +212,11 @@ ARABIC: Mapping[str, str] = MappingProxyType(
             " مني أن أختار لك."
         ),
         "How many people will usually be sitting in the room?": ("كم شخصًا سيجلس في الغرفة عادةً؟"),
+        "Roughly how long and how wide is the room?": "كم طول الغرفة وعرضها تقريبًا؟",
+        "Which room would you like to design next?": "أي غرفة تودّ تصميمها بعد ذلك؟",
+        "Would you like anything else for this room, or are you done with it?": (
+            "هل تودّ إضافة شيء آخر لهذه الغرفة، أم انتهيت منها؟"
+        ),
         "Which colours are you drawn to for the room - or shall I choose for you?": (
             "ما الألوان التي تميل إليها للغرفة - أم تفضّل أن أختار لك؟"
         ),

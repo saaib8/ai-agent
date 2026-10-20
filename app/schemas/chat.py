@@ -293,6 +293,15 @@ class ChatPresentation(BaseModel):
     which is what keeps a room edit from cross-selling a piece it already holds
     (CLAUDE.md 27)."""
 
+    room_addition: str | None = None
+    """The finishing touch the cards are a page of, for the room still being
+    designed: each card's button is "Add to room", sending `bundle_action`
+    `add_to_room` with its place in the list, never a pick (CLAUDE.md 10.3)."""
+    room_in_cart: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The room on record is in their cart: every room package drawn before
+    this reply is a record of how it was designed, no longer edited
+    (CLAUDE.md 36)."""
+
     support: SupportPresentation | None = None
     """The store's own support channels beneath the reply - WhatsApp, email -
     on a turn about the store, built from the contacts its owner set. Never

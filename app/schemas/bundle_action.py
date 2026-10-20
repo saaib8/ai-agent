@@ -139,6 +139,26 @@ class FinishingTouchesAction(BaseModel):
     kind: Literal["finishing_touches"] = "finishing_touches"
 
 
+class RoomDoneAction(BaseModel):
+    """"I'm done with this room": the room in their cart is finished, and the
+    next room is asked about (CLAUDE.md 36)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["room_done"] = "room_done"
+
+
+class AddToRoomAction(BaseModel):
+    """A product Nora suggested to finish the room, added to the room package
+    - the card's "Add to room". Named by its place in the list on screen, as a
+    swap's chosen option is; the room is costed with it, and over budget the
+    customer is asked before anything changes (CLAUDE.md 10.3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["add_to_room"] = "add_to_room"
+    ordinal: int = Field(ge=1)
+
+
 class AddRoomToCartAction(BaseModel):
     """Put the room package's pieces in the cart - its "Add all to cart"
     button, which shows what they come to before the tap.
@@ -178,6 +198,8 @@ BundleActionRequest = Annotated[
     | SwapDismissAction
     | AddPieceAction
     | FinishingTouchesAction
+    | AddToRoomAction
+    | RoomDoneAction
     | AddRoomToCartAction,
     Field(discriminator="kind"),
 ]

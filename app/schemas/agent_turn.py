@@ -250,6 +250,9 @@ class SwapBudgetOffer(BaseModel):
     budget_max: Decimal
     overage: Decimal
     currency: str
+    added_piece: str | None = None
+    """The finishing touch being added, by its room name, when the change is
+    an addition rather than a swap."""
 
     @model_validator(mode="after")
     def _overage_is_the_gap(self) -> Self:
@@ -392,6 +395,18 @@ class CustomerTurnResult(BaseModel):
     one do you recommend?" is answered about them, never with "I don't have
     them in front of me"."""
     taste_answered: TasteAnsweredView | None = None
+    room_in_cart: str | None = None
+    """The room they just put in their cart whole, when the cards are what
+    would finish it (CLAUDE.md 36)."""
+    room_addition: str | None = None
+    """The finishing touch Nora suggests for the room being designed, when the
+    cards are a page of it, each added with "Add to room" (CLAUDE.md 10.3)."""
+    picks_for_room: str | None = None
+    """The room in their cart a pick this turn was added for - a "living
+    room" - when it is not one of the room's own pieces (CLAUDE.md 36)."""
+    room_finished: str | None = None
+    """The room in their cart they just said they were done with; the next
+    step asks which room to design next (CLAUDE.md 36)."""
     space_fit: SpaceFitView | None = None
     opening_answered: bool = False
     """The message answered the questions on screen in words: the questions

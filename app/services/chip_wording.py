@@ -56,6 +56,7 @@ class Chip(StrEnum):
     TAKE_SECOND = "take_second"
     SWAP_A_PIECE = "swap_a_piece"
     FINISHING_TOUCH = "finishing_touch"
+    ROOM_DONE = "room_done"
     SHOW_MORE = "show_more"
     NARROW_DOWN = "narrow_down"
     PRODUCT_TYPE = "product_type"
@@ -71,6 +72,8 @@ class Chip(StrEnum):
     NO_STRICT_BUDGET = "no_strict_budget"
     LEAVE_THE_PALETTE = "leave_the_palette"
     ROOM_COLOUR = "room_colour"
+    ROOM_SIZE = "room_size"
+    ROOM_SIZE_UNSURE = "room_size_unsure"
     SEATS_CONFIRM = "seats_confirm"
     SEATS = "seats"
     SEATS_OR_MORE = "seats_or_more"
@@ -122,6 +125,10 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
         Chip.ROOM_AROUND_PICKS: {
             EN: ChipText("Design a room around my picks", "Design a room around my picks"),
             AR: ChipText("صمّم غرفة حول اختياراتي", "صمّم غرفة حول اختياراتي"),
+        },
+        Chip.ROOM_DONE: {
+            EN: ChipText("I'm done with this room", "I'm done with this room"),
+            AR: ChipText("انتهيت من هذه الغرفة", "انتهيت من هذه الغرفة"),
         },
         Chip.KEEP_BROWSING: {
             EN: ChipText("Keep browsing", "Show me something else"),
@@ -204,6 +211,14 @@ CHIPS: Mapping[Chip, Mapping[ReplyLanguage, ChipText]] = MappingProxyType(
         Chip.ROOM_COLOUR: {
             EN: ChipText("{colour}", "I'd like {colour_lower} tones"),
             AR: ChipText("{colour}", "أفضّل لون {colour}"),
+        },
+        Chip.ROOM_SIZE: {
+            EN: ChipText("About {length} x {width} m", "My room is about {length} x {width} m"),
+            AR: ChipText("حوالي {length} في {width} م", "غرفتي حوالي {length} في {width} م"),
+        },
+        Chip.ROOM_SIZE_UNSURE: {
+            EN: ChipText("Not sure", "I'm not sure of the room's size"),
+            AR: ChipText("لست متأكدًا", "لست متأكدًا من مقاس الغرفة"),
         },
         Chip.SEATS_CONFIRM: {
             EN: ChipText("Yes, {count}", "Seating for {count} people"),

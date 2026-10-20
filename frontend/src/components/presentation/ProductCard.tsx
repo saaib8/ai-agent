@@ -20,6 +20,9 @@ function Chip({ children, tone = 'default' }: { children: ReactNode; tone?: 'def
 export interface AlternativePick {
   role: string
   onPick: (alternativeOrdinal: number) => void
+  /** The pick adds a finishing touch to the room ("Add to room") rather than
+   *  replacing a piece ("Use this …"). */
+  adds?: boolean
 }
 
 /** Checking a card for a side-by-side comparison. */
@@ -193,7 +196,7 @@ export function ProductCard({
               onClick={() => pick.onPick(product.presented_ordinal ?? product.grounding_ref)}
               className="w-full rounded-lg bg-clay px-3 py-2 text-xs font-semibold text-white transition hover:bg-clay-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
             >
-              Use this {pick.role}
+              {pick.adds ? words.room.addToRoom : `Use this ${pick.role}`}
             </button>
           )}
           {!pick && onMoreLikeThis && product.presented_ordinal != null && (

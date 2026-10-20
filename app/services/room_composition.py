@@ -20,6 +20,7 @@ from app.schemas.room_opener import (
     RoomQuestionKind,
 )
 from app.services.chip_wording import PIECE_PICKED
+from app.services.fit import knows_room_size
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.rooms import PieceTier, RoomPiece, RoomTemplate
 
@@ -80,7 +81,8 @@ def next_question(
 ) -> RoomQuestion | None:
     """The one question to ask this turn, or `None` to build the room now.
 
-    In order - budget, pieces, head count (when the room seats people), colour
+    In order - budget, the room's size, pieces, head count (when the room
+    seats people), colour
     - the first that is still unanswered and not yet asked. Each is asked once,
     and none once they said to get on with it or the room already exists.
     """
@@ -88,6 +90,7 @@ def next_question(
         return None
     missing = {
         RoomQuestionKind.BUDGET: room.budget is None,
+        RoomQuestionKind.SIZE: not knows_room_size(room.geometry),
         RoomQuestionKind.PIECES: room.pieces is None,
         RoomQuestionKind.SEATS: template.asks_seats and room.regular_seating_count is None,
         RoomQuestionKind.COLOUR: not colour_known(room),

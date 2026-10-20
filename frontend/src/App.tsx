@@ -174,6 +174,16 @@ export default function App() {
     [chat, config.config, swap, say],
   )
 
+  const handleAddToRoom = useCallback(
+    (ordinal: number, piece: string) => {
+      if (chat.sending) return
+      void chat.send(say.addToRoom(piece), config.config, {
+        bundle: { kind: 'add_to_room', ordinal },
+      })
+    },
+    [chat, config.config, say],
+  )
+
   const handleShowMoreOptions = useCallback(() => {
     if (chat.sending) return
     setSwap(null)
@@ -671,6 +681,7 @@ export default function App() {
           onSwapStart={handleSwapStart}
           onRemovePiece={handleRemovePiece}
           onPickAlternative={handlePickAlternative}
+          onAddToRoom={handleAddToRoom}
           onShowMoreOptions={handleShowMoreOptions}
           onExcludeProduct={handleExcludeProduct}
           onVisualize={handleVisualize}

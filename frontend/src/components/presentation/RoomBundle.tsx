@@ -112,7 +112,11 @@ export function RoomBundle({
   const budgetLabel = t.display?.budget ?? money(t.budget_max_amount, t.budget_currency)
   // "Add all to cart" adds the pieces being bought; a room that could not be
   // built, or holds only pieces they own, has nothing to add.
+  // In their cart, the package is a record of how the room was designed: it
+  // is no longer edited, and its pieces are already in.
+  const record = !!room.in_cart
   const canAddAll =
+    !record &&
     !!onAddAllToCart &&
     room.status !== 'infeasible' &&
     room.items.some((item) => item.acquisition === 'to_buy')
@@ -121,7 +125,11 @@ export function RoomBundle({
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
       <div className="flex items-center justify-between border-b border-line bg-canvas/60 px-4 py-3">
         <span className="text-sm font-semibold text-ink">{label ?? words.title}</span>
-        {!hideStatus && (
+        {record ? (
+          <span className="rounded-full bg-clay-soft px-2.5 py-0.5 text-[11px] font-semibold text-clay" dir="auto">
+            {words.inCart}
+          </span>
+        ) : !hideStatus && (
           <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${STATUS_CLASS[room.status]}`}>
             {words.status[room.status]}
           </span>
@@ -157,7 +165,7 @@ export function RoomBundle({
                   {item.acquisition === 'already_owned' && (
                     <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] text-muted">{words.alreadyOwned}</span>
                   )}
-                  {onSwapStart && item.acquisition === 'to_buy' && !item.locked && (
+                  {!record && onSwapStart && item.acquisition === 'to_buy' && !item.locked && (
                     <button
                       onClick={() => onSwapStart(item.grounding_ref, humanise(kind ?? 'item'))}
                       disabled={busy}
@@ -168,7 +176,7 @@ export function RoomBundle({
                       {words.swap}
                     </button>
                   )}
-                  {onRemovePiece && (
+                  {!record && onRemovePiece && (
                     <button
                       onClick={() => onRemovePiece(item.grounding_ref, humanise(kind ?? 'item'))}
                       disabled={busy}

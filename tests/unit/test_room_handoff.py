@@ -52,7 +52,7 @@ def _shopped(
         lean=RankingLean(space_cm=Decimal(wall)) if wall else None,
         revision=1,
     )
-    state = _state(room=room if room is not None else _room())
+    state = _state(room=room if room is not None else _room(geometry=None))
     return state.model_copy(
         update={
             "active_search": search,

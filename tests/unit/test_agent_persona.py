@@ -12,11 +12,17 @@ from typing import Any
 
 from app.schemas.agent_decision import AgentAction, CommercialReason, CustomerAgentDecision
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import AgentStateV1
-from app.schemas.agent_turn import CustomerTurnInput, CustomerTurnResult, TurnGrounding
+from app.schemas.agent_state import AgentStateV1, SwapBudgetOfferStage
+from app.schemas.agent_turn import (
+    CustomerTurnInput,
+    CustomerTurnResult,
+    SwapBudgetOffer,
+    TurnGrounding,
+)
 from app.schemas.bundle import BundleStatus, RoomBundle
 from app.schemas.bundle_action import (
     AddPieceAction,
+    AddToRoomAction,
     BundleAlternativesAction,
     FinishingTouchesAction,
     SwapConfirmAction,
@@ -86,13 +92,30 @@ def test_what_goes_with_a_pick_is_salman() -> None:
     assert speaker(_turn(product_action=GoesWithPickAction(pick=1)), _result()) is SALMAN
 
 
-def test_finishing_touches_are_salman() -> None:
+def test_finishing_touches_are_nora() -> None:
     offer = RoomPieceOffer(key="vase", label="Vase", tier=PieceTier.OPTIONAL, selected=False)
 
-    assert speaker(_turn(), _result(finishing_pieces=(offer,))) is SALMAN
-    assert speaker(_turn(bundle_action=FinishingTouchesAction()), _result()) is SALMAN
+    assert speaker(_turn(), _result(finishing_pieces=(offer,))) is NORA
+    assert speaker(_turn(bundle_action=FinishingTouchesAction()), _result()) is NORA
+    assert speaker(_turn(), _result(room_addition="vase")) is NORA
     tapped = _turn(bundle_action=AddPieceAction(piece="vase"))
-    assert speaker(tapped, _result(bundle_outcome=_room())) is SALMAN
+    assert speaker(tapped, _result(bundle_outcome=_room())) is NORA
+    added = _turn(bundle_action=AddToRoomAction(ordinal=1))
+    assert speaker(added, _result(bundle_outcome=_room(), pieces_added=("vase",))) is NORA
+
+
+def test_an_addition_over_budget_is_salmans_question() -> None:
+    offer = SwapBudgetOffer(
+        stage=SwapBudgetOfferStage.STRETCH,
+        new_spend_total=Decimal(4000),
+        budget_max=Decimal(3500),
+        overage=Decimal(500),
+        currency="SAR",
+        added_piece="vase",
+    )
+    added = _turn(bundle_action=AddToRoomAction(ordinal=1))
+
+    assert speaker(added, _result(bundle_outcome=_room(), swap_offer=offer)) is SALMAN
 
 
 def test_a_rooms_money_side_outranks_the_room() -> None:

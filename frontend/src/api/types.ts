@@ -185,6 +185,9 @@ export interface CardLabels {
   say_more_seating: string
   say_other_options: string
   say_remove_piece: string
+  add_to_room: string
+  say_add_to_room: string
+  room_in_cart: string
   say_use_option: string
   say_visualize_room: string
   say_place_room: string
@@ -358,6 +361,9 @@ export interface GroundedBundlePresentation {
   status: BundleStatus
   items: GroundedBundleItem[]
   totals: GroundedBundleTotals
+  /** The room went into their cart: a record of how it was designed, with no
+   *  Swap, Remove or Add all. */
+  in_cart?: boolean
 }
 
 export interface ChatPresentation {
@@ -398,6 +404,12 @@ export interface ChatPresentation {
    *  `swap` for that piece rather than picking a fresh product — which is what
    *  keeps a room edit from cross-selling a piece it already holds. */
   swap_context?: RoomSwapContext | null
+  /** The finishing touch these cards are a page of, for the room still being
+   *  designed: each card's button adds it to the room (`add_to_room`). */
+  room_addition?: string | null
+  /** The room on record is in their cart: every room package drawn before
+   *  this reply is a record, no longer edited. */
+  room_in_cart?: boolean
   /** The store's own support channels beneath a reply about the store. */
   support?: SupportPresentation | null
 }
@@ -594,6 +606,18 @@ export interface BundleSwapAction {
   alternative_ordinal: number
 }
 
+/** "I'm done with this room": the room in their cart is finished. */
+export interface RoomDoneAction {
+  kind: 'room_done'
+}
+
+/** A finishing touch's "Add to room": that card joins the room package. */
+export interface AddToRoomAction {
+  kind: 'add_to_room'
+  /** The card's place in the list on screen (1-based). */
+  ordinal: number
+}
+
 /** A room piece's Remove button: that piece leaves the room, exactly as typed
  *  "remove the second one" would take it out. */
 export interface BundleRemoveAction {
@@ -637,6 +661,8 @@ export type BundleAction =
   | BundleAlternativesAction
   | BundleSwapAction
   | BundleRemoveAction
+  | AddToRoomAction
+  | RoomDoneAction
   | SwapConfirmAction
   | SwapDeclineAction
   | SwapAlternativesAction
@@ -824,6 +850,8 @@ export interface CartLineView {
   display?: ProductDisplay | null
   /** `line_total` worded in the conversation's language: "7,200 SAR". */
   line_total_display?: string | null
+  /** The room it was chosen for ("Living room"), in the reply's language. */
+  room?: string | null
 }
 
 /** What the cart comes to in one currency; never converted. */

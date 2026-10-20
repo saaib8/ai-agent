@@ -411,6 +411,9 @@ class SwapOfferGroundingView(BaseModel):
     budget_max: Decimal
     overage: Decimal
     currency: str = Field(min_length=1)
+    added_piece: str | None = None
+    """The finishing touch they chose to add, when the change is an addition
+    rather than a swap - "rug"."""
 
 
 class RoomQuestionGroundingView(BaseModel):
@@ -1017,6 +1020,18 @@ class ResponseGroundingView(BaseModel):
     """A soft taste question to close on - the application's, worded by you."""
 
     taste_answered: TasteAnsweredView | None = None
+    room_in_cart: str | None = None
+    """They just put the whole room - a "living room" - in their cart, and the
+    cards are a kind you suggest would finish it."""
+    room_addition: str | None = None
+    """The room is still being designed, and the cards are the finishing touch
+    you suggest for it - a "mirror" - each added with "Add to room"."""
+    picks_for_room: str | None = None
+    """Their whole room - a "living room" - is in their cart, and what they
+    picked this turn was added for that room."""
+    room_finished: str | None = None
+    """They just said they are done with this room - a "living room" - whose
+    pieces are in their cart."""
     space_fit: SpaceFitView | None = None
     """What the designer would aim for in the space they gave, when it was
     worked out this turn - the cards are ordered by closeness to it."""

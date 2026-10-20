@@ -39,6 +39,7 @@ from app.schemas.agent_turn import (
     CustomerTurnInput,
     CustomerTurnResult,
 )
+from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.cart import CartView
 from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse
 from app.schemas.conversation import (
@@ -64,6 +65,7 @@ from app.services.product_brief import opening_asked, record_asked
 from app.services.product_display import ProductDisplayWords, displayed
 from app.services.response_generator import CustomerResponseGenerator
 from app.services.response_view import best_match_first, offers_what_goes_with
+from app.services.room_cart import room_in_cart
 from app.services.room_presentation import (
     finishing_choices,
     piece_picker,
@@ -218,7 +220,9 @@ class ChatRuntime:
         elif result.seating_solution is not None:
             choices = seating_choices(result.seating_solution, language)
         elif result.finishing_pieces:
-            choices = finishing_choices(result.finishing_pieces, language)
+            choices = finishing_choices(
+                result.finishing_pieces, language, you_choose=result.room_addition is None
+            )
         elif result.room_cards:
             choices = room_card_choices(result.room_cards, language)
         else:
@@ -271,7 +275,8 @@ class ChatRuntime:
             # it would read as the only thing they chose.
             focus=result.focus if result.chosen_seating is None else None,
             comparison=grounding.comparison,
-            room=build_bundle_presentation(result),
+            room=_as_in_cart(build_bundle_presentation(result), result),
+            room_in_cart=room_in_cart(result.state) is not None,
             seating_bundles=seating_bundles,
             chosen_seating=(
                 present_chosen_seating(result.chosen_seating)
@@ -285,6 +290,7 @@ class ChatRuntime:
                 else None
             ),
             swap_context=result.swap_context,
+            room_addition=result.room_addition,
             # The store's own support, drawn from its contacts - never from
             # the reply, which only points to it.
             support=(
@@ -645,3 +651,12 @@ _ACTION_STEPS = frozenset({NextStepKind.AFTER_ROOM})
 """A next step whose chips carry an action - a room's "Add a finishing touch"
 opens its finishing touches directly - so chips the reply wrote, which a tap
 would send back as words for a model to route, never replace them."""
+
+
+def _as_in_cart(
+    room: GroundedBundlePresentation | None, result: CustomerTurnResult
+) -> GroundedBundlePresentation | None:
+    """The room package, marked as a record once the room is in their cart."""
+    if room is None or room_in_cart(result.state) is None:
+        return room
+    return room.model_copy(update={"in_cart": True})

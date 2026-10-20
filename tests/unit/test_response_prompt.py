@@ -161,7 +161,7 @@ def test_the_prompt_asks_for_no_arabic_behaviour() -> None:
 
 
 def test_the_prompt_is_versioned() -> None:
-    assert VERSION == "customer_response/v1.39"
+    assert VERSION == "customer_response/v1.43"
 
 
 # ── the correction prompt ───────────────────────────────────────────────────

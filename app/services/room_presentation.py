@@ -92,6 +92,8 @@ def room_answer_choices(
             return _seat_choices(question.earlier_seat_count, language)
         case RoomQuestionKind.BUDGET:
             return _budget_choices(language)
+        case RoomQuestionKind.SIZE:
+            return _size_choices(language)
         case RoomQuestionKind.COLOUR:
             return _colour_choices(question, language)
 
@@ -111,6 +113,20 @@ def _budget_choices(language: ReplyLanguage) -> tuple[ReplyChoice, ...]:
             )
         )
     chips.append(chip(Chip.NO_STRICT_BUDGET, language))
+    return tuple(chips)
+
+
+_ROOM_SIZES: tuple[tuple[int, int], ...] = ((3, 4), (4, 5), (5, 6))
+"""Common room sizes in metres, offered as a quick answer - round sizes a
+person recognises, never a claim about their room; they may type their own."""
+
+
+def _size_choices(language: ReplyLanguage) -> tuple[ReplyChoice, ...]:
+    chips = [
+        chip(Chip.ROOM_SIZE, language, length=length, width=width)
+        for length, width in _ROOM_SIZES
+    ]
+    chips.append(chip(Chip.ROOM_SIZE_UNSURE, language))
     return tuple(chips)
 
 
@@ -183,14 +199,24 @@ def _piece_label(label: str, label_ar: str | None, picked: bool, language: Reply
 
 
 def finishing_choices(
-    pieces: tuple[RoomPieceOffer, ...], language: ReplyLanguage = EN
+    pieces: tuple[RoomPieceOffer, ...], language: ReplyLanguage = EN, *, you_choose: bool = True
 ) -> tuple[ReplyChoice, ...]:
     """A finished room's finishing touches as chips: each piece it could still
-    take, then "you choose". Each carries its room edit, so a tap adds exactly
-    that piece - or lets the designer pick one - whatever the words say
-    (CLAUDE.md 3.6)."""
+    take, then "you choose" - left off beside a page Nora already chose. Each
+    carries its room action, so a tap shows exactly that piece - or lets the
+    designer pick one - whatever the words say (CLAUDE.md 3.6)."""
     if not pieces:
         return ()
+    if not you_choose:
+        return tuple(
+            chip(
+                Chip.ADD_PIECE,
+                language,
+                bundle_action=AddPieceAction(piece=piece.key),
+                label=_piece_label(piece.label, piece.label_ar, False, language),
+            )
+            for piece in pieces
+        )
     return (
         *(
             chip(

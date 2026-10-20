@@ -35,6 +35,7 @@ from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
 
+from tests.unit.test_room_pieces import SIZED
 from tests.unit.test_turn_coordinator import (
     FakeCapabilities,
     FakeDesign,
@@ -74,6 +75,7 @@ def _handoff(**proposal: Any) -> CustomerAgentDecision:
 
 
 def _room(**fields: Any) -> RoomProjectState:
+    fields.setdefault("geometry", SIZED)
     return RoomProjectState(room_kind="living_room", **fields)
 
 
@@ -222,7 +224,7 @@ async def test_a_room_the_registry_does_not_know_is_planned_as_before() -> None:
 
 
 async def test_leaving_the_palette_to_us_settles_the_colour_question() -> None:
-    """"Any colour" is a real answer: the colour question is not asked again, and
+    """ "Any colour" is a real answer: the colour question is not asked again, and
     the room is built from what is known (CLAUDE.md 10.1)."""
     planner = ArrangingPlanner()
     discovery = FakeDesignDiscovery(_room_discovery("carpet"))

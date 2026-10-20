@@ -695,6 +695,23 @@ class RoomProjectState(BaseModel):
     against the budget (CLAUDE.md 10.3, 27). Cleared once locked, and when the
     room kind changes."""
 
+    finishing_order: tuple[str, ...] = Field(
+        default=(), max_length=30, exclude_if=lambda v: not v
+    )
+    """The pieces the room could still take, as registry keys, in the order
+    Nora ranked them - so chips tapped later keep her order (CLAUDE.md 10.3)."""
+
+    in_cart: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The whole room went into their cart ("Add all to cart"). From then on
+    the cart is the room: the package is a record of how it was designed, no
+    longer edited, and what they pick next is for this room (CLAUDE.md 36)."""
+
+    picks_before_cart: tuple[int, ...] = Field(
+        default=(), max_length=200, exclude_if=lambda v: not v
+    )
+    """What was in their cart, beside the room's own pieces, when the room went
+    in - so anything picked after it is known to be for this room."""
+
     @field_validator("anchor_product_ids")
     @classmethod
     def _anchors_are_distinct_products(cls, value: tuple[int, ...]) -> tuple[int, ...]:
@@ -896,17 +913,28 @@ class SwapBudgetOfferState(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    bundle_ordinal: int = Field(ge=1)
-    """The swapped piece's position among the room cards it was chosen from."""
+    bundle_ordinal: int | None = Field(default=None, ge=1)
+    """The swapped piece's position among the room cards it was chosen from.
+    None for a piece being added."""
+
+    added_piece: str | None = Field(default=None, min_length=1)
+    """The room registry's piece a finishing touch is being added as, when the
+    held change is an addition rather than a swap."""
 
     chosen_product_id: int = Field(ge=1)
-    """The dearer product the customer picked for that piece."""
+    """The product the customer picked: for the swapped piece, or to add."""
 
     bundle_revision: int = Field(ge=0)
     """The room revision the offer was made against, so a room that moved on
     underneath it is caught rather than edited from a stale reference."""
 
     stage: SwapBudgetOfferStage = SwapBudgetOfferStage.STRETCH
+
+    @model_validator(mode="after")
+    def _a_swap_or_an_addition(self) -> Self:
+        if (self.bundle_ordinal is None) == (self.added_piece is None):
+            raise ValueError("a held change swaps a piece or adds one, never both")
+        return self
 
 
 class PurchaseStage(StrEnum):
@@ -927,6 +955,22 @@ class DerivedCommerceState(BaseModel):
     purchase_stage: PurchaseStage | None = None
 
 
+class FinishedRoom(BaseModel):
+    """A room they designed, put in their cart and said they were done with:
+    which products in the cart are its, so its lines stay labelled with it and
+    "which room next?" leaves it out (CLAUDE.md 36)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    room_kind: str | None = Field(default=None, max_length=40)
+    room_words: str = Field(min_length=1, max_length=60)
+    """The room in customer words ("living room")."""
+    product_ids: tuple[int, ...] = Field(default=(), max_length=200)
+
+
+MAX_FINISHED_ROOMS = 10
+
+
 class AgentStateV1(BaseModel):
     """Structured working memory. Five domains, and nothing else."""
 
@@ -945,6 +989,10 @@ class AgentStateV1(BaseModel):
     swap_budget_offer: SwapBudgetOfferState | None = None
     """A dearer swap awaiting the customer's yes/no on the budget. Defaulted,
     like `seating_offer`, so every saved session still reads."""
+    finished_rooms: tuple[FinishedRoom, ...] = Field(
+        default=(), max_length=MAX_FINISHED_ROOMS, exclude_if=lambda v: not v
+    )
+    """Rooms they have finished, oldest first (CLAUDE.md 36)."""
 
     product_brief: ProductBriefState = ProductBriefState()
     """The cards of questions asked before a search (CLAUDE.md 10.4).

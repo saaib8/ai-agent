@@ -48,12 +48,12 @@ photo-search replies and room-picture replies all carry it. Grouped:
 | Compare bar | `compare_same_kind`, `compare_limit`, `compare_title`, `compare_count`, `compare_need_two`, `compare_one_more`, `stop_comparing`, `clear` |
 | Picks tray | `your_picks`, `goes_with`, `what_goes_with`, `what_goes_with_product`, `remove_pick`, `focused_pick` |
 | Catalogue tile | `add`, `view`, `room_limit` |
-| Room package (section 4) | `room_package`, `your_seating`, `seating_option`, `choose_this`, `not_this_option`, `more_options`, `status_*`, `locked`, `already_owned`, `swap`, `swap_piece`, `remove`, `remove_piece`, `each`, `new_spend`, `budget_up_to`, `budget_under`, `within_budget`, `over_budget`, `total_mixed_units`, `total_nothing_priced`, `camera_view`, `view_corner`, `view_eye_level`, `view_isometric`, `view_top_down`, `visualize`, `upload_room_photo`, `place_in_my_room`, `change_photo` |
+| Room package (section 4) | `room_package`, `your_seating`, `seating_option`, `choose_this`, `not_this_option`, `more_options`, `status_*`, `locked`, `already_owned`, `swap`, `swap_piece`, `remove`, `remove_piece`, `add_to_room`, `room_in_cart`, `each`, `new_spend`, `budget_up_to`, `budget_under`, `within_budget`, `over_budget`, `total_mixed_units`, `total_nothing_priced`, `camera_view`, `view_corner`, `view_eye_level`, `view_isometric`, `view_top_down`, `visualize`, `upload_room_photo`, `place_in_my_room`, `change_photo` |
 | Card of questions | `narrow_down`, `quick_taps`, `narrow_these_down`, `up_to`, `cancel`, `anything_else`, `remove_chip`, `choice_or` (between several chosen chips in the message it sends) |
 | Comparison table | `comparison_heading`, `comparison_field`, `field_<row.field>` (one per comparison field: `field_price`, `field_main_color`, ...), `comparison_different`, `comparison_same`, `listed_dimensions`, `listed_caveat`, `not_listed`, `not_listed_title` |
 | Reply chips | `quick_reply`, `goes_well_with_it`, `also_goes_well_with_it` |
 | Room picture | `render_title`, `render_view`, `render_outdated`, `full_screen`, `open_full_screen`, `close`, `download`, `edit_selection`, `render_again`, `try_this_view`, `render_alt_furnished`, `render_alt_view`, `room_visualisation` - name the picture's camera with `view_<render.view>`, not the English `view_label` |
-| The customer's own message after a tap | `say_like`, `say_not_this_one`, `say_what_goes_with`, `say_more_like`, `say_compare`, `show_different_options`, `say_without`, `say_take_option`, `say_not_option`, `say_more_seating`, `say_other_options`, `say_remove_piece`, `say_use_option`, `say_visualize_room`, `say_place_room`, `say_place_selection`, `say_visualize_selection`, `say_show_selection`, `say_show_selection_in_room`, `pieces_one`, `pieces_many` - send it as the `message` beside the structured action, as the console does |
+| The customer's own message after a tap | `say_like`, `say_not_this_one`, `say_what_goes_with`, `say_more_like`, `say_compare`, `show_different_options`, `say_without`, `say_take_option`, `say_not_option`, `say_more_seating`, `say_other_options`, `say_remove_piece`, `say_add_to_room`, `say_use_option`, `say_visualize_room`, `say_place_room`, `say_place_selection`, `say_visualize_selection`, `say_show_selection`, `say_show_selection_in_room`, `pieces_one`, `pieces_many` - send it as the `message` beside the structured action, as the console does |
 | Lists | `list_separator`, `list_and` - "a, b and c" / "a، b وc" |
 | Browse Catalogue | `catalog_title`, `close_catalogue`, `step_pick`, `step_room`, `try_again`, `loading_catalogue`, `back_to_products`, `nothing_picked`, `products_one`/`products_many`, `catalog_max_products`, `catalog_total`, `visualize_room`, `render_unavailable`, `waiting_for_reply`, `sort_*`, `search_*`, `clear_search`, `filter_*`, `all_categories`, `all_types`, `any_colour`, `any_style`, `min_price`, `max_price`, `min_short`, `max_short`, `clear_filters`, `no_matches`, `catalog_page`, `previous_page`, `next_page`, `size_error`, `room_*` (the room step's fields), `in_the_room`, `upload_room_photo_long`, `room_photo_note`, `fit_*` (the fit check), `quantity_of`, `one_fewer`, `one_more`, `at_most_per_product` |
 
@@ -183,7 +183,10 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
 
 - Draw the tray from `cart.lines`: `display.name`, `display.price` (each),
   `line_total_display`, and a − / + stepper. Totals: `cart_total` ("Total {price}")
-  with each `totals[].display` - one per currency, never added together.
+  with each `totals[].display` - one per currency, never added together. A line
+  chosen for a designed room carries `room` ("Living room"): show it as a tag. A
+  room package with `in_cart` is a record - tag it `room_in_cart` and draw no
+  Swap, Remove or Add all.
 - **The agent asks Salla first.** On a Salla store, before a product enters our cart
   (or its quantity rises) the agent checks Salla's storefront: a product that is not
   this store's, out of stock, or past one order's limit is never put in our cart -

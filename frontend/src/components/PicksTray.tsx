@@ -39,6 +39,8 @@ interface TrayLine extends CartLineRef {
   quantity: number | null
   lineTotal: string | null
   focused: boolean
+  /** The room it was chosen for, when it belongs to a designed room. */
+  room?: string | null
 }
 
 function fromCart(line: CartLineView, focused: boolean): TrayLine {
@@ -57,6 +59,7 @@ function fromCart(line: CartLineView, focused: boolean): TrayLine {
     quantity: line.quantity,
     lineTotal: line.line_total_display ?? money(String(line.line_total), line.price_unit),
     focused,
+    room: line.room ?? null,
   }
 }
 
@@ -183,6 +186,11 @@ function CartTile({
           </div>
           <div className="text-[11px] text-muted" dir="auto">
             {line.price}
+            {line.room && (
+              <span className="ms-1.5 rounded-full bg-clay-soft px-1.5 py-px text-[10px] font-medium text-clay">
+                {line.room}
+              </span>
+            )}
           </div>
         </div>
         {line.lineTotal && (

@@ -16,6 +16,8 @@ from app.core.exceptions import TaxonomyConfigurationError
 from app.schemas.agent_state import RoomProjectState
 from app.schemas.design import DesignCategoryNeed, DesignPriority, InteriorDesignResult
 from app.schemas.discovery import PriceConstraint
+from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
+from app.schemas.language import ReplyLanguage
 from app.schemas.query import ConstraintStrength, SemanticPreference
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
 from app.schemas.room_opener import RoomQuestionKind
@@ -68,8 +70,19 @@ BEIGE = SemanticPreference(
 BUDGET = PriceConstraint.at_most(Decimal("12000"), "SAR")
 
 
+SIZED = RoomGeometry(
+    measurements=(
+        RoomMeasurement(role=RoomMeasurementRole.ROOM_LENGTH, centimetres=Decimal(500)),
+        RoomMeasurement(role=RoomMeasurementRole.ROOM_WIDTH, centimetres=Decimal(400)),
+    )
+)
+"""A room whose size they gave - so a test about another question is not asked
+the size first."""
+
+
 def _living(**fields: object) -> RoomProjectState:
-    return RoomProjectState(room_kind="living_room", **fields)  # type: ignore[arg-type]
+    fields.setdefault("geometry", SIZED)
+    return RoomProjectState(room_kind="living_room", **fields)
 
 
 # ── the registry ────────────────────────────────────────────────────────────
@@ -162,8 +175,8 @@ def test_an_unknown_piece_is_dropped_never_mapped() -> None:
 # ── the questions, one per turn ─────────────────────────────────────────────
 
 
-def test_budget_is_asked_first_then_pieces_seats_and_colour() -> None:
-    room = _living()
+def test_budget_is_asked_first_then_size_pieces_seats_and_colour() -> None:
+    room = _living(geometry=None)
     order = []
     for _ in range(5):
         question = next_question(room, LIVING, EVERYTHING, None)
@@ -174,6 +187,7 @@ def test_budget_is_asked_first_then_pieces_seats_and_colour() -> None:
 
     assert order == [
         RoomQuestionKind.BUDGET,
+        RoomQuestionKind.SIZE,
         RoomQuestionKind.PIECES,
         RoomQuestionKind.SEATS,
         RoomQuestionKind.COLOUR,
@@ -198,7 +212,11 @@ def test_an_unanswered_question_is_never_asked_twice() -> None:
 
 def test_a_bedroom_never_asks_how_many_will_sit() -> None:
     room = RoomProjectState(
-        room_kind="bedroom", budget=BUDGET, pieces=("bed",), design_preferences=(BEIGE,)
+        room_kind="bedroom",
+        budget=BUDGET,
+        geometry=SIZED,
+        pieces=("bed",),
+        design_preferences=(BEIGE,),
     )
 
     assert next_question(room, BEDROOM, EVERYTHING, 9) is None
@@ -293,3 +311,40 @@ def test_seating_is_left_to_the_head_count_and_an_unstocked_piece_is_skipped() -
     assert [n.commerce_subcategory for n in needs] == ["carpet"]
     assert seating_piece(LIVING, keys, stock) is LIVING.seating
     assert seating_piece(LIVING, ("rug",), stock) is None
+
+
+def test_the_size_is_asked_after_the_budget_while_it_is_not_known() -> None:
+    question = next_question(_living(budget=BUDGET, geometry=None), LIVING, EVERYTHING, None)
+
+    assert question is not None and question.kind is RoomQuestionKind.SIZE
+
+
+def test_a_size_they_gave_is_never_asked() -> None:
+    question = next_question(_living(budget=BUDGET), LIVING, EVERYTHING, None)
+
+    assert question is not None and question.kind is RoomQuestionKind.PIECES
+
+
+def test_a_wall_alone_is_not_the_rooms_size() -> None:
+    wall = RoomGeometry(
+        measurements=(
+            RoomMeasurement(role=RoomMeasurementRole.USABLE_WALL, centimetres=Decimal(300)),
+        )
+    )
+
+    question = next_question(_living(budget=BUDGET, geometry=wall), LIVING, EVERYTHING, None)
+
+    assert question is not None and question.kind is RoomQuestionKind.SIZE
+
+
+def test_the_size_question_offers_common_sizes_and_not_sure() -> None:
+    from app.schemas.room_opener import RoomQuestion
+    from app.services.room_presentation import room_answer_choices
+
+    question = RoomQuestion(room_kind="living_room", kind=RoomQuestionKind.SIZE)
+
+    labels = [choice.label for choice in room_answer_choices(question)]
+    arabic = [choice.label for choice in room_answer_choices(question, ReplyLanguage.AR)]
+
+    assert labels == ["About 3 x 4 m", "About 4 x 5 m", "About 5 x 6 m", "Not sure"]
+    assert len(arabic) == 4 and arabic[-1] == "لست متأكدًا"

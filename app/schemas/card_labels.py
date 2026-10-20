@@ -213,6 +213,13 @@ class CardLabels(BaseModel):
     say_other_options: str
     say_remove_piece: str
     """The message a room piece's Remove button records."""
+    add_to_room: str
+    """A finishing touch's card button, while the room is designed."""
+    say_add_to_room: str
+    """"Add this {name} to my room" - the message "Add to room" records."""
+    room_in_cart: str
+    """The room package's tag once the room is in their cart - a record of how
+    it was designed, no longer edited."""
     say_use_option: str
     say_visualize_room: str
     say_place_room: str

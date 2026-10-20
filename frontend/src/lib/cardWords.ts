@@ -140,6 +140,9 @@ export const ENGLISH: CardLabels = {
   say_more_seating: 'Show me more seating options',
   say_other_options: 'Show me other {name} options',
   say_remove_piece: 'Remove the {name} from the room',
+  add_to_room: 'Add to room',
+  say_add_to_room: 'Add this {name} to my room',
+  room_in_cart: 'In your cart',
   say_use_option: 'Use option {number} for the {name}',
   say_visualize_room: 'Visualize my room — {view} view',
   say_place_room: 'Place my room package in my room',
@@ -284,6 +287,8 @@ export interface CardWords {
     swapPiece: (kind: string) => string
     remove: string
     removePiece: (kind: string) => string
+    addToRoom: string
+    inCart: string
     each: (price: string) => string
     newSpend: string
     budget: (price: string, exclusive: boolean) => string
@@ -354,6 +359,7 @@ export interface CardWords {
     moreSeating: string
     otherOptions: (role: string) => string
     removePiece: (role: string) => string
+    addToRoom: (piece: string) => string
     useOption: (number: number, role: string) => string
     visualizeRoom: (view: string) => string
     placeRoom: string
@@ -523,6 +529,8 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
       swapPiece: (kind) => fill(l.swap_piece, { name: kind }),
       remove: l.remove,
       removePiece: (kind) => fill(l.remove_piece, { name: kind }),
+      addToRoom: l.add_to_room,
+      inCart: l.room_in_cart,
       each: (price) => fill(l.each, { price }),
       newSpend: l.new_spend,
       budget: (price, exclusive) => fill(exclusive ? l.budget_under : l.budget_up_to, { price }),
@@ -598,6 +606,7 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
       moreSeating: l.say_more_seating,
       otherOptions: (role) => fill(l.say_other_options, { name: role }),
       removePiece: (role) => fill(l.say_remove_piece, { name: role }),
+      addToRoom: (piece) => fill(l.say_add_to_room, { name: piece }),
       useOption: (number, role) => fill(l.say_use_option, { number, name: role }),
       visualizeRoom: (view) => fill(l.say_visualize_room, { view }),
       placeRoom: l.say_place_room,

@@ -22,13 +22,15 @@ class RoomQuestionKind(StrEnum):
     """What a room question asks, in the order they are asked."""
 
     BUDGET = "budget"
+    SIZE = "size"
     PIECES = "pieces"
     SEATS = "seats"
     COLOUR = "colour"
 
 
 ROOM_QUESTION_ORDER: tuple[RoomQuestionKind, ...] = tuple(RoomQuestionKind)
-"""Budget first: every other choice depends on it (CLAUDE.md 10.1)."""
+"""Budget first: every other choice depends on it; then the room's size, which
+decides what fits in it (CLAUDE.md 10.1)."""
 
 
 class RoomPieceOffer(BaseModel):

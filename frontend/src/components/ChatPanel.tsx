@@ -49,6 +49,8 @@ interface ChatPanelProps {
   onSwapStart: (bundleOrdinal: number, role: string) => void
   onRemovePiece: (bundleOrdinal: number, role: string) => void
   onPickAlternative: (alternativeOrdinal: number) => void
+  /** A finishing touch's card chosen for the room still being designed. */
+  onAddToRoom: (ordinal: number, piece: string) => void
   onShowMoreOptions: () => void
   onExcludeProduct: (product: GroundedProduct) => void
   onVisualize: (view: RenderView, viewLabel: string) => void
@@ -133,6 +135,7 @@ export function ChatPanel({
   onSwapStart,
   onRemovePiece,
   onPickAlternative,
+  onAddToRoom,
   onShowMoreOptions,
   onExcludeProduct,
   onVisualize,
@@ -186,6 +189,11 @@ export function ChatPanel({
   // The picker only lives on the most recent assistant turn: older product
   // grids are history and must not sprout "Use this" buttons.
   const lastAssistantId = [...turns].reverse().find((t) => t.kind === 'assistant')?.id
+  const addToRoomPick = (piece: string) => ({
+    role: piece,
+    adds: true,
+    onPick: (ordinal: number) => onAddToRoom(ordinal, piece),
+  })
   // What a list's search uses stays beside it until another list replaces it:
   // a turn that shows nothing new (a stale ✕, nothing more to page) leaves it.
   // Narrow down opened as a turn's question replaces the folded one, whose
@@ -332,6 +340,13 @@ export function ChatPanel({
     .reverse()
     .find((t) => t.kind === 'assistant' && !!t.data.presentation?.room)
   const currentRoomId = currentRoom?.id
+  // A room package drawn before a reply that says the room is in their cart is
+  // a record of how it was designed: no Swap, Remove or Add all.
+  const lastRoomInCart = turns.reduce(
+    (last, t, i) => (t.kind === 'assistant' && t.data.presentation?.room_in_cart ? i : last),
+    -1,
+  )
+  const roomIsRecord = (index: number) => index <= lastRoomInCart
   const currentRoomKey =
     currentRoom?.kind === 'assistant' && currentRoom.data.presentation?.room
       ? roomKey(currentRoom.data.presentation.room)
@@ -374,7 +389,7 @@ export function ChatPanel({
           />
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
-            {turns.map((turn) => {
+            {turns.map((turn, index) => {
               if (turn.kind === 'user')
                 return (
                   <UserBubble
@@ -395,9 +410,13 @@ export function ChatPanel({
                     onSwapStart={onSwapStart}
                     onRemovePiece={onRemovePiece}
                     pick={
-                      turn.id === lastAssistantId && swapRole
-                        ? { role: swapRole, onPick: onPickAlternative }
-                        : undefined
+                      turn.id !== lastAssistantId
+                        ? undefined
+                        : swapRole
+                          ? { role: swapRole, onPick: onPickAlternative }
+                          : turn.data.presentation?.room_addition
+                            ? addToRoomPick(turn.data.presentation.room_addition)
+                            : undefined
                     }
                     refine={
                       turn.id === lastAssistantId
@@ -419,6 +438,7 @@ export function ChatPanel({
                     onQuickReply={onChoice}
                     latest={turn.id === lastAssistantId}
                     onAddRoomToCart={turn.id === currentRoomId ? onAddRoomToCart : undefined}
+                    roomInCart={roomIsRecord(index)}
                     {...visualizeProps(
                       turn.data.presentation?.room ?? null,
                       turn.data.presentation?.render ?? null,
