@@ -157,7 +157,7 @@ export function ProductCard({
         {dims && <div className="text-[11.5px] text-muted">{dims}</div>}
 
         <div className="mt-auto flex flex-col gap-2 pt-1">
-          {compare && !pick && product.presented_ordinal != null && (
+          {compare && (!pick || !pick.adds) && product.presented_ordinal != null && (
             <label
               title={compare.disabled && !compare.checked ? compare.hint : undefined}
               className={`inline-flex w-fit items-center gap-2 text-xs font-medium ${

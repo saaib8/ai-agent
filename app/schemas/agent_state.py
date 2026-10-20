@@ -955,6 +955,21 @@ class DerivedCommerceState(BaseModel):
     purchase_stage: PurchaseStage | None = None
 
 
+class RoomSwapState(BaseModel):
+    """A room piece being swapped, and the options shown for it: while the
+    room and that search are unchanged, choosing one of them - tapped, typed,
+    or after comparing them - swaps it into the room, never into the cart
+    (CLAUDE.md 27)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bundle_ordinal: int = Field(ge=1)
+    role: str = Field(min_length=1, max_length=60)
+    bundle_revision: int = Field(ge=0)
+    request: ProductSearchRequest
+    """The options search: paging it keeps the swap, another search ends it."""
+
+
 class FinishedRoom(BaseModel):
     """A room they designed, put in their cart and said they were done with:
     which products in the cart are its, so its lines stay labelled with it and
@@ -989,6 +1004,8 @@ class AgentStateV1(BaseModel):
     swap_budget_offer: SwapBudgetOfferState | None = None
     """A dearer swap awaiting the customer's yes/no on the budget. Defaulted,
     like `seating_offer`, so every saved session still reads."""
+    room_swap: RoomSwapState | None = Field(default=None, exclude_if=lambda v: v is None)
+    """A room piece being swapped from the options on screen (CLAUDE.md 27)."""
     finished_rooms: tuple[FinishedRoom, ...] = Field(
         default=(), max_length=MAX_FINISHED_ROOMS, exclude_if=lambda v: not v
     )

@@ -113,9 +113,13 @@ export default function App() {
   const say = words.say
   const swapCtx =
     lastTurn?.kind === 'assistant' ? (lastTurn.data.presentation?.swap_context ?? null) : null
+  // The server says on every reply whether a room piece is still being swapped
+  // (its options on screen, the room unchanged) - through a comparison or a
+  // typed question too - so swap mode follows each reply.
   useEffect(() => {
-    if (swapCtx) setSwap({ bundleOrdinal: swapCtx.bundle_ordinal, role: swapCtx.role })
-  }, [lastTurn?.id, swapCtx?.bundle_ordinal, swapCtx?.role])
+    if (lastTurn?.kind !== 'assistant') return
+    setSwap(swapCtx ? { bundleOrdinal: swapCtx.bundle_ordinal, role: swapCtx.role } : null)
+  }, [lastTurn?.id, lastTurn?.kind, swapCtx?.bundle_ordinal, swapCtx?.role])
 
   const handleSend = useCallback(
     (text: string) => {
