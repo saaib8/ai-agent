@@ -1137,8 +1137,10 @@ def _room_piece_offers(pieces: Iterable[RoomPiece]) -> tuple[CompanionOffer, ...
 
 
 def _swap_is_live(state: AgentStateV1, swap: RoomSwapState) -> bool:
-    """The swap's options are still the ones on screen, for the same room:
-    the options search is the active one and the room has not changed."""
+    """The options on screen are still for the piece being swapped, in the same
+    room: the room has not changed and the search is still for that kind of
+    piece - paged, or narrowed ("cheaper ones", "only grey") all the same.
+    A search for another kind ends it."""
     room = state.room_project
     active = state.active_search
     return (
@@ -1146,9 +1148,41 @@ def _swap_is_live(state: AgentStateV1, swap: RoomSwapState) -> bool:
         and not room.in_cart
         and room.bundle_revision == swap.bundle_revision
         and active is not None
-        # Paging leaves out what was seen, and is still the same options.
-        and active.request.model_copy(update={"exclude_product_ids": ()})
-        == swap.request.model_copy(update={"exclude_product_ids": ()})
+        and _same_kind(active.request, swap.request)
+    )
+
+
+def _same_kind(request: ProductSearchRequest, swapped: ProductSearchRequest) -> bool:
+    return (
+        request.commerce_category == swapped.commerce_category
+        and request.commerce_subcategory == swapped.commerce_subcategory
+    )
+
+
+def _without_room_pieces(composed: ComposedSearch, working: AgentStateV1) -> ComposedSearch:
+    """Options for a piece being swapped never include what the room already
+    holds - also once they are narrowed, which starts the exclusions afresh."""
+    swap = working.room_swap
+    room = working.room_project
+    request = composed.resolved.request
+    if (
+        swap is None
+        or room is None
+        or room.in_cart
+        or room.bundle_revision != swap.bundle_revision
+        or not _same_kind(request, swap.request)
+    ):
+        return composed
+    held = tuple(line.product_id for line in room.bundle_items)
+    excluded = tuple(dict.fromkeys((*request.exclude_product_ids, *held)))
+    if excluded == request.exclude_product_ids:
+        return composed
+    return composed.model_copy(
+        update={
+            "resolved": composed.resolved.model_copy(
+                update={"request": request.model_copy(update={"exclude_product_ids": excluded})}
+            )
+        }
     )
 
 
@@ -8427,6 +8461,7 @@ class CustomerTurnCoordinator:
         types reviewed to stand beside its own (`_with_family`); every other
         search keeps to its one type.
         """
+        composed = _without_room_pieces(composed, working)
         composed, left_out = self._with_family(composed, mixed=mixed)
         if self._designer_taste:
             composed = await self._with_learned_taste(composed, working, context)
