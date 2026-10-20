@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.rooms import RoomPiece, RoomPieces
 
-VERSION = "customer_decision/v1.25"
+VERSION = "customer_decision/v1.27"
 LANGUAGE_VERSION = "customer_decision/v1.24+reply-language.9"
 """The same prompt with the LANGUAGE section, used where Arabic replies are on
 (docs/arabic-replies-plan.md). Off, the prompt is exactly `VERSION`."""
@@ -268,14 +268,20 @@ A ROOM THE APPLICATION ASKS ABOUT
 For the room kinds listed under ROOMS - a living room, a bedroom - you never
 write the room's questions yourself. Hand off with whole_room and set
 room_kind; the application asks what it still needs, one question per turn:
-the budget, which pieces they want (shown as chips), how many people will sit
-(living room) and the colours they like. Anything already on record is not
-asked, and nothing is asked twice.
+the budget, the room's size, which pieces they want (shown as chips), how many
+people will sit (living room) and the colours they like. Anything already on
+record is not asked, and nothing is asked twice. A room size they give at any
+point - "my 4x5 m bedroom", "the room is 5 by 4 metres" - is recorded in
+state_proposal.room_geometry as the room's length and width, each with their
+unit, so it is not asked.
 
 While room_project shows a last_room_question, their reply is almost always
 the answer to it. Hand off with whole_room again and record what they said:
 
   budget          room_budget
+  size            room_geometry - the room's length and width, each with the
+                  unit they gave; "not sure", "no idea" answers it too: record
+                  nothing and hand off again
   pieces          room_pieces - the keys of every piece they want, the whole
                   list; room_pieces_default when they leave it to you
                   ("choose for me", "whatever you think")
@@ -721,6 +727,10 @@ quantity.
   while a room package is on record: answer with add_room_to_cart. The
   application adds every piece they are buying, with how many of each - never
   name them yourself.
+- "I'm done with this room", "that's the living room sorted", "the room is
+  finished" after its pieces went into their cart: answer with room_done. The
+  application closes the room and asks which room to design next - never ask
+  it yourself.
 - "What's in my cart?", "show me my cart" is show_selection. "How much is my
   cart?", "what's my total?" is answer with cart_question: the reply reads the
   cart.

@@ -135,6 +135,8 @@ interface AssistantBubbleProps {
   roomPhotoPreview?: string | null
   /** Present on the current room package only: put its pieces in the cart. */
   onAddRoomToCart?: () => void
+  /** This turn's room package went into the cart since: draw it as a record. */
+  roomInCart?: boolean
   /** Present while this turn's render can be drawn again from another view. */
   onRerender?: (view: RenderView, viewLabel: string) => void
   /** A catalogue render: reopen the catalogue with its pieces. */
@@ -174,6 +176,7 @@ export function AssistantBubble({
   onVisualizeInRoom,
   roomPhotoPreview = null,
   onAddRoomToCart,
+  roomInCart,
   onRerender,
   onEditSelection,
   renderOutdated = false,
@@ -324,7 +327,7 @@ export function AssistantBubble({
         )}
         {hasRoom && (
           <RoomBundle
-            room={presentation!.room!}
+            room={roomInCart ? { ...presentation!.room!, in_cart: true } : presentation!.room!}
             labels={data.labels}
             onSwapStart={onSwapStart}
             onRemovePiece={onRemovePiece}

@@ -1352,6 +1352,10 @@ def test_the_composite_route_widened_no_model_authority() -> None:
         "taste_question",
         "taste_answered",
         "space_fit",
+        "room_in_cart",
+        "room_addition",
+        "picks_for_room",
+        "room_finished",
         "room_carried",
         "still_on_screen",
         # The room question to word: its kind, and counts of pieces offered.

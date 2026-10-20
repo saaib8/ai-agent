@@ -15,19 +15,21 @@ from app.schemas.bundle import RoomBundle
 
 _SALES_ROOM_ACTIONS = frozenset(
     {
-        # The over-budget swap's yes/no and its cheaper options.
+        # The over-budget question's yes/no and its cheaper options - for a
+        # swap or a finishing touch alike: the room's money.
         "swap_confirm",
         "swap_decline",
         "swap_keep_original",
         "swap_alternatives",
         "swap_dismiss",
-        # Finishing touches: the offer and the piece added.
-        "finishing_touches",
-        "add_piece",
+        "room_done",
     }
 )
-_DESIGN_ROOM_ACTIONS = frozenset({"list_alternatives", "swap"})
-"""A piece of the room swapped for another of its kind: the room, not money."""
+_DESIGN_ROOM_ACTIONS = frozenset(
+    {"list_alternatives", "swap", "finishing_touches", "add_piece", "add_to_room"}
+)
+"""A piece of the room swapped for another of its kind, or a finishing touch
+shown and added: the room being designed, not money (CLAUDE.md 10.3)."""
 
 _SALES_PRODUCT_ACTIONS = frozenset({"goes_with", "companion"})
 """What goes with a pick: the offer, and a kind tapped from it."""
@@ -44,6 +46,14 @@ def speaker(
     if not turn.conversation.messages:
         # Every other first reply greets them and introduces itself as Sara.
         return AgentPersona.SARA
+    if result.room_addition is not None or (
+        (result.finishing_pieces or result.pieces_added)
+        and result.swap_offer is None
+        and result.budget_stretched is None
+    ):
+        # Finishing the room being designed - a touch shown, offered or added
+        # within budget - is Nora's; the budget question is Salman's.
+        return AgentPersona.NORA
     if _sells(turn, result):
         return AgentPersona.SALMAN
     if _designs(turn, result):
@@ -64,14 +74,15 @@ def _sells(turn: CustomerTurnInput, result: CustomerTurnResult) -> bool:
         return True
     if result.decision.commercial_reason is CommercialReason.UPSELL:
         return True
+    # The room in their cart, from "Add all to cart" on: what they add for it,
+    # and closing it when they are done (CLAUDE.md 36).
+    if result.room_in_cart or result.picks_for_room or result.room_finished:
+        return True
     # Cross-sell: a pick shown with what goes with it, or the kinds offered.
     if result.companions or result.focus is not None:
         return True
-    # The room's money side: a stretch held for their yes, one confirmed, and
-    # finishing touches offered or added.
+    # The room's money side: a stretch held for their yes, or one confirmed.
     if result.swap_offer is not None or result.budget_stretched is not None:
-        return True
-    if result.finishing_pieces or result.pieces_added:
         return True
     # A page of what goes with their pick, ordered by it.
     search = result.grounding.search

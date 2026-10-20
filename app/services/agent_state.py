@@ -83,6 +83,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         derived_commerce=commerce,
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
+        finished_rooms=state.finished_rooms,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
@@ -160,6 +161,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
+        finished_rooms=state.finished_rooms,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
@@ -190,6 +192,7 @@ def record_brief(
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
+        finished_rooms=state.finished_rooms,
         product_brief=ProductBriefState(
             shown=names,
             cards=max(current.cards, pending.card) if pending is not None else current.cards,
@@ -262,6 +265,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
+        finished_rooms=state.finished_rooms,
         product_brief=state.product_brief,
         reply_language=state.reply_language,
         taste=state.taste,
@@ -483,6 +487,10 @@ def _room_pieces(base: RoomProjectState, update: RoomProjectUpdate) -> dict[str,
             if update.anchor_product_ids is not None
             else (() if fresh else base.anchor_product_ids)
         ),
+        # The room in their cart stays so until it is finished (CLAUDE.md 36).
+        "in_cart": not fresh and base.in_cart,
+        "finishing_order": () if fresh else base.finishing_order,
+        "picks_before_cart": () if fresh else base.picks_before_cart,
     }
 
 

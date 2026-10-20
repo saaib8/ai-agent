@@ -26,7 +26,7 @@ from app.prompts.visualization.v1 import ROOM_TYPES
 from app.schemas.agent_decision import BlockingClarificationReason, ProductInteractionOp
 from app.schemas.agent_turn import CustomerResponse, CustomerTurnResult
 from app.schemas.bundle import RoomBundle
-from app.schemas.bundle_action import FinishingTouchesAction
+from app.schemas.bundle_action import FinishingTouchesAction, RoomDoneAction
 from app.schemas.cart import CartRefusal, CartRefusalReason
 from app.schemas.language import ReplyLanguage
 from app.schemas.next_step import NextStep, NextStepKind
@@ -110,6 +110,14 @@ def next_step(
         choices = _room_type_chips(rooms, language)
         if choices:
             return NextStep(kind=NextStepKind.CHOOSE_ROOM, chips=choices)
+    if result.room_finished is not None:
+        # Done with a room: the next one, never a room already finished.
+        done = frozenset(r.room_kind for r in result.state.finished_rooms if r.room_kind)
+        choices = _room_type_chips(rooms, language, exclude=done) if rooms is not None else ()
+        return NextStep(
+            kind=NextStepKind.NEXT_ROOM,
+            chips=choices or _chips(language, Chip.KEEP_BROWSING),
+        )
     if already_asks(result):
         return None
     grounding = result.grounding
@@ -145,6 +153,8 @@ def next_step(
             kind=NextStepKind.AFTER_DETAIL,
             chips=_chips(language, Chip.ADD_TO_PICKS, Chip.WHAT_GOES_WITH_IT, Chip.SHOW_SIMILAR),
         )
+    if isinstance(result.bundle_outcome, RoomBundle) and _room_is_in_cart(result):
+        return _room_in_cart_step(None, language)
     if isinstance(result.bundle_outcome, RoomBundle):
         return NextStep(
             kind=NextStepKind.AFTER_ROOM,
@@ -171,6 +181,16 @@ def next_step(
                 kind=NextStepKind.KEEP_BROWSING,
                 chips=_chips(language, Chip.SHOW_MORE, Chip.NARROW_DOWN),
             )
+        if _room_is_in_cart(result):
+            # The room they designed is in their cart, and what they pick now
+            # is for it: a room around their picks would only plan it again,
+            # so it is never offered (CLAUDE.md 36).
+            if showing_what_goes_with:
+                return NextStep(
+                    kind=NextStepKind.KEEP_BROWSING,
+                    chips=_chips(language, Chip.SHOW_MORE, Chip.NARROW_DOWN),
+                )
+            return _room_in_cart_step(_goes_with_pick(picks, complements), language)
         goes_with = None if showing_what_goes_with else _goes_with_pick(picks, complements)
         kind = NextStepKind.AFTER_PICKS if goes_with else NextStepKind.ROOM_AROUND_PICKS
         return NextStep(kind=kind, chips=_picks_chips(goes_with, language))
@@ -235,11 +255,16 @@ def _piece_chips(
     return tuple(choices)
 
 
-def _room_type_chips(rooms: RoomPieces, language: ReplyLanguage) -> tuple[ReplyChoice, ...]:
+def _room_type_chips(
+    rooms: RoomPieces, language: ReplyLanguage, *, exclude: frozenset[str] = frozenset()
+) -> tuple[ReplyChoice, ...]:
     """The rooms the registry can guide, named as the room pictures name them -
-    one list of room names per language, beside `RoomType`."""
+    one list of room names per language, beside `RoomType`. `exclude`: rooms
+    already finished."""
     choices = []
     for kind in rooms.kinds:
+        if kind in exclude:
+            continue
         try:
             room = RoomType(kind)
         except ValueError:
@@ -343,6 +368,36 @@ def _goes_with_pick(
         (pick for pick in reversed(picks) if pick.kind is not None and pick.kind in paired),
         None,
     )
+
+
+def _room_is_in_cart(result: CustomerTurnResult) -> bool:
+    """The room on record went into their cart - or every pick is one of its
+    pieces, for a session saved before the room recorded it."""
+    room = result.state.room_project
+    if room is None or not room.bundle_items:
+        return False
+    if room.in_cart:
+        return True
+    picked = result.state.product_interaction.selected_product_ids
+    return bool(picked) and set(picked) <= {line.product_id for line in room.bundle_items}
+
+
+def _room_in_cart_step(pick: PickView | None, language: ReplyLanguage) -> NextStep:
+    """Anything more for the room in their cart - what goes with their newest
+    pick, where something is reviewed to - or are they done with it."""
+    chips = []
+    if pick is not None:
+        chips.append(
+            chip(
+                Chip.WHAT_GOES_WITH_PICK,
+                language,
+                product_action=GoesWithPickAction(pick=pick.pick),
+                kind=pick.kind,
+            )
+        )
+    chips.append(chip(Chip.ROOM_DONE, language, bundle_action=RoomDoneAction()))
+    chips.append(chip(Chip.KEEP_BROWSING, language))
+    return NextStep(kind=NextStepKind.ROOM_IN_CART, chips=tuple(chips))
 
 
 def _picks_chips(pick: PickView | None, language: ReplyLanguage) -> tuple[ReplyChoice, ...]:

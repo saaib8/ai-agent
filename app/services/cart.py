@@ -34,6 +34,7 @@ from app.schemas.retailer import RetailerContext
 from app.services.card_labels import card_labels
 from app.services.click_tracking import tracking_url
 from app.services.product_display import arabic_name, price_words
+from app.services.room_cart import room_names
 
 logger = get_logger(__name__)
 
@@ -66,7 +67,7 @@ class CartService:
             identity.product_id: identity
             for identity in await self._repository.store_identities(wanted, context)
         }
-        lines = self._lines(after, picks, identities, language)
+        lines = self._lines(after, picks, identities, language, room_names(state, language))
         totals = self._totals(lines, language)
         changes = tuple(
             _change(identities[product_id], quantities, language)
@@ -95,6 +96,7 @@ class CartService:
         picks: Sequence[PickView],
         identities: dict[int, StoreProductIdentity],
         language: ReplyLanguage,
+        rooms: dict[int, str],
     ) -> tuple[CartLineView, ...]:
         selected = interaction.selected_product_ids
         lines: list[CartLineView] = []
@@ -119,6 +121,7 @@ class CartService:
                     kind=pick.kind,
                     product=_ref(identity),
                     display=pick.display,
+                    room=rooms.get(product_id),
                     line_total_display=price_words(line_total, pick.price_unit, language),
                 )
             )

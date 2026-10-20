@@ -77,6 +77,11 @@ class CartLineView(BaseModel):
     display: ProductDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
     """Its text, ready to show in the conversation's language."""
 
+    room: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The room it was chosen for - "Living room" - in the conversation's
+    language: a piece of a designed room in the cart, or a pick made for it
+    afterwards (CLAUDE.md 36)."""
+
     line_total_display: str | None = Field(default=None, exclude_if=lambda v: v is None)
     """`line_total`, worded in the conversation's language: "7,200 SAR"."""
 

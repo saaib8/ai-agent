@@ -63,6 +63,14 @@ class NextStepKind(StrEnum):
     TASTE_SPACE = "taste_space"
     """How wide the spot is - asked after products, ordering them to fit."""
 
+    ROOM_IN_CART = "room_in_cart"
+    """The designed room is in their cart: anything more for it, or are they
+    done with it - never a room around picks that are the room."""
+
+    NEXT_ROOM = "next_room"
+    """They are done with a room: which room to design next, leaving out the
+    rooms already finished."""
+
     ROOM_SIZE = "room_size"
     """A pick checked against the room - a bed - and the room's size unknown:
     its length and width, typed, so the designer can judge the space."""
@@ -90,6 +98,10 @@ QUESTIONS: dict[NextStepKind, str] = {
     NextStepKind.TASTE_STYLE: "Which style feels right to you?",
     NextStepKind.TASTE_AVOID: "Is there anything you'd rather avoid?",
     NextStepKind.TASTE_SPACE: "How wide is the spot where it will go?",
+    NextStepKind.ROOM_IN_CART: (
+        "Would you like anything else for this room, or are you done with it?"
+    ),
+    NextStepKind.NEXT_ROOM: "Which room would you like to design next?",
     NextStepKind.ROOM_SIZE: (
         "What is your room's length and width, so I can check there's space around it?"
     ),

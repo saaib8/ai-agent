@@ -1,11 +1,10 @@
 """A finishing touch for a finished room (CLAUDE.md 10.3).
 
-"I'd like to add a finishing touch" names no piece. Routed as a complement,
-it used to find no product to build around and answer "I wasn't able to put
-that together just now" with nothing to tap. A finished room is something to
-complement: the turn now asks which piece, with the room's missing pieces the
-store stocks as chips and "you choose" beside them, and a tap plans the room
-again with that piece added - exactly as "add a mirror to the room" typed does.
+"Add a finishing touch" - tapped, or typed - is shown, never asked about: Nora
+chooses the piece the room lacks that would best finish it, and a page of it
+is shown with the other pieces as chips. Each card's "Add to room" adds it to
+the room package, never the cart; over budget the customer is asked, as for a
+dearer swap, whether to increase the budget or keep the plan.
 """
 
 from __future__ import annotations
@@ -21,32 +20,53 @@ from app.schemas.agent_decision import (
     CustomerAgentDecision,
     DesignScope,
 )
-from app.schemas.agent_state import BundleItemState, BundleItemStatus, RoomProjectState
+from app.schemas.agent_state import (
+    AgentStateV1,
+    BundleItemState,
+    BundleItemStatus,
+    RoomProjectState,
+    SwapBudgetOfferStage,
+    SwapBudgetOfferState,
+)
 from app.schemas.agent_turn import CustomerResponse, CustomerTurnInput, CustomerTurnResult
-from app.schemas.bundle_action import AddPieceAction, BundleActionRequest
-from app.schemas.design import DesignTask
+from app.schemas.bundle import BundleLine, BundleStatus, RoomBundle
+from app.schemas.bundle_action import (
+    AddPieceAction,
+    AddToRoomAction,
+    BundleActionRequest,
+    FinishingTouchesAction,
+    SwapAlternativesAction,
+    SwapConfirmAction,
+    SwapDeclineAction,
+    SwapKeepOriginalAction,
+)
+from app.schemas.design import DesignCategoryNeed, DesignPriority, DesignTask, InteriorDesignResult
 from app.schemas.discovery import PriceConstraint
 from app.schemas.grounding import TurnFailureCode
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import CommerceClassification, ProductCandidate
-from app.schemas.response import DeterministicResponse, DeterministicResponseKind
-from app.services.arabic_wording import ARABIC
+from app.schemas.relaxation import StopReason
+from app.schemas.resolution import (
+    CandidatePoolResult,
+    RankedProductCandidate,
+    ResolvedProductReference,
+)
 from app.services.chat_runtime import ChatRuntime
-from app.services.response_generator import CustomerResponseGenerator
-from app.services.response_view import route_response
-from app.services.response_wording import FINISHING_TOUCH_OFFER_WORDING
+from app.services.design_discovery import DesignDiscoveryService
 from app.services.room_composition import MAX_FINISHING_PIECES, finishing_offers
 from app.services.room_presentation import finishing_choices
+from app.services.turn_coordinator import _bundle_action_decision
 from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
 from pydantic import TypeAdapter
 
-from tests.unit.test_response_generator import FakeClient
 from tests.unit.test_turn_coordinator import (
     CONTEXT,
     FakeCapabilities,
     FakeDesign,
+    FakePipeline,
+    FakeReferences,
     _coordinator,
     _product,
     _state,
@@ -62,6 +82,9 @@ KINDS = {
     SOFA: ("seating", "sofa"),
     TABLE: ("tables", "center-table"),
     RUG: ("decor", "carpet"),
+    520: ("decor", "vase"),
+    521: ("decor", "vase"),
+    522: ("decor", "vase"),
 }
 STOCK = (
     ("seating", "sofa"),
@@ -202,19 +225,219 @@ def _capabilities(pairs: tuple[tuple[str, str], ...]) -> Any:
     )
 
 
-# ── the turn that asks ──────────────────────────────────────────────────────
+# ── the page Nora chooses ───────────────────────────────────────────────────
 
 
-async def test_a_finishing_touch_for_a_finished_room_asks_which_piece() -> None:
-    result = await _ask(_finished_room())
+PAGE = (520, 521, 522)
+"""A page of the finishing touch Nora chose."""
 
-    assert tuple(piece.key for piece in result.finishing_pieces) == MISSING
-    assert result.grounding.deterministic_clarification is None
-    assert result.grounding.failure is None
-    assert result.next_step is None, "the question is the turn's own"
-    assert route_response(result).primary == DeterministicResponse(
-        kind=DeterministicResponseKind.FINISHING_TOUCH_OFFER
+VASES = DesignCategoryNeed(
+    commerce_category="decor", commerce_subcategory="vase", priority=DesignPriority.OPTIONAL
+)
+
+
+class RoomPipeline(FakePipeline):
+    """The page search, and the one-product pools an addition is costed with."""
+
+    def __init__(self, ids: tuple[int, ...] = PAGE) -> None:
+        super().__init__(ids=ids)
+        self.hydration = RoomHydration()
+
+    async def execute_forced_pool(self, product_id: int, context: Any) -> CandidatePoolResult:
+        products = await self.hydration.hydrate_ids((product_id,), context)
+        return CandidatePoolResult(
+            candidates=tuple(
+                RankedProductCandidate(product=p, relaxation_depth=0) for p in products
+            ),
+            eligible_count=len(products),
+            was_relaxed=False,
+            stop_reason=StopReason.EXACT_SUFFICIENT,
+            semantic_used=False,
+        )
+
+
+class CostingOptimizer:
+    """Keeps every lock and takes each pool's one product, priced as it is."""
+
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    def optimize(self, request: Any) -> RoomBundle:
+        self.requests.append(request)
+        lines = [
+            BundleLine(
+                product=lock.product,
+                quantity=lock.quantity,
+                locked=True,
+                acquisition=lock.acquisition,
+            )
+            for lock in request.locked
+        ]
+        for entry in request.discovery.needs:
+            if entry.pool is not None and entry.pool.candidates:
+                lines.append(
+                    BundleLine(
+                        need_index=entry.need_index,
+                        product=entry.pool.candidates[0].product,
+                        quantity=entry.need.quantity,
+                        locked=False,
+                        acquisition=BundleAcquisition.TO_BUY,
+                        relaxation_depth=0,
+                    )
+                )
+        return RoomBundle(
+            status=BundleStatus.COMPLETE,
+            lines=tuple(lines),
+            new_spend_total=sum((line.line_total for line in lines), Decimal(0)),
+            currency="SAR",
+        )
+
+
+def _engine(
+    *, design: Any = None, pipeline: RoomPipeline | None = None, chosen: int = PAGE[0]
+) -> tuple[Any, dict[str, Any]]:
+    pipeline = pipeline or RoomPipeline()
+    return _parts(
+        _finishing_touch(),
+        design=design or FakeDesign(InteriorDesignResult(needs=(VASES,))),
+        pipeline=pipeline,
+        optimizer=CostingOptimizer(),
+        design_discovery=DesignDiscoveryService(pipeline, TAXONOMY),  # type: ignore[arg-type]
+        references=FakeReferences(
+            {"PresentedOrdinal": ResolvedProductReference(product_id=chosen)}
+        ),
     )
+
+
+def _room(budget: str = "12000") -> RoomProjectState:
+    """Three pieces at 1,000 each: 3,000 spent."""
+    return _finished_room().model_copy(
+        update={"budget": PriceConstraint.at_most(Decimal(budget), "SAR")}
+    )
+
+
+def _on_screen(room: RoomProjectState) -> AgentStateV1:
+    return _state(room=room, selected=(), presented=PAGE)
+
+
+def _input(state: AgentStateV1, action: BundleActionRequest, message: str) -> CustomerTurnInput:
+    return CustomerTurnInput(message=message, state=state, context=CONTEXT, bundle_action=action)
+
+
+async def test_the_finishing_touch_is_shown_not_asked_about() -> None:
+    coordinator, parts = _engine()
+
+    result = await coordinator.run(
+        _tap(_finished_room(), FinishingTouchesAction(), "Add a finishing touch")
+    )
+
+    asked = parts["design"].requests[0]
+    assert asked.task is DesignTask.COMPLEMENTARY_RECOMMENDATION
+    assert len(asked.anchors) == 3, "Nora is told everything in the room"
+    (search,) = parts["pipeline"].calls
+    assert search.request.commerce_subcategory == "vase"
+    assert result.room_addition == "vase"
+    assert result.state.product_interaction.presented_product_ids == PAGE
+    assert tuple(piece.key for piece in result.finishing_pieces) == tuple(
+        key for key in MISSING if key != "vase"
+    ), "the other pieces the room could take are chips"
+    assert parts["decisions"].inputs == [], "no model read the words"
+
+
+async def test_typed_add_a_finishing_touch_is_the_tap() -> None:
+    coordinator, parts = _engine()
+
+    result = await coordinator.run(
+        _turn(_state(room=_finished_room(), selected=()), "I'd like to add a finishing touch")
+    )
+
+    assert result.room_addition == "vase"
+    assert [c.request.commerce_subcategory for c in parts["pipeline"].calls] == ["vase"]
+
+
+async def test_a_pieces_chip_shows_that_piece_without_asking_nora() -> None:
+    coordinator, parts = _engine()
+
+    result = await coordinator.run(
+        _tap(_finished_room(), AddPieceAction(piece="mirror"), "Show me mirrors")
+    )
+
+    assert parts["design"].requests == []
+    assert [c.request.commerce_subcategory for c in parts["pipeline"].calls] == ["mirror"]
+    assert result.room_addition == "mirror"
+    assert "mirror" not in {piece.key for piece in result.finishing_pieces}
+
+
+async def test_the_chips_beside_the_page_offer_no_you_choose() -> None:
+    coordinator, _ = _engine()
+    result = await coordinator.run(
+        _tap(_finished_room(), FinishingTouchesAction(), "Add a finishing touch")
+    )
+
+    presentation = ChatRuntime.presentation(result)
+
+    assert presentation is not None
+    assert presentation.room_addition == "vase"
+    assert [c.bundle_action for c in presentation.choices] == [
+        AddPieceAction(piece=key) for key in MISSING if key != "vase"
+    ]
+
+
+async def test_with_nothing_in_stock_the_pieces_stay_chips() -> None:
+    coordinator, _ = _engine(pipeline=RoomPipeline(ids=()))
+
+    result = await coordinator.run(
+        _tap(_finished_room(), FinishingTouchesAction(), "Add a finishing touch")
+    )
+
+    assert result.room_addition is None
+    assert tuple(piece.key for piece in result.finishing_pieces) == (
+        "vase",
+        *(key for key in MISSING if key != "vase"),
+    ), "in Nora's order"
+
+
+MIRRORS = DesignCategoryNeed(
+    commerce_category="decor", commerce_subcategory="mirror", priority=DesignPriority.OPTIONAL
+)
+
+
+async def test_nora_ranks_the_pieces_and_the_chips_follow_her_order() -> None:
+    coordinator, parts = _engine(design=FakeDesign(InteriorDesignResult(needs=(MIRRORS, VASES))))
+
+    result = await coordinator.run(
+        _tap(_finished_room(), FinishingTouchesAction(), "Add a finishing touch")
+    )
+
+    (asked,) = parts["design"].requests
+    told = {
+        (c.commerce_category, c.commerce_subcategory)
+        for c in asked.catalog_capabilities.capabilities
+    }
+    assert {sub for _, sub in told} == {"service-table", "table-lamp", "vase", "mirror"}, (
+        "she ranks only what the room could still take"
+    )
+    assert result.room_addition == "mirror"
+    assert [piece.key for piece in result.finishing_pieces] == ["vase", "side-table", "table-lamp"]
+    room = result.state.room_project
+    assert room is not None
+    assert room.finishing_order == ("mirror", "vase", "side-table", "table-lamp")
+
+
+async def test_a_tapped_chip_keeps_noras_order_without_asking_her_again() -> None:
+    room = _finished_room().model_copy(
+        update={"finishing_order": ("mirror", "vase", "side-table", "table-lamp")}
+    )
+    coordinator, parts = _engine()
+
+    result = await coordinator.run(_tap(room, AddPieceAction(piece="vase"), "Show me vases"))
+
+    assert parts["design"].requests == []
+    assert [piece.key for piece in result.finishing_pieces] == [
+        "mirror",
+        "side-table",
+        "table-lamp",
+    ]
 
 
 async def test_without_a_room_it_still_asks_which_product_they_meant() -> None:
@@ -226,48 +449,6 @@ async def test_without_a_room_it_still_asks_which_product_they_meant() -> None:
     assert clarification.reason is BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE
 
 
-async def test_the_reply_is_the_fixed_question_with_no_model_call() -> None:
-    result = await _ask(_finished_room())
-    client = FakeClient(CustomerResponse(message="unused"))
-
-    response = await CustomerResponseGenerator(client).generate(
-        _turn(_state(), "I'd like to add a finishing touch"), result
-    )
-
-    assert response.message == FINISHING_TOUCH_OFFER_WORDING
-    assert client.calls == []
-
-
-async def test_in_arabic_the_question_is_the_reviewed_arabic() -> None:
-    result = (await _ask(_finished_room())).model_copy(update={"reply_language": ReplyLanguage.AR})
-
-    response = await CustomerResponseGenerator(
-        FakeClient(CustomerResponse(message="unused")), arabic_replies=True
-    ).generate(_turn(_state(), "أريد لمسة أخيرة"), result)
-
-    assert response.message == ARABIC[FINISHING_TOUCH_OFFER_WORDING]
-
-
-async def test_each_piece_is_a_chip_that_adds_it_and_you_choose_comes_last() -> None:
-    result = await _ask(_finished_room())
-
-    presentation = ChatRuntime.presentation(result)
-
-    assert presentation is not None
-    choices = presentation.choices
-    assert [c.label for c in choices] == [
-        "Side table",
-        "Table lamp",
-        "Vase",
-        "Mirror",
-        "You choose",
-    ]
-    assert [c.bundle_action for c in choices] == [
-        *(AddPieceAction(piece=key) for key in MISSING),
-        AddPieceAction(piece=None),
-    ]
-
-
 def test_arabic_chips_name_the_pieces_in_arabic() -> None:
     assert LIVING_ROOM is not None
     offers = finishing_offers(LIVING_ROOM, _capabilities(STOCK), frozenset({"sofa"}))
@@ -276,306 +457,147 @@ def test_arabic_chips_name_the_pieces_in_arabic() -> None:
 
     assert labels[-1] == "اختر أنت"
     assert all(label == offer.label_ar for label, offer in zip(labels, offers, strict=False))
+    beside_a_page = finishing_choices(offers, ReplyLanguage.AR, you_choose=False)
+    assert [c.label for c in beside_a_page] == labels[:-1]
 
 
-# ── the tap ─────────────────────────────────────────────────────────────────
+# ── add to room ─────────────────────────────────────────────────────────────
 
 
-async def test_a_tapped_piece_is_added_as_an_optional_need_last() -> None:
-    from app.schemas.design import DesignPriority
-
-    from tests.unit.test_turn_coordinator import FakeDesignDiscovery
-
-    design, discovery = FakeDesign(), FakeDesignDiscovery()
-    coordinator, _ = _parts(_finishing_touch(), design=design, design_discovery=discovery)
+async def test_add_to_room_within_budget_joins_the_room_package() -> None:
+    coordinator, _ = _engine()
 
     result = await coordinator.run(
-        _tap(_finished_room(), AddPieceAction(piece="mirror"), "Mirror, please")
+        _input(_on_screen(_room()), AddToRoomAction(ordinal=1), "Add this vase to my room")
     )
 
-    assert result.decision.action is AgentAction.DESIGN_HANDOFF
-    assert result.grounding.failure is None
-    _, plan, _ = discovery.calls[-1]
-    added = plan.needs[-1]
-    assert (added.commerce_category, added.commerce_subcategory) == ("decor", "mirror")
-    assert added.priority is DesignPriority.OPTIONAL, "it can never push a piece out"
-    assert design.requests == [], "a tapped piece needs no designer"
-
-
-async def test_every_chosen_piece_is_pinned_to_the_product_it_is() -> None:
-    """Seen live: adding a vase also swapped the sofa for a dearer one."""
-    from app.schemas.agent_state import RoomDesignNeedState
-    from app.schemas.design import DesignPriority
-
-    from tests.unit.test_turn_coordinator import FakeDesignDiscovery
-
-    room = _finished_room().model_copy(
-        update={
-            "next_design_need_id": 3,
-            "design_needs": (
-                RoomDesignNeedState(
-                    need_id=1,
-                    commerce_category="seating",
-                    commerce_subcategory="sofa",
-                    priority=DesignPriority.REQUIRED,
-                    quantity=1,
-                ),
-                RoomDesignNeedState(
-                    need_id=2,
-                    commerce_category="tables",
-                    commerce_subcategory="center-table",
-                    priority=DesignPriority.REQUIRED,
-                    quantity=1,
-                ),
-            ),
-            "bundle_items": (
-                _line(1, SOFA).model_copy(
-                    update={"status": BundleItemStatus.SUGGESTED, "need_id": 1}
-                ),
-                _line(2, TABLE).model_copy(
-                    update={"status": BundleItemStatus.SUGGESTED, "need_id": 2}
-                ),
-                _line(3, RUG),
-            ),
-        }
-    )
-    discovery = FakeDesignDiscovery()
-    coordinator, _ = _parts(_finishing_touch(), design_discovery=discovery)
-
-    await coordinator.run(_tap(room, AddPieceAction(piece="vase"), "Vase, please"))
-
-    _, plan, _ = discovery.calls[-1]
-    assert [n.commerce_subcategory for n in plan.needs] == ["sofa", "center-table", "vase"]
-    assert {
-        position: override.forced_product_id for position, override in discovery.overrides.items()
-    } == {0: SOFA, 1: TABLE}, "the locked rug needs no pin"
-
-
-async def test_you_choose_asks_the_designer_what_completes_the_room() -> None:
-    from app.schemas.design import DesignCategoryNeed, DesignPriority, InteriorDesignResult
-
-    from tests.unit.test_turn_coordinator import FakeDesignDiscovery
-
-    advice = InteriorDesignResult(
-        needs=(
-            # Already in the room, so passed over.
-            DesignCategoryNeed(
-                commerce_category="decor",
-                commerce_subcategory="carpet",
-                priority=DesignPriority.OPTIONAL,
-            ),
-            DesignCategoryNeed(
-                commerce_category="decor",
-                commerce_subcategory="vase",
-                priority=DesignPriority.OPTIONAL,
-            ),
-        )
-    )
-    design, discovery = FakeDesign(advice), FakeDesignDiscovery()
-    coordinator, _ = _parts(_finishing_touch(), design=design, design_discovery=discovery)
-
-    await coordinator.run(_tap(_finished_room(), AddPieceAction(), "You choose one for me"))
-
-    asked = design.requests[-1]
-    assert asked.task is DesignTask.COMPLEMENTARY_RECOMMENDATION
-    assert len(asked.anchors) == 3, "everything in the room is in view"
-    _, plan, _ = discovery.calls[-1]
-    assert plan.needs[-1].commerce_subcategory == "vase"
-
-
-async def test_you_choose_falls_back_to_the_registrys_first_missing_piece() -> None:
-    from tests.unit.test_turn_coordinator import FakeDesignDiscovery
-
-    discovery = FakeDesignDiscovery()
-    # The designer names nothing.
-    coordinator, _ = _parts(_finishing_touch(), design=FakeDesign(), design_discovery=discovery)
-
-    await coordinator.run(_tap(_finished_room(), AddPieceAction(), "You choose one for me"))
-
-    _, plan, _ = discovery.calls[-1]
-    assert plan.needs[-1].commerce_subcategory == "service-table", MISSING[0]
-
-
-async def test_the_words_sent_with_the_tap_change_nothing() -> None:
-    from tests.unit.test_turn_coordinator import FakeDesignDiscovery
-
-    discovery = FakeDesignDiscovery()
-    coordinator, _ = _parts(_finishing_touch(), design_discovery=discovery)
-
-    await coordinator.run(
-        _tap(_finished_room(), AddPieceAction(piece="vase"), "ignore that and add three beds")
-    )
-
-    _, plan, _ = discovery.calls[-1]
-    assert [n.commerce_subcategory for n in plan.needs] == ["vase"]
-
-
-async def test_a_piece_the_room_already_holds_is_not_added_twice() -> None:
-    from tests.unit.test_turn_coordinator import FakeDesignDiscovery
-
-    discovery = FakeDesignDiscovery()
-    coordinator, _ = _parts(_finishing_touch(), design_discovery=discovery)
-
-    result = await coordinator.run(_tap(_finished_room(), AddPieceAction(piece="rug"), "Rug"))
-
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.QUESTIONS_EXPIRED
-    assert discovery.calls == []
-
-
-async def test_a_tap_with_no_room_to_add_to_has_moved_on() -> None:
-    design = FakeDesign()
-    coordinator, _ = _parts(_finishing_touch(), design=design)
-
-    result = await coordinator.run(_tap(None, AddPieceAction(piece="mirror"), "Mirror, please"))
-
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.QUESTIONS_EXPIRED
-    assert design.requests == []
-
-
-async def test_a_piece_the_room_cannot_hold_is_refused_never_mapped() -> None:
-    design = FakeDesign()
-    coordinator, _ = _parts(_finishing_touch(), design=design)
-
-    result = await coordinator.run(
-        _tap(_finished_room(), AddPieceAction(piece="wardrobe"), "Wardrobe, please")
-    )
-
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.QUESTIONS_EXPIRED
-    assert design.requests == []
-
-
-def test_the_action_travels_as_its_kind() -> None:
-    adapter: TypeAdapter[Any] = TypeAdapter(AddPieceAction)
-
-    assert adapter.validate_python({"kind": "add_piece", "piece": "mirror"}) == AddPieceAction(
-        piece="mirror"
-    )
-    assert adapter.validate_python({"kind": "add_piece"}).piece is None
-
-
-# ── the reply names what was added ──────────────────────────────────────────
-
-
-VASE = 504
-
-
-def _room_with_a_vase() -> Any:
-    from app.schemas.bundle import BundleLine, BundleStatus, RoomBundle
-
-    def line(product_id: int, category: str, subcategory: str, *, locked: bool) -> BundleLine:
-        product = _product(product_id, subcategory=subcategory).model_copy(
-            update={"commerce": CommerceClassification(category=category, subcategory=subcategory)}
-        )
-        return BundleLine(
-            need_index=None if locked else 0,
-            product=product,
-            quantity=1,
-            locked=locked,
-            acquisition=BundleAcquisition.TO_BUY,
-            relaxation_depth=None if locked else 0,
-        )
-
-    lines = (
-        line(SOFA, "seating", "sofa", locked=True),
-        line(TABLE, "tables", "center-table", locked=True),
-        line(RUG, "decor", "carpet", locked=True),
-        line(VASE, "decor", "vase", locked=False),
-    )
-    return RoomBundle(
-        status=BundleStatus.COMPLETE,
-        lines=lines,
-        new_spend_total=sum((line.line_total for line in lines), Decimal(0)),
-        currency="SAR",
-    )
-
-
-async def test_the_reply_is_told_which_piece_you_choose_added() -> None:
-    from app.schemas.design import DesignCategoryNeed, DesignPriority, InteriorDesignResult
-    from app.schemas.response import ResponseGroundingView
-
-    from tests.unit.test_turn_coordinator import FakeOptimizer
-
-    plan = InteriorDesignResult(
-        needs=(
-            DesignCategoryNeed(
-                commerce_category="decor",
-                commerce_subcategory="vase",
-                priority=DesignPriority.OPTIONAL,
-            ),
-        )
-    )
-    coordinator, _ = _parts(
-        _finishing_touch(),
-        design=FakeDesign(plan),
-        optimizer=FakeOptimizer(_room_with_a_vase()),
-    )
-
-    result = await coordinator.run(
-        _tap(_finished_room(), AddPieceAction(), "You choose one for me")
-    )
-
+    room = result.state.room_project
+    assert room is not None
+    assert PAGE[0] in {line.product_id for line in room.bundle_items}
     assert result.pieces_added == ("vase",)
-    view = route_response(result).primary
-    assert isinstance(view, ResponseGroundingView)
-    assert view.bundle is not None
-    assert view.bundle.added_pieces == ("vase",)
+    assert result.swap_offer is None
+    assert result.state.product_interaction.selected_product_ids == (), "never the cart"
 
 
-async def test_a_room_that_gained_nothing_names_nothing() -> None:
-    result = await _ask(_finished_room())
-
-    assert result.pieces_added == ()
-
-
-async def test_a_piece_the_budget_left_out_is_not_called_added() -> None:
-    """Short of budget, the new piece is the one left unfilled - and the reply
-    must not say it was added."""
-    from app.schemas.bundle import BundleStatus, RoomBundle
-
-    from tests.unit.test_turn_coordinator import FakeOptimizer
-
-    room = _room_with_a_vase()
-    lines = room.lines[:3]
-    outcome = RoomBundle(
-        status=BundleStatus.COMPLETE,
-        lines=lines,
-        new_spend_total=sum((line.line_total for line in lines), Decimal(0)),
-        currency="SAR",
-    )
-    coordinator, _ = _parts(_finishing_touch(), optimizer=FakeOptimizer(outcome))
+async def test_a_card_the_room_already_holds_a_piece_of_is_refused() -> None:
+    coordinator, _ = _engine(chosen=RUG)
 
     result = await coordinator.run(
-        _tap(_finished_room(), AddPieceAction(piece="vase"), "Vase, please")
+        _input(_on_screen(_room()), AddToRoomAction(ordinal=1), "Add this to my room")
     )
 
-    assert result.pieces_added == ()
+    assert result.grounding.failure is not None
+    assert result.grounding.failure.code is TurnFailureCode.QUESTIONS_EXPIRED
+
+
+async def _over_budget() -> tuple[Any, CustomerTurnResult]:
+    coordinator, _ = _engine()
+    result = await coordinator.run(
+        _input(_on_screen(_room("3500")), AddToRoomAction(ordinal=1), "Add this vase to my room")
+    )
+    return coordinator, result
+
+
+async def test_over_budget_asks_whether_to_increase_it_or_keep_the_plan() -> None:
+    _, result = await _over_budget()
+
+    room = result.state.room_project
+    assert room is not None
+    assert PAGE[0] not in {line.product_id for line in room.bundle_items}, "nothing changes yet"
+    assert result.swap_offer is not None
+    assert result.swap_offer.stage is SwapBudgetOfferStage.STRETCH
+    assert result.swap_offer.added_piece == "vase"
+    assert (result.swap_offer.new_spend_total, result.swap_offer.overage) == (
+        Decimal(4000),
+        Decimal(500),
+    )
+    held = result.state.swap_budget_offer
+    assert held is not None and held.added_piece == "vase" and held.chosen_product_id == PAGE[0]
+
+
+async def test_yes_adds_it_and_raises_the_budget() -> None:
+    coordinator, held = await _over_budget()
+
+    result = await coordinator.run(_input(held.state, SwapConfirmAction(), "Yes, increase it"))
+
+    room = result.state.room_project
+    assert room is not None
+    assert PAGE[0] in {line.product_id for line in room.bundle_items}
+    assert room.budget is not None and room.budget.max_amount == Decimal(4000)
+    assert result.state.swap_budget_offer is None
+    assert result.pieces_added == ("vase",)
+    assert result.budget_stretched is not None
+
+
+async def test_no_offers_keeping_the_plan_or_cheaper_options() -> None:
+    coordinator, held = await _over_budget()
+
+    result = await coordinator.run(_input(held.state, SwapDeclineAction(), "No"))
+
+    assert result.swap_offer is not None
+    assert result.swap_offer.stage is SwapBudgetOfferStage.ALTERNATIVES
+    assert result.swap_offer.added_piece == "vase"
+
+
+async def _declined() -> tuple[Any, CustomerTurnResult]:
+    coordinator, held = await _over_budget()
+    return coordinator, await coordinator.run(_input(held.state, SwapDeclineAction(), "No"))
+
+
+async def test_keeping_the_plan_leaves_the_room_as_it_was() -> None:
+    coordinator, held = await _declined()
+
+    result = await coordinator.run(
+        _input(held.state, SwapKeepOriginalAction(), "Keep my original room")
+    )
+
+    room = result.state.room_project
+    assert room is not None
+    assert {line.product_id for line in room.bundle_items} == {SOFA, TABLE, RUG}
+    assert result.state.swap_budget_offer is None
+    assert room.budget is not None and room.budget.max_amount == Decimal(3500)
+
+
+async def test_cheaper_options_are_the_same_piece_within_what_is_left() -> None:
+    coordinator, held = await _declined()
+
+    result = await coordinator.run(
+        _input(held.state, SwapAlternativesAction(), "Show cheaper options")
+    )
+
+    search = coordinator._pipeline.calls[-1].request
+    assert search.commerce_subcategory == "vase"
+    assert search.price is not None and search.price.max_amount == Decimal(500)
+    assert result.room_addition == "vase"
+    assert result.state.swap_budget_offer is None
+
+
+def test_the_addition_travels_as_its_kind() -> None:
+    adapter: TypeAdapter[Any] = TypeAdapter(BundleActionRequest)
+
+    assert adapter.validate_python({"kind": "add_to_room", "ordinal": 2}) == AddToRoomAction(
+        ordinal=2
+    )
+    assert _bundle_action_decision(AddToRoomAction(ordinal=1)).action is AgentAction.DESIGN_HANDOFF
+
+
+def test_the_held_offer_is_a_swap_or_an_addition_never_both() -> None:
+    from pydantic import ValidationError
+
+    SwapBudgetOfferState(added_piece="vase", chosen_product_id=1, bundle_revision=0)
+    SwapBudgetOfferState(bundle_ordinal=1, chosen_product_id=1, bundle_revision=0)
+    for wrong in ({}, {"bundle_ordinal": 1, "added_piece": "vase"}):
+        try:
+            SwapBudgetOfferState(chosen_product_id=1, bundle_revision=0, **wrong)
+        except ValidationError:
+            continue
+        raise AssertionError(f"accepted {wrong}")
 
 
 # ── the room's own chip ─────────────────────────────────────────────────────
 
 
-async def test_the_rooms_chip_opens_the_finishing_touches_without_a_model() -> None:
-    from app.schemas.bundle_action import FinishingTouchesAction
-
-    coordinator, parts = _parts(_finishing_touch())
-
-    result = await coordinator.run(
-        _tap(_finished_room(), FinishingTouchesAction(), "What would finish the room?")
-    )
-
-    assert tuple(piece.key for piece in result.finishing_pieces) == MISSING
-    assert parts["decisions"].inputs == [], "no model read the words"
-    assert route_response(result).primary == DeterministicResponse(
-        kind=DeterministicResponseKind.FINISHING_TOUCH_OFFER
-    )
-
-
 async def test_the_rooms_chip_with_no_room_has_moved_on() -> None:
-    from app.schemas.bundle_action import FinishingTouchesAction
-
     coordinator, _ = _parts(_finishing_touch())
 
     result = await coordinator.run(_tap(None, FinishingTouchesAction(), "What would finish it?"))

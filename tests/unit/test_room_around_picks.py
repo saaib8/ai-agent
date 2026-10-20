@@ -35,6 +35,7 @@ from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
 
+from tests.unit.test_room_pieces import SIZED
 from tests.unit.test_room_questions_turn import LIVING_STOCK, _parts
 from tests.unit.test_turn_coordinator import (
     FakeCapabilities,
@@ -149,6 +150,7 @@ async def test_the_seats_question_confirms_what_the_picked_sofas_seat() -> None:
     room = RoomProjectState(
         room_kind="living_room",
         budget=BUDGET,
+        geometry=SIZED,
         pieces=("sofa", "center-table", "rug"),
         anchor_product_ids=(THREE_SEATER, TABLE, TWO_SEATER),
     )
@@ -166,6 +168,7 @@ async def test_the_pieces_question_shows_the_picks_as_theirs() -> None:
     room = RoomProjectState(
         room_kind="living_room",
         budget=BUDGET,
+        geometry=SIZED,
         anchor_product_ids=(THREE_SEATER, TABLE),
     )
 
@@ -192,7 +195,9 @@ def test_the_seat_chips_confirm_the_picks_or_add_to_them() -> None:
 
 
 def test_the_picks_seats_replace_an_earlier_head_count() -> None:
-    room = RoomProjectState(room_kind="living_room", budget=BUDGET, pieces=("sofa",))
+    room = RoomProjectState(
+        room_kind="living_room", budget=BUDGET, geometry=SIZED, pieces=("sofa",)
+    )
 
     question = next_question(room, LIVING, _stock(), 2, picked_seats=5)
 
@@ -234,6 +239,7 @@ async def test_the_picks_are_locked_into_the_room_when_it_is_built() -> None:
     room = RoomProjectState(
         room_kind="living_room",
         budget=BUDGET,
+        geometry=SIZED,
         pieces=("sofa", "center-table", "rug"),
         regular_seating_count=5,
         questions_done=True,
@@ -261,6 +267,7 @@ async def test_seats_beyond_the_picks_are_planned_for_the_remainder_only() -> No
     room = RoomProjectState(
         room_kind="living_room",
         budget=BUDGET,
+        geometry=SIZED,
         pieces=("sofa", "rug"),
         regular_seating_count=7,
         questions_done=True,
@@ -344,6 +351,7 @@ def _built(**room: Any) -> RoomProjectState:
     fields: dict[str, Any] = {
         "room_kind": "living_room",
         "budget": BUDGET,
+        "geometry": SIZED,
         "pieces": ("sofa", "center-table", "rug"),
         "regular_seating_count": 5,
         "questions_done": True,
@@ -413,7 +421,9 @@ async def test_a_bedroom_keeps_its_own_picks_and_never_asks_seats() -> None:
 
     room = first.state.room_project
     assert room is not None and room.anchor_product_ids == (BED, NIGHTSTAND)
-    later = room.model_copy(update={"budget": BUDGET, "pieces": ("bed", "nightstands", "rug")})
+    later = room.model_copy(
+        update={"budget": BUDGET, "geometry": SIZED, "pieces": ("bed", "nightstands", "rug")}
+    )
     coordinator, _ = _coordinator(
         _handoff(),
         capabilities=FakeCapabilities(
@@ -438,7 +448,11 @@ async def test_a_bedroom_keeps_its_own_picks_and_never_asks_seats() -> None:
 async def test_only_known_seats_are_counted(anchors: tuple[int, ...], seats: int | None) -> None:
     coordinator, _ = _coordinator(_handoff())
     room = RoomProjectState(
-        room_kind="living_room", budget=BUDGET, pieces=("sofa",), anchor_product_ids=anchors
+        room_kind="living_room",
+        budget=BUDGET,
+        geometry=SIZED,
+        pieces=("sofa",),
+        anchor_product_ids=anchors,
     )
 
     result = await coordinator.run(_turn(_state(room=room), "choose for me"))
@@ -479,6 +493,7 @@ async def test_a_room_already_built_is_not_rebuilt_around_new_picks() -> None:
     room = RoomProjectState(
         room_kind="living_room",
         budget=BUDGET,
+        geometry=SIZED,
         design_needs=(
             RoomDesignNeedState(
                 need_id=1,

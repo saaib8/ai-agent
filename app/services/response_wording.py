@@ -314,6 +314,7 @@ ROOM_QUESTION_WORDING: dict[RoomQuestionKind, str] = {
         "Here are the pieces I'd put in the room - untick anything you don't "
         "need, add anything you'd like, or tell me to choose for you."
     ),
+    RoomQuestionKind.SIZE: "Roughly how long and how wide is the room?",
     RoomQuestionKind.SEATS: "How many people will usually be sitting in the room?",
     RoomQuestionKind.COLOUR: (
         "Which colours are you drawn to for the room - or shall I choose for you?"

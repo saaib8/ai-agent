@@ -584,6 +584,7 @@ def _swap_offer_view(
             budget_max=offer.budget_max,
             overage=offer.overage,
             currency=offer.currency,
+            added_piece=offer.added_piece,
         ),
     )
 
@@ -708,6 +709,10 @@ def _view(
         taste_question=_taste_question(result),
         taste_answered=result.taste_answered if result else None,
         space_fit=result.space_fit if result else None,
+        room_in_cart=result.room_in_cart if result else None,
+        picks_for_room=result.picks_for_room if result else None,
+        room_finished=result.room_finished if result else None,
+        room_addition=result.room_addition if result else None,
         room_carried=result.room_carried if result else None,
         narrowed=result.narrowed if result else False,
         next_step=(result.next_step.kind if result and result.next_step else None),

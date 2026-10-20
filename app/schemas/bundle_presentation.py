@@ -163,6 +163,9 @@ class GroundedBundlePresentation(BaseModel):
     status: BundleStatus
     items: tuple[GroundedBundleItem, ...] = ()
     totals: GroundedBundleTotals
+    in_cart: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The room went into their cart: the package is a record of how it was
+    designed, no longer edited - no Swap, Remove or Add all (CLAUDE.md 36)."""
 
     @model_validator(mode="after")
     def _refs_are_this_turns_positions(self) -> Self:

@@ -950,6 +950,13 @@ class CustomerAgentDecision(BaseModel):
     each, is the application's to read from the room on record; pieces they
     already own are left out (CLAUDE.md 36)."""
 
+    room_done: bool = False
+    """They said they are done with the room whose pieces are in their cart -
+    "I'm done with this room", "that's the living room sorted", "the room is
+    finished". With answer. The application closes it only when the room on
+    record is in their cart, and the reply asks which room to design next
+    (CLAUDE.md 36)."""
+
     anchor_picks: bool = False
     """They asked to build the room around the products they have picked -
     "around these", "around my picks", "with what I've chosen". For

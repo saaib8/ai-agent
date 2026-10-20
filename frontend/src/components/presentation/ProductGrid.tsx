@@ -62,7 +62,7 @@ export function ProductGrid({
   const showRefine = refine && !pick
   return (
     <div className="flex flex-col gap-2.5">
-      {pick && (
+      {pick && !pick.adds && (
         <div className="rounded-xl border border-clay/25 bg-clay-soft/50 px-3.5 py-2 text-xs font-medium text-clay">
           Choose a replacement {pick.role} — tap “Use this” on the one you like, and I&apos;ll rebuild the
           room around it.

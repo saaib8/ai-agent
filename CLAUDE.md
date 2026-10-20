@@ -459,13 +459,18 @@ application, one question per turn**, in this order, skipping anything already
 on record:
 
 1. **budget** - it constrains every other choice;
-2. **pieces** - which pieces they want, shown as chips (10.3);
-3. **how many people will sit** - living room only;
-4. **colour** - the colours they are drawn to.
+2. **the room's size** - its length and width, which decide what fits; asked
+   only while they have not given it ("my 4x5 m bedroom" is never asked),
+   with a few common sizes and "Not sure" as chips, and given to the designer
+   when the room is planned;
+3. **pieces** - which pieces they want, shown as chips (10.3);
+4. **how many people will sit** - living room only;
+5. **colour** - the colours they are drawn to.
 
 The decision model never writes these questions: it hands off `whole_room`
-with the `room_kind` and records each answer (`room_budget`, `room_pieces` or
-`room_pieces_default`, `regular_seating_count`, `design_preferences`). A room
+with the `room_kind` and records each answer (`room_budget`, `room_geometry`,
+`room_pieces` or `room_pieces_default`, `regular_seating_count`,
+`design_preferences`). A room
 question the model writes anyway (`missing_room_requirements`) is replaced by
 the application's own.
 
@@ -520,8 +525,8 @@ question among several, chosen as a band from the store's own prices.
   exist, each "from" its real lowest total, plus the colour if none is known.
   Asked once per seat count; answered, ignored or declined, it is never asked
   again (section 27.1).
-- **A whole room** asks budget first, then its pieces, head count and colour,
-  one per turn (10.1): the optimiser needs the total.
+- **A whole room** asks budget first, then its size, pieces, head count and
+  colour, one per turn (10.1): the optimiser needs the total.
 - **Budget otherwise** only once they are engaged: comparing, having picked
   something, talking price without a figure, or refining a wide price range.
 
@@ -608,25 +613,37 @@ If a customer accepts/locks an item, later optimization must preserve it unless 
 
 Distinguish required, recommended, and optional furnishing categories so budget optimization can remove lower-priority items before degrading core room requirements.
 
-**A finishing touch for a finished room asks which piece.** The room's own
-"Add a finishing touch" chip opens it directly (`bundle_action`
+**A finishing touch for a finished room is shown, never asked about.** The
+room's own "Add a finishing touch" chip opens it directly (`bundle_action`
 `finishing_touches`; after a room, the step's chips are never replaced by ones
 the reply wrote), and the decision model is told that "add a finishing touch"
-with no piece named is `complement`, never `whole_room`. "Add a finishing
-touch" names no piece; with a room package on record it is answered with a
-fixed question and the room's pieces the store stocks that the room does not
-hold yet as chips, in the registry's order (at most `MAX_FINISHING_PIECES`),
-plus "You choose" - never "I wasn't able to put that together". Each chip is a
-`bundle_action` `add_piece` with the registry key; "You choose" carries none.
-A tap adds that piece and changes nothing else: every chosen piece is pinned
-to the product it is for this choice (`forced_product_id`, never a lock, so its
-Swap button stays), and the new piece joins the plan last as an optional need,
-so it can never push a piece out - short of budget, it is the one left unfilled
-and the reply names it as missing. The words sent with the tap are never read.
-For "You choose" the designer is asked what would complete the space around
-everything in the room (`complementary_recommendation`), kept to the pieces the
-room could still take, falling back to the registry's first. The reply is told
-which types the room gained (`added_pieces`) and names them as added.
+with no piece named is `complement`, never `whole_room`; typed, it is the tap.
+With a room package on record, the design specialist ranks the pieces it could
+still take - the room registry's pieces the store stocks that the room does not
+hold yet (at most `MAX_FINISHING_PIECES`) - by what would finish it best
+(`complementary_recommendation`, told everything in the room and only those
+pieces); pieces she does not name follow in the registry's order, and that
+order stands alone when she cannot answer - code never ranks them. The first
+she ranks that has products is shown at once, about a page leaning to the
+room's colours and styles; the others are chips in her order (`bundle_action`
+`add_piece` with the registry key), kept with the room (`finishing_order`) so
+a chip tapped later shows its own page with the rest still in her order, and
+with no "You choose" beside a page. Only when nothing of the
+piece is in stock do the pieces stay chips with "You choose" - never "I wasn't
+able to put that together". The words sent with a tap are never read.
+
+**"Add to room" puts a finishing touch in the room package, never the cart.**
+Each card on that page (`presentation.room_addition`, the piece shown) carries
+"Add to room": `bundle_action` `add_to_room` with the card's place in the list.
+It must be a piece the room could still take, of a product the room does not
+hold. The room is costed with it and every other piece pinned to the product it
+is (`forced_product_id`), with no budget ceiling, so nothing is silently dropped
+to make room. Within budget it joins the package and the reply names it as
+added (`added_pieces`). Over budget nothing changes yet: the customer is asked,
+exactly as for a dearer swap (27), whether to increase the budget or keep the
+plan (`swap_budget_offer` with `added_piece`) - yes adds it and raises the
+budget to the room's new total; no offers keeping the room as it is or cheaper
+options, which are the same piece within what the budget has left.
 
 **"Which piece?" beside a finished room is answered with its pieces.** When a
 turn asks which product (`ambiguous_product_reference`), shows nothing new, has
@@ -2415,11 +2432,11 @@ one it is shown under:
   (every render), and everything else.
 - **Salman** - cross-sell (a pick shown with what goes with it, the kinds
   offered, a companion tapped), an up-sell (`commercial_reason: upsell`), and a
-  room's money side: an over-budget swap and its answers, cheaper pieces, and
-  finishing touches offered or added. Sales outranks design on a turn that is
-  both.
+  room's money side: an over-budget swap or finishing touch and its answers,
+  and cheaper pieces. Sales outranks design on a turn that is both.
 - **Nora** - design answers, and the room being designed: its questions, its
-  package, and a piece swapped for another of its kind.
+  package, a piece swapped for another of its kind, and finishing touches
+  shown or added to the room.
 
 **The server words what a client shows around products, in the reply's
 language** - so a store's widget, like the console, shows it as it is and keeps
@@ -2846,6 +2863,36 @@ keeps a cart of its own.
   card's `bundle_action` `add_to_cart` add every piece being bought with its
   quantity - owned pieces stay out, and a product already in the cart keeps the
   larger quantity, so adding twice never doubles it.
+- **A whole room in the cart is answered as a pick is** (Salman, 10.4): for a
+  room the registry knows, the pieces it could still take are ranked by the
+  design specialist exactly as for a finishing touch (10.3); the first in stock
+  is shown as a page leaning to the room's colours and styles, and the rest are
+  chips in her order - each showing its own page, with the room's chips beside
+  it, less what the room or their cart already holds. A pick's own chips - a
+  reviewed pairing of something they picked later - are answered as for any
+  pick. Another room: one kind the specialist chooses, with the reviewed
+  pairings of its first piece as chips (the room's first piece is the one in
+  focus, not drawn - the room is on screen). Nothing the room
+  holds is suggested again. Picks that already are the room are never offered
+  "design a room around my picks"; picks made outside a room still are.
+- **From then on the cart is the room** (`room_project.in_cart`). The room
+  package is a record of how it was designed: drawn tagged "In your cart",
+  with no Swap, Remove or Add all, and its edits - a swap, a removal, a
+  finishing touch, a piece added - are refused from a card still on screen
+  (`questions_expired`). What they pick next is for that room: the reply says
+  it was added for their room (`picks_for_room`), and each cart line of the
+  room - its pieces and what was picked after it went in, never a pick from
+  before (`picks_before_cart`) - names it (`room`: "Living room"). While it
+  is on record "design a room around my picks" is never offered; the next step
+  is what goes with the newest pick, "I'm done with this room", or more
+  browsing (`room_in_cart`).
+- **"I'm done with this room"** - its chip (`bundle_action` `room_done`) or
+  typed (the decision's `room_done`) - closes the room in the cart: its
+  products stay in the cart, still named by it (`finished_rooms`), the room is
+  no longer the one on record, and the reply wraps it up and asks which room
+  to design next, with the registry's rooms as chips less every room already
+  finished (`next_room`). A room still being designed is never closed by it.
+  The cart turns from "Add all to cart" on, and closing the room, are Salman's.
 - **Liking is not adding.** "I like the fifth one" is a `consider`
   interaction: the piece is focused and offered - "It's 3,302 SAR, which would
   bring your cart to 9,604 SAR. Shall I add it to your cart?" - with Yes (a
