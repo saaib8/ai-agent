@@ -27,9 +27,6 @@ HANDOVER_MESSAGES = 6
 """How many of the shopper's own messages a request to the store carries."""
 HANDOVER_MESSAGE_CHARS = 500
 """Each message is cut to this many characters; the store reads it on a phone."""
-CONTACT_LOOKUP_QUESTION = "How can I contact customer care by phone, WhatsApp or email?"
-"""What the store's documents are searched for when it set no support channels:
-its own contact details, given in place of "the store hasn't shared one"."""
 
 
 class SupportChannel(StrEnum):
@@ -129,7 +126,6 @@ class SupportHandover(BaseModel):
 
 
 __all__ = [
-    "CONTACT_LOOKUP_QUESTION",
     "HANDOVER_MESSAGES",
     "HANDOVER_MESSAGE_CHARS",
     "MAX_EMAIL_CHARS",

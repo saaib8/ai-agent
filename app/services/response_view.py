@@ -266,9 +266,6 @@ def _primary_route(result: CustomerTurnResult) -> ResponseRouting:
             clarification,
             result=result,
             support_offered=offered,
-            policy_passages=(
-                grounding.store_knowledge.passages if grounding.store_knowledge else ()
-            ),
         )
 
     if grounding.store_knowledge is not None:

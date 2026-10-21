@@ -72,16 +72,15 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "pieces whose look you like."
     ),
     TurnFailureCode.REQUEST_NOT_UNDERSTOOD: (
-        "Sorry, I didn't quite catch that. Try saying it a little differently - "
-        "for example, the kind of piece you're after, or what you'd like to "
-        "change about what you're looking at."
+        "Could you put that another way? For example, the kind of piece you're "
+        "after, or what you'd like to change about what you're looking at."
     ),
     TurnFailureCode.STORE_INFO_UNAVAILABLE: (
-        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "The store's information isn't reachable right now. Please try again in a "
         "moment, and feel free to ask me about any product meanwhile."
     ),
     TurnFailureCode.STORE_INFO_UNAVAILABLE_WITH_SUPPORT: (
-        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "The store's information isn't reachable right now. Please try again in a "
         "moment, or contact the store's support team below."
     ),
     TurnFailureCode.DESIGN_ADVICE_UNAVAILABLE: (

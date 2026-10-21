@@ -713,6 +713,12 @@ class CustomerAgentSettings(BaseModel):
     `support_agent`. Off by default: each button is a plain link to the store,
     as before."""
 
+    support_owner_fallback: bool = True
+    """Where a store saved no support email or WhatsApp, its owner's - the email
+    and phone given when their account was created - are the store's support.
+    Never a contact from the store's documents, which nobody checked. A phone
+    without its country code is left out. Off: only the store's own."""
+
     designer_led_buttons: bool = True
     """Three buttons on every card: Select as before, ♡ Like - a silent liked
     list, kept apart from the picks - and More like this, a similarity search
