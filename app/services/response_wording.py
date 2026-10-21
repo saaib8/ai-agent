@@ -72,7 +72,7 @@ FAILURE_WORDING: dict[TurnFailureCode, str] = {
         "pieces whose look you like."
     ),
     TurnFailureCode.REQUEST_NOT_UNDERSTOOD: (
-        "Could you put that another way? For example, the kind of piece you're "
+        "Try putting that another way - for example, the kind of piece you're "
         "after, or what you'd like to change about what you're looking at."
     ),
     TurnFailureCode.STORE_INFO_UNAVAILABLE: (
