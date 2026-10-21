@@ -68,20 +68,19 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "You haven't picked anything out yet, so there's nothing to show you here.": (
             "لم تختر أي شيء بعد، لذلك لا يوجد ما أعرضه عليك هنا."
         ),
-        "Sorry, I didn't quite catch that. Try saying it a little differently - for example, "
-        "the kind of piece you're after, or what you'd like to change about what you're "
-        "looking at.": (
-            "عذرًا، لم أفهم ذلك تمامًا. جرّب أن تصيغه بطريقة أخرى - مثلًا نوع القطعة"
+        "Could you put that another way? For example, the kind of piece you're after, or "
+        "what you'd like to change about what you're looking at.": (
+            "هل يمكنك صياغة ذلك بطريقة أخرى؟ مثلًا نوع القطعة"
             " التي تبحث عنها، أو ما تودّ تغييره فيما تراه أمامك."
         ),
-        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "The store's information isn't reachable right now. Please try again in a "
         "moment, and feel free to ask me about any product meanwhile.": (
-            "عذرًا، لا أستطيع الوصول إلى معلومات المتجر حاليًا. يُرجى المحاولة بعد قليل،"
+            "معلومات المتجر غير متاحة حاليًا. يُرجى المحاولة بعد قليل،"
             " ويسعدني مساعدتك في أي منتج خلال ذلك."
         ),
-        "Sorry, I can't reach the store's information right now. Please try again in a "
+        "The store's information isn't reachable right now. Please try again in a "
         "moment, or contact the store's support team below.": (
-            "عذرًا، لا أستطيع الوصول إلى معلومات المتجر حاليًا. يُرجى المحاولة بعد قليل،"
+            "معلومات المتجر غير متاحة حاليًا. يُرجى المحاولة بعد قليل،"
             " أو التواصل مع فريق دعم المتجر أدناه."
         ),
         "I wasn't able to answer that one just now. Please try again in a moment.": (

@@ -353,7 +353,10 @@ def customer_turn_coordinator(
         store_knowledge=app_resources.store_knowledge,
         support=(
             SupportService(
-                SupportContactsRepository(session),
+                SupportContactsRepository(
+                    session,
+                    owner_fallback=app_resources.settings.customer_agent.support_owner_fallback,
+                ),
                 handover=app_resources.settings.customer_agent.support_handover,
             )
             if app_resources.settings.customer_agent.support_agent

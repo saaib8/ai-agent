@@ -50,6 +50,24 @@ core_store = Table(
     # on - so a catalog without the columns runs exactly as before.
     Column("support_email", String(254), nullable=True),
     Column("support_whatsapp", String(15), nullable=True),
+    Column("business_id", Integer, nullable=True),
+)
+
+# The business a store belongs to, and the person who owns it: only their
+# contact, the store's support where it saved none of its own.
+core_business = Table(
+    "core_business",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("owner_id", Integer, nullable=True),
+)
+
+account_user = Table(
+    "account_user",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("email", String(254), nullable=False),
+    Column("phone", String(255), nullable=True),
 )
 
 core_product = Table(

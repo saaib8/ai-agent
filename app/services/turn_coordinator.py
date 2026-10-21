@@ -283,7 +283,7 @@ from app.schemas.seating_solution import (
     SeatingSolutionOutcome,
 )
 from app.schemas.store_knowledge import StoreKnowledgeGrounding
-from app.schemas.support import CONTACT_LOOKUP_QUESTION, SupportGrounding
+from app.schemas.support import SupportGrounding
 from app.schemas.taste import PendingTaste, TasteQuestionKind
 from app.services.agent_state import (
     NO_RESULTS_REVISION,
@@ -2342,11 +2342,7 @@ class CustomerTurnCoordinator:
             if self._support is not None
             else SupportGrounding(requested=True)
         )
-        primary = _Primary(
-            state=turn.state,
-            support=support,
-            store_knowledge=await self._contact_passages(turn, support),
-        )
+        primary = _Primary(state=turn.state, support=support)
         kinds, picks, liked = await self._selection_facts(turn.state, turn)
         return CustomerTurnResult(
             state=turn.state,
@@ -5130,8 +5126,6 @@ class CustomerTurnCoordinator:
         # Faysal offers the store's own support beside every answer about the
         # store, and in place of one that could not be looked up.
         support = await self._support.offer(turn.context) if self._support is not None else None
-        if found is not None:
-            found = _with_contact(found, await self._contact_passages(turn, support))
         if found is None:
             reachable = support is not None and support.contacts.any
             code = (
@@ -5141,22 +5135,6 @@ class CustomerTurnCoordinator:
             )
             return _Primary(state=working, failure=TurnFailure(code=code), support=support)
         return _Primary(state=working, store_knowledge=found, support=support)
-
-    async def _contact_passages(
-        self, turn: CustomerTurnInput, support: SupportGrounding | None
-    ) -> StoreKnowledgeGrounding | None:
-        """The store's own contact details from its documents, when it set no
-        support channels: a customer-care line its PDF gives is how to reach
-        it, so the reply never says the store shared none (CLAUDE.md 3.3).
-        None where channels are set, the support agent is off, or the search
-        could not run."""
-        if support is None or support.contacts.any or self._store_knowledge is None:
-            return None
-        try:
-            return await self._store_knowledge.lookup(turn.context, CONTACT_LOOKUP_QUESTION)
-        except IntegrationUnavailableError:
-            logger.warning("store_contact_lookup_unavailable", store_id=turn.context.store_id)
-            return None
 
     async def _show_selection(
         self, working: AgentStateV1, turn: CustomerTurnInput, *, liked: bool = False
@@ -10108,14 +10086,3 @@ def _interpretation_clarification(
     if isinstance(interpretation, ClarificationRequired):
         return DeterministicClarification(reason=_M7_CLARIFICATION[interpretation.reason])
     return DeterministicClarification(reason=_M7_UNSUPPORTED[type(interpretation)])
-
-
-def _with_contact(
-    found: StoreKnowledgeGrounding, contact: StoreKnowledgeGrounding | None
-) -> StoreKnowledgeGrounding:
-    """The question's passages, then any contact passage not already among
-    them: the answer stays first, and the way to reach the store is there too."""
-    if contact is None:
-        return found
-    extra = tuple(p for p in contact.passages if p not in found.passages)
-    return found.model_copy(update={"passages": found.passages + extra})

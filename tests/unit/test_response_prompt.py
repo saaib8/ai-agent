@@ -101,9 +101,6 @@ POLICIES = {
     "the support buttons are the contact": (
         "never say its contact details are missing",
     ),
-    "a passage's contact is given when no buttons are": (
-        "that passage is the contact",
-    ),
 }
 
 
@@ -161,7 +158,7 @@ def test_the_prompt_asks_for_no_arabic_behaviour() -> None:
 
 
 def test_the_prompt_is_versioned() -> None:
-    assert VERSION == "customer_response/v1.43"
+    assert VERSION == "customer_response/v1.44"
 
 
 # ── the correction prompt ───────────────────────────────────────────────────
