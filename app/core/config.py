@@ -153,6 +153,13 @@ class SessionSettings(BaseModel):
     shopper the platform names at the front of a conversation id; an id with
     no shopper keeps its cart to itself. 0 switches it off."""
 
+    guest_handover: bool = True
+    """A guest who signs in keeps their chat: the platform, having checked the
+    guest was that browser, asks for it to move from the guest's name to the
+    account's (`POST /v1/sessions/adopt`) - the chat, its room photo and its
+    finder photos - and the guest's cart joins the account's (CLAUDE.md 36).
+    Off, the route refuses and a signed-in shopper starts their chat afresh."""
+
 
 class ApiSettings(BaseModel):
     prefix: str = "/v1"

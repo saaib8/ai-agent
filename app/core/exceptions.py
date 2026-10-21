@@ -488,6 +488,15 @@ class CartQuantityError(InvalidRequestError):
 # ── Support ─────────────────────────────────────────────────────────────────
 
 
+class ConversationAdoptionOffError(ZoryError):
+    """The platform asked for a guest's chat to move to an account where
+    `session.guest_handover` is off."""
+
+    code = "guest_handover_off"
+    http_status = HTTPStatus.NOT_FOUND
+    public_message = "Keeping a chat after signing in is not available here."
+
+
 class SupportHandoverOffError(ZoryError):
     """The platform asked for a conversation to hand to the store's support
     where `customer_agent.support_handover` is off."""

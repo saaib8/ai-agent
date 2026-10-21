@@ -21,6 +21,7 @@ from app.integrations.llm import StructuredLLMClient
 from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
 from app.orchestration.graph import ChatGraphRunner
+from app.repositories.conversation_moves import ConversationMoves
 from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
@@ -44,6 +45,7 @@ from app.services.click_tracking import ClickTrackingService
 from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
+from app.services.conversation_adoption import ConversationAdoptionService
 from app.services.cross_sell import CompanionSearchBuilder
 from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
@@ -534,6 +536,23 @@ def support_handover_service(
 
 SupportHandoverServiceDep = Annotated[
     SupportHandoverService | None, Depends(support_handover_service)
+]
+
+
+def conversation_adoption_service(
+    sessions: SessionStoreDep, app_resources: ResourcesDep
+) -> ConversationAdoptionService | None:
+    """A signed-in guest's chat moved to their account; None where it is off."""
+    settings = app_resources.settings.session
+    if not settings.guest_handover:
+        return None
+    return ConversationAdoptionService(
+        sessions, ConversationMoves(app_resources.redis.client, settings)
+    )
+
+
+ConversationAdoptionServiceDep = Annotated[
+    ConversationAdoptionService | None, Depends(conversation_adoption_service)
 ]
 
 
