@@ -242,6 +242,7 @@ def test_the_settings_still_carry_only_what_has_consumers() -> None:
         # and whether they take the shopper's request to the store.
         "support_agent",
         "support_handover",
+        "support_owner_fallback",
         "designer_direction",
         "designer_taste",
         "designer_space_fit",

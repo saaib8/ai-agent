@@ -68,9 +68,9 @@ ARABIC: Mapping[str, str] = MappingProxyType(
         "You haven't picked anything out yet, so there's nothing to show you here.": (
             "لم تختر أي شيء بعد، لذلك لا يوجد ما أعرضه عليك هنا."
         ),
-        "Could you put that another way? For example, the kind of piece you're after, or "
+        "Try putting that another way - for example, the kind of piece you're after, or "
         "what you'd like to change about what you're looking at.": (
-            "هل يمكنك صياغة ذلك بطريقة أخرى؟ مثلًا نوع القطعة"
+            "جرّب أن تصيغ ذلك بطريقة أخرى - مثلًا نوع القطعة"
             " التي تبحث عنها، أو ما تودّ تغييره فيما تراه أمامك."
         ),
         "The store's information isn't reachable right now. Please try again in a "
