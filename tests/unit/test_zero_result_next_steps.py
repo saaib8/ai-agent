@@ -27,13 +27,11 @@ from app.schemas.query import (
     ResolvedSearch,
 )
 from app.schemas.relaxation import SetAsideField, SetAsideOption
-from app.schemas.response import ResponseOutcomeKind
 from app.schemas.retailer import RetailerContext
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.discovery import ProductDiscoveryService
 from app.services.numeric_guard import build_allowance, check_numeric_policy
 from app.services.relaxation import RelaxationPlanner
-from app.services.response_wording import FALLBACK_WORDING
 from app.services.search_pipeline import ProductSearchPipeline
 from app.taxonomy.dimensions import DimensionRole
 
@@ -290,7 +288,3 @@ def test_a_figure_nobody_supplied_is_still_refused() -> None:
     )
 
     assert violation is not None
-
-
-def test_the_fixed_zero_results_sentence_offers_a_next_step() -> None:
-    assert "widen" in FALLBACK_WORDING[ResponseOutcomeKind.ZERO_RESULTS]

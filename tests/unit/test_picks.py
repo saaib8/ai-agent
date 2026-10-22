@@ -23,7 +23,6 @@ from app.schemas.agent_state import (
     AgentStateV1,
     ProductInteractionState,
 )
-from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
 from app.schemas.chat import ChatRequest
 from app.schemas.conversation import ConversationContext, ConversationMessage, ConversationRole
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
@@ -32,17 +31,13 @@ from app.schemas.picks import DeselectPickAction, PicksRequest, SelectPickAction
 from app.schemas.product import CommerceClassification, ProductCandidate
 from app.schemas.product_action import (
     CompanionAction,
-    CompanionOffer,
     ComparePicksAction,
     GoesWithPickAction,
 )
 from app.schemas.product_reference import PickedOrdinal
-from app.schemas.reply_choice import ReplyChoice
 from app.schemas.resolution import ReferenceFailureReason, ReferenceUnresolved
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, new_session
-from app.services.chat_runtime import ChatRuntime
-from app.services.grounding_builder import to_grounded_product
 from app.services.picks import PicksRuntime
 from app.services.product_interaction import build_picks
 from app.services.reference_resolver import ProductReferenceResolver
@@ -403,82 +398,6 @@ def test_no_action_names_a_product_id() -> None:
         names = set(model.model_fields)
         assert "id" not in names
         assert not {name for name in names if name.endswith(("_id", "_ids"))}, model
-
-
-# ── what the client draws ═══════════════════════════════════════════════════
-
-
-def _result(**fields: Any) -> CustomerTurnResult:
-    from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
-
-    return CustomerTurnResult(
-        state=AgentStateV1(),
-        decision=CustomerAgentDecision(action=AgentAction.ANSWER),
-        grounding=fields.pop("grounding", TurnGrounding()),
-        **fields,
-    )
-
-
-def test_an_opened_pick_is_drawn_above_its_companions_with_chips() -> None:
-    focus = to_grounded_product(
-        _candidate(7), grounding_ref=1, presented_ordinal=None, relaxation_depth=None
-    )
-    presentation = ChatRuntime.presentation(
-        _result(
-            grounding=TurnGrounding(product_detail=focus),
-            focus=None,
-            companions=(CompanionOffer(category="decor", subcategory="carpet", label="rugs"),),
-        )
-    )
-
-    assert presentation is not None
-    assert presentation.product_source == "detail"
-    (chip,) = presentation.choices
-    assert chip == ReplyChoice(
-        label="Rugs",
-        value="Show me rugs to go with it",
-        product_action=CompanionAction(category="decor", subcategory="carpet"),
-    )
-
-
-def test_a_pick_offered_what_goes_with_it_can_also_say_no() -> None:
-    """Their pick above, the kinds as chips, nothing searched - and a way to
-    decline beside them."""
-    focus = to_grounded_product(
-        _candidate(7), grounding_ref=1, presented_ordinal=None, relaxation_depth=None
-    )
-    presentation = ChatRuntime.presentation(
-        _result(
-            focus=focus,
-            companions=(CompanionOffer(category="decor", subcategory="carpet", label="rugs"),),
-        )
-    )
-
-    assert presentation is not None
-    assert presentation.focus == focus and presentation.products == ()
-    assert [c.label for c in presentation.choices] == ["Rugs", "No thanks"]
-    assert presentation.choices[-1].product_action is None
-
-
-def test_the_focus_card_alone_is_something_to_draw() -> None:
-    focus = to_grounded_product(
-        _candidate(7), grounding_ref=1, presented_ordinal=None, relaxation_depth=None
-    )
-    presentation = ChatRuntime.presentation(_result(focus=focus))
-
-    assert presentation is not None and presentation.focus == focus
-    assert presentation.product_source is None, "no list, so nothing to count into"
-
-
-def test_chips_stop_at_four() -> None:
-    offers = tuple(
-        CompanionOffer(category="decor", subcategory=f"type-{n}", label=f"things {n}")
-        for n in range(6)
-    )
-    presentation = ChatRuntime.presentation(_result(companions=offers))
-
-    assert presentation is not None
-    assert len(presentation.choices) == 4
 
 
 # ── the route ═══════════════════════════════════════════════════════════════

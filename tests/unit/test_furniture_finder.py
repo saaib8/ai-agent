@@ -1527,11 +1527,10 @@ async def test_the_next_chat_message_sees_the_photos_matches() -> None:
 
     assert chat.status_code == 200
     assert chat.json()["session_revision"] == 2
-    selector, state = harness.parts[0]["references"].calls[0]
+    selector, state = harness.references.calls[0]
     assert selector == PresentedOrdinal(position=2)
     assert state.product_interaction.presented_product_ids == (31, 32, 33)
-    turn = harness.responses.calls[0][0]
-    assert "picked the sofa" in turn.conversation.messages[0].content
+    assert "picked the sofa" in harness.told(0)[1]
 
 
 # ── settings ════════════════════════════════════════════════════════════════

@@ -8,45 +8,24 @@ turn exactly as it was before Arabic replies existed.
 from __future__ import annotations
 
 import ast
-from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 
 import pytest
-import pytest_asyncio
-from app.core.exceptions import LLMResponseInvalidError
-from app.prompts.customer_commerce.v1 import (
-    _LANGUAGE_SECTION,
-    INSTRUCTIONS,
-    build_instructions,
-)
-from app.schemas.agent_decision import AgentAction, CustomerAgentDecision, with_reply_language
 from app.schemas.agent_state import AgentStateV1
-from app.schemas.agent_turn import CustomerTurnInput, DecisionInput
 from app.schemas.language import LanguageSource, ReplyLanguage
-from app.schemas.search_action import MoreOptionsAction
-from app.services.customer_decision import CustomerAgentDecisionService, _constrained_schema
 from app.services.reply_language import (
     TurnLanguage,
     after_the_decision,
     before_the_turn,
     writes_arabic_script,
 )
-from app.taxonomy.attributes import load_catalog_attributes
-from httpx import ASGITransport, AsyncClient
-from openai.lib._pydantic import to_strict_json_schema
 
 from tests.conftest import build_settings
-from tests.unit.test_chat_api import SESSION, STORE, Harness, a_search, body
-from tests.unit.test_turn_coordinator import CONTEXT, _coordinator, _state
+from tests.unit.agents.fakes import _state
 
 AR, EN = ReplyLanguage.AR, ReplyLanguage.EN
 ARABIC = "أبي كنبة رمادية"
 ENGLISH = "show me grey sofas"
-
-
-def _answer(**fields: Any) -> CustomerAgentDecision:
-    return CustomerAgentDecision(action=AgentAction.ANSWER, **fields)
 
 
 # ── reading the script ──────────────────────────────────────────────────────
@@ -158,139 +137,7 @@ def test_nothing_said_leaves_the_turn_as_it_started() -> None:
 # ── the coordinator, switched off ───────────────────────────────────────────
 
 
-async def test_off_nothing_is_read_stored_or_passed_on() -> None:
-    """Today's behaviour exactly, whatever the customer writes or sends."""
-    coordinator, parts = _coordinator(
-        _answer(switch_reply_language=AR, writes_arabizi=True), arabic_replies=False
-    )
-    turn = CustomerTurnInput(message=ARABIC, state=_state(), context=CONTEXT, locale=AR)
-
-    result = await coordinator.run(turn)
-
-    assert result.reply_language is None
-    assert result.state.reply_language is None
-    assert parts["decisions"].inputs[0].reply_language is None
-
-
-async def test_off_a_stored_language_is_left_alone() -> None:
-    """A session written while the switch was on keeps its value untouched,
-    so turning the switch back on later resumes it."""
-    coordinator, _ = _coordinator(_answer(), arabic_replies=False)
-    state = _state().model_copy(update={"reply_language": AR})
-
-    result = await coordinator.run(CustomerTurnInput(message=ENGLISH, state=state, context=CONTEXT))
-
-    assert result.reply_language is None
-    assert result.state.reply_language is AR
-
-
 # ── the coordinator, switched on ────────────────────────────────────────────
-
-
-async def _run_on(
-    decision: CustomerAgentDecision,
-    message: str,
-    *,
-    stored: ReplyLanguage | None = None,
-    locale: ReplyLanguage | None = None,
-    decision_error: Exception | None = None,
-) -> tuple[Any, Any]:
-    coordinator, parts = _coordinator(decision, decision_error=decision_error, arabic_replies=True)
-    state = _state().model_copy(update={"reply_language": stored})
-    turn = CustomerTurnInput(message=message, state=state, context=CONTEXT, locale=locale)
-    return await coordinator.run(turn), parts
-
-
-async def test_an_arabic_message_starts_an_arabic_session() -> None:
-    result, parts = await _run_on(_answer(), ARABIC)
-
-    assert result.reply_language is AR
-    assert result.state.reply_language is AR
-    assert parts["decisions"].inputs[0].reply_language is AR
-
-
-async def test_an_english_message_keeps_an_arabic_session() -> None:
-    result, parts = await _run_on(_answer(), ENGLISH, stored=AR)
-
-    assert result.reply_language is AR
-    assert result.state.reply_language is AR
-    # The model is told so - the input the LANGUAGE section exists to explain.
-    assert parts["decisions"].inputs[0].reply_language is AR
-
-
-async def test_an_undecided_english_session_stores_nothing() -> None:
-    result, parts = await _run_on(_answer(), ENGLISH)
-
-    assert result.reply_language is EN
-    assert result.state.reply_language is None
-    assert parts["decisions"].inputs[0].reply_language is None
-
-
-async def test_asking_for_english_switches_and_is_remembered() -> None:
-    result, _ = await _run_on(_answer(switch_reply_language=EN), "English please", stored=AR)
-
-    assert result.reply_language is EN
-    assert result.state.reply_language is EN
-
-
-async def test_asking_for_arabic_switches_an_english_session() -> None:
-    result, _ = await _run_on(_answer(switch_reply_language=AR), "تكلم عربي", stored=EN)
-
-    assert result.reply_language is AR
-    assert result.state.reply_language is AR
-
-
-async def test_arabizi_read_by_the_decision_starts_an_arabic_session() -> None:
-    result, _ = await _run_on(_answer(writes_arabizi=True), "abi kanaba")
-
-    assert result.reply_language is AR
-    assert result.state.reply_language is AR
-
-
-async def test_the_locale_answers_the_turn_but_is_never_stored() -> None:
-    result, parts = await _run_on(_answer(), ENGLISH, locale=AR)
-
-    assert result.reply_language is AR
-    assert result.state.reply_language is None
-    assert parts["decisions"].inputs[0].reply_language is AR
-
-
-async def test_a_turn_we_could_not_understand_keeps_the_language() -> None:
-    """The fallback answers in the language the turn started in - settled
-    before the decision that failed."""
-    result, _ = await _run_on(
-        _answer(), ARABIC, decision_error=LLMResponseInvalidError(reason="bad")
-    )
-
-    assert result.reply_language is AR
-    assert result.state.reply_language is AR
-
-
-async def test_a_screen_action_keeps_the_session_language() -> None:
-    """A tap carries no words to read; the session's language stands."""
-    coordinator, _ = _coordinator(_answer(), arabic_replies=True)
-    state = _state().model_copy(update={"reply_language": AR})
-    turn = CustomerTurnInput(
-        message="more", state=state, context=CONTEXT, search_action=MoreOptionsAction()
-    )
-
-    result = await coordinator.run(turn)
-
-    assert result.reply_language is AR
-    assert result.state.reply_language is AR
-
-
-async def test_the_language_never_changes_what_the_turn_does() -> None:
-    """Presentation only: the same decision on the same state does the same
-    thing in either language, apart from the language itself."""
-    english, _ = await _run_on(_answer(), ENGLISH)
-    arabic, _ = await _run_on(_answer(), ARABIC)
-
-    def without_language(state: AgentStateV1) -> dict[str, Any]:
-        return state.model_dump(exclude={"reply_language"})
-
-    assert without_language(english.state) == without_language(arabic.state)
-    assert english.grounding == arabic.grounding
 
 
 # ── settings ────────────────────────────────────────────────────────────────
@@ -315,64 +162,6 @@ def test_an_explicit_setting_always_wins(environment: str, explicit: bool) -> No
 
 
 # ── across requests ─────────────────────────────────────────────────────────
-
-
-@pytest_asyncio.fixture
-async def chat_client() -> AsyncIterator[Any]:
-    clients: list[AsyncClient] = []
-
-    async def build(harness: Harness) -> AsyncClient:
-        client = AsyncClient(transport=ASGITransport(app=harness.app()), base_url="http://test")
-        clients.append(client)
-        return client
-
-    try:
-        yield build
-    finally:
-        for client in clients:
-            await client.aclose()
-
-
-async def test_an_arabic_session_stays_arabic_across_requests(chat_client: Any) -> None:
-    harness = Harness(a_search(), a_search(), arabic_replies=True)
-    client = await chat_client(harness)
-
-    first = (await client.post("/v1/chat", json=body(ARABIC))).json()
-    second = (await client.post("/v1/chat", json=body(ENGLISH, expected_session_revision=1))).json()
-
-    assert first["reply_language"] == "ar"
-    assert second["reply_language"] == "ar"
-    assert harness.sessions.saved[(STORE, SESSION)].state.reply_language is AR
-
-
-async def test_the_locale_is_per_request(chat_client: Any) -> None:
-    harness = Harness(a_search(), a_search(), arabic_replies=True)
-    client = await chat_client(harness)
-
-    first = (await client.post("/v1/chat", json=body(ENGLISH, locale="ar"))).json()
-    second = (await client.post("/v1/chat", json=body(ENGLISH, expected_session_revision=1))).json()
-
-    assert first["reply_language"] == "ar"
-    assert second["reply_language"] == "en"
-    assert harness.sessions.saved[(STORE, SESSION)].state.reply_language is None
-
-
-async def test_off_the_response_carries_no_language(chat_client: Any) -> None:
-    harness = Harness(a_search())
-    client = await chat_client(harness)
-
-    payload = (await client.post("/v1/chat", json=body(ARABIC, locale="ar"))).json()
-
-    assert payload["reply_language"] is None
-    assert harness.sessions.saved[(STORE, SESSION)].state.reply_language is None
-
-
-async def test_an_unknown_locale_is_refused(chat_client: Any) -> None:
-    client = await chat_client(Harness(a_search(), arabic_replies=True))
-
-    reply = await client.post("/v1/chat", json=body(ENGLISH, locale="fr"))
-
-    assert reply.status_code == 422
 
 
 # ── every rebuilt state carries the language ────────────────────────────────
@@ -406,98 +195,6 @@ def test_every_state_rebuild_names_every_field() -> None:
 
 
 # ── what the decision model is asked ────────────────────────────────────────
-
-
-class _RecordingClient:
-    def __init__(self, decision: CustomerAgentDecision) -> None:
-        self.decision = decision
-        self.calls: list[dict[str, Any]] = []
-
-    @property
-    def model(self) -> str:
-        return "decision-model-under-test"
-
-    async def parse(self, *, instructions: str, user_input: str, schema: type[Any]) -> Any:
-        self.calls.append({"instructions": instructions, "schema": schema})
-        return self.decision
-
-
-def _schema_fields(schema: type[Any]) -> set[str]:
-    return set(to_strict_json_schema(schema)["properties"])
-
-
-@pytest.mark.parametrize("vocabulary", [False, True], ids=["plain", "constrained"])
-async def test_off_the_model_is_asked_exactly_what_it_was_before(vocabulary: bool) -> None:
-    """Same instructions, same response schema: the language fields are on the
-    contract but invisible to the model."""
-    attributes = load_catalog_attributes() if vocabulary else None
-    client = _RecordingClient(_answer())
-    service = CustomerAgentDecisionService(client, attributes)  # type: ignore[arg-type]
-
-    await service.decide(DecisionInput(message=ENGLISH))
-
-    call = client.calls[0]
-    assert call["instructions"] == build_instructions(attributes)
-    assert "LANGUAGE\n" not in call["instructions"]
-    fields = _schema_fields(call["schema"])
-    assert "switch_reply_language" not in fields
-    assert "writes_arabizi" not in fields
-    expected = _constrained_schema(attributes) if attributes else CustomerAgentDecision
-    assert call["schema"] is expected, "the very schema main sends"
-
-
-@pytest.mark.parametrize("vocabulary", [False, True], ids=["plain", "constrained"])
-async def test_on_the_model_is_shown_and_told_about_the_language_fields(
-    vocabulary: bool,
-) -> None:
-    attributes = load_catalog_attributes() if vocabulary else None
-    client = _RecordingClient(_answer())
-    service = CustomerAgentDecisionService(
-        client,  # type: ignore[arg-type]
-        attributes,
-        reply_language=True,
-    )
-
-    await service.decide(DecisionInput(message=ENGLISH))
-
-    call = client.calls[0]
-    assert call["instructions"] == build_instructions(attributes, reply_language=True)
-    assert "LANGUAGE\n" in call["instructions"]
-    assert {"switch_reply_language", "writes_arabizi"} <= _schema_fields(call["schema"])
-
-
-async def test_on_what_the_model_wrote_reaches_the_plain_contract() -> None:
-    shown = with_reply_language(CustomerAgentDecision)
-    client = _RecordingClient(
-        shown(action=AgentAction.ANSWER, switch_reply_language=EN, writes_arabizi=True)
-    )
-    service = CustomerAgentDecisionService(client, reply_language=True)  # type: ignore[arg-type]
-
-    decision = await service.decide(DecisionInput(message="English please"))
-
-    assert type(decision) is CustomerAgentDecision
-    assert decision.switch_reply_language is EN
-    assert decision.writes_arabizi is True
-
-
-def test_the_language_section_is_only_added_when_on() -> None:
-    assert build_instructions() == INSTRUCTIONS
-    on = build_instructions(reply_language=True)
-    assert on != INSTRUCTIONS
-    # The section, and in its place no blanket "Reply in English." - the
-    # section says which field is in which language.
-    assert on.replace(_LANGUAGE_SECTION, "", 1) == INSTRUCTIONS.replace(
-        "Reply in English.\n\n", "", 1
-    )
-
-
-def test_the_language_section_teaches_the_counter_examples() -> None:
-    """The live failure this guards: an English follow-up in an Arabic session
-    read as a request for English."""
-    flat = " ".join(_LANGUAGE_SECTION.split())
-    assert "Writing in a language is not asking for it" in flat
-    assert '"show me cheaper ones"' in flat
-    assert "never sets switch_reply_language" in flat
 
 
 # ── what a saved session holds ──────────────────────────────────────────────

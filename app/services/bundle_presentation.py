@@ -24,7 +24,6 @@ from decimal import Decimal
 from app.core.exceptions import BundlePresentationError
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_state import RoomProjectState
-from app.schemas.agent_turn import CustomerTurnResult
 from app.schemas.bundle import BundleLine, BundleStatus, RoomBundle, TotalUnavailableReason
 from app.schemas.bundle_presentation import (
     GroundedBundleItem,
@@ -37,50 +36,34 @@ from app.services.bundle_cards import group_bundle_cards
 from app.services.bundle_money import SpendLine, new_spend
 
 
-def build_bundle_presentation(
-    result: CustomerTurnResult,
-) -> GroundedBundlePresentation | None:
-    """The room as the customer sees it, or None when no room was selected.
+def present_room_bundle(
+    outcome: RoomBundle,
+    committed: RoomProjectState | None,
+    *,
+    budget: PriceConstraint | None = None,
+) -> GroundedBundlePresentation:
+    """One optimised room as the customer sees it, without a turn result.
 
-    Built for every real bundle - complete, partial and infeasible alike. An
-    infeasible one still renders the pieces they asked to keep, which is the
-    only way to explain what conflicts with what.
+    `committed` is the room state this outcome was committed into, or None when
+    it was not (an infeasible room, a held proposal): ordering comes from that
+    state when there is one, and from the outcome's own lines otherwise. The
+    budget is the customer's, and defaults to the committed room's.
     """
-    outcome = result.bundle_outcome
-    if not isinstance(outcome, RoomBundle):
-        return None
-
-    room = result.state.room_project
+    if budget is None and committed is not None:
+        budget = committed.budget
     return GroundedBundlePresentation(
         status=outcome.status,
         # Ordering comes from the state this outcome was committed into; the
         # budget comes from the room either way, because it is what the
         # customer said rather than anything the commit decided.
-        items=_items(outcome, _committed_room(result, outcome)),
-        totals=_totals(outcome, room.budget if room else None),
+        items=_items(outcome, committed),
+        totals=_totals(outcome, budget),
     )
 
 
-def _committed_room(
-    result: CustomerTurnResult, outcome: RoomBundle
-) -> RoomProjectState | None:
-    """The state this outcome was committed into, or None if it was not.
-
-    An infeasible package is never committed, so current state describes a
-    different room and must not be used to order its explanatory rendering. A
-    held over-budget swap is the same: its complete room is a proposal, not
-    committed, so state still describes the room before the swap and ordering by
-    it would look up the swapped-out product's facts and not find them
-    (CLAUDE.md 27).
-    """
-    if outcome.status is BundleStatus.INFEASIBLE or result.swap_offer is not None:
-        return None
-    return result.state.room_project
 
 
-def _items(
-    bundle: RoomBundle, room: RoomProjectState | None
-) -> tuple[GroundedBundleItem, ...]:
+def _items(bundle: RoomBundle, room: RoomProjectState | None) -> tuple[GroundedBundleItem, ...]:
     """One card per distinguishable piece, in the room's canonical order.
 
     Grouped and ordered by the shared card rule over **committed state**, so
@@ -121,13 +104,8 @@ def _outcome_groups(lines: Sequence[BundleLine]) -> list[tuple[BundleLine, int]]
     """The outcome's own grouping, for a room that was never committed."""
     merged: dict[tuple[int, BundleAcquisition, bool], list[BundleLine]] = {}
     for line in lines:
-        merged.setdefault(
-            (line.product.product_id, line.acquisition, line.locked), []
-        ).append(line)
-    return [
-        (members[0], sum(line.quantity for line in members))
-        for members in merged.values()
-    ]
+        merged.setdefault((line.product.product_id, line.acquisition, line.locked), []).append(line)
+    return [(members[0], sum(line.quantity for line in members)) for members in merged.values()]
 
 
 def _cards(groups: Sequence[tuple[BundleLine, int]]) -> tuple[GroundedBundleItem, ...]:
@@ -154,9 +132,7 @@ def _cards(groups: Sequence[tuple[BundleLine, int]]) -> tuple[GroundedBundleItem
     )
 
 
-def _totals(
-    bundle: RoomBundle, budget: PriceConstraint | None
-) -> GroundedBundleTotals:
+def _totals(bundle: RoomBundle, budget: PriceConstraint | None) -> GroundedBundleTotals:
     """The arithmetic, copied rather than recomputed.
 
     `new_spend_total` and its unavailability both come from the outcome that
@@ -248,9 +224,7 @@ def build_state_bundle_presentation(
                 locked=card.locked,
                 unit_price=product.price_amount,
                 price_unit=product.price_unit,
-                new_spend_line_total=(
-                    product.price_amount * card.quantity if buying else None
-                ),
+                new_spend_line_total=(product.price_amount * card.quantity if buying else None),
             )
         )
         spend.append(
@@ -288,9 +262,7 @@ def _state_totals(
         assert budget is not None and budget.max_amount is not None
         if currency == budget.currency:
             within = (
-                total < budget.max_amount
-                if budget.max_exclusive
-                else total <= budget.max_amount
+                total < budget.max_amount if budget.max_exclusive else total <= budget.max_amount
             )
     # Only a ceiling is rendered, with its currency. A budget stated some other
     # way has no maximum to show, and a minimum shown as one would be a

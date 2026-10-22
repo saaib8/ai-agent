@@ -20,9 +20,7 @@ from app.schemas.agent_state import (
     BundleItemState,
     BundleItemStatus,
     CustomerPreferenceState,
-    DerivedCommerceState,
     ProductInteractionState,
-    PurchaseStage,
     RoomDesignNeedState,
     RoomProjectState,
 )
@@ -97,7 +95,6 @@ def test_a_default_state_is_valid_and_empty() -> None:
     assert state.active_search is None
     assert state.room_project is None
     assert state.customer_preferences.semantic_preferences == ()
-    assert state.derived_commerce.purchase_stage is None
 
 
 def test_an_unknown_schema_version_is_rejected() -> None:
@@ -118,7 +115,6 @@ def test_an_unknown_schema_version_is_rejected() -> None:
         ActiveSearchState,
         ProductInteractionState,
         RoomProjectState,
-        DerivedCommerceState,
     ],
 )
 def test_every_state_model_is_frozen_and_forbids_extras(
@@ -137,7 +133,7 @@ def test_state_cannot_be_mutated_in_place() -> None:
     state = AgentStateV1()
 
     with pytest.raises(ValidationError):
-        state.derived_commerce = DerivedCommerceState()  # type: ignore[misc]
+        state.room_project = None  # type: ignore[misc]
 
 
 # ── active search ───────────────────────────────────────────────────────────
@@ -485,14 +481,8 @@ def test_room_type_is_plain_context() -> None:
 # ── derived commerce ────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("stage", list(PurchaseStage))
-def test_every_purchase_stage_is_representable(stage: PurchaseStage) -> None:
-    assert DerivedCommerceState(purchase_stage=stage).purchase_stage is stage
 
 
-def test_an_unassessed_stage_is_none_not_exploring() -> None:
-    assert DerivedCommerceState().purchase_stage is None
-    assert DerivedCommerceState().purchase_stage is not PurchaseStage.EXPLORING
 
 
 # ── boundary guards ─────────────────────────────────────────────────────────
@@ -501,7 +491,7 @@ def test_an_unassessed_stage_is_none_not_exploring() -> None:
 def _state_field_names() -> set[str]:
     models = (
         AgentStateV1, CustomerPreferenceState, ActiveSearchState,
-        ProductInteractionState, RoomProjectState, DerivedCommerceState,
+        ProductInteractionState, RoomProjectState,
     )
     return {name for model in models for name in model.model_fields}
 
@@ -555,3 +545,25 @@ def test_retailer_context_and_capabilities_are_not_state_fields() -> None:
     imported = _imported_names()
     assert "RetailerContext" not in imported
     assert "RetailerCatalogCapabilities" not in imported
+
+
+def test_a_session_saved_with_retired_fields_still_reads() -> None:
+    """Fields the scripted conversation kept are dropped on reading, so a
+    conversation saved before they were retired carries on."""
+    stored = {
+        "schema_version": AGENT_STATE_VERSION,
+        "product_brief": {"shown": ["sofa"]},
+        "taste": {"asked": ["style"]},
+        "derived_commerce": {"purchase_stage": "exploring"},
+        "room_project": {
+            "room_type": "living room",
+            "questions_asked": ["budget"],
+            "questions_done": True,
+            "palette_left_to_us": True,
+        },
+    }
+
+    state = AgentStateV1.model_validate(stored)
+
+    assert state.room_project is not None and state.room_project.room_type == "living room"
+    assert "product_brief" not in state.model_dump()

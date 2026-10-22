@@ -74,9 +74,7 @@ logger = get_logger(__name__)
 MAX_MESSAGE_CHARS = 1000
 
 
-def _strength(
-    stated: ConstraintStrength | None, *, present: bool
-) -> ConstraintStrength | None:
+def _strength(stated: ConstraintStrength | None, *, present: bool) -> ConstraintStrength | None:
     """The strength to record for one constraint.
 
     Absent constraint -> None. Present constraint with no softening language ->
@@ -187,9 +185,7 @@ class QueryUnderstandingService:
                 if isinstance(outcome, UnsupportedDimensionRequirement)
                 else None
             ),
-            dimension_roles=[
-                str(d.role) for d in interpretation.dimensions if d.role is not None
-            ],
+            dimension_roles=[str(d.role) for d in interpretation.dimensions if d.role is not None],
             elapsed_ms=elapsed_ms,
         )
         return outcome
@@ -208,20 +204,36 @@ class QueryUnderstandingService:
         )
         return interpretation, self._resolve(interpretation)
 
+    @property
+    def interpretation_schema(self) -> type[CommerceInterpretation]:
+        """The interpretation restricted to approved values - what an agent's
+        search tool takes as its arguments."""
+        return self._schema
+
+    def resolve(self, interpretation: CommerceInterpretation) -> QueryInterpretation:
+        """An interpretation an agent wrote, validated exactly as one this
+        service's own model wrote: taxonomy first, then every figure.
+
+        An agent names the product type; its family comes from the registry.
+        A type is filed under one category only, so the family an agent wrote
+        beside it is replaced by the registry's - "bedroom / nightstand" is a
+        nightstand, and searching it never fails on where the shop files it."""
+        subcategory = (interpretation.commerce_subcategory or "").strip()
+        family = self._taxonomy.category_of(subcategory) if subcategory else None
+        if family is not None and family != interpretation.commerce_category:
+            interpretation = interpretation.model_copy(update={"commerce_category": family})
+        return self._resolve(interpretation)
+
     def _resolve(self, interpretation: CommerceInterpretation) -> QueryInterpretation:
         if interpretation.multiple_product_types:
             # One request cannot serve two product families, and picking one
             # would silently drop the other. Splitting a message into several
             # searches belongs to the future conversational layer.
-            return ClarificationRequired(
-                reason=ClarificationReason.MULTIPLE_PRODUCT_TYPES
-            )
+            return ClarificationRequired(reason=ClarificationReason.MULTIPLE_PRODUCT_TYPES)
 
         category = (interpretation.commerce_category or "").strip()
         if not category:
-            return ClarificationRequired(
-                reason=ClarificationReason.NO_COMMERCE_CATEGORY
-            )
+            return ClarificationRequired(reason=ClarificationReason.NO_COMMERCE_CATEGORY)
 
         subcategory = (interpretation.commerce_subcategory or "").strip() or None
         # Taxonomy first: an unapproved value never reaches the domain contract,
@@ -324,9 +336,7 @@ class QueryUnderstandingService:
             lean=RankingLean(space_cm=space_cm) if space_cm else None,
         )
 
-    def _to_centimetres(
-        self, raw: str, unit_text: str | None, *, field: str
-    ) -> Decimal | None:
+    def _to_centimetres(self, raw: str, unit_text: str | None, *, field: str) -> Decimal | None:
         """Convert one stated measurement to centimetres, or refuse.
 
         Uses the shared unit vocabulary, so there is no second converter and a
@@ -357,14 +367,10 @@ class QueryUnderstandingService:
 
         for stated in interpretation.dimensions:
             if stated.role is None:
-                return ClarificationRequired(
-                    reason=ClarificationReason.MISSING_DIMENSION_ROLE
-                )
+                return ClarificationRequired(reason=ClarificationReason.MISSING_DIMENSION_ROLE)
             values = self._dimension_values(stated)
             if values is None:
-                return ClarificationRequired(
-                    reason=ClarificationReason.MISSING_DIMENSION_UNIT
-                )
+                return ClarificationRequired(reason=ClarificationReason.MISSING_DIMENSION_UNIT)
             min_cm, max_cm, target_cm = values
 
             refusal = self._dimension_semantics.refusal(subcategory, stated.role)
@@ -397,13 +403,9 @@ class QueryUnderstandingService:
                     )
                 )
             except ValidationError as exc:
-                raise LLMResponseInvalidError(
-                    reason="dimension constraint invalid"
-                ) from exc
+                raise LLMResponseInvalidError(reason="dimension constraint invalid") from exc
             semantics.append(
-                DimensionConstraintSemantics(
-                    role=stated.role, strength=stated.strength
-                )
+                DimensionConstraintSemantics(role=stated.role, strength=stated.strength)
             )
 
         planar = self._planar(interpretation.planar_dimensions, subcategory)
@@ -449,16 +451,12 @@ class QueryUnderstandingService:
         if not self._dimension_semantics.reads_pair(subcategory):
             # A pair means nothing where sides have no agreed order; fall back
             # to asking rather than guessing which side is which.
-            return ClarificationRequired(
-                reason=ClarificationReason.MISSING_DIMENSION_ROLE
-            )
+            return ClarificationRequired(reason=ClarificationReason.MISSING_DIMENSION_ROLE)
         unit = stated.unit or PAIR_UNIT_WHEN_UNSAID
         first = self._to_centimetres(stated.first_value, unit, field="first_value")
         second = self._to_centimetres(stated.second_value, unit, field="second_value")
         if first is None or second is None:
-            return ClarificationRequired(
-                reason=ClarificationReason.MISSING_DIMENSION_UNIT
-            )
+            return ClarificationRequired(reason=ClarificationReason.MISSING_DIMENSION_UNIT)
         try:
             constraint = PlanarDimensionConstraint(
                 first_cm=first, second_cm=second, source_unit=unit
@@ -497,9 +495,7 @@ class QueryUnderstandingService:
             # Untrusted model output: a value must belong to the family claimed
             # for it, so a style can never arrive as a colour. Returned in the
             # registry's spelling, which is what the stored data uses.
-            canonical = (
-                self._attributes.canonical(attribute.family, stated) if stated else None
-            )
+            canonical = self._attributes.canonical(attribute.family, stated) if stated else None
             if stated is not None and canonical is None:
                 raise LLMResponseInvalidError(
                     reason=f"{attribute.family} value outside the approved vocabulary"
@@ -519,9 +515,7 @@ class QueryUnderstandingService:
                     strict[attribute.family].append(canonical)
             else:
                 unresolved.append(
-                    UnresolvedAttribute(
-                        family=attribute.family, raw_value=attribute.raw_value
-                    )
+                    UnresolvedAttribute(family=attribute.family, raw_value=attribute.raw_value)
                 )
 
         return (
@@ -541,9 +535,7 @@ class QueryUnderstandingService:
         if not currency:
             # No trusted retailer-currency source exists, and `price_unit` is
             # not one. Asking is the only honest option.
-            return ClarificationRequired(
-                reason=ClarificationReason.MISSING_PRICE_CURRENCY
-            )
+            return ClarificationRequired(reason=ClarificationReason.MISSING_PRICE_CURRENCY)
         try:
             return PriceConstraint(
                 currency=currency,
@@ -557,9 +549,7 @@ class QueryUnderstandingService:
         except ValidationError as exc:
             raise LLMResponseInvalidError(reason="price constraint invalid") from exc
 
-    def _capacity(
-        self, interpretation: CommerceInterpretation
-    ) -> SeatingCapacityConstraint | None:
+    def _capacity(self, interpretation: CommerceInterpretation) -> SeatingCapacityConstraint | None:
         low, high = (
             interpretation.seating_capacity_min,
             interpretation.seating_capacity_max,

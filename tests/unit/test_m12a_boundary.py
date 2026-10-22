@@ -14,7 +14,6 @@ import re
 from pathlib import Path
 
 import pytest
-from app.schemas.agent_view import AgentStateView
 from app.schemas.design import (
     AnchorProduct,
     InteriorDesignRequest,
@@ -99,7 +98,7 @@ def test_the_design_model_is_its_own_setting() -> None:
 def test_the_design_prompt_is_versioned() -> None:
     from app.prompts.interior_design.v1 import VERSION
 
-    assert VERSION == "interior_design/v5"
+    assert VERSION == "interior_design/v8"
 
 
 # ── the authority line ──────────────────────────────────────────────────────
@@ -186,16 +185,6 @@ def test_each_measurement_type_fixes_its_own_authority() -> None:
         assert "Literal" in annotation, model.__name__
 
 
-def test_the_state_view_exposes_room_measurements_but_no_geometry_engine() -> None:
-    """The decision model may see what the customer said about their room, for
-    the same reason it may see their budget."""
-    names = _reachable_names(AgentStateView)
-
-    assert "room_measurements" in names
-    # Whole field names: `max_cm` legitimately contains "x_cm", so a substring
-    # check would flag an ordinary bound.
-    for forbidden in ("polygon", "coordinates", "position", "placement", "layout"):
-        assert forbidden not in names, forbidden
 
 
 # ── the deterministic services stay deterministic ───────────────────────────
@@ -340,10 +329,10 @@ def test_the_design_agent_is_built_from_its_own_client_in_one_place() -> None:
 
 
 def test_a_commerce_turn_does_not_require_the_design_capability() -> None:
-    """M12B made the specialist optional. A coordinator that demanded it would
-    have taken ordinary search and comparison down with it."""
+    """M12B made the specialist optional. Agent services that demanded it
+    would have taken ordinary search and comparison down with it."""
     dependencies = (APP / "api/dependencies.py").read_text()
-    factory = dependencies.split("def customer_turn_coordinator")[1].split("\ndef ")[0]
+    factory = dependencies.split("def agent_services")[1].split("\ndef ")[0]
 
     assert "optional_interior_design_agent(" in factory
     # Word-boundary, because the optional factory's name ends with the
@@ -364,7 +353,7 @@ def test_an_unconfigured_deployment_still_starts() -> None:
     settings = build_settings()
 
     assert settings.interior_design.model is None
-    assert settings.customer_agent.decision_model is None
+    assert settings.agents.supervisor.model is None
 
 
 def test_redacted_settings_expose_status_not_identifiers() -> None:

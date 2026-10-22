@@ -14,7 +14,6 @@ that safe:
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 import pytest
@@ -38,9 +37,7 @@ from app.schemas.agent_updates import (
     SetBundleLineQuantity,
     SetBundleLineStatus,
 )
-from app.schemas.agent_view import RoomProjectView
 from app.services.agent_state import apply_update
-from app.services.agent_view import project_state
 from app.services.design_facts import project_anchors
 from pydantic import ValidationError
 
@@ -344,39 +341,8 @@ def test_an_anchor_never_learns_a_line_or_product_id() -> None:
 # ── the model-facing view ───────────────────────────────────────────────────
 
 
-def test_the_view_counts_lines_without_naming_products() -> None:
-    state = committed(
-        spec(10, status=BundleItemStatus.LOCKED),
-        spec(11, acquisition=BundleAcquisition.ALREADY_OWNED),
-        spec(12),
-    )
-
-    view = project_state(state).room_project
-    assert view is not None
-    assert view.bundle_line_count == 3
-    assert view.locked_line_count == 1
-    assert view.already_owned_line_count == 1
 
 
-def test_four_of_one_product_is_one_line_in_the_view() -> None:
-    state = committed(spec(10, quantity=4))
-
-    view = project_state(state).room_project
-    assert view is not None
-    assert view.bundle_line_count == 1
-
-
-@pytest.mark.parametrize(
-    "forbidden", ["product_id", "line_id", "price", "store", "rank", "bundle_items"]
-)
-def test_the_view_carries_no_identity_or_catalog_fact(forbidden: str) -> None:
-    for field in RoomProjectView.model_fields:
-        assert forbidden not in field, field
-
-
-def test_a_count_cannot_exceed_the_bundle_it_summarises() -> None:
-    with pytest.raises(ValidationError):
-        RoomProjectView(bundle_line_count=1, already_owned_line_count=2)
 
 
 # ── model authority ─────────────────────────────────────────────────────────
@@ -391,35 +357,3 @@ def test_the_model_cannot_author_bundle_membership(forbidden: str) -> None:
     application resolves a verified reference into a line."""
     for field in CustomerStateProposal.model_fields:
         assert forbidden not in field, field
-
-
-def test_proposal_mapping_never_reaches_the_bundle() -> None:
-    tree = ast.parse((APP / "services/proposal_mapping.py").read_text())
-    names = {
-        node.arg
-        for node in ast.walk(tree)
-        if isinstance(node, ast.keyword) and node.arg is not None
-    }
-
-    assert "bundle_operations" not in names
-
-
-# ── nothing executes yet ────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "service",
-    [
-        "BundleOptimizer",
-        "DesignDiscoveryService",
-        "InteriorDesignAgent",
-        "CatalogCapabilityService",
-    ],
-)
-def test_the_coordinator_now_runs_the_whole_room_path(service: str) -> None:
-    """M12E-1 asserted the opposite: state only, handoff still a marker. M12E-2
-    wired it, so the guard is inverted rather than deleted - the composition is
-    worth pinning in the direction it now runs."""
-    source = (APP / "services/turn_coordinator.py").read_text()
-
-    assert service in source

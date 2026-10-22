@@ -21,13 +21,19 @@ on every transition rather than trusted to hold.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
-from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority
+from app.schemas.design import (
+    MAX_NEXT_SIZES,
+    MAX_REGULAR_SEATING_COUNT,
+    DesignPriority,
+    NextSize,
+)
 from app.schemas.design_intent import (
     MAX_DESIGN_INTENT_CHARS,
     normalise_design_intent,
@@ -40,9 +46,8 @@ from app.schemas.discovery import (
     ProductSearchRequest,
     SeatingCapacityConstraint,
 )
-from app.schemas.geometry import RoomGeometry
+from app.schemas.geometry import MAX_WALL_NOTES, RoomGeometry, WallNote
 from app.schemas.language import ReplyLanguage
-from app.schemas.product_brief import ProductBriefState
 from app.schemas.query import (
     ConstraintSemantics,
     DimensionConstraintSemantics,
@@ -51,9 +56,7 @@ from app.schemas.query import (
     SemanticPreference,
     validate_dimension_correspondence,
 )
-from app.schemas.room_opener import RoomQuestionKind
-from app.schemas.seating_solution import SeatingShape
-from app.schemas.taste import TasteState
+from app.schemas.seating_solution import SeatingRequirements, SeatingShape
 
 AGENT_STATE_VERSION: Literal["agent_state_v5"] = "agent_state_v5"
 """The state contract. Change the shape, change this.
@@ -74,6 +77,15 @@ A session written by an older version is refused rather than coerced: the store
 validates through this contract, and an unreadable session is a controlled
 failure (M13 7). No migration is written, because the product has not launched
 and inventing one would be maintaining a path nobody has travelled."""
+
+_RETIRED_STATE_FIELDS = frozenset(
+    {"product_brief", "taste", "room_check", "inside_sizes", "derived_commerce"}
+)
+_RETIRED_ROOM_FIELDS = frozenset(
+    {"questions_asked", "questions_done", "palette_left_to_us", "finishing_order"}
+)
+"""Fields no code reads any more. Dropped when a stored session is read, never
+written again; the version does not move, since every v5 session still reads."""
 
 MAX_SEMANTIC_INTENT_CHARS = 200
 """A quality phrase is a few words. This bound is the only thing standing
@@ -208,6 +220,10 @@ class ActiveSearchState(BaseModel):
     its contents to make a decision.
     """
 
+    customer_words: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The customer's own words for this search, kept so "show me more" ranks
+    the next page the same way. A new search replaces them."""
+
     ordered_by_pick: bool = False
     """The cards were chosen to go with a pick - the designer's kind, or a
     kind tapped beneath the pick - and lean on its look, not on anything the
@@ -297,42 +313,6 @@ class PresentedList(BaseModel):
     """The search revision it was committed at - the number its cards carry."""
 
     product_ids: tuple[int, ...] = Field(min_length=1)
-
-
-class RoomCheck(BaseModel):
-    """A pick's fit in the room, asked about once: whether the room's size has
-    been asked for it, and whether its answer has been checked."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    product_id: int = Field(ge=1)
-    kind: str = Field(min_length=1)
-    """The pick's reviewed type - a bed."""
-    answered: bool = False
-    """The fit was judged once the room's size came: the next fit question is
-    about whatever they point at, not this pick."""
-    list_revision: int | None = None
-    """The list on screen when it was asked: only a reply beside that list
-    answers it."""
-
-
-MAX_INSIDE_SIZES = 10
-"""As many as the picks tray holds."""
-
-
-class InsideSize(BaseModel):
-    """What goes inside one pick, in the size it takes - a 180 cm mattress for
-    the bed they picked - as the designer read it off the pick (CLAUDE.md
-    10.11). Kept so their own later search for it comes in that size."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    product_id: int = Field(ge=1)
-    pick_kind: str = Field(min_length=1)
-    """The pick's type - a bed."""
-    kind: str = Field(min_length=1)
-    """The type that goes inside it - mattresses."""
-    width_cm: int = Field(ge=40, le=250)
 
 
 class ProductInteractionState(BaseModel):
@@ -616,6 +596,15 @@ class RoomProjectState(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _retired(cls, data: Any) -> Any:
+        """Fields the scripted room interview kept, dropped on reading - so a
+        session saved before they were retired still reads, unchanged."""
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if k not in _RETIRED_ROOM_FIELDS}
+        return data
+
     room_type: str | None = None
     """Free-text customer context. **Never a catalog filter**: there is no
     approved room-type vocabulary, so letting this reach SQL would be an
@@ -633,15 +622,7 @@ class RoomProjectState(BaseModel):
     budget: PriceConstraint | None = None
     design_preferences: tuple[SemanticPreference, ...] = ()
 
-    palette_left_to_us: bool = False
-    """The customer answered the colour question by leaving it to us - "any
-    colour", "you choose", "leave the palette to me". An answer like any other:
-    it records no colour preference, but the colour question is settled and is
-    never asked again (CLAUDE.md 10.1). Reset when the room kind changes."""
-
-    regular_seating_count: int | None = Field(
-        default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
-    )
+    regular_seating_count: int | None = Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT)
     """How many people regularly use this room, when the customer has said.
 
     A **room requirement**, not a product quantity and not a shopping list. It
@@ -672,14 +653,6 @@ class RoomProjectState(BaseModel):
     recommended pieces, so it is an answer like any other. Only keys of this
     room's template, checked before they are stored (CLAUDE.md 10.3)."""
 
-    questions_asked: tuple[RoomQuestionKind, ...] = ()
-    """The room questions already asked, one per turn. Each is asked once:
-    whatever they leave unanswered is built from what is known, never asked
-    again (CLAUDE.md 10.1)."""
-
-    questions_done: bool = False
-    """They asked to skip the rest - "just design it". No further question."""
-
     seats_carried: bool = Field(default=False, exclude_if=lambda v: not v)
     """The head count was carried from shopping, not given for this room - so
     the seats their picks provide are still confirmed when they ask to build
@@ -695,16 +668,23 @@ class RoomProjectState(BaseModel):
     against the budget (CLAUDE.md 10.3, 27). Cleared once locked, and when the
     room kind changes."""
 
-    finishing_order: tuple[str, ...] = Field(
-        default=(), max_length=30, exclude_if=lambda v: not v
-    )
-    """The pieces the room could still take, as registry keys, in the order
-    Nora ranked them - so chips tapped later keep her order (CLAUDE.md 10.3)."""
-
     in_cart: bool = Field(default=False, exclude_if=lambda v: not v)
     """The whole room went into their cart ("Add all to cart"). From then on
     the cart is the room: the package is a record of how it was designed, no
     longer edited, and what they pick next is for this room (CLAUDE.md 36)."""
+
+    layout: tuple[WallNote, ...] = Field(
+        default=(), max_length=MAX_WALL_NOTES, exclude_if=lambda v: not v
+    )
+    """The room's walls as the customer described them - what is on each -
+    for placing pieces. Defaulted, so every saved session still reads."""
+
+    next_sizes: tuple[NextSize, ...] = Field(
+        default=(), max_length=MAX_NEXT_SIZES, exclude_if=lambda v: not v
+    )
+    """The designer's latest sizes for the pieces this room wants next - kept
+    so any agent searches at her size on a later turn, never at one it made
+    up. Her judgement, not a fact the customer gave."""
 
     picks_before_cart: tuple[int, ...] = Field(
         default=(), max_length=200, exclude_if=lambda v: not v
@@ -726,15 +706,6 @@ class RoomProjectState(BaseModel):
     def _pieces_are_distinct(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
         if value is not None and len(value) != len(set(value)):
             raise ValueError("a piece is chosen at most once")
-        return value
-
-    @field_validator("questions_asked")
-    @classmethod
-    def _each_question_once(
-        cls, value: tuple[RoomQuestionKind, ...]
-    ) -> tuple[RoomQuestionKind, ...]:
-        if len(value) != len(set(value)):
-            raise ValueError("a room question is asked at most once")
         return value
 
     design_needs: tuple[RoomDesignNeedState, ...] = ()
@@ -878,6 +849,13 @@ class SeatingOfferState(BaseModel):
     avoid_type: str | None = Field(default=None, max_length=64)
     """A multi-seat type the customer turned down for this seat count ("not
     an L-shape, a simple sofa") - never a piece of their combinations."""
+    budget_amount: Decimal | None = Field(default=None, gt=0, exclude_if=lambda v: v is None)
+    """The budget the combinations were held to, so the next page is too."""
+    currency: str | None = Field(default=None, min_length=1, exclude_if=lambda v: v is None)
+    shape: SeatingShape | None = Field(default=None, exclude_if=lambda v: v is None)
+    requirements: SeatingRequirements | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The colours, styles, type and sizes every piece was held to, so the next
+    page is held to them too."""
 
     @model_validator(mode="after")
     def _choice_was_offered(self) -> Self:
@@ -930,6 +908,11 @@ class SwapBudgetOfferState(BaseModel):
 
     stage: SwapBudgetOfferStage = SwapBudgetOfferStage.STRETCH
 
+    room_total: Decimal | None = Field(default=None, ge=0, exclude_if=lambda v: v is None)
+    room_currency: str | None = Field(default=None, min_length=1, exclude_if=lambda v: v is None)
+    """What the room would total with the change, as the optimiser costed it -
+    so a later turn can say it without working it out."""
+
     @model_validator(mode="after")
     def _a_swap_or_an_addition(self) -> Self:
         if (self.bundle_ordinal is None) == (self.added_piece is None):
@@ -941,18 +924,6 @@ class PurchaseStage(StrEnum):
     EXPLORING = "exploring"
     CONSIDERING = "considering"
     HIGH_PURCHASE_INTENT = "high_purchase_intent"
-
-
-class DerivedCommerceState(BaseModel):
-    """The system's own commercial read, kept apart from what the customer said.
-
-    `None` is not `EXPLORING`: absence means nothing has assessed the stage yet,
-    the same way an absent `ConstraintStrength` is never read as consent.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    purchase_stage: PurchaseStage | None = None
 
 
 class RoomSwapState(BaseModel):
@@ -986,17 +957,70 @@ class FinishedRoom(BaseModel):
 MAX_FINISHED_ROOMS = 10
 
 
+class GoalKind(StrEnum):
+    """What a customer is working toward (docs/goal-led-agents-plan.md)."""
+
+    SEATING = "seating"
+    """Seat a number of people - chosen piece by piece."""
+    ROOM = "room"
+    """Furnish a room; `room_project` is its engine."""
+    PIECE = "piece"
+    """Find one kind of thing for something - "a rug for my sofa"."""
+
+
+class GoalStatus(StrEnum):
+    OPEN = "open"
+    DONE = "done"
+    DROPPED = "dropped"
+
+
+MAX_GOALS = 8
+MAX_GOAL_MEMBERS = 50
+
+
+class GoalState(BaseModel):
+    """One thing the customer is working toward, opened, revised and closed by
+    the agents in their judgement. Code only counts its progress: the
+    products chosen for it that are still in the cart, and the seats they
+    give."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    goal: int = Field(ge=1)
+    """Its number, kept for the session - how an agent names it."""
+    kind: GoalKind
+    status: GoalStatus = GoalStatus.OPEN
+    summary: str = Field(min_length=1, max_length=160)
+    """What it is, in the agent's words: "seat 10 in the living room"."""
+    seats: int | None = Field(default=None, ge=2, le=MAX_REGULAR_SEATING_COUNT)
+    """For seating: how many people it must seat."""
+    for_kind: str | None = Field(default=None, max_length=64)
+    """For a piece: the kind it is - an approved sub-category."""
+    room: str | None = Field(default=None, max_length=MAX_ROOM_WORDS)
+    members: tuple[int, ...] = Field(default=(), max_length=MAX_GOAL_MEMBERS)
+    """Products chosen for it - counted only while they are in the cart."""
+
+
 class AgentStateV1(BaseModel):
     """Structured working memory. Five domains, and nothing else."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retired(cls, data: Any) -> Any:
+        """Fields the scripted conversation kept - its question cards, taste
+        questions, room checks and purchase stage - dropped on reading, so a
+        session saved before they were retired still reads, unchanged."""
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if k not in _RETIRED_STATE_FIELDS}
+        return data
 
     schema_version: Literal["agent_state_v5"] = AGENT_STATE_VERSION
     customer_preferences: CustomerPreferenceState = CustomerPreferenceState()
     active_search: ActiveSearchState | None = None
     product_interaction: ProductInteractionState = ProductInteractionState()
     room_project: RoomProjectState | None = None
-    derived_commerce: DerivedCommerceState = DerivedCommerceState()
     seating_offer: SeatingOfferState | None = None
     """A seating combination in progress. Defaulted, like
     `measurements_by_type`, so every saved session still reads."""
@@ -1006,30 +1030,15 @@ class AgentStateV1(BaseModel):
     like `seating_offer`, so every saved session still reads."""
     room_swap: RoomSwapState | None = Field(default=None, exclude_if=lambda v: v is None)
     """A room piece being swapped from the options on screen (CLAUDE.md 27)."""
+    goals: tuple[GoalState, ...] = Field(
+        default=(), max_length=MAX_GOALS, exclude_if=lambda v: not v
+    )
+    """What the customer is working toward, oldest first. Defaulted and left
+    out while empty, so every saved session still reads."""
     finished_rooms: tuple[FinishedRoom, ...] = Field(
         default=(), max_length=MAX_FINISHED_ROOMS, exclude_if=lambda v: not v
     )
     """Rooms they have finished, oldest first (CLAUDE.md 36)."""
-
-    product_brief: ProductBriefState = ProductBriefState()
-    """The cards of questions asked before a search (CLAUDE.md 10.4).
-    Defaulted, so every saved session still reads."""
-
-    taste: TasteState = Field(
-        default=TasteState(), exclude_if=lambda v: not v.asked and v.pending is None
-    )
-    """Taste questions asked after products, and the one on screen (phase 5).
-    Defaulted and left out while unused, so every saved session still reads."""
-
-    room_check: RoomCheck | None = Field(default=None, exclude_if=lambda v: v is None)
-    """The room's size asked for a pick that is checked against the room - a
-    bed - once a session. Defaulted and left out while unused."""
-
-    inside_sizes: tuple[InsideSize, ...] = Field(
-        default=(), max_length=MAX_INSIDE_SIZES, exclude_if=lambda v: not v
-    )
-    """What goes inside their picks, in the size each takes, newest last.
-    Defaulted and left out while unused."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

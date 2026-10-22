@@ -40,7 +40,7 @@ def _prompt_text(module: Path) -> str:
 def test_there_are_prompts_to_check() -> None:
     """Guards the guard: a glob that matches nothing passes everything."""
     assert len(PROMPT_MODULES) >= 4
-    for family in ("query_understanding", "customer_commerce", "interior_design"):
+    for family in ("query_understanding", "agents", "interior_design"):
         assert any(family in m.as_posix() for m in PROMPT_MODULES), family
 
 
@@ -243,87 +243,3 @@ def test_the_design_prompt_is_not_retailer_specific() -> None:
 
     for forbidden in ("store 50", "salla", "zory.", "retailer_id"):
         assert forbidden not in source.lower(), forbidden
-
-
-# ── decision rules added after the conversational UAT ───────────────────────
-
-
-def test_declining_questions_is_taught_not_to_be_a_refinement() -> None:
-    """The UAT blocker: "just show me options" produced `refine_search` with an
-    empty delta, which the contract correctly refuses - so the customer got an
-    error. The prompt now says what to do instead."""
-    source = (PROMPTS / "customer_commerce/v1.py").read_text()
-
-    assert "Declining questions is not itself a change to the search" in source
-    # The prompt wraps this sentence, so match it the way it is written.
-    assert "Never a refinement\nwith nothing in it." in source
-
-
-def test_a_relative_price_is_taught_to_carry_no_strength() -> None:
-    """The model intermittently added `max_strength` to a relative operation,
-    which the validator refuses. The rule is now explicit, with both shapes
-    written out."""
-    source = (PROMPTS / "customer_commerce/v1.py").read_text()
-
-    assert "It\nhas no amount and no strength" in source or "no strength" in source
-    assert "invalid: relative = cheaper than <reference>, and a max strength" in source
-
-
-def test_the_validators_that_caught_those_shapes_are_still_strict() -> None:
-    """The prompt got clearer; neither rule was relaxed to accommodate it."""
-    from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
-    from app.schemas.refinement import SearchRefinementDelta
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError):
-        CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, refinement=SearchRefinementDelta())
-    with pytest.raises(ValidationError):
-        CustomerAgentDecision(action=AgentAction.REFINE_SEARCH)
-
-
-# ── a whole room asks before it delivers ────────────────────────────────────
-
-
-def test_a_room_request_is_taught_to_ask_before_building() -> None:
-    """The one exception to value-first.
-
-    A product search proceeds on almost nothing; a room commits the customer to
-    a set of pieces and a total, so a guessed budget produces a room they
-    cannot buy (CLAUDE.md 10.1).
-    """
-    source = (PROMPTS / "customer_commerce/v1.py").read_text()
-
-    assert "A WHOLE ROOM IS THE EXCEPTION" in source
-    assert "Budget first." in source
-
-
-def test_the_opening_questions_are_bounded_and_asked_once() -> None:
-    """Two, together, once - and never again after the first room."""
-    source = (PROMPTS / "customer_commerce/v1.py").read_text()
-
-    assert "At most two questions, and only once." in source
-    assert "everything after the first room is\nrefinement" in source
-
-
-def test_the_agent_is_told_not_to_ask_for_what_it_already_knows() -> None:
-    """The state view carries budget, measurements, room type and style, so
-    asking again is the annoyance the rule exists to avoid."""
-    source = (PROMPTS / "customer_commerce/v1.py").read_text()
-
-    assert "Ask about what you can see is still missing" in source
-    assert "asking\nagain is the annoyance to avoid" in source
-
-
-def test_declining_the_opening_questions_still_builds_the_room() -> None:
-    """A room is never held back over a detail that can be chosen sensibly and
-    changed afterwards."""
-    source = (PROMPTS / "customer_commerce/v1.py").read_text()
-
-    assert "decline, or tell you to get on with it, build the room" in source
-    assert "Never ask twice" in source
-
-
-def test_the_room_requirements_reason_exists_for_that_question() -> None:
-    from app.schemas.agent_decision import BlockingClarificationReason
-
-    assert BlockingClarificationReason.MISSING_ROOM_REQUIREMENTS

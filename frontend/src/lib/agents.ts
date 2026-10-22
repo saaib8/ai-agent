@@ -1,6 +1,6 @@
-// The four assistants a reply can be shown as. The server decides which
-// (`ChatResponse.agent`); this is only how each one looks. One assistant
-// answers every turn behind them.
+// The four agents a reply can come from. The server says which one wrote it
+// (`ChatResponse.agent`) and who worked on the turn (`workflow.handoffs`);
+// this is only how each one looks.
 
 export type AgentKey = 'sara' | 'salman' | 'nora' | 'faysal'
 

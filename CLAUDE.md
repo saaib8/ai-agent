@@ -17,14 +17,15 @@ V1 must support two primary journeys:
 1. Single-product discovery
 2. Whole-room furnishing/design using products from the active retailer's catalog
 
-The customer experience must feel like one coherent ZORY assistant, but internally V1 uses only two reasoning agents:
+The customer sees one conversation, answered by a team of agents (section 17):
+a supervisor that delegates each turn, and four tool-calling agents - Sara
+(shopping), Nora (interior design), Salman (sales) and Faysal (store support) -
+each its own model with its own tools, sharing one memory. The design
+specialist (`InteriorDesignAgent`) is a model behind tools - `design_advice`,
+which every agent may call, and the room and pairing tools Nora and Salman use.
 
-- Customer / Commerce Agent - customer-facing conversation owner
-- Interior Design Agent - specialist for interior-design reasoning
-
-Everything else should normally be implemented as deterministic services/tools, not additional agents.
-
-Do not create one agent per capability.
+Facts, scope and money stay in deterministic services the agents reach only
+through typed tools. Do not add an agent where a tool would do.
 
 ---
 
@@ -156,9 +157,12 @@ Repositories own SQL.
 
 ### 3.5 No free-form agent-to-agent conversations
 
-Customer Agent -> Interior Design Agent communication must use typed structured contracts.
+The agents reach the Interior Design Agent only through typed tools, never in
+free text to one another, and hand turns to each other only with a typed reason
+(17.1).
 
-The Interior Design Agent returns structured outputs that the Customer Agent or domain services consume.
+The Interior Design Agent returns structured outputs that the tools and domain
+services consume.
 
 ### 3.6 Prefer deterministic services over agent reasoning
 
@@ -343,9 +347,9 @@ until confirmed.
   sectional, sofa set) as main pieces - a sofa bed only when the customer asked
   for sofa beds - and the reviewed `combination_extras` (chair, lounge chair,
   single-seater sofa) as extra seats.
-- A seat count of one on a multi-seat type, set in a turn, is a misreading: the
-  composition is refused and the decision is corrected once to change product
-  type ("make them single seaters").
+- A seat count of one on a multi-seat type is a misreading: what they want is
+  a one-seat type ("make them single seaters"), which the agent searches
+  instead.
 
 ---
 
@@ -415,732 +419,247 @@ live catalog data, not from dataset observation.
 
 ---
 
-## 10. Whole-Room Planning Rule
+## 10. Rooms, Searches and the Conversation
+
+The agents decide the conversation: what to ask and when, what to show, and
+what comes next (section 17). Their instructions are
+`app/prompts/agents/v2.py`. Code decides none of it; code holds the facts, the
+scope, the money and the reviewed domain data below, and refuses what breaks
+them. What follows is what the tools guarantee, and what each agent is told to
+do with it.
+
+Reviewed domain data, loaded and validated at startup:
+
+| File | What it says | Used by |
+|---|---|---|
+| `app/taxonomy/room_pieces_v1.yaml` | the pieces each room kind may hold, each essential, recommended or optional | `plan_room`, `room_could_add`, `add_to_room` |
+| `app/taxonomy/seating_v1.yaml` | how many each seating type seats; which types stand beside a sofa | seat filters, a room's seating (27.1), mixed sofa searches |
+| `app/taxonomy/complements_v1.yaml` | the kinds that go with each kind | `what_goes_with`, beside the design specialist's own |
+| `app/taxonomy/compare_groups_v1.yaml` | which kinds compare with which | `compare_products` |
+| `app/taxonomy/subcategory_questions_v1.yaml` | the questions the store's designers ask for each kind, with their usual answers | `search_products` facts (`a_designer_might_ask`) - knowledge the agent chooses from, never a script |
+
+`app/taxonomy/briefs_v1.yaml` is kept but no longer loaded; only its question
+kinds (`BriefQuestionKind`) are still imported.
+
+### 10.1 A whole room (Nora)
+
+A room commits the customer to a set of pieces and a total, so Nora asks
+before building - one question per turn, never what the session brief already
+holds: the budget first, then the room's size, then (a living room) how many
+usually sit there, then the colours they like, and the pieces last. "Just
+design it" builds from what is known. An amount said without a currency is in
+the store's (`store_currency`).
+
+- **Each answer is kept as it comes.** `plan_room` without `pieces` - always
+  with `room_kind` for a room the registry lists - saves what it is given
+  (budget, size, head count, colours, styles, the picks it is built around) and
+  builds nothing while the room has no pieces on record: it returns
+  `room_could_hold`, the pieces this store can
+  supply for the room with their tier and whether a pick already fills one.
+  Another room still being designed is never given up for one whose pieces are
+  being chosen: then nothing is saved (`inputs_kept: false`) and Nora restates
+  it all when she plans. A room of no listed kind is built at once.
+- **A room is exactly the chosen pieces**, one need per piece at its tier's
+  priority (essential -> required, recommended -> recommended, optional ->
+  optional), so a short budget gives up optional pieces first and essential
+  ones last. The design specialist shapes how each piece should feel; it cannot
+  add or drop one.
+- **Living-room seating is sized to the head count**: one piece when one seats
+  everyone, otherwise a combination (27.1), tried together with the rest of the
+  room so the seats are kept and the most pieces fit.
+- **Built around their picks** (`around_picks`): the picks that belong in the
+  room are saved (`anchor_product_ids`) and locked into its first build; their
+  seats count, they fill their own slots and their prices count against the
+  budget.
+- **A missing piece is named**, with why - not stocked, or not within the
+  budget alongside the rest, with the lowest real price that would fill it -
+  never only a count.
+- **Refine, never replan**: piece options and swaps, remove, lock or mark
+  owned, revise the budget. A locked piece is kept by every later
+  optimisation. A change that would go over budget is held, never applied
+  (`swap_budget_offer`): the reply says what the room would total
+  (`room_total_if_accepted`) and asks; yes is `accept_over_budget` (the budget
+  rises to the new total), no is `decline_over_budget` and cheaper options for
+  that piece.
+- **Finishing touches**: `room_could_add` lists every stocked piece the room
+  could still take, with its tier; the agent chooses which would finish it and
+  in what order, shows one with `search_products`, and `add_to_room` adds a
+  card - every other piece pinned to the product it is, over budget asked
+  first exactly as above.
+- **Their room, fit and placement** are Nora's (10.6): the room's size and
+  walls are recorded as they are said, and the plan comes back with where each
+  piece goes and the sizes the next pieces should be.
+
+### 10.2 A product search (Sara)
+
+Sara searches as soon as she knows the kind of product. A vague kind ("a
+table", "a light") is a question - which kind - never a guess (14.5). For a new
+kind she may first invite them to say more (the room it is for, how many sit
+there, the look), choosing from `a_designer_might_ask`; at most one question a
+reply, and never the budget as an opener - budget comes once they are engaged
+(comparing, choosing, talking price).
+
+- **Their words, as the search.** `search_products` takes the whole search each
+  time, in approved values only (14). Colours and styles are preferences unless
+  they are strict (12.4) - and asking for one again, insisting on it, or turning
+  results down for lacking it makes it strict for that search and its pages
+  ("more beige ones" after a mixed page means beige only). A budget is a limit
+  unless softened ("around").
+- **Colours and styles are plain lists.** An agent's search gives
+  `colours_required` / `colours_wanted` and `styles_required` / `styles_wanted`,
+  each a list of approved values; code writes them as the interpretation's
+  attributes (required -> locked, wanted -> preferred), so one contract reaches
+  query understanding. Every search reports what actually ran
+  (`searched_for`: kind, colours, styles, seats, budget, sizes, words - with
+  the taste and sizes code added), and the agent checks it against what was
+  asked before showing anything.
+- **"More like this" keeps the look.** The product's own colour and styles are
+  requirements of the search (`colors_any_of`, `styles_all_of`), lifted only as
+  the last resort of 12.4 and then said plainly.
+- **Knowing when it has run out.** Every search says whether anything not yet
+  seen still matches (`more_after_this_page`). When nothing does, the reply says
+  these are all of them and offers the nearest alternative as a question -
+  another size, a close shade - never a page filled with what was not asked.
+- **Taste** they say - likes and what they would rather avoid - is kept with
+  `remember_taste` (`customer_preferences`): likes lean every new search, what
+  they avoid is pushed down in every search and its pages. Nothing is hidden.
+- **Head count orders, seats filter.** How many usually sit there is
+  `head_count`: pieces that seat them first, unknown seat counts next, fewer
+  last. A seat count they require ("a 3-seater") is the search's seats.
+- **Sizes stay with their kind** (13.5): sizes given for a kind come back on
+  its next search that names none (`earlier_sizes_applied`); "any size is fine"
+  is `earlier_sizes: false`. A search that is ours - what goes with a pick, more
+  like this - neither restores nor saves sizes.
+- **A sofa search shows sets and sectionals beside sofas**
+  (`customer_agent.mixed_types`, `seating_v1.yaml` `shown_with`), with every
+  other constraint alike, unless they asked for the type alone
+  (`with_related_types: false`) or gave a size those listings cannot answer.
+  Among equally good matches the cards take turns by type; an explicit sort is
+  never interleaved.
+- **The reply** picks out one or two by their place on screen and says why.
+  It calls a card the best match only when their own words ordered the list,
+  never beside a price sort, and never says how many products the store holds.
+  A widened search, a lifted strict colour or style, or a request nothing met
+  is said plainly, with what setting a requirement aside would find (13.5).
+- **Comparing** is between similar kinds (`compare_groups_v1.yaml`), up to
+  `comparison_max_products`; the server refuses a mixed set.
+- **The card buttons**: Select adds to the cart (36); Like keeps it in the
+  liked list (`max_likes`, a quiet taste signal, not a pick); More like this is
+  the similarity search.
+- **A group no single piece seats** ("sofas for 10") is chosen one piece at a
+  time, never as a ready-made combination: Sara opens a seating goal (10.5),
+  asks what the first piece should seat, and after each add the goal says how
+  many seats are left; the next piece is searched to match what they chose
+  (`match_goal`). Before the second piece she asks the room (10.6) - two sofas
+  must fit together.
+
+### 10.3 After a pick (Salman)
+
+Salman comes in when what they set out to choose is chosen - a goal met, or a
+pick with no goal open - never in the middle of one: a first sofa of ten seats
+is followed by the next sofa, not a rug. With the room known, Nora's
+`next_sizes` and `placements` come first: the next piece is searched at her
+size (`designer_size`) beside their choice (`match_with`). Otherwise
+`what_goes_with` without a kind lists the kinds in
+stock that could go with the piece - the design specialist's suggestions
+marked, beside the reviewed pairings, most stocked first, no counts - and Salman
+chooses one and calls it again with `show_kind`: a page of that kind leaning to
+the piece's look. It is a design suggestion, never "usually bought together".
+The other kinds are offered as choices.
+
+### 10.4 What every agent is told, and what the screen shows
+
+Each turn every agent gets the session brief (`SessionBrief`,
+`app/schemas/agent_brief.py`, built in `app/agents/views.py`): the cards on
+screen; the cart with its lines, quantities, line totals and totals per
+currency (summed in code) and the room each line was bought for; every budget
+on record and what it applies to; the search as it ran; the room - what they
+told us - size, walls and what is on them - and, once built, its plan; their
+goals with progress counted in code; finished rooms; liked products; their taste;
+saved sizes; what waits on their answer (seating options with their pieces and
+totals, an over-budget offer with the room's total if accepted, options for a
+room piece). Products are named by place, never by id; in Arabic each card's
+`name_ar` is the name on the customer's card. Sizes are a piece's longer and
+shorter floor side and its height (15.1). Earlier replies show who wrote them
+and the answers they offered (`[offered: ...]`).
+
+The screen is built from what this turn's tools produced
+(`app/agents/screen.py`), never from the reply's words. The reply's `show`
+chooses among them - never something shown before the turn's last list, which
+is the list "the second one" means - and the last thing shown is the default.
+Chips (`choices`) must answer the question the reply asks; a reply that offers
+them without a question is sent back as broken arguments. The store's support
+channels are drawn from its contacts when `contact_store` ran.
+
+### 10.5 Goals: what they are working toward
+
+`AgentStateV1.goals` holds what the customer is trying to finish - seat ten
+people (`seating`), furnish a room (`room`, whose engine is `room_project`), a
+rug for the sofa (`piece`) - each `open`, `done` or `dropped`, with its members:
+the cart products chosen for it (`add_to_cart` `for_goal`). Sara, Nora and
+Salman keep them with `update_goal`: open, revise, done, drop - their
+judgement, never a reflex. Code only counts progress for the brief: for
+seating, the seats its members give (reviewed capacities only - a product with
+no recorded seats counts none) and the seats left. The next step comes from the
+open goals: an unmet goal first, and only when it is met, what goes with it
+(10.3).
+
+**Matching** what they already have is the designer's: `search_products` with
+`match_with` (cards, picks, liked), `match_goal` (a goal's members) or
+`match_room` asks the design specialist one direction for the kind searched
+(`DesignTask.MATCH`) - colours and styles the store stocks for that kind, what
+to avoid, a size in proportion to the first anchor - turned into a ranking lean
+that orders and never filters (`RankingLean`); the facts carry the direction
+and why. A tap on a card's Select is the customer's words ("I've added X to my
+cart") routed like any message (17.3).
+
+### 10.6 Their room: walls, fit, placement and the next size
+
+What the customer says about their room is recorded by whoever hears it -
+Sara, Nora or Salman - with `note_room`: its kind, length, width, doorway, and
+each wall by their own name for it ("the TV wall"), its length and what is on
+it (`WallFeature`: door, window, TV point, radiator, built-in, keep free). It is
+kept on `room_project` (`geometry`, `layout`), merged wall by wall - a wall said
+again keeps what it does not restate - and builds nothing. It is asked once,
+after something has been shown, when sizes start to decide: a second sofa, a
+rug, a whole room.
+
+**Code measures; Nora judges** (`app/services/fit.py`):
+
+- each piece against each wall and doorway: a wall against its longer floor
+  side, a doorway against the smaller of its shorter side and height (15.1);
+  a size not listed is said to be unknown, never guessed;
+- how much of the floor the chosen pieces take, and each card beside them,
+  only when every size is known.
+
+A search in a known room carries `room_fit` per card; `design_advice` and a
+match give the specialist the layout, the measured fit and the floor taken. The
+specialist (`interior_design/v8`) returns, beside its guidance:
+
+- **`placements`** - which of their walls each piece goes on, what beside it,
+  and why, in words only (no figures), and only for walls they described;
+- **`next_sizes`** - the size the next pieces should be for their room and what
+  they chose (a rug's longer side, a coffee table's length), as ranges in whole
+  centimetres with a reason, for approved kinds only.
+
+A placement with a figure in it, or a size that is out of order, has a figure
+in its reason or names a kind outside the vocabulary, is dropped on its own;
+the rest of her answer stands (21.1). They reach every agent as facts
+(`design_notes`), and her sizes are kept on the room (`room_project.next_sizes`,
+newest per kind, shown in the brief), so a later turn searches at her size
+rather than one an agent made up: `search_products` `designer_size` orders by
+closeness to her longer side, never filters and never becomes a product fact,
+and the reply says why that size suits their room (`size_reason`).
+`design_advice` returns each piece's measured fit (`measured_fit`), the only
+figures of fit an agent may quote. Whether a piece works there is never stated
+beyond what was measured.
+
+`note_room` never gives up a room being designed or in the cart for another
+(`another_room_in_progress`); the same room in other words ("the lounge") keeps
+its walls; another room starts with no size, walls or sizes of its own. Walls
+and doorways are measured apart (at most four walls and two doorways), so a
+doorway is always checked.
 
-For a request such as:
-
-> Furnish my 4x5m bedroom under SAR 12,000 in a modern style.
-
-The correct high-level flow is:
-
-```text
-Customer request
-    -> Customer/Commerce Agent
-    -> Retailer catalog capability lookup
-    -> Interior Design Agent
-    -> structured furnishing plan
-    -> budget allocation
-    -> Product Discovery per required category
-    -> room/bundle compatibility + optimization
-    -> complete initial bundle
-    -> Customer/Commerce Agent presents proposal
-    -> user iteratively accepts/rejects/replaces items
-    -> preserve locked/accepted items and re-optimize remaining bundle
-```
-
-Do not force the customer to pick every category one-by-one before seeing value.
-
-Default UX behavior:
-
-1. ask what the room still needs, one question per turn, each once (10.1)
-2. propose a coherent complete bundle
-3. let the customer iteratively refine it
-
-### 10.1 The room questions
-
-A whole room is the only place this service asks before delivering in words.
-A single product search proceeds on almost nothing - "show me sofas" is
-answerable, and its one card of tappable questions (10.4) can be skipped with a
-tap - but a room commits the customer to a set of pieces and a total, and one
-built around a guessed budget is a room they cannot buy.
-
-**Rooms the registry knows - a living room, a bedroom - are asked about by the
-application, one question per turn**, in this order, skipping anything already
-on record:
-
-1. **budget** - it constrains every other choice;
-2. **the room's size** - its length and width, which decide what fits; asked
-   only while they have not given it ("my 4x5 m bedroom" is never asked),
-   with a few common sizes and "Not sure" as chips, and given to the designer
-   when the room is planned;
-3. **pieces** - which pieces they want, shown as chips (10.3);
-4. **how many people will sit** - living room only;
-5. **colour** - the colours they are drawn to.
-
-The decision model never writes these questions: it hands off `whole_room`
-with the `room_kind` and records each answer (`room_budget`, `room_geometry`,
-`room_pieces` or `room_pieces_default`, `regular_seating_count`,
-`design_preferences`). A room
-question the model writes anyway (`missing_room_requirements`) is replaced by
-the application's own.
-
-**An amount said without a currency is in the store's** when its catalog
-prices in exactly one: the decision model is told it (`catalog_currency`) and
-writes it, a currency question it asks anyway is corrected once, and a room
-budget still without one takes it. Only a store with several currencies asks.
-
-**Each question is asked at most once** (`questions_asked` in session state).
-If they answer partly, ignore it, or say to get on with it ("just design it":
-`room_skip_questions`), the room is built from what is known - the usual
-pieces, one sofa when no head count was given. Everything after the first room
-is refinement, never another round of questions.
-
-**A room starts from what shopping learned** (`customer_agent.designer_room_handoff`,
-phase 6). A head count they gave for seating while shopping - "a sofa for 9",
-or how many usually sit there - is the room's, unasked, and the reply says it
-once ("for the nine of you"). The colours and styles they said become the
-room's taste, so its colour question is skipped; what was only learned from
-likes and picks still asks. A wall they gave becomes the room's wall for that
-piece. Only where the room has nothing of its own, and never once it is
-planned. Picks join only when they ask ("around my picks"). Asked to design
-"the room" without naming it, the room they were shopping for is the one.
-Switched off, a head count from a search is offered to confirm - "is it for
-the 9 you mentioned?" - as before.
-
-Any other room (a dining room, a home office) is asked about by the decision
-model as before: budget first, at most two questions, together, once.
-
-### 10.2 When the agent asks
-
-At most one question per reply, and never budget as an opener: asking it first
-anchors the price down and reads as "can you afford this?". The one exception
-is the card for a product search (10.4), where the budget is one tappable
-question among several, chosen as a band from the store's own prices.
-
-- **A new search for a kind of product**, however it is put - "I need a sofa",
-  "find me a sofa", "I'd like to see some sofas", "show me sofas", "any
-  rugs?", or moving on from sofas to dining tables - gets the card of
-  questions first (10.4); nothing is searched until they answer or skip it.
-  The decision model never writes the card's questions; it only flags a
-  decline (`skip_questions`: "just show me sofas", or answering the card on
-  screen in words).
-- **Results without a card** - they declined it, a refinement of the results
-  on screen, a kind with no card, nothing left to ask - carry at most one
-  optional follow-up: how many people will sit, for multi-seat seating (sofas,
-  sets, sectionals) while unknown; otherwise the colour or style taste, while
-  neither is on record - the designer's one question. Nothing when the key
-  facts are given ("beige 3-seaters"), and nothing beside a folded card.
-- **A seat count no single piece meets** asks first which shape - separate
-  sofas together, or a sofa with armchairs - offering only shapes that really
-  exist, each "from" its real lowest total, plus the colour if none is known.
-  Asked once per seat count; answered, ignored or declined, it is never asked
-  again (section 27.1).
-- **A whole room** asks budget first, then its size, pieces, head count and
-  colour, one per turn (10.1): the optimiser needs the total.
-- **Budget otherwise** only once they are engaged: comparing, having picked
-  something, talking price without a figure, or refining a wide price range.
-
-**No reply is a dead end.** Every reply closes on one next step - a question
-with chips that answer it (`app/services/next_step.py`), decided in code from
-what the turn did: picks offer what goes with the newest pick (only a type
-with reviewed pairings) or a room around them - a pick is a moment to
-cross-sell, never to offer a comparison, which stays theirs to ask for; a detail, a comparison or a room each offer
-their own next move; nothing else offers a piece or a room. A greeting or small
-talk - nothing on screen, nothing picked - closes on its open question ("a
-particular piece, or a whole room?") with **no chips**: what they want is
-theirs to say, in their own words. A turn that already
-asks - a question card, a room question, a seating shape, companions, a
-clarification - keeps its question and gets no second one. A reply that
-closes on a question of its own - the one preference question, an offer of what
-setting a requirement aside would find - keeps it in place of the next step's,
-with its own answers as the chips; one with no answers to tap is replaced by the
-next step's question, so the chips always answer the question shown. If the reply
-still ends without a question, the next step's fixed, digit-free question is
-added after the number check. The counts the picks tray shows ("your 2 sofa sets")
-may be said.
-
-**"Narrow these down, or see more?" only beside a list.** It is offered when
-this reply shows results, or is only words about the cards still on screen
-("which do you recommend?"). A turn that acted on the cart - added, removed,
-changed how many, added a room - or asked about it (`cart_question`: "what's
-my total?"), and a store answer, never get it, however long a list has stayed
-on screen behind them: they close on the cart's step, or with nothing picked
-on the open question.
-
-### 10.3 A room is built from the pieces they chose
-
-Which pieces a room may hold is reviewed domain data
-(`app/taxonomy/room_pieces_v1.yaml`, loaded and validated at startup), in three
-tiers:
-
-- **essential** - starts selected; the customer may still remove it
-- **recommended** - starts selected
-- **optional** - offered, not selected
-
-"Choose for me" (or no answer) is every essential and recommended piece. Only
-pieces the store stocks are offered as chips (live capabilities, 9.1).
-
-The room is exactly the chosen pieces: one need per piece, at its tier's
-priority (essential -> required, recommended -> recommended, optional ->
-optional), so a short budget gives up optional pieces first and essential ones
-last. The design specialist is still consulted, but only for how each piece
-should feel; it cannot add or drop a piece.
-
-**Living-room seating is sized to the head count.** The "Sofa" chip is built
-from sofas, sectionals, sofa sets, single-seaters and chairs: one piece when one
-seats everyone, otherwise a combination (27.1). Each way the store can seat
-them within the budget is tried together with the rest of the room, and the
-room that keeps every seat and the most of its pieces wins - so the sofa never
-crowds out the rug, and the rug never leaves someone standing.
-
-**A room built around their picks keeps them.** "Build my living room around
-these", "around my picks" (the decision's `anchor_picks`) saves every pick that
-belongs in that room (`room_project.anchor_product_ids`) before the room's
-questions, so a budget question in between cannot lose them; a pick that is not
-a piece of that room (a bed, for a living room) is left out. The pieces
-question shows them as "· your pick"; the seats question confirms what the
-picked sofas and chairs seat ("your two sofas seat 5 - is that everyone?", chips
-5 · 6 · 7 · 8+) instead of a head count from an earlier search. When the room is
-built they are locked into it: their seats count toward the head count and only
-the remainder is planned - never filled by the same locked sofa again
-(`fresh_needs`) - a picked piece fills its own slot so it is never bought twice,
-and their prices count against the budget.
-
-**A missing piece is named, never counted.** The reply says which piece is
-missing and why - not stocked, or not within the budget alongside the rest,
-with the lowest real price that would fill it - and offers one concrete next
-step. "1 needed piece couldn't be included" is a defect.
-
-Track per-item state such as:
-
-- suggested
-- accepted
-- rejected
-- locked
-- replaced
-
-If a customer accepts/locks an item, later optimization must preserve it unless the customer explicitly permits replacement.
-
-Distinguish required, recommended, and optional furnishing categories so budget optimization can remove lower-priority items before degrading core room requirements.
-
-**A finishing touch for a finished room is shown, never asked about.** The
-room's own "Add a finishing touch" chip opens it directly (`bundle_action`
-`finishing_touches`; after a room, the step's chips are never replaced by ones
-the reply wrote), and the decision model is told that "add a finishing touch"
-with no piece named is `complement`, never `whole_room`; typed, it is the tap.
-With a room package on record, the design specialist ranks the pieces it could
-still take - the room registry's pieces the store stocks that the room does not
-hold yet (at most `MAX_FINISHING_PIECES`) - by what would finish it best
-(`complementary_recommendation`, told everything in the room and only those
-pieces); pieces she does not name follow in the registry's order, and that
-order stands alone when she cannot answer - code never ranks them. The first
-she ranks that has products is shown at once, about a page leaning to the
-room's colours and styles; the others are chips in her order (`bundle_action`
-`add_piece` with the registry key), kept with the room (`finishing_order`) so
-a chip tapped later shows its own page with the rest still in her order, and
-with no "You choose" beside a page. Only when nothing of the
-piece is in stock do the pieces stay chips with "You choose" - never "I wasn't
-able to put that together". The words sent with a tap are never read.
-
-**"Add to room" puts a finishing touch in the room package, never the cart.**
-Each card on that page (`presentation.room_addition`, the piece shown) carries
-"Add to room": `bundle_action` `add_to_room` with the card's place in the list.
-It must be a piece the room could still take, of a product the room does not
-hold. The room is costed with it and every other piece pinned to the product it
-is (`forced_product_id`), with no budget ceiling, so nothing is silently dropped
-to make room. Within budget it joins the package and the reply names it as
-added (`added_pieces`). Over budget nothing changes yet: the customer is asked,
-exactly as for a dearer swap (27), whether to increase the budget or keep the
-plan (`swap_budget_offer` with `added_piece`) - yes adds it and raises the
-budget to the room's new total; no offers keeping the room as it is or cheaper
-options, which are the same piece within what the budget has left.
-
-**"Which piece?" beside a finished room is answered with its pieces.** When a
-turn asks which product (`ambiguous_product_reference`), shows nothing new, has
-no answers of its own and a room package is on record - "I'd like to swap one
-of the pieces", "fine-tune another piece" - each piece a Swap button is drawn
-for (to buy, not locked) becomes a chip (`room_cards`), numbered as the room's
-cards are and named by the room registry (by type for seating). A chip is that
-piece's Swap button: `list_alternatives` for its ordinal, and the console
-enters swap mode, so picking an option replaces the piece.
-
-**Each piece has a Remove button beside Swap.** It sends `bundle_action`
-`remove` with the piece's ordinal - exactly what "remove the second one" typed
-does: the card is resolved to the role it fills and the role leaves the plan.
-Only that piece goes: every other piece stays the product it is (each role one
-product fills is pinned to it, as for a finishing touch), and the totals are
-worked out again without it.
-
-### 10.4 The card for a product search
-
-"I need a sofa" - or "find me a sofa", "show me sofas" - says what they want
-and nothing about which one. Instead of
-showing the first few products the catalog returns, the application shows one
-card of short questions, answered by tapping and sent together:
-
-- **the kind** - for sofas: 2-seater, 3-seater, 4+ seater, L-shape, set, bed
-  (2/3/4-seater are `seating_capacity` on `sofa`, 7). A need that names only a
-  category - "I need a table", "I need a light" - gets its category's card
-  with the kind asked first (coffee, side, dining, TV, console, nightstand):
-  the vague word is settled by a tap, never guessed (14.5), and results for a
-  whole category are never described as narrowed to one kind;
-- **the budget** - bands between the quartiles of what those products cost in
-  the store, rounded the way a person says a budget;
-- **colours** and **style** - the approved values the store's products of that
-  kind actually carry, most common first;
-- **the feel** - a fabric, finish or detail (bouclé, marble, with storage).
-
-Chips come in order of how many products stand behind them: the kinds, colours
-and styles the store has most of first. Budget bands stay in price order -
-they are cut at the quartiles, so each already holds about a quarter - and
-feels in their reviewed order, since the catalog records no material to count.
-The kinds offered beside a pick ("Rugs", "Centre tables") are ordered the
-same way.
-
-Which questions each product family is asked, its kinds and its feel words are
-reviewed domain data (`app/taxonomy/briefs_v1.yaml`, loaded and validated
-against the taxonomy at startup). Budget bands, colours and styles are counted
-from the live, store-scoped catalog when the card is built, and a kind the store
-does not stock is not offered - every chip leads to real products.
-
-- **Every new search for a kind of product gets its card**, whatever the
-  wording and however long the chat: "I need a bed" said again is a new need,
-  and an earlier card they left unanswered is no reason to skip the questions.
-  A change to another category ("now show me coffee tables") is a new search
-  and gets its card; a change of type within the running task ("sectional
-  ones instead") is a refinement and does not. Refinements, "show me more"
-  and "not this one" never bring a card. The card never asks what they already said,
-  in the message or on record earlier; a card with nothing left to ask is
-  skipped and the search simply runs. A head count no single piece in the
-  store seats ("a sofa for 9") skips the card too: which seating shape is the
-  question that matters, and it comes first (27.1). A head count on a card
-  still on screen is the one a room's seats question confirms (10.1).
-- **Answers are keys, read back through the card the session remembers**
-  (`product_brief.pending`), so a client can name a choice but never invent
-  one; a stale card or an unknown key searches nothing (`questions_expired`).
-- **The kind and the budget are requirements** (they tapped them): the kind is
-  locked, a band's ceiling is locked and its floor preferred. **Colours and
-  styles are preferences** (12.4). **The feel only ranks**: the catalog has no
-  material field (5), so it becomes descriptive wording for semantic ranking,
-  nothing is filtered on it, and the reply never says a piece is made of it.
-- Answered or skipped, the search runs like any other, showing the configured
-  number of products (five by default) with the closest first. The reply may
-  call the first card the best match only when their own words ordered the
-  list (16.1) and it met their request exactly - never beside a price sort,
-  and never on what goes with a pick, which is ordered by the pick's look. The
-  console draws no "best match" or "exact" tag on a card.
-- **Declining the card** ("just show me sofas", "no questions") shows
-  products at once; the card sits folded beside them as "Narrow down" -
-  offered once per family per session, so it does not follow every list
-  around - and the reply asks no other question.
-- A typed answer to the card ("grey, around 3000") is a new search restating
-  the whole request, and is never asked the card again: the same family,
-  saying something the card asked, is its answer even if the decision model
-  missed it. The same need said again with nothing added is asked again.
-  "Any size is fine" said with the need ("back to sofas, any size is fine")
-  is kept with the card (`drop_saved_sizes`), so its answers do not bring the
-  saved sizes back (13.5).
-
-**Picking a product.** Cards can be ticked into the customer's picks, which last
-across searches. Every pick - ticked or typed ("I like the third one"), a
-second sofa as much as the first, and a kind nothing is paired with - is
-**shown**, not asked about, what goes well with it: their pick's card, and
-beneath it a page of one kind of product that goes with it. The design
-specialist chooses the kind (`complementary_recommendation`), from everything
-the store stocks and with all their picks in view, and the first kind it
-proposes that returns products is shown. The cards lean towards the colours
-and styles the customer has expressed - a room's first, then the chat's, and
-the pick's own style where they named none - by the same ladder a new search
-seeds from; taste ranks, it never filters (12.4). If the specialist cannot
-answer or nothing it proposed is in stock, the first reviewed pairing
-(`app/taxonomy/complements_v1.yaml`) the store stocks is shown instead. The
-other reviewed kinds stay as chips under "Also goes well with it", and tapping
-one shows a normal page of it leaning towards the pick's style. A pick's "Goes
-with" button does the same. With nothing to show, the pick stands alone and is
-offered a room around their picks or more browsing. The reply introduces the
-cards as a suggestion beside their pick - never as their search, and never as
-"usually bought together": it is a design judgement, not sales data. This is
-`customer_agent.cross_sell_shows_products` (on by default); off, a pick is
-offered the kinds as chips with "No thanks", and nothing is searched until
-they tap one. Earlier result lists stay tickable for a while
-(`product_interaction.earlier_lists`), so a second sofa can still be picked to
-compare after the screen has moved on.
-
-**Comparing.** A comparison is between similar products - sofas with sofas,
-never a sofa and a coffee table - and covers as many as the customer checks:
-two or more, up to `comparison_max_products` (ten by default, the picks
-tray's size; the schema allows up to twenty). Each card on a result list
-carries its own Compare checkbox, apart from Select; once one is checked,
-cards of other kinds are greyed out, and so is every card once the limit is
-reached. Checking only marks a card: the checked ones sit in a compare bar
-above the message box, and its Compare button - active once two are checked -
-sends a turn of the conversation (`product_action` `compare_cards`), exactly as
-a typed "compare these" would: the side-by-side table, one column per product,
-and a short take on what differs appear in the chat, the comparison is
-recorded in the session, and the reply ends on its next step ("Take the
-first", "Take the second"). The cards stay checked, so one can be swapped and
-compared again; Clear unchecks them all. Typed comparisons ("compare the first
-three") share the same limit; more is answered with a question rather than
-silently dropped. Checked cards are resolved like ticks, against the lists the
-session remembers, and the table comes from the ordinary comparison service.
-`POST /v1/comparisons` - the same comparison as a look that adds nothing to the
-conversation - remains for clients that want it; the console no longer calls
-it. Which types
-compare with which is reviewed data (`app/taxonomy/compare_groups_v1.yaml`):
-every type with itself, and a few groups across types (sofas with L-shapes,
-sets and sofa beds; armchairs with accent and lounge chairs). The server
-refuses a set with any dissimilar product whatever the client sent.
-
----
-
-### 10.5 The designer-led opening (`customer_agent.designer_led_opening`)
-
-Designer-led shopping is built in phases (`docs/designer-led-shopping-plan.md`);
-each runs behind its own setting. Phase 1 is on by default and replaces the
-card of 10.4 for a new product search (switched off, the card returns). A
-sub-category the reviewed sheet covers is asked its own questions instead
-(10.13):
-
-- **Two questions, before any product, in one soft message** - an invitation
-  a designer would make in a showroom, never a form, never budget.
-- **The reply writer chooses the two** (`CustomerResponse.asked`) from the
-  questions code offers: the family's `opening` in `briefs_v1.yaml`, or
-  `opening_default` for a type no card covers, less anything already known (in
-  this message, earlier, on record) and anything asked before in that family
-  (`product_brief.asked`). A choice outside the offer is refused
-  (`opening_not_offered`) and the fixed sentence asks the first two offered.
-  A family may name what its every opening asks while open (`always`): a
-  sofa's asks **the room**, and how wide the spot is waits until products are
-  on screen (10.9); a family that names nothing asks the space where it
-  offers one (`ALWAYS_ASKED`).
-- **Only the chosen questions' chips are drawn**, from the registry and the
-  live catalog, so every chip is a real answer; answers are keys read back
-  through the pending card, as in 10.4.
-- **A kind not chosen by its look has no opening** (`not_by_look` in
-  `briefs_v1.yaml`: mattresses, which lie under the bedding). It is shown at
-  once, and never asked about colour or style - not after results (10.9), not
-  in Narrow down, which offers it the budget only.
-- **Which room is it for?** is remembered (`customer_preferences.room`,
-  tapped or named in words as the decision's `shopping_room`) and filters
-  nothing - no product records a room. It is never `room_project`, which is a
-  room being designed.
-- **How many usually sit there?** (multi-seat seating only) orders: pieces
-  reviewed to seat that many first, unknown seat counts next, fewer seats last
-  (`seat_preference`). A count no single stocked piece seats is a seat
-  requirement, so it leads to a combination (27.1). Typed in reply to the
-  opening ("there are four of us") it reads exactly as the tap does - typing
-  and tapping never differ (17.1) - when the decision records it as the head
-  count (`head_count`); a size of piece they name ("a grey 3 seater") is the
-  piece they want, never a head count. Stated with the need ("a sofa for
-  four") it is a requirement (13.1).
-- **Any reply while the opening is on screen answers it** - it is never asked
-  again; "just show me" skips it; a head count no single piece seats still
-  asks the seating shape first (27.1).
-
-### 10.6 Results with their brief (`customer_agent.designer_led_brief`)
-
-Phase 2, on by default; switched off, the card folded once per family returns.
-Beside every list of results a customer searched for - not what goes with a
-pick, a combination or a room, which are ours to order:
-
-- **Chips name what the search uses** (`brief_chips`): seats, budget, a size
-  in its own figures ("Up to 220 cm wide", "200 x 300 cm"), each colour and
-  style - never the search's descriptive wording, which is a restatement, not
-  theirs to read, and keeps ranking. They stay beside the list they describe
-  until another list replaces it. ✕ sends a `drop` search
-  action and
-  the search runs again without that one thing, as a fresh set; a facet the
-  search no longer uses searches nothing (`questions_expired`).
-- **Narrow down** (`narrow_down`) is the card in its folded mode, opened
-  showing what the search already uses (`selected` per question): every
-  question of the family, with the head count where its opening asks one, or
-  `narrow_default` for a type no card covers. Its answers replace the values it
-  showed ticked (`PendingBrief.replaces`) - an unticked chip is taken away, and
-  a value no chip names ("under 3,000") stays until a band replaces it - except
-  the kind, which stays, and the feel, whose words are mixed with their own. A
-  colour or style they required stays required when re-ticked. It is answered
-  by tapping only; words typed into "Anything else?" are sent as a message, and
-  a new need typed beside it still gets its opening. A colour or style they
-  untick is no longer theirs: it leaves their remembered preferences too, so
-  nothing seeds it back, and the reply describes the search only as it is now
-  (`narrowed`).
-- It is a tool beside the cards, never the turn's question: the reply and its
-  next step are unchanged by it, and it sits on the latest list only.
-
-### 10.7 The buttons on a card (`customer_agent.designer_led_buttons`)
-
-Phase 3, on by default. Every card on a result list still on screen carries:
-
-- **Select** - as before: a pick, and what goes with it is shown (10.4).
-- **♡ Like** - kept in the liked list (`product_interaction.liked_product_ids`),
-  apart from the picks, as a taste signal. Silent: no turn, no reply, nothing
-  else changes. ♡ again, or ✕ in the tray, takes it back. Past
-  `max_likes` the oldest like is let go. Only the screen likes: a typed "I
-  like this one" is a pick (17.1).
-- **More like this** - the similarity search a typed "more like the second
-  one" runs (its kind, leaning to its colour and style), from any card on a
-  list still on screen (`product_action` `more_like_this`).
-
-The tray above the message box shows the picks only. "What have I liked so
-far?" shows the liked list as cards (`show_selection` with `show_liked`,
-`product_source` `liked`), framed as what caught their eye, never as their
-picks; each card carries Select, ♡ (unlike) and More like this, named by its
-place in the liked list. "The one I liked", "the one I hearted" is a reference
-of its own (`liked_product`), so "I want to buy the one I liked" picks it -
-asked which only when several are liked. A ♡ tapped while a reply or a tick is
-in flight is queued and saved after, so a like never races the session. Every reply reports the liked
-list beside the picks; switched off, likes are refused and none is reported.
-
-### 10.8 The designer's direction (`customer_agent.designer_direction`)
-
-Phase 4, on by default. After a pick, the design specialist chooses what comes
-next for the room they named in the opening (an office desk leads to a chair,
-a living-room sofa to a table) and gives that kind **one direction**: colours
-and styles from what the store stocks for that kind, what to avoid, the
-piece's character, and a size proportion to the pick. A value the kind is not
-stocked in is dropped, never matched to something near it.
-
-- **It orders, never filters.** The customer's own colours and styles rank
-  first; the designer's colours, then styles, rank after them in a tier of
-  their own (so a customer's White is never outweighed by a designer's
-  Modern, and where none of their colours is stocked the designer's decide);
-  the pick's own style gives way to the designer's; what to avoid goes after;
-  a size proportion orders by closeness. Kept with the search, so paging and refinements lean the same
-  way. No price role: price comes only from the customer.
-- **Sizes need no convention.** A product's longer floor side is the longer
-  whatever column holds it. A kind is long and shallow - longer side = width,
-  shorter = depth - only where the store's own data shows it (`size` settings:
-  one side at least 1.3 times the other in 95% of pieces): sofas, rugs,
-  wardrobes, TV units, consoles in store 50; not beds (nearly square), chairs,
-  sets or centre tables. A pick's size sets a target only where its kind
-  passes the rule - a corner set stored as one piece's 96 cm is not the set's
-  size. Sizes order only; no size is stated from them.
-- **The reply picks out the best one or two** on every list, whatever the
-  setting (it is how the writer presents any list) - by position,
-  each with a reason from the card (colour, style, size, seats, price, the
-  words of its name) or the direction - never all five, never a material,
-  quality or popularity the card does not show.
-
-### 10.9 Taste after products (`customer_agent.designer_taste`)
-
-Phase 5, on by default; switched off, the colour-or-style follow-up of 10.2
-returns. Taste is of three kinds, kept apart, all ordering and none filtering:
-
-- **Said** - their words, or a tapped taste answer: every later search.
-- **Learned** - caught quietly, never asked: the catalog's current colour and
-  style of what they ♡ liked, picked or tapped More like this on
-  (`product_interaction.explored_product_ids`), worked out when a search
-  starts. A colour leans only the same kind; a style leans any kind. Shown as
-  a "· suggested" chip whose ✕ drops it from that search. Un-liking takes it
-  back from the next search; a change of kind works it out again.
-- **The designer's** - the direction after a pick (10.8).
-
-Said ranks before learned, learned before the designer's.
-
-**One soft question after results**, in place of the colour-or-style
-follow-up, decided in code (`app/services/taste_question.py`), each kind at
-most once a session (`taste`), and never about what was said or learned:
-
-1. "How wide is the spot where it will go?" - for a kind a space can be
-   fitted to (`SPACE_WIDTHS`), while no wall and no width for the piece is
-   known: the widths as chips, and "Not sure". The answer is the space of
-   10.10 - it orders, never filters. **Off by default**
-   (`customer_agent.designer_space_question`): the next question is asked
-   instead, and no card - opening, card or Narrow down - offers "How wide a
-   space?" either. A space given in words is still used.
-2. "Which of these two feels more like you?" - the two cards on screen that
-   differ most in colour and style, and "Neither". The answer is said taste
-   (the card's styles for any kind, its colour for this kind) and is **never a
-   pick**; "Neither" leaves both cards out.
-3. "Which style feels right?" - the store's real styles for this kind, the
-   ones on screen first. No mood words.
-4. "Anything you'd rather avoid?" - colours and styles on screen they have
-   not said, required or shown they like. **Pushed down, never hidden** - in
-   this search and every later one (`customer_preferences.avoid_colours` /
-   `avoid_styles`), right after what they said they like and ahead of
-   anything learned or suggested.
-
-Not asked of a kind not chosen by its look (a mattress, 10.5), nor beside a
-seats question, a combination, a room or a room's
-alternatives, suggestions, a turn that already asks, a turn that declined
-questions ("just show me"), or the turn that answered one. Answers are keys
-read back through the pending question (`search_action` `taste`); a typed
-answer is read into the same keys (the decision's `taste_answer`), exactly as
-the tap. The question lives only beside the list it was asked about
-(`list_revision`): once another list replaces it, nothing answers it. Taking,
-comparing or looking into a card is never a taste answer, and its chips are
-never replaced by the reply's own.
-
-### 10.10 The space it must fit (`customer_agent.designer_space_fit`)
-
-On by default. "My wall is 400 cm" - typed (`space_width` in query
-understanding, `refinement.space_width` on results), or the space question
-tapped - says two things, handled apart:
-
-- **It orders, never filters.** Pieces that fit the space come first, pieces
-  of unknown size next, wider ones last - shown, never hidden, since a room
-  being designed may use a piece differently. Shown as a removable chip ("For
-  a 400 cm space"). A width they give for the piece itself is a filter as
-  always, and ends the space.
-- **What suits the space is the designer's.** Asked once per space (`space_fit`
-  task, with the room and head count when known), it gives a proportion of the
-  space and a reason; code turns it into a width (`RankingLean.size_target_cm`)
-  and orders the cards by closeness to it - nothing that fits is hidden. Only
-  for a kind the store's data shows to be long and shallow (10.8). Paging and
-  refinements keep the answer; a designer that cannot answer leaves the space
-  only limiting. The reply says the width aimed for and why, once.
-
-An opening that offers the space question always asks it (`ALWAYS_ASKED`),
-unless its family names what it asks instead - a sofa's opening asks the
-room, and its space is the first question after products (10.9) - simply:
-how wide the wall or spot is, never which measurement or unit. "Help
-me narrow these down", "narrow by size" open Narrow down as the turn's
-question (`narrow_by`), kept to the questions named. The console draws it open
-with its questions showing - never as the folded "Narrow down" button - and
-keeps it in the chat, read-only, once they move on. A measurement a kind
-cannot be searched by is corrected once, never a failed turn.
-
-### 10.11 Will it fit (`customer_agent.designer_fit`)
-
-Phase 7, on by default. Whether a piece fits their room - a wall, through a
-door, the room itself - is **the design specialist's judgement**, never code's
-and never the writer's. Code only measures:
-
-- **The room's size first.** Asked "will it fit?" with no room length and width
-  on record, the application asks for them in one question (`missing_room_size`);
-  it never guesses, and never answers from a wall alone.
-- **What the designer is given.** The room's measurements, every wall and doorway
-  they gave (kept, never overwritten by the next), and each piece asked about -
-  the one they point at, or the cards on screen - measured in code
-  (`fit_checks`): a wall against the piece's longer side, a doorway against the
-  smaller of its depth and height; a size not listed is said to be unknown.
-- **What the designer decides.** Whether it fits physically and whether it
-  works - walking space, room beside it, what else the room must hold, how it
-  comes through the door - and the reply relays that, never more than was
-  measured. No chips and no labels: the conversation carries it.
-
-**At the pick, and piece in piece** (`customer_agent.fit_after_pick`, on by
-default; off is the behaviour above, exactly):
-
-- **A bed picked is checked against the room.** Which kinds are is reviewed
-  data (`briefs_v1.yaml`, `room_check_on_pick`: beds). Picked with the room's
-  size unknown, the turn closes on its length and width (`room_size`), in
-  place of the step after a pick - once a session (`room_check`), never beside
-  another question, and never for a piece of a room being designed. It is
-  answered only while the list it was asked beside is on screen and the bed is
-  still picked (`awaiting_room_check`): then a reply giving just the room's
-  length and width, with the unit, is its answer even where the decision read
-  it as a plain one, and the designer judges that bed in that room, not the
-  cards on screen. A room to design, a new search or a question about another
-  piece is theirs to have, with the size recorded beside it.
-- **What goes in the pick comes in its size.** After a bed, the designer reads
-  the mattress width that goes inside it off the bed's listed size and name
-  (`fits_inside_cm`); the mattresses in that size come first (`fit_side_cm`),
-  nothing hidden, and - only when the first card is that size - the reply says
-  they start with the size made for the bed: the designer's reading, never a
-  guarantee. The reading is kept with the pick (`inside_sizes`), so their own
-  later search for that kind - typed, or the chip beneath the pick - comes in
-  that size too, while the bed is still picked (`sized_for_their_pick`).
-- **A piece in a piece never asks for the room.** "Will this mattress fit my
-  bed?" is the decision's `fit_with_piece`: the designer judges it from what
-  is on screen and what they picked, with no room size asked and no wall or
-  doorway measured.
-
-### 10.12 A sofa search shows sets and sectionals (`customer_agent.mixed_types`)
-
-On by default. A sofa is not only a sofa: for five people store 50 has one
-5-seat sofa and twelve 5-seat sofa sets. So a search the customer asked for -
-new, answered, refined, paged - also covers the types reviewed to stand beside
-its own (`seating_v1.yaml`, `shown_with`: sofa sets and sectional sofas beside
-sofas), with or without a head count. Switched off, a sofa search shows sofas
-only, exactly as before.
-
-- **Every other constraint applies to them alike** - price, seats, colour,
-  style, exclusions - in one query (`ProductSearchRequest.alongside_subcategories`,
-  set by code on every run, never by a model and never stored).
-- **The cards take turns by type** - the type asked for first - but only among
-  products equally good for what they asked (the same depth, seats, colour,
-  style and space match). A better match is never moved below a worse one, and
-  an explicit sort is never interleaved: "the cheapest" is the cheapest. Nor
-  are cards their own words order - descriptive wording, a colour no approved
-  value names - which only similarity can rank: the closest stays first.
-- **The reply says it as it is.** It is told how many of the asked type meet
-  the request - seating the head count, when one orders the cards - and the
-  types on screen (`type_mix`). Fewer than the cards shown: "I have only one
-  sofa that seats 5, and these sofa sets seat you all" - said in so many words.
-  It calls each card by its own type, names only types on screen, and never
-  counts the cards of a type ("2 sofas here" reads as the shop's stock).
-- **Kept to one type** when the customer asks for it alone - "just sofas", "a
-  simple sofa, not a set" (the decision's `only_asked_type`, kept with the
-  search as `single_type` until the type changes, through paging, refinements
-  and the opening's typed answer) - when they tap a kind (a 3-seater is a
-  3-seat sofa), when they ask for sofas again while only sets and sectionals
-  are on screen (known issue 21), when they name another type, and when they
-  give a size: these types' listings cannot answer a size (15.1), so the
-  search keeps to sofas and the reply says why. Kept to sofas, a seat count no
-  sofa reaches is the seating-shape question (27.1), never the sets again.
-- **Ours to order, theirs to keep**: what goes with a pick and "more like this"
-  keep to their own type - "more like this", refined, too - and a room's
-  pieces, their alternatives and seating combinations are unchanged.
-- Their sizes are read by floor side exactly like any other piece (15.1); nothing
-  about them is special-cased.
-
-### 10.13 A sub-category's own questions (`customer_agent.subcategory_questions`)
-
-On by default. A new search for a sub-category the "ZORY Product Search" sheet
-covers - every one but `lounge-chair`, until its options are reviewed - is
-asked that sub-category's own questions (`app/taxonomy/subcategory_questions_v1.yaml`,
-loaded and validated against the taxonomy at startup) in place of the opening
-(10.5) or its family's card (10.4). Switched off, every type is asked exactly
-as before.
-
-- **All at once, on one card**, before any product: the sheet's questions,
-  at most three, exactly as it asks them. A question that lists colours with
-  patterns or materials ("Which color or pattern do you prefer?") stays one
-  question: the store's colours, then the sheet's words beside them - before
-  them where the sheet lists them first ("Which material or color") - up to
-  three ticked across both. Each word chip is marked a feel
-  (`BriefChoice.kind`), so a client sends it with the feels and the colours as
-  colours. The reply writes one or two warm sentences and asks nothing itself;
-  the card is the question. "Just show me" skips it.
-- **The sheet decides what is asked; the catalog decides the chips** wherever
-  it has the data: a type answer that names a sub-category (Office chair, an
-  L-shaped sofa, a 3-seater) switches the search to it and is offered only
-  where the store stocks it, the one it has most of first; colours are the
-  store's own for the type; the budget is bands cut from its real prices; a
-  head count orders by reviewed seats (10.5), or - where the type records
-  none - only ranks ("6 seater").
-- **What the catalog cannot know only ranks**: a material, a feature, a shape,
-  a size, a pattern, a use - and a type answer no sub-category names (a
-  rocking chair) - are the sheet's words, added to the descriptive wording
-  (12.3). Nothing is hidden and the reply never says a piece is made of or has
-  one. Such questions may take up to three ticks where they are a taste
-  (materials, features, patterns); a type, a size, a use, a head count or a
-  budget take one.
-- **Such a chip is offered only where the store's names back it**
-  (`customer_agent.subcategory_chips_from_names`, on by default): at least
-  `subcategory_chip_min_products` (one) of the store's active products of the
-  types the card offers are named with its words, counted in one read when
-  the card is built (`app/taxonomy/name_match.py`). Its words are reviewed
-  data - the option's `match` terms in the sheet ("gas lift" for lift-up
-  storage, "dhurry" for flatweave), else its own label's distinctive words -
-  matched as whole words with their plural, accents and Arabic spellings read
-  as one. **Every sheet question is still asked**: where its names back fewer
-  than two chips - with the kinds it switches to, for a type question - it is
-  asked in the sheet's own chips, the backed ones first, so a store with two
-  chaise lounges is asked the chaise questions too (logged as
-  `named_fallback`). A size comes from names ("King", "Queen"),
-  never from the dimension columns. This is the one use of names for what the
-  catalog has no field for (5): they decide only whether a chip is worth
-  offering - nothing is filtered on them, no product is said to be made of or
-  to have what a chip names, and the chip still only ranks. Off, every chip
-  is offered in the sheet's order.
-- **At most eight chips** a question: the most-stocked kinds, then the chips
-  the most products are named with, the reviewed order among equals and where
-  names are not checked. Answers that add nothing ("Not sure", "No
-  preference", "All colors", "Other ...") are left out, and brand questions
-  until the catalog records a brand.
-- **What they already said is left off**, as on any card: a seat count or
-  their own words naming an answer ("a velvet sofa"), a budget, a colour said
-  or on record. A card with nothing left to ask is skipped and the search runs.
-  A typed reply that answers one of its questions is searched, never asked
-  again.
-- **A search that named no kind** ("I need a table", "a light") gets the row
-  that asks the kind; tapping one searches it at once.
-- **Narrow down** beside its results asks the same questions, opened showing
-  what the search uses, with the budget added where the row asks none.
-- Worded from the sheet's Arabic tab for a customer answered in Arabic; the
-  catalog's chips keep their reviewed Arabic names.
 
 ## 11. Single-Product Discovery Flow
 
@@ -1157,7 +676,7 @@ User query
         -> yes: determine whether semantic ranking adds value
     -> Pinecone only when semantic/fuzzy ranking is useful
     -> final ranking
-    -> Customer/Commerce Agent explains trade-offs and presents results
+    -> the agent explains trade-offs and presents results
 ```
 
 PostgreSQL decides structured eligibility.
@@ -1212,7 +731,7 @@ retrieval needs. It carries:
 - `commerce_subcategory` (optional, validated as a pair against the registry)
 - the types searched beside it, `alongside_subcategories` - each validated as
   a pair, set only by code and never with a measurement - and `single_type`,
-  when the customer asked for the type alone (10.12)
+  when the customer asked for the type alone (10.2)
 - an optional price constraint, with an explicit currency
 - an optional seating-capacity constraint
 - exact colour and style requirements (see 12.4)
@@ -1284,7 +803,7 @@ satisfying the whole request.
 A material they simply want ("a wool rug", "something velvet") is a leaning,
 exactly as a colour is (12.4): it is kept as descriptive wording that ranks by
 meaning, nothing is filtered on it, and the reply never says a piece is made of
-it. The card's feel (10.4) is the same thing, tapped.
+it.
 
 Colour and style are no longer among these: they are handled by 12.4.
 
@@ -1330,7 +849,7 @@ code.** The model interprets what the customer described and chooses every
 approved value that fits - one-to-many: "dark grey" is Grey and Charcoal,
 "something lighter" is the approved colours lighter than the cards on screen.
 It is given the approved lists and its response schema only admits those
-values (query understanding and the decision model alike), so it cannot write
+values (the search tool's arguments), so it cannot write
 a value that does not exist. There are no tone tags and no synonym table:
 customers say "warm", "earthy", "moody", and only the model's reading covers
 that. Application code only normalises spelling (case, spacing, "_", "-") and
@@ -1363,8 +882,8 @@ preference and nothing is disclosed as unmatched; in "Modern and cottagecore",
 a Modern-only piece does not satisfy it (styles are all required), so the
 unexpressible style is reported as unmatched.
 
-The reply is told how many cards on screen carry a colour or style the customer
-asked or wished for. When that count is zero it must say so - it never
+Each card the agent is given carries its stored colour and styles. When no
+card carries one the customer asked or wished for, the reply says so - it never
 describes the cards as that colour.
 
 ## 13. Constraint Semantics
@@ -1476,7 +995,7 @@ they excluded. Widening it is the relaxation layer's job, using the
 
 Never silently violate locked constraints.
 
-If a relaxed result is ever presented, the Customer Agent must explain the
+If a relaxed result is ever presented, the replying agent must explain the
 trade-off clearly.
 
 ### 13.5 Controlled relaxation
@@ -1540,14 +1059,15 @@ says nothing about a coffee table, so a measurement never follows the customer
 to a different type - not even one the registry could measure the same way.
 Each type's sizes are saved in session state
 (`CustomerPreferenceState.measurements_by_type`) after a search the customer
-asked for has run - a room plan's or a similar-product search never saves, and
-a refinement saves only when it touched a size. Returning to a type, or a new
+asked for has run - a room plan's, a companion's or a similar-product search
+never saves. Returning to a type, or a new
 search for it that states no size of its own, brings its sizes back and the
 reply says so (`earlier_sizes_applied`); a size stated now is used exactly, not
-blended with the saved one. "Any size is fine" on the way back sets the
-decision's `drop_saved_sizes`. Sizes left behind are reported as
-`dropped_roles`, which the reply mentions only when the new piece takes the old
-one's place (sofa -> sectional), never for a different piece (sofa -> armchair).
+blended with the saved one. "Any size is fine" on the way back is the search's
+`earlier_sizes: false`. A search that is ours - what goes with a pick, more
+like this - neither brings sizes back nor saves them. A size the search could
+not apply is reported (`sizes_not_applied`), so the reply never presents it as
+met.
 Room measurements are a different fact - they belong to the room and always
 carry.
 
@@ -1706,7 +1226,7 @@ The LLM must not invent certainty.
 basis to choose between `center-table`, `service-table`, `nightstand`,
 `console` and `tv-table`.
 
-The architecture must allow the Customer/Commerce Agent to ask one useful
+The architecture must allow the agent to ask one useful
 clarification question instead of inventing a subcategory. Guessing a specific
 subcategory to avoid asking is a defect.
 
@@ -1894,7 +1414,7 @@ Provenance is structured, never prose. One `RelaxableField.DIMENSION` member
 carries the field and a `DimensionRole` carries which measurement, so adding a
 role never means editing an enum. A widened attempt records the role, the
 customer's original kind, the strength, the stage, the original figures and the
-bounds actually applied - enough for the Customer Agent to explain the
+bounds actually applied - enough for the replying agent to explain the
 trade-off, and nothing that reads as a score.
 
 Relaxation never admits a product whose dimension or unit is missing. That holds
@@ -1979,6 +1499,18 @@ it can never change a category, a bound, a colour requirement or a retailer.
 A request with no fuzzy wording and no preference is not embedded at all -
 an embedding would impose an order rather than discover one.
 
+**The customer's own message ranks too** (`ResolvedSearch.customer_words`).
+On a search the customer asked for, the message they typed that turn - never a
+tap's stand-in words - is added to the query document as "Customer said",
+with figures, currency words and units taken out (`ranking_words`: text
+cleaning, no interpretation). Their words therefore order the cards even when
+the agent's search left them out: "beige king beds" ranks the beige king beds
+first though the agent searched only "beds". It is kept with the search, so
+its pages rank the same way, and replaced by the next search. Searches that
+are ours - what goes with a pick, more like this, the room engine - never take
+it. It orders and never filters: eligibility, an explicit sort, relaxation
+depth and stated preferences all stand exactly as above.
+
 **Every failure degrades to deterministic order.** No index, no embedding, no
 candidates, or an integrity failure: the eligible products still come back, in
 M6/M8 order, with the reason recorded structurally. Discovery never becomes
@@ -1998,93 +1530,135 @@ customer-facing shape.
 
 ## 17. Agent Architecture
 
-### 17.1 Customer / Commerce Agent
+A supervisor and four agents, built on LangGraph (`app/agents/`).
 
-This is the only customer-facing reasoning agent.
+| Agent | Owns | Tools (`app/agents/tools/`) |
+|---|---|---|
+| Supervisor | who handles the turn | `transfer_to_<agent>`, `finish` - it never talks to the customer |
+| Sara | finding, comparing, the cart, a group's seating one piece at a time | `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room` - the only owner of the cart's adds and of comparisons |
+| Nora | how it looks and whether it works: design, their room, fit and placement, whole rooms | `design_advice` (hers alone), `plan_room`, `revise_room`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
+| Salman | what goes with a finished choice, finishing a designed room, rooms into the cart, value | `what_goes_with` and `add_room_to_cart` (his alone), `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
+| Faysal | the store itself | `store_policy`, `contact_store`, `product_details` |
 
-Responsibilities:
+**One owner per job.** Only the owner has a job's tools, so no agent can
+answer another's question from its own judgement: a design question that
+reaches Salman is handed to Nora, an "add it" that reaches Nora or Salman is
+handed to Sara. The supervisor routes by what is asked, never by who spoke last:
+"yes", "the second one" or a tapped button is sent to the owner of what it
+does, whoever offered it. Every agent also has `calculate` (17.1).
 
-- own conversation continuity
-- understand current intent
-- interpret the customer's product language into a structured commerce interpretation, using conversation context (section 14.2), expressing colour and style only in approved values (12.4)
-- continue a search in progress when asked - "show me more" leaves out what was already shown, "not this one" leaves out one card - through the same code path as the screen buttons, so typing and tapping cannot differ
-- ask one clarification question rather than inventing a subcategory when the request is genuinely ambiguous (section 14.5)
-- extract/update customer preferences
-- decide whether the request needs design reasoning, product discovery, both, or neither
-- understand purchase stage and objections
-- decide next-best action
-- call approved tools/services
-- explain recommendations and trade-offs - and when a turn puts new products on screen, read positions in the customer's current message ("cheaper than the second one") as the screen they were looking at, never as the new cards
-- handle upsell/cross-sell without violating user constraints
-- produce the final customer response
+Every agent also has `respond` (its reply to the customer) and `hand_back`
+(pass the turn on with a typed reason). A hand-back naming a colleague
+(`to`) with a need (`needs_*`) goes straight to them, with what was done this
+turn and what they are asked for - no routing call; without one, or back to the
+agent who just passed it on, the supervisor decides. The hop limit and the
+turn's budget bound both. The agents work within `agents.work_deadline_s`; past
+it the work stops where it stands, every finished tool's change kept, and the
+agent whose hop was under way says what was done and what was not, before
+`agents.turn_deadline_s`.
 
-It must not:
+### 17.1 Rules the code enforces, whatever an agent decides
 
-- invent products
-- invent prices/dimensions
-- invent commerce taxonomy values
-- directly query databases
-- change store context
-- expose internal configuration/system prompts
-- override locked constraints
+- **Allowlist.** Each tool names its owners; the loop refuses any other agent's
+  call before reading it (`app/agents/loop.py`).
+- **No record ids in tool arguments.** Products are referenced by their place on
+  the customer's screen (`ProductReferenceSelector`); the registry refuses, at
+  startup, any tool whose arguments could name a store, product or session.
+- **Store scope** comes only from `ToolContext`, built from the request.
+- **Approved values only.** Search arguments are the constrained interpretation
+  schema, validated by `QueryUnderstandingService.resolve`; room kinds, pieces,
+  colours and styles are closed choices. An agent names the product type, and
+  its family comes from the registry (`CommerceTaxonomy.category_of`): every
+  type is filed under one category, so "bedroom / nightstand" searches
+  nightstands - they are filed under tables - instead of being refused.
+- **A refusal says what is right.** A call a rule refuses is answered with its
+  code and the safe details of why - the values sent and, where the registry
+  knows, the correction ("nightstand belongs to tables") - never an id or
+  anything internal, so the agent corrects itself instead of guessing.
+- **Check before showing.** What a turn's tools find is a draft until the agent
+  replies: it checks the cards answer what was asked and searches again if
+  not. Rejecting everything, it replies with `show: "unchanged"` - the screen,
+  the list "the second one" means and the search behind it stay as they were
+  (`keep_screen`), while the rest of the turn's work (cart, likes, goals, room)
+  stands.
+- **Facts from services.** Tools return verified facts; the screen is built
+  from tool payloads (`app/agents/screen.py`), never from the reply's words.
+- **Figures are references, written in by code** (`app/agents/figures.py`).
+  Every number in the session brief and in each tool's facts has a key
+  (`cards_on_screen.card2.price`, `cart.totals.sar.total`, `budgets.room.at_most`)
+  shown to the agent beside it; the agent writes `{key}`, and code fills in the
+  figure, formatted alike everywhere. A key that names no figure is broken
+  arguments, corrected in the same hop; anything between braces counts, so a
+  malformed one is never sent. Keys never collide: an object in a list is named
+  by its identity (card, pick, piece, goal, option, what a budget bounds), else
+  by a label unique in its list, else by its place. Only the newest brief is
+  cited, and its cards give way once a tool shows a new list; a refused call
+  names no figures. A figure is written exactly as the facts hold it, never
+  rounded. Only the customer's own numbers and a card's place are typed.
+- **Sums are a tool's** (`calculate`, every agent): add, subtract, multiply,
+  divide, a floor area from two lengths, a percentage - each input a figure key
+  or a number the customer said, the result a new figure. An agent never works
+  out a figure itself.
+- **Every figure checked**, as a safety net (`app/agents/reply.py`): a number
+  must come from a tool's facts, the brief or the customer's words. One
+  correction; then only the sentences with such a figure are dropped (a
+  question with one goes with its choices), and the fixed reply follows only
+  when nothing is left.
+- **Budgets.** Handoffs, model calls per turn, tools per hop, and a turn deadline
+  (`agents.*` settings). A turn that runs out of steps, or breaks the argument
+  rules twice, keeps what its tools already did - each tool's change is staged
+  whole, so the state is never half-applied - and the agent who was working gets
+  one reply-only call to say plainly what was done and what was not. Only when
+  that reply fails too, when a reply's figures fail the check twice, or past the
+  deadline, does the turn end on the fixed reply with the stored session
+  untouched.
+- **Typed handoffs.** Agents never message each other: a hand-back carries a
+  typed reason and, at most, the colleague's name. The next agent reads the
+  record of what earlier agents' tools did this turn.
 
-### 17.2 Interior Design Agent
+### 17.2 Shared memory
 
-This is a specialist reasoning agent.
+One staged `AgentStateV1` per turn (`TurnWork`), changed only through the
+reducers in `app/services/agent_state.py`, plus the ordered record of every
+tool call. Redis compare-and-set (`save_if_revision`) stays the only store; no
+LangGraph checkpointer. Each stored assistant message names the agent who wrote
+it (`ConversationMessage.agent`) and the answers it offered to tap
+(`ConversationMessage.choices`). Every agent reads the session through one
+typed brief built fresh each turn (`SessionBrief`, 10.4) - never the catalogue
+beyond what the customer touched. Fields the scripted flow kept are dropped
+when an old session is read (`AgentStateV1` and `RoomProjectState` before
+validators); the version does not move.
 
-Responsibilities:
+### 17.3 Taps
 
-- general interior-design Q&A
-- room sizing/spatial reasoning
-- furniture sizing guidance
-- room composition
-- style/color/material coordination
-- circulation considerations
-- identify required/recommended/optional product categories
-- generate structured whole-room furnishing plans
-- produce design constraints for Product Discovery
-
-It must not:
-
-- search arbitrary products directly unless explicitly exposed through a narrow tool contract
-- invent catalog products
-- invent product prices
-- change store context
-- make hidden commerce/security decisions
-
-The Interior Design Agent must receive retailer catalog capabilities for whole-room planning so it does not plan around unsupported product categories.
+A screen button (`bundle_action`, `search_action`, `product_action`,
+`support_action`) becomes a typed event (`TapEvent` in
+`app/agents/screen_actions.py`: the button and the places it named, never an
+id) that the supervisor routes like a message, told who offered the button and
+each agent's tools - a hint, never a rule about which tool must run. The
+console sends a Select as the customer's words ("I've added X to my cart").
+Tapping and typing run the same agents, tools and checks.
 
 ---
 
 ## 18. Orchestration
 
-Use LangGraph for controlled orchestration, not as a place to hide business logic.
-
-Nodes should represent meaningful orchestration phases, for example:
+Two graphs:
 
 ```text
-load_context
--> input_guardrails
--> load_session_state
--> customer_agent
--> route
-    -> direct_response
-    -> interior_design_agent
-    -> product_discovery
-    -> whole_room_flow
--> validate_results
--> customer_agent_response
--> output_guardrails
--> update_session_state
+outer (app/orchestration/graph.py):
+load_session -> run_agents -> persist_session -> build_public_response
+
+team (app/agents/team.py), inside run_agents:
+START -> supervisor -> sara | nora | salman | faysal
+              ^                    |  model -> tools -> ... -> respond | hand_back
+              +---- hand_back -----+
 ```
 
-Do not make every helper function a graph node.
-
-Do not put deterministic ranking/SQL/taxonomy logic inside prompts because LangGraph makes it convenient.
-
-Graph state must be typed.
-
-Do not expose hidden chain-of-thought. Store only explicit structured planning/state required for execution and observability.
+The revision is checked before any model call; the reply is checked before
+persistence; nothing is returned that was not committed. Both graphs compile
+once per process; a request's tools and services travel in the team graph's
+state.
 
 ---
 
@@ -2254,15 +1828,20 @@ stops at the first step that works:
 1. **Normalise** what can be read without guessing: spelling of approved
    values, thousands separators and "5k" for money, "20%" for a percentage.
    Anything ambiguous ("2,5", "5.000" as a price, "1,500 m") is refused, never
-   guessed - a misread figure is worse than a refused one. Every figure from
-   model output goes through one reader (`app/core/numbers.py`).
+   guessed - a misread figure is worse than a refused one. Every figure read
+   from model text goes through one reader (`app/core/numbers.py`); a figure in
+   an agent's tool arguments is a typed number its schema validates.
 2. **One corrective attempt**, told which rules were broken - our own rule text
    and the approved values, never the customer's words or the refused answer.
    The model may then ask the customer one question if their meaning is
-   genuinely unclear. A turn costs at most three decisions.
+   genuinely unclear. An agent gets one correction of broken arguments a
+   turn; a turn the agents cannot finish is first worded by the agent who was
+   working, keeping the work its tools did (17.1).
 3. **Fall back** to a fixed, friendly "please say it another way" reply, with
    the conversation state exactly as it was before the turn. No model call,
-   nothing half-applied.
+   nothing half-applied. For the agent team, a turn stopped by a rule first gets
+   one worded reply that keeps the work its tools completed (17.1); the fixed
+   reply follows only when that fails.
 
 Only outages (database, provider, index) and genuine defects surface as errors.
 Every rejection is logged with the rule that failed, never the offending value.
@@ -2321,8 +1900,10 @@ app/
 │   ├── design.py
 │   └── bundle.py
 ├── agents/
-│   ├── customer_commerce.py
-│   └── interior_design.py
+│   ├── team.py             # supervisor + agents (LangGraph)
+│   ├── loop.py, views.py, screen.py, reply.py
+│   ├── operations/         # search, cart, room engine
+│   └── tools/              # each agent's typed tools
 ├── orchestration/
 │   ├── graph.py
 │   ├── state.py
@@ -2351,7 +1932,7 @@ app/
 │   ├── output.py
 │   └── public_dto.py
 ├── prompts/
-│   ├── customer_commerce/
+│   ├── agents/             # the supervisor's and each agent's instructions
 │   └── interior_design/
 └── observability/
     └── tracing.py
@@ -2419,24 +2000,16 @@ Once `store_id` is resolved into request context, downstream agents/tools must c
 
 Design the response so structured product/bundle data can coexist with assistant text; do not encode UI as arbitrary LLM-generated HTML.
 
-**Each reply names the assistant it is shown as** (`ChatResponse.agent`):
-`sara` (shopping - the session's own voice), `salman` (sales) or `nora`
-(interior design). A label only: one assistant answers every turn, with one set
-of prompts and services; nothing routes on it. It is decided in code from what
-the turn did (`app/services/agent_persona.py`), never by a model, and the reply
-is told it (`ResponseInput.speaking_as`) so a reply that names itself names the
-one it is shown under:
+**Each reply names the agent who wrote it** (`ChatResponse.agent`: `sara`,
+`nora`, `salman` or `faysal`), and `ChatResponse.workflow` lists every agent that
+worked on the turn, in order (`handoffs`), ending with the one who replied - the
+console shows "Sara → Salman". Furniture Finder and room renders are Sara's.
 
-- **Sara** - the session's first reply (it greets and introduces itself as
-  Sara), product discovery, Furniture Finder, the cart, room visualisation
-  (every render), and everything else.
-- **Salman** - cross-sell (a pick shown with what goes with it, the kinds
-  offered, a companion tapped), an up-sell (`commercial_reason: upsell`), and a
-  room's money side: an over-budget swap or finishing touch and its answers,
-  and cheaper pieces. Sales outranks design on a turn that is both.
-- **Nora** - design answers, and the room being designed: its questions, its
-  package, a piece swapped for another of its kind, and finishing touches
-  shown or added to the room.
+`POST /v1/chat/stream` runs the same turn once and sends server-sent events:
+`progress` (`{agent, phase}`, never arguments or products) while the agents
+work, then exactly one `reply` with the committed `ChatResponse`, or one
+`error`. A stream that ends without a reply means the session must be re-read,
+never the request replayed.
 
 **The server words what a client shows around products, in the reply's
 language** - so a store's widget, like the console, shows it as it is and keeps
@@ -2452,7 +2025,7 @@ seating combination carries `display` too (name, kind, seats, the price of one,
 the line total), and its totals the worded new spend and budget. Every chat reply
 carries `labels` - every word a client draws around the conversation: the card
 buttons, the picks tray, the compare bar, Browse Catalogue's screens, the room package card,
-the card of questions, the comparison table, a room picture, and the message a
+the comparison table, a room picture, and the message a
 tapped button puts on the customer's side - with placeholders for the client to
 fill (`app/services/card_labels.py`; an Arabic label may leave one out, never add
 one). A photo search's pick and a room picture carry `labels` too, and the pick's
@@ -2462,9 +2035,10 @@ fallback; `GET /v1/labels?language=` answers before any reply has. Browse Catalo
 (`price.currency_label`) in it. The language is the reply's
 (`reply_language`), the session's for the picks endpoint, and English while
 `customer_agent.arabic_replies` is off. Display only: every search, filter,
-comparison, pick and decision keeps the English values beside it, and nothing
-the decision model reads carries Arabic. A reply written in Arabic is given
-each card's Arabic name, so its words and the cards name a product alike. A
+comparison and pick keeps the English values beside it, and the agents reason
+in the approved English values. A reply written in Arabic is given each card's
+Arabic name (`name_ar` in the session brief), so its words and the cards name a
+product alike. A
 room package and its renders stay English.
 
 ---
@@ -2494,7 +2068,7 @@ judging whether a result is too small, and widening it, belongs to the
 controlled relaxation layer above it (section 13.5). Discovery therefore knows
 nothing of constraint strength, and must not acquire a dependency on it.
 
-The Customer Agent explains results; Product Discovery finds them.
+The agents explain results; Product Discovery finds them.
 
 ---
 
@@ -2523,72 +2097,32 @@ When the user rejects/replaces an item, preserve accepted/locked items and re-op
 
 ---
 
-### 27.1 Seating combinations
+### 27.1 Seating for a group
 
-When a seat count no single piece meets leaves a search empty ("a sofa for
-8"), the combination planner (`app/services/seating_solution.py`) works out
-every combination the store can really build: two or three multi-seat pieces,
-or one or two with up to three extra seats of one kind. Seats add to the
-target exactly (one spare only if nothing is exact), and the total is within
-budget - both summed in code.
+**Shopping, a group is seated one piece at a time** (10.2, 10.5): a seating
+goal for the head count, the first piece's seats asked, and after each add the
+seats left counted from reviewed capacities - the next piece matched to what
+they chose (`match_goal`) and fitted to their room once it is known (10.6). The
+agents are never handed a ready-made combination; a product with no recorded
+seat count never fills a seat, and "seating for all ten" is said only when the
+cart's pieces add up to it.
+
+**In a room**, the room engine sizes living-room seating to the head count
+(10.1) with the combination planner (`app/services/seating_solution.py`): one
+piece when one seats everyone, otherwise two or three multi-seat pieces, or one
+or two with up to three extra seats of one kind, the seats adding to the
+target exactly (one spare only if nothing is exact) and the total within the
+room's budget - both summed in code.
 
 - Types come from reviewed data (`app/taxonomy/seating_v1.yaml`): the
-  multi-seat types a combination is built around, and the one-seat types
-  allowed as extra seats in a living space. A product with no recorded seat
-  count never fills a seat.
-- Every piece goes through Product Discovery and is held to the rest of the
-  request: strict colour and style filter it (lifted only if no combination
-  meets them, and then said plainly), wishes rank it, and sizes measure only
-  the type they were given for.
-- Each kind of piece (a type at one seat count) may be filled by several real
-  products - the best few matches to their wishes, plus the cheapest - so one
-  layout comes in several versions, and several pieces of one kind need not
-  match. Each "show me more" looks further down each kind, so paging reaches
-  every product that fits. The best combinations by rank are kept, never
-  merely the first found. The first page shows every shape and arrangement
-  before other versions of one already shown.
-- Ranking: fewest missed wishes, then fewer pieces, then price. Each shape
-  carries a "from" price - the lowest total among its best wish matches, so it
-  is the price of what would be shown.
-- The offer lives in the session (`seating_offer`): shapes offered, whether
-  the question was asked, the chosen shape, the combinations on screen and the
-  one they chose ("I'll take the second option" adds its products to their
-  picks).
-- **Each combination card can be chosen or turned down, and the list paged,
-  by tapping** - Choose, Not this one, Show more options - a `combination`
-  search action on exactly the path the typed words take.
-- **A chosen combination is settled seating.** It is saved with how many of
-  each piece (`seating_offer.chosen`); the reply is told its pieces,
-  quantities and the seats they add up to (`chosen_seating`), because their
-  picks list each product once - two of one 4-seater seat eight, and the reply
-  never calls it incomplete. It is drawn whole as "Your seating", and what goes
-  with it is shown, as for any pick (10.4), around its largest piece.
-- "Show me more" with combinations on screen means more combinations: the ones
-  on screen are remembered (`excluded`) and never shown again, and the next
-  best follow. "Not the second option" leaves out just that one. The shape can be switched
-  at any time while combinations are on screen. When a shape
-  has nothing left the reply says so (`no_more`) and offers the shapes that
-  still have unseen combinations - it never repeats or relabels old ones.
-- The reply is told which strict requirements were lifted, how many
-  combinations their size did not limit, and how many fully match their
-  wishes - and never claims more.
-- **When nothing fits the budget**, the reply offers the closest real total -
-  the lowest combination with the budget set aside and everything else kept -
-  as a question they can say yes to ("the closest is about 3,700 - shall I show
-  it?"). That offer is the seat count's one question: a yes shows the
-  combinations at once.
-- **When the asked type never seats that many but another main type does in
-  one piece** ("a sofa for six", where sofa sets seat six), that type is
-  searched with everything else kept and presented as the best fit - never
-  opened with "none of our sofas". Only when the asked type itself cannot seat
-  them: a colour or budget problem never changes the type.
-- **In a room**, each seating piece carries its own seat count, so swapping one
-  brings back a piece that seats the same; and the reply says "seating for all
-  nine" only when the real pieces add up to it, and says plainly when they fall
-  short.
-
-This is the `build_combination` tool of the agent-loop plan; the automatic
-trigger on an empty search is a bridge until the loop decides when to call it.
+  multi-seat types seating is built around (`combination_main`), and the
+  one-seat types allowed as extra seats (`combination_extras`).
+- Every piece goes through Product Discovery, held to the room's colours and
+  styles, which rank.
+- Each seating piece of a room carries its own seat count, so swapping one
+  brings back a piece that seats the same; the reply says the room seats
+  everyone only when the real pieces add up to it, and says plainly when they
+  fall short.
 
 ## 28. Prompt Management
 
@@ -2736,7 +2270,7 @@ Unless the user asks to prioritize differently, build in this order:
 12. Pinecone semantic ranking integration
 13. Redis session state
 14. guardrail layer
-15. Customer/Commerce Agent
+15. the agent team (supervisor and agents) and their tools
 16. Interior Design Agent
 17. LangGraph orchestration
 18. whole-room furnishing + bundle optimization
@@ -2806,35 +2340,19 @@ It is done when:
 
 ```text
 Customer
-   -> FastAPI API
-   -> resolve Store/Retailer Context
-   -> Input Guardrails
-   -> load Redis Session State
-   -> Customer / Commerce Agent
-       -> interprets customer language into a structured commerce interpretation
-       -> direct answer, OR
-       -> Interior Design Agent, OR
-       -> Product Discovery Service, OR
-       -> Whole-Room Flow
-   -> Deterministic Taxonomy Validation (approved category/subcategory pairs only)
-   -> Product Discovery Service
-       -> PostgreSQL structured filtering
-       -> Controlled Relaxation when needed
-       -> Pinecone semantic ranking when needed
-       -> Ranking / Comparison
-   -> Whole-Room Flow
-       -> Catalog Capability Service
-       -> Interior Design Plan
-       -> Budget Allocation
-       -> Product Discovery per category
-       -> Bundle Optimization
-   -> Customer / Commerce Agent composes customer response
-   -> Output Guardrails
-   -> update Redis Session State
+   -> FastAPI (/v1/chat, or /v1/chat/stream for live progress)
+   -> resolve RetailerContext
+   -> load Redis session (revision checked)
+   -> supervisor -> Sara / Nora / Salman / Faysal (typed tools, shared staged state)
+       -> services: query understanding + taxonomy validation, search pipeline
+          (PostgreSQL -> relaxation -> Pinecone ranking), comparison, seating,
+          room engine (design specialist -> discovery -> bundle optimiser),
+          cart + store cart check, store documents, support
+   -> reply figures checked against tool facts
+   -> screen built from tool payloads
+   -> Redis compare-and-set
    -> Customer
 ```
-
-Only two reasoning agents exist in V1. Everything else is a service/tool unless requirements later justify another reasoning boundary.
 
 ---
 
@@ -2856,72 +2374,47 @@ keeps a cart of its own.
   it; `GET /v1/cart` reads it without a turn.
 - **Changing it.** `POST /v1/picks` takes `quantity` (1..`cart_max_quantity`)
   beside `select` / `deselect`. At most `max_picks` products however they are
-  added - a tap (`pick_limit`), a typed add or an offer's yes (`CART_FULL`, a
-  fixed reply); a product already in the cart only changes quantity. A typed
-  choice with a number carries `ProductInteractionIntent.quantity` ("add two of
-  the third one", "make the second one 3"); `add_room_to_cart` and the room
-  card's `bundle_action` `add_to_cart` add every piece being bought with its
-  quantity - owned pieces stay out, and a product already in the cart keeps the
-  larger quantity, so adding twice never doubles it.
-- **A whole room in the cart is answered as a pick is** (Salman, 10.4): for a
-  room the registry knows, the pieces it could still take are ranked by the
-  design specialist exactly as for a finishing touch (10.3); the first in stock
-  is shown as a page leaning to the room's colours and styles, and the rest are
-  chips in her order - each showing its own page, with the room's chips beside
-  it, less what the room or their cart already holds. A pick's own chips - a
-  reviewed pairing of something they picked later - are answered as for any
-  pick. Another room: one kind the specialist chooses, with the reviewed
-  pairings of its first piece as chips (the room's first piece is the one in
-  focus, not drawn - the room is on screen). Nothing the room
-  holds is suggested again. Picks that already are the room are never offered
-  "design a room around my picks"; picks made outside a room still are.
+  added - a tap (`pick_limit`) or an agent's `add_to_cart` (`cart_full`, which
+  the agent says in its own words) - except a whole room (`add_room_to_cart`),
+  which goes in whole even past it: half a room is not a choice they made. A product already in the cart only
+  changes quantity. `add_to_cart` takes several products at once, each with how many
+  ("add two of the third one"), capped at `cart_max_quantity`; a product is
+  named by its place on a list, in the cart, in the liked list or a comparison,
+  as the product in focus, or by a colour, style or the cheapest or dearest
+  among the cards (`ProductReferenceSelector`). `add_room_to_cart` adds every piece being bought
+  with its quantity - owned pieces stay out, and a product already in the cart
+  keeps the larger quantity, so adding twice never doubles it.
+- **A whole room in the cart** is answered as a pick is (10.3): Salman offers
+  what would finish it (`room_could_add`), never what the room already holds.
 - **From then on the cart is the room** (`room_project.in_cart`). The room
   package is a record of how it was designed: drawn tagged "In your cart",
   with no Swap, Remove or Add all, and its edits - a swap, a removal, a
-  finishing touch, a piece added - are refused from a card still on screen
-  (`questions_expired`). What they pick next is for that room: the reply says
-  it was added for their room (`picks_for_room`), and each cart line of the
-  room - its pieces and what was picked after it went in, never a pick from
-  before (`picks_before_cart`) - names it (`room`: "Living room"). While it
-  is on record "design a room around my picks" is never offered; the next step
-  is what goes with the newest pick, "I'm done with this room", or more
-  browsing (`room_in_cart`).
-- **"I'm done with this room"** - its chip (`bundle_action` `room_done`) or
-  typed (the decision's `room_done`) - closes the room in the cart: its
-  products stay in the cart, still named by it (`finished_rooms`), the room is
-  no longer the one on record, and the reply wraps it up and asks which room
-  to design next, with the registry's rooms as chips less every room already
-  finished (`next_room`). A room still being designed is never closed by it.
-  The cart turns from "Add all to cart" on, and closing the room, are Salman's.
-- **Liking is not adding.** "I like the fifth one" is a `consider`
-  interaction: the piece is focused and offered - "It's 3,302 SAR, which would
-  bring your cart to 9,604 SAR. Shall I add it to your cart?" - with Yes (a
-  `product_action` `add_to_cart` naming its card) and Not now. The price and
-  that total are summed in code (`CartOffer`). An explicit "add it", "I'll take
-  it", a tap, or their yes is a select.
-- **Several at once and kinds alone.** "Add the first and second sofa" is one
-  select plus `more_to_add`. A position or a kind they name finds its card on
-  the lists still on screen, newest first, when the newest cards are another
-  kind - "the first sofa" under suggestions, "the floor lamp" beside the sofa in
-  focus - with a sectional counting as a sofa (`compare_groups_v1.yaml`).
+  finishing touch, a piece added - are refused (`room_in_cart`). Each cart line
+  of the room - its pieces and what was picked after it went in, never a pick
+  from before (`picks_before_cart`) - names it (`room`: "Living room").
+- **"I'm done with this room"** - its chip or typed - is Salman's
+  `finish_room`: the room's products stay in the cart, still named by it
+  (`finished_rooms`), the room is no longer the one on record, and the reply
+  asks which room to design next, from `rooms_to_design_next` (the registry's
+  rooms less every room already finished). Only a room in the cart is closed.
+- **Liking is not adding.** "I like the fifth one" is not an add: the agent says
+  what it costs and offers to add it; ♡ keeps it in the liked list. An
+  explicit "add it", "I'll take it", a tap, or their yes is an add.
 - **The store's own cart is asked first.** On a Salla store
   (`core_store.provider` SALLA with its Salla id) every product about to enter
   the cart, or rise in quantity, is put to Salla's public storefront API
   (`app/integrations/salla_storefront.py`, keyless, `Store-Identifier` = the
   store's Salla id) by `StoreCartCheck`: not this store's (404/410, or no Salla
   id), out of stock, or past one order's `max_quantity` - and the cart holds only
-  what Salla's would. A typed choice is asked before it is recorded (so nothing
-  goes with a refused piece); every other route - a room, a combination, an
-  offer's yes - after the turn, before the reply; a tap before it applies
-  (`pick_unavailable` with the reason). The reply is told (`cart.refused`). A
-  timeout, a dropped connection or a busy Salla (429, 5xx) is asked again
-  (`salla.retries`); a product Salla still could not confirm stays out
-  (`unconfirmed`: "I couldn't check it with the store just now"), never
-  promised - the widget cannot take back what Salla's own cart then refuses
-  (`salla.refuse_unconfirmed`). `salla.check_cart` switches the check off.
-  A turn whose only news is that one piece was refused (not merely unconfirmed) closes on more like it
-  (`after_refusal`: "Show similar ones" from its card, "Keep browsing") - never
-  on narrowing a list from turns ago that is no longer beside the reply.
+  what Salla's would. An agent's add is asked before it is recorded, inside
+  `CartOperations` (`app/agents/operations/cart.py`), so nothing goes with a
+  refused piece; a tap is asked before it applies (`pick_unavailable` with the
+  reason). The agent is told (`refused_by_store`: the product and why, and for
+  `add_to_cart` how many were kept). A timeout, a dropped connection or a busy Salla (429, 5xx) is
+  asked again (`salla.retries`); a product Salla still could not confirm stays
+  out (`unconfirmed`), never promised - the widget cannot take back what
+  Salla's own cart then refuses (`salla.refuse_unconfirmed`).
+  `salla.check_cart` switches the check off.
 - **The cart is the shopper's, not one chat's.** The platform names the
   shopper at the front of every conversation id (`<16 hex>.<the widget's id>`).
   Every saved turn keeps that shopper's cart beside their conversations
@@ -2930,11 +2423,10 @@ keeps a cart of its own.
   so "what's in my cart?" answers the same in every chat. An id naming no
   shopper (the console, direct calls) keeps its own cart. A change made only on
   the store's own cart page never reaches us; that needs the widget.
-- **The agent reads it.** The decision model sees `cart` (place, name, kind,
-  quantity - no price, no id), so a line is named by `picked_ordinal`. The reply
-  sees `CartFactsView`: counts, quantities, whether the turn changed it, and its
-  totals - summed by the application and worded, and so sayable exactly as given
-  (the numeric guard admits the cart's figures as it admits the tray's).
+- **The agents read it** in the session brief (10.4): each line by its place
+  in the cart (`picked_ordinal`), with name, kind, quantity, line total and the
+  room it was bought for, and the totals per currency - summed by the
+  application, so sayable exactly as given (the number check admits them).
 - **The store's own cart is the widget's to fill.** Only the storefront page can
   write a shopper's cart (on Salla, `salla.cart.addItem`), so each line names its
   product the way the store knows it (`product`: uuid, Salla id, url) and

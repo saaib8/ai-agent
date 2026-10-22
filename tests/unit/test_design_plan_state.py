@@ -38,12 +38,10 @@ from app.schemas.agent_updates import (
     ReplaceDesignPlan,
     RoomProjectUpdate,
 )
-from app.schemas.agent_view import RoomProjectView
 from app.schemas.design import DesignCategoryNeed, DesignPriority
 from app.schemas.design_intent import MAX_DESIGN_INTENT_CHARS
 from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS, SeatingCapacityConstraint
 from app.services.agent_state import apply_update
-from app.services.agent_view import project_state
 from pydantic import ValidationError
 
 APP = Path(__file__).parents[2] / "app"
@@ -436,57 +434,8 @@ def test_a_preserved_line_must_already_exist() -> None:
 # ── boundaries ══════════════════════════════════════════════════════════════
 
 
-@pytest.mark.parametrize(
-    "forbidden",
-    ["need_id", "rejected", "semantic_intent", "next_design"],
-)
-def test_the_model_facing_view_gained_nothing(forbidden: str) -> None:
-    """Durable plan internals exist now; that is no reason to show them.
-
-    M12E-4D dropped `design_need` from this list, because the view now carries
-    the plan's roles deliberately - a model asked to name what the customer
-    wants removed cannot do it from a plan it has never seen. What it may see
-    is pinned below; everything here stays hidden.
-    """
-    for field in RoomProjectView.model_fields:
-        assert forbidden not in field, field
 
 
-def test_the_plan_the_model_sees_is_roles_and_nothing_else() -> None:
-    """Two taxonomy fields, and deliberately not a third.
-
-    Priority, quantity, capacity and design wording say what the room *should
-    be*, which is the specialist's reasoning. Supplying them here would invite
-    the commerce agent to compose the replacement itself (M12E-4D 2).
-    """
-    from app.schemas.agent_view import DesignNeedReferenceView
-
-    assert set(DesignNeedReferenceView.model_fields) == {
-        "commerce_category",
-        "commerce_subcategory",
-    }
-
-
-def test_the_plan_reaches_the_view_in_its_own_order() -> None:
-    state = commit(
-        needs=(
-            need_spec("lighting", "floor-lamp"),
-            need_spec("seating", "sofa"),
-        )
-    )
-
-    view = project_state(state).room_project
-    assert view is not None
-    assert [(need.commerce_category, need.commerce_subcategory) for need in view.design_needs] == [
-        ("lighting", "floor-lamp"),
-        ("seating", "sofa"),
-    ]
-
-
-def test_an_unplanned_room_shows_no_roles() -> None:
-    """Nothing to refer back to, which reads correctly as an empty list."""
-    view = project_state(AgentStateV1()).room_project
-    assert view is None or view.design_needs == ()
 
 
 def test_the_optimizer_knows_nothing_of_durable_ids() -> None:

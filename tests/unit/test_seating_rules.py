@@ -8,20 +8,15 @@ sofa for one is a misreading, corrected into a change of product type.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 from app.core.exceptions import TaxonomyConfigurationError
 from app.schemas.agent_decision import (
     AgentAction,
     CustomerAgentDecision,
-    CustomerStateProposal,
-    PreferenceProposal,
-    PreferenceProposalOp,
 )
 from app.schemas.composition import ComposedSearch, CompositionDefect, CompositionFailed
 from app.schemas.discovery import ProductSearchRequest, SeatingCapacityConstraint
-from app.schemas.grounding import TurnFailureCode
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
 from app.schemas.refinement import (
     CapacityRefinement,
@@ -37,8 +32,6 @@ from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import SeatingSemantics, load_seating_semantics
 
 from tests.unit.test_refinement_composer import _state
-from tests.unit.test_turn_coordinator import _coordinator, _preference, _turn
-from tests.unit.test_turn_coordinator import _state as _turn_state
 
 ONE = SeatingCapacityConstraint(min_capacity=1, max_capacity=1)
 FOUR = SeatingCapacityConstraint(min_capacity=4, max_capacity=4)
@@ -236,68 +229,4 @@ def test_without_the_registry_nothing_changes() -> None:
 # ── the correction, through the turn engine ─────────────────────────────────
 
 
-class _Decisions:
-    """Each call returns the next decision, and records what it was told."""
-
-    def __init__(self, *decisions: CustomerAgentDecision) -> None:
-        self.decisions = decisions
-        self.problems: list[tuple[str, ...]] = []
-
-    async def decide(self, _input: Any, *, problems: Any = ()) -> CustomerAgentDecision:
-        self.problems.append(tuple(problems))
-        return self.decisions[min(len(self.problems), len(self.decisions)) - 1]
-
-
-ONE_SEAT_SOFA = CustomerAgentDecision(
-    action=AgentAction.REFINE_SEARCH,
-    refinement=_seats(1, 1),
-    state_proposal=CustomerStateProposal(
-        customer_preferences=PreferenceProposal(
-            op=PreferenceProposalOp.ADD, preferences=(_preference("Japandi"),)
-        )
-    ),
-)
 RETYPE = CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True)
-SINGLE_SEATERS = ResolvedSearch(
-    request=ProductSearchRequest(
-        commerce_category="seating", commerce_subcategory="single-seater-sofa"
-    ),
-    semantics=ConstraintSemantics(),
-)
-
-
-async def test_one_seat_sofa_is_corrected_into_a_change_of_type(seating: SeatingSemantics) -> None:
-    decisions = _Decisions(ONE_SEAT_SOFA, RETYPE)
-    coordinator, parts = _coordinator(
-        RETYPE, decisions=decisions, seating=seating, interpretation=SINGLE_SEATERS
-    )
-    before = _turn_state(revision=1)
-
-    result = await coordinator.run(_turn(before, "make them single seaters"))
-
-    assert decisions.problems[0] == ()
-    assert any("taxonomy_change_requested" in p for p in decisions.problems[1])
-    # Only the corrected decision ran a search.
-    assert len(parts["pipeline"].calls) == 1
-    executed = parts["pipeline"].calls[0].request
-    assert executed.commerce_subcategory == "single-seater-sofa"
-    assert executed.seating_capacity is None
-    assert result.grounding.failure is None
-    # Nothing from the refused attempt was kept.
-    assert result.state.customer_preferences.semantic_preferences == ()
-
-
-async def test_a_second_misreading_ends_as_a_friendly_reply(seating: SeatingSemantics) -> None:
-    decisions = _Decisions(ONE_SEAT_SOFA, ONE_SEAT_SOFA)
-    coordinator, parts = _coordinator(
-        RETYPE, decisions=decisions, seating=seating, interpretation=SINGLE_SEATERS
-    )
-    before = _turn_state(revision=1)
-
-    result = await coordinator.run(_turn(before, "make them single seaters"))
-
-    assert len(decisions.problems) == 2
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.REQUEST_NOT_UNDERSTOOD
-    assert result.state == before
-    assert parts["pipeline"].calls == []

@@ -21,7 +21,6 @@ from app.schemas.agent_decision import (
     BlockingClarification,
     BlockingClarificationReason,
     CustomerAgentDecision,
-    FollowUpPolicy,
     NewSearchProposal,
     ProductInteractionIntent,
     ProductInteractionOp,
@@ -31,14 +30,12 @@ from app.schemas.agent_state import (
     AgentStateV1,
     ProductInteractionState,
 )
-from app.schemas.agent_turn import TurnGrounding
 from app.schemas.agent_updates import (
     AgentStateUpdate,
     ProductInteractionUpdate,
     RemoveItems,
 )
 from app.schemas.discovery import ProductSearchRequest
-from app.schemas.grounding import TurnFailure, TurnFailureCode
 from app.schemas.product_reference import (
     FocusedProduct,
     PresentedOrdinal,
@@ -295,79 +292,17 @@ BUDGET_QUESTION = DeterministicClarification(
 )
 
 
-def test_a_model_clarification_stands_alone() -> None:
-    grounding = TurnGrounding(clarification=MODEL_QUESTION)
-
-    assert grounding.deterministic_clarification is None
-    assert grounding.follow_up_policy is FollowUpPolicy.NONE
 
 
-def test_a_deterministic_clarification_stands_alone() -> None:
-    grounding = TurnGrounding(deterministic_clarification=SERVICE_QUESTION)
-
-    assert grounding.clarification is None
-    assert grounding.follow_up_policy is FollowUpPolicy.NONE
 
 
-def test_the_two_kinds_cannot_coexist() -> None:
-    """The invariant that makes the priority policy enforceable rather than
-    advisory: there is no grounding that carries both."""
-    with pytest.raises(ValidationError, match="at most one question"):
-        TurnGrounding(
-            clarification=MODEL_QUESTION,
-            deterministic_clarification=SERVICE_QUESTION,
-        )
 
 
-def test_two_deterministic_findings_cannot_both_be_asked() -> None:
-    """An ambiguous selection and a currency-less budget are both real. The
-    field holds one, so the coordinator picks by priority."""
-    assert BUDGET_QUESTION != SERVICE_QUESTION
-    grounding = TurnGrounding(deterministic_clarification=BUDGET_QUESTION)
-
-    assert grounding.deterministic_clarification is BUDGET_QUESTION
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"clarification": MODEL_QUESTION},
-        {"deterministic_clarification": SERVICE_QUESTION},
-    ],
-    ids=["model", "deterministic"],
-)
-def test_a_question_turn_offers_no_follow_up(kwargs: dict[str, object]) -> None:
-    with pytest.raises(ValidationError, match="no follow-up"):
-        TurnGrounding(follow_up_policy=FollowUpPolicy.OPTIONAL, **kwargs)
 
 
-@pytest.mark.parametrize("code", list(TurnFailureCode))
-def test_a_handled_failure_offers_no_follow_up(code: TurnFailureCode) -> None:
-    """The operation did not complete, so there are no results to ask about."""
-    with pytest.raises(ValidationError, match="failed turn offers no follow-up"):
-        TurnGrounding(
-            failure=TurnFailure(code=code), follow_up_policy=FollowUpPolicy.OPTIONAL
-        )
-
-    assert TurnGrounding(failure=TurnFailure(code=code)).follow_up_policy is (
-        FollowUpPolicy.NONE
-    )
 
 
-def test_a_failure_is_not_turned_into_a_question() -> None:
-    """Three different outcomes stay three: a failure carries no clarification
-    of either kind, and nothing here manufactures one."""
-    grounding = TurnGrounding(
-        failure=TurnFailure(code=TurnFailureCode.SEARCH_UNAVAILABLE)
-    )
-
-    assert grounding.clarification is None
-    assert grounding.deterministic_clarification is None
 
 
-def test_an_ordinary_turn_may_still_offer_a_follow_up() -> None:
-    grounding = TurnGrounding(follow_up_policy=FollowUpPolicy.OPTIONAL)
-
-    assert grounding.follow_up_policy is FollowUpPolicy.OPTIONAL
-    assert grounding.clarification is None
-    assert grounding.deterministic_clarification is None

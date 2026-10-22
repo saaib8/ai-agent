@@ -151,7 +151,13 @@ def test_a_room_plan_request_is_accepted() -> None:
 
 def test_a_design_result_carries_guidance_and_needs() -> None:
     """No design_preferences: the customer's preferences have one home."""
-    assert set(InteriorDesignResult.model_fields) == {"guidance", "needs", "space_fit"}
+    assert set(InteriorDesignResult.model_fields) == {
+        "guidance",
+        "needs",
+        "space_fit",
+        "placements",
+        "next_sizes",
+    }
     assert "design_preferences" not in InteriorDesignResult.model_fields
 
 

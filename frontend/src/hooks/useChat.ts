@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   postCatalogVisualize,
-  postChat,
+  streamChat,
   postFinderPhoto,
   postFinderPick,
   postPicks,
   postRoomPhoto,
   postVisualize,
 } from '../api/client'
+import type { AgentProgress } from '../api/client'
 import type {
   BundleAction,
   CartView,
@@ -77,6 +78,8 @@ export interface UseChat {
   /** The turn whose reply is typing out, or null. */
   revealTurnId: string | null
   activity: Activity
+  /** The agent working on the turn in flight, and what it is doing. */
+  working: AgentProgress | null
   /** Revision the last committed turn produced; drives expected_session_revision. */
   revision: number | null
   /** The customer's picks, as the server last reported them. */
@@ -155,6 +158,8 @@ export function useChat(): UseChat {
   const [turns, setTurns] = useState<Turn[]>([])
   const [sending, setSending] = useState(false)
   const [activity, setActivity] = useState<Activity>(null)
+  /** Which agent is working on the turn in flight, and what it is doing. */
+  const [working, setWorking] = useState<AgentProgress | null>(null)
   const [revision, setRevision] = useState<number | null>(null)
   const [picks, setPicks] = useState<PickView[]>([])
   const [cart, setCart] = useState<CartView | null>(null)
@@ -248,7 +253,7 @@ export function useChat(): UseChat {
       const controller = new AbortController()
       abortRef.current = controller
 
-      const result = await postChat(
+      const result = await streamChat(
         config.apiBase,
         {
           session_id: config.sessionId,
@@ -259,10 +264,12 @@ export function useChat(): UseChat {
           ...(opts?.search ? { search_action: opts.search } : {}),
           ...(opts?.product ? { product_action: opts.product } : {}),
         },
+        setWorking,
         controller.signal,
       )
 
       abortRef.current = null
+      setWorking(null)
       if (result.ok) commit(result.data)
       // Stopped: no reply came and nothing persisted. The message stays on
       // screen, the thread returns to idle, and no error is shown.
@@ -503,6 +510,7 @@ export function useChat(): UseChat {
     revealedLen,
     revealTurnId,
     activity,
+    working,
     revision,
     picks,
     cart,

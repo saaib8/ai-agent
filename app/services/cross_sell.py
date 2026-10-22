@@ -23,25 +23,20 @@ search. Executing it belongs to the pipeline.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Final
 
 from app.core.logging import get_logger
 from app.schemas.discovery import ProductSearchRequest
-from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
-from app.schemas.product_action import CompanionAction, CompanionOffer
 from app.schemas.query import (
     ConstraintSemantics,
     ConstraintStrength,
     ResolvedSearch,
     SemanticPreference,
 )
-from app.schemas.reply_choice import ReplyChoice
-from app.services.chip_wording import Chip, chip
 from app.services.similar_search import leanings_of
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.complements import Companion, Complements
+from app.taxonomy.complements import Companion
 
 logger = get_logger(__name__)
 
@@ -90,47 +85,7 @@ class CompanionSearchBuilder:
         )
 
 
-def companion_choices(
-    companions: Sequence[CompanionOffer],
-    *,
-    offering: bool = False,
-    language: ReplyLanguage = ReplyLanguage.EN,
-) -> tuple[ReplyChoice, ...]:
-    """The companions of the product in focus, as chips.
-
-    Each chip carries the action it performs, so tapping "Rugs" runs that
-    search for the focused product directly; `value` is the words recorded
-    for the customer's side of the turn. When the chips are the offer itself
-    - their pick on screen, nothing searched - they can also say no.
-    """
-    chips = tuple(
-        chip(
-            Chip.COMPANION,
-            language,
-            product_action=CompanionAction(category=offer.category, subcategory=offer.subcategory),
-            label=_companion_label(offer, language),
-            label_lower=offer.label,
-        )
-        for offer in companions[:MAX_COMPANION_CHIPS]
-    )
-    if offering and chips:
-        return (*chips, chip(Chip.NO_THANKS, language))
-    return chips
 
 
-def _companion_label(offer: CompanionOffer, language: ReplyLanguage) -> str:
-    """The kind as the chip shows it: capitalised English, or its reviewed
-    Arabic name."""
-    if language is ReplyLanguage.AR and offer.label_ar is not None:
-        return offer.label_ar
-    return offer.label[:1].upper() + offer.label[1:]
 
 
-def has_pairings(subcategory: str | None, complements: Complements) -> bool:
-    """Whether anything reviewed goes with a pick of this type.
-
-    Every such pick is offered what goes with it - a second sofa as much as the
-    first: another option of the same kind is still a moment to cross-sell, and
-    kinds they already picked are left out of the offer anyway.
-    """
-    return bool(complements.for_type(subcategory))

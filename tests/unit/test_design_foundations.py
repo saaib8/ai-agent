@@ -399,7 +399,9 @@ def test_no_placement_table_was_introduced() -> None:
         Path(__file__).parents[2] / "app/schemas/design.py",
         Path(__file__).parents[2] / "app/schemas/geometry.py",
     )
-    placement_words = ("against_wall", "placement", "placed_against", "position_in_room")
+    # `placements` is the designer's judgement for one room, written by the
+    # model from the walls the customer described - never a table in code.
+    placement_words = ("against_wall", "placed_against", "position_in_room")
 
     for module in modules:
         tree = ast.parse(module.read_text())

@@ -36,13 +36,13 @@ from app.schemas.design_intent import (
     normalise_design_intent,
 )
 from app.schemas.discovery import PriceConstraint, SeatingCapacityConstraint
-from app.schemas.geometry import MeasurementAuthority, RoomGeometry
+from app.schemas.geometry import MeasurementAuthority, RoomGeometry, WallNote
 from app.schemas.query import SemanticPreference
 from app.schemas.retailer import RetailerCatalogCapabilities
 from app.taxonomy.dimensions import DimensionRole
 from app.taxonomy.registry import CommerceTaxonomy
 
-MAX_DESIGN_QUESTION_CHARS = 500
+MAX_DESIGN_QUESTION_CHARS = 1500
 
 MAX_REGULAR_SEATING_COUNT = 200
 """The most people a room's regular seating may be planned for.
@@ -258,6 +258,12 @@ class DesignTask(StrEnum):
     400 cm wall. A proportion of the space, never a product: code turns it
     into a width and orders the cards by closeness to it."""
 
+    MATCH = "match"
+    """The customer is choosing a known kind of piece to go with what they
+    already have - a second sofa beside the first, a rug for the sofa. One
+    direction for that kind: colours, styles, what to avoid and a proportion,
+    for ranking only (docs/goal-led-agents-plan.md, C)."""
+
     COMPLEMENTARY_RECOMMENDATION = "complementary_recommendation"
     """The single furnishing role that would most complete the space around a
     piece the customer has settled on.
@@ -324,9 +330,7 @@ class InteriorDesignRequest(BaseModel):
     """Already composed by the locked precedence ladder. The specialist
     receives one settled list and resolves no precedence itself."""
 
-    regular_seating_count: int | None = Field(
-        default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
-    )
+    regular_seating_count: int | None = Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT)
     """How many people regularly use this room, when the customer has said.
 
     A room requirement to design against, and **not a furniture count**. Five
@@ -340,6 +344,8 @@ class InteriorDesignRequest(BaseModel):
     """
 
     catalog_capabilities: RetailerCatalogCapabilities | None = None
+    match_kind: MatchKind | None = None
+    """For a match: the kind being chosen beside the anchors."""
     stocked_looks: tuple[StockedLook, ...] = ()
     """For a complement: the colours and styles each stocked kind comes in, so
     a direction names only what the shop can show."""
@@ -353,6 +359,15 @@ class InteriorDesignRequest(BaseModel):
     """For "will it fit?" advice: each piece asked about against each wall and
     doorway they gave, measured in code. Whether it works in their room is the
     designer's judgement, with the room's size."""
+
+    layout: tuple[WallNote, ...] = ()
+    """Their walls as they described them - lengths, and what is on each (a
+    door, a window, the TV point, a wall to keep free) - so a placement is
+    for their room, not a template."""
+
+    floor_taken_percent: int | None = Field(default=None, ge=0)
+    """How much of the room's floor the pieces already chosen take, counted in
+    code from their listed sizes. Absent when any size is unknown."""
 
     revision: DesignRevisionContext | None = None
     """The existing plan this request revises, when there is one.
@@ -397,6 +412,10 @@ class InteriorDesignRequest(BaseModel):
             # full of things nobody can buy - and recommending a complement
             # this shop does not sell is the same mistake at smaller scale.
             raise ValueError("a room plan needs the retailer's capabilities")
+        if (self.task is DesignTask.MATCH) != (self.match_kind is not None):
+            raise ValueError("a match, and only a match, names the kind it is for")
+        if self.task is DesignTask.MATCH and not self.anchors:
+            raise ValueError("a match needs what it is matched with")
         if self.task is DesignTask.COMPLEMENTARY_RECOMMENDATION:
             if not self.anchors:
                 # The piece they chose is the whole premise: without it there
@@ -456,6 +475,15 @@ class DesignDirection(BaseModel):
             or self.size_ratio is not None
             or self.fits_inside_cm is not None
         )
+
+
+class MatchKind(BaseModel):
+    """The kind of piece a match is for - an approved pair."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_category: str = Field(min_length=1)
+    commerce_subcategory: str | None = Field(default=None, min_length=1)
 
 
 class StockedLook(BaseModel):
@@ -703,6 +731,68 @@ class SpaceFitAdvice(BaseModel):
     wall not looking crammed. No figures: the reply states those."""
 
 
+MAX_PLACEMENTS = 8
+MAX_NEXT_SIZES = 4
+
+
+class Placement(BaseModel):
+    """Where a piece goes in their room, as a designer would point: on which
+    of their walls, beside what, and why. Words only - every figure belongs to
+    a size or a measurement, never to a placement."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    piece: str = Field(min_length=1, max_length=80)
+    """The piece, by name or kind in plain words."""
+    wall: str | None = Field(default=None, max_length=40)
+    """One of their walls, in their words, when they described them."""
+    beside: str | None = Field(default=None, max_length=80)
+    note: str = Field(min_length=1, max_length=MAX_GUIDANCE_LABEL_CHARS)
+
+    def states_a_figure(self) -> bool:
+        """A figure in a placement is one nothing measured: the placement is
+        dropped, never the designer's whole answer (CLAUDE.md 21.1)."""
+        return any(_DIGITS.search(v or "") for v in (self.piece, self.wall, self.beside, self.note))
+
+
+class NextSize(BaseModel):
+    """The size the next piece of a kind should be for their room and what
+    they chose - a rug under the front legs of the sofa, a coffee table two
+    thirds of its length. A designer's target that orders a search, never a
+    filter and never a product fact."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_category: str
+    commerce_subcategory: str | None = None
+    longer_min_cm: int | None = Field(default=None, gt=0, le=2000)
+    longer_max_cm: int | None = Field(default=None, gt=0, le=2000)
+    shorter_min_cm: int | None = Field(default=None, gt=0, le=2000)
+    shorter_max_cm: int | None = Field(default=None, gt=0, le=2000)
+    reason: str = Field(min_length=1, max_length=MAX_GUIDANCE_LABEL_CHARS)
+
+    def is_usable(self) -> bool:
+        """A size names its longer side, keeps each range in order and puts no
+        figure in its reason. One that does not is dropped on its own; the rest
+        of the designer's answer stands (CLAUDE.md 21.1)."""
+        if _DIGITS.search(self.reason):
+            return False
+        if self.longer_min_cm is None and self.longer_max_cm is None:
+            return False
+        return all(
+            low is None or high is None or low <= high
+            for low, high in (
+                (self.longer_min_cm, self.longer_max_cm),
+                (self.shorter_min_cm, self.shorter_max_cm),
+            )
+        )
+
+    def longer_target_cm(self) -> int:
+        """The middle of the longer side's range - the size a search sits near."""
+        sides = [v for v in (self.longer_min_cm, self.longer_max_cm) if v is not None]
+        return round(sum(sides) / len(sides))
+
+
 class InteriorDesignResult(BaseModel):
     """What the design specialist concluded.
 
@@ -726,6 +816,10 @@ class InteriorDesignResult(BaseModel):
     needs: tuple[DesignCategoryNeed, ...] = ()
     space_fit: SpaceFitAdvice | None = None
     """For a space fit only: the proportion the piece should take."""
+    placements: tuple[Placement, ...] = Field(default=(), max_length=MAX_PLACEMENTS)
+    """Where each piece goes, when the room and its walls are known."""
+    next_sizes: tuple[NextSize, ...] = Field(default=(), max_length=MAX_NEXT_SIZES)
+    """The size the next pieces should be, for their room and what they chose."""
 
     def validate_against(self, taxonomy: CommerceTaxonomy) -> None:
         """Reject any need the approved vocabulary does not contain.

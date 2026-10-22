@@ -27,7 +27,7 @@ import base64
 import time
 from collections.abc import Sequence
 from io import BytesIO
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from PIL import Image, UnidentifiedImageError
 
@@ -57,12 +57,14 @@ from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1, RoomProjectState
+from app.schemas.agent_turn import CustomerResponse
 from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
 from app.schemas.chat import ChatPresentation, ChatResponse
 from app.schemas.dimensions import DimensionStatus
 from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
+from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
 from app.schemas.room_photo import RoomPhoto
 from app.schemas.visualization import (
@@ -74,7 +76,6 @@ from app.schemas.visualization import (
     VisualizeRequest,
 )
 from app.services.card_labels import card_labels
-from app.services.chat_runtime import commit_exchange, load_for_turn
 from app.services.discovery import to_candidate
 from app.services.media_wording import (
     ARABIC_ROOMS,
@@ -84,7 +85,11 @@ from app.services.media_wording import (
 )
 from app.services.reply_language import session_language
 from app.services.room_photo import fit_exactly, load_room_photo
+from app.services.session_turns import commit_exchange, load_for_turn
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
+
+if TYPE_CHECKING:
+    from app.agents.writer import ReplyWriter
 
 logger = get_logger(__name__)
 
@@ -323,12 +328,15 @@ class VisualizationTurnRuntime:
         room_photos: RoomPhotoStore,
         *,
         arabic_replies: bool = False,
+        writer: ReplyWriter | None = None,
     ) -> None:
         self._arabic_replies = arabic_replies
         self._visualizer = visualizer
         self._sessions = sessions
         self._settings = settings
         self._room_photos = room_photos
+        self._writer = writer
+        """Words the reply in Sara's voice; None keeps the fixed words."""
 
     async def visualize(self, request: VisualizeRequest, context: RetailerContext) -> ChatResponse:
         """Load, render, commit, answer.
@@ -369,6 +377,20 @@ class VisualizationTurnRuntime:
             customer_said = (
                 f"[Asked to see the room package visualised, {render.view_label.lower()} view]"
             )
+        if self._writer is not None:
+            response = await self._writer.write(
+                happened=customer_said + " [The render is now on screen]",
+                facts={
+                    "room": room_label,
+                    "view": render.view_label,
+                    "in_their_own_photo": photo is not None,
+                },
+                state=state,
+                conversation=loaded.envelope.conversation,
+                retailer=context,
+                language=language,
+                fixed=response,
+            )
         revision = await commit_exchange(
             self._sessions,
             self._settings,
@@ -378,12 +400,14 @@ class VisualizationTurnRuntime:
             state=state,
             customer_said=customer_said,
             response=response,
+            # Room visualisation is Sara's (CLAUDE.md 25).
+            agent=AgentPersona.SARA,
         )
         return ChatResponse(
             session_id=request.session_id,
             session_revision=revision,
             response=response,
-            presentation=ChatPresentation(render=render),
+            presentation=ChatPresentation(render=render, choices=_choices(response)),
             reply_language=language if self._arabic_replies else None,
             labels=card_labels(language if self._arabic_replies else None),
             # Room visualisation is Sara's, like product discovery.
@@ -409,8 +433,11 @@ class CatalogVisualizationRuntime:
         room_photos: RoomPhotoStore,
         *,
         arabic_replies: bool = False,
+        writer: ReplyWriter | None = None,
     ) -> None:
         self._arabic_replies = arabic_replies
+        self._writer = writer
+        """Words the reply in Sara's voice; None keeps the fixed words."""
         self._visualizer = visualizer
         self._sessions = sessions
         self._session_settings = session_settings
@@ -474,6 +501,21 @@ class CatalogVisualizationRuntime:
                 f"{spec.length_m:g} x {spec.width_m:g} m {room_words}, "
                 f"{render.view_label.lower()} view]"
             )
+        if self._writer is not None:
+            response = await self._writer.write(
+                happened=customer_said + " [The render is now on screen]",
+                facts={
+                    "pieces_shown": len(render.items),
+                    "pieces_left_out": dropped,
+                    "view": render.view_label,
+                    "in_their_own_photo": spec is None,
+                },
+                state=loaded.envelope.state,
+                conversation=loaded.envelope.conversation,
+                retailer=context,
+                language=language,
+                fixed=response,
+            )
         revision = await commit_exchange(
             self._sessions,
             self._session_settings,
@@ -483,12 +525,14 @@ class CatalogVisualizationRuntime:
             state=loaded.envelope.state,
             customer_said=customer_said,
             response=response,
+            # Room visualisation is Sara's (CLAUDE.md 25).
+            agent=AgentPersona.SARA,
         )
         return ChatResponse(
             session_id=request.session_id,
             session_revision=revision,
             response=response,
-            presentation=ChatPresentation(render=render),
+            presentation=ChatPresentation(render=render, choices=_choices(response)),
             reply_language=language if self._arabic_replies else None,
             labels=card_labels(language if self._arabic_replies else None),
             # Room visualisation is Sara's, like product discovery.
@@ -603,3 +647,8 @@ def _as_jpeg(data: bytes, quality: int) -> tuple[bytes, int, int]:
             return buffer.getvalue(), width, height
     except (UnidentifiedImageError, OSError) as exc:
         raise RenderUnavailableError(reason="undecodable_image") from exc
+
+
+def _choices(response: CustomerResponse) -> tuple[ReplyChoice, ...]:
+    """The reply's chips, where the client draws them."""
+    return tuple(ReplyChoice(label=c.label, value=c.value) for c in response.choices)

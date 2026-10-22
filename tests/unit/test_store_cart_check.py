@@ -17,34 +17,17 @@ from app.core.exceptions import PickUnavailableError
 from app.integrations.salla_storefront import SallaProduct, SallaStorefrontClient
 from app.repositories.products import ProductRepository, StoreProductIdentity
 from app.repositories.stores import StoreRepository
-from app.schemas.agent_decision import (
-    AgentAction,
-    CustomerAgentDecision,
-    ProductInteractionIntent,
-    ProductInteractionOp,
-)
-from app.schemas.agent_turn import CustomerTurnInput
-from app.schemas.card_comparison import CardRef
 from app.schemas.cart import CartRefusalReason
-from app.schemas.next_step import NextStepKind
 from app.schemas.picks import PicksRequest, SelectPickAction, SetQuantityAction
-from app.schemas.product_action import MoreLikeThisAction
-from app.schemas.product_reference import PresentedOrdinal
-from app.schemas.resolution import ResolvedProductReference
 from app.schemas.retailer import RetailerContext
 from app.services.store_cart_check import CartCheck, StoreCartCheck
 
 from tests.unit.test_cart import (
-    SOFAS_THEN_A_LAMP,
-    KindHydration,
-    _cart,
     _runtime,
-    _two_sofas_and_a_lamp,
     _with_cart,
 )
 from tests.unit.test_chat_api import FakeSessionStore
 from tests.unit.test_picks import STORE, _state, _stored
-from tests.unit.test_turn_coordinator import FakeReferences, _coordinator
 
 CONTEXT = RetailerContext(store_id=STORE)
 SALLA_STORE = 306242292
@@ -286,81 +269,6 @@ class Refuses:
         }
 
 
-def _adding(product_id: int, refuses: Refuses, quantity: int | None = None) -> Any:
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.ANSWER,
-            interaction=ProductInteractionIntent(
-                op=ProductInteractionOp.SELECT,
-                reference=PresentedOrdinal(position=1),
-                quantity=quantity,
-            ),
-        ),
-        references=FakeReferences(default=ResolvedProductReference(product_id=product_id)),
-        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
-        cart=_cart(),
-    )
-    coordinator._cart_check = refuses  # type: ignore[assignment]
-    return coordinator
-
-
-async def test_a_typed_add_the_store_refuses_never_stays_in_the_cart() -> None:
-    refuses = Refuses({20: (CartRefusalReason.NOT_IN_STORE, 0, None)})
-
-    result = await _adding(20, refuses).run(
-        CustomerTurnInput(message="add the lamp", state=_two_sofas_and_a_lamp(), context=CONTEXT)
-    )
-
-    assert result.state.product_interaction.selected_product_ids == (10,)
-    assert [(r.name_english, r.reason, r.kept) for r in result.cart_refusals] == [
-        ("Product 20", CartRefusalReason.NOT_IN_STORE, 0)
-    ]
-    assert not result.selection_added
-    assert result.cart is not None and result.cart.changes == ()
-    assert refuses.asked == [{20: 1}], "asked once, before the choice was recorded"
-    # The next step is more like the lamp, from its card - never "narrow these
-    # down" for a list the reply is not beside.
-    assert result.cart_refusals[0].card == CardRef(list_revision=2, ordinal=1)
-    assert result.next_step is not None
-    assert result.next_step.kind is NextStepKind.AFTER_REFUSAL
-    assert result.next_step.chips[0].product_action == MoreLikeThisAction(
-        card=CardRef(list_revision=2, ordinal=1)
-    )
-
-
-async def test_more_than_one_order_takes_is_kept_at_the_limit() -> None:
-    refuses = Refuses({20: (CartRefusalReason.OVER_LIMIT, 3, 3)})
-
-    result = await _adding(20, refuses, quantity=5).run(
-        CustomerTurnInput(message="add 5 lamps", state=_two_sofas_and_a_lamp(), context=CONTEXT)
-    )
-
-    assert result.state.product_interaction.quantity_of(20) == 3
-    assert result.cart_refusals[0].max_quantity == 3
-
-
-async def test_an_offer_is_never_made_for_what_the_store_refuses() -> None:
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.ANSWER,
-            interaction=ProductInteractionIntent(
-                op=ProductInteractionOp.CONSIDER, reference=PresentedOrdinal(position=1)
-            ),
-        ),
-        references=FakeReferences(default=ResolvedProductReference(product_id=20)),
-        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
-        cart=_cart(),
-    )
-    coordinator._cart_check = Refuses({20: (CartRefusalReason.OUT_OF_STOCK, 0, None)})  # type: ignore[assignment]
-
-    result = await coordinator.run(
-        CustomerTurnInput(message="I like the lamp", state=_two_sofas_and_a_lamp(), context=CONTEXT)
-    )
-
-    assert result.cart_offer is None
-    assert [r.reason for r in result.cart_refusals] == [CartRefusalReason.OUT_OF_STOCK]
-
-
 async def test_a_tap_the_store_refuses_says_why() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state(picks=()))
@@ -395,162 +303,9 @@ async def test_a_quantity_past_one_orders_limit_is_refused_by_tap() -> None:
     assert "up to 2" in raised.value.public_message
 
 
-async def test_liking_a_sofa_on_an_earlier_list_offers_it() -> None:
-    """The sofas sit under the suggestions for another piece: "I like the
-    second sofa" points at one they can still see - it once failed the turn."""
-    from app.taxonomy.compare_groups import load_compare_groups
-
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.ANSWER,
-            interaction=ProductInteractionIntent(
-                op=ProductInteractionOp.CONSIDER,
-                reference=PresentedOrdinal(position=2),
-                expected_subcategory="sofa",
-            ),
-        ),
-        references=FakeReferences(default=ResolvedProductReference(product_id=20)),
-        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
-        compare_groups=load_compare_groups(),
-        cart=_cart(),
-    )
-
-    result = await coordinator.run(
-        CustomerTurnInput(
-            message="I like the second sofa", state=_two_sofas_and_a_lamp(), context=CONTEXT
-        )
-    )
-
-    assert result.state.product_interaction.focused_product_id == 11
-    assert result.cart_offer is not None
-    assert result.cart_offer.card is not None and result.cart_offer.card.list_revision == 1
-
-
-async def test_one_refused_does_not_stop_the_others_and_already_is_named_exactly() -> None:
-    """ "Add the first and third sofa": the first is not the store's, the
-    third is already in the cart - each is said of itself, never of the piece
-    last in focus."""
-    from app.schemas.agent_decision import CartAddition
-
-    class ByPosition(FakeReferences):
-        async def resolve(self, selector: Any, state: Any, context: Any) -> Any:
-            return ResolvedProductReference(product_id={1: 11, 3: 10}[selector.position])
-
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.ANSWER,
-            interaction=ProductInteractionIntent(
-                op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=1)
-            ),
-            more_to_add=(CartAddition(reference=PresentedOrdinal(position=3)),),
-        ),
-        references=ByPosition(),
-        hydration=KindHydration(SOFAS_THEN_A_LAMP),  # type: ignore[arg-type]
-        cart=_cart(),
-    )
-    coordinator._cart_check = Refuses({11: (CartRefusalReason.NOT_IN_STORE, 0, None)})  # type: ignore[assignment]
-
-    result = await coordinator.run(
-        CustomerTurnInput(
-            message="add the first and third sofa",
-            state=_two_sofas_and_a_lamp(),
-            context=CONTEXT,
-        )
-    )
-
-    assert [r.name_english for r in result.cart_refusals] == ["Product 11"]
-    assert result.already_in_cart == (10,), "the third was looked at, and it is already in"
-
-
 # ── what a refused room says ────────────────────────────────────────────────
 
 
-def test_the_reply_may_name_a_refused_piece_with_the_numbers_in_its_name() -> None:
-    """A room's lamp "Floor Lamp 2.25m" refused by Salla: the reply naming it
-    was refused twice for "2.25" and fell back to a sentence saying nothing."""
-    from app.schemas.cart import CartRefusal
-    from app.services.numeric_guard import (
-        build_allowance,
-        cart_refusal_counts,
-        cart_refusal_figures,
-        check_numeric_policy,
-    )
-
-    refused = (
-        CartRefusal(
-            name_english="Black LED Floor Lamp 2.25m",
-            reason=CartRefusalReason.NOT_IN_STORE,
-            kept=0,
-        ),
-    )
-    allowance = build_allowance(
-        "Add all of these to my cart",
-        counts=cart_refusal_counts(refused),
-        figures=cart_refusal_figures(refused),
-    )
-
-    named = "The Black LED Floor Lamp 2.25m isn't available in this store's cart."
-    invented = "It would have cost 900 SAR."
-    assert check_numeric_policy(message=named, follow_up_question=None, allowance=allowance) is None
-    assert (
-        check_numeric_policy(message=invented, follow_up_question=None, allowance=allowance)
-        is not None
-    )
-
-
-@pytest.mark.parametrize(
-    ("kind", "changed", "expected"),
-    [
-        ("answer", False, "The store's cart couldn't take that, so your cart hasn't changed."),
-        (
-            "product_detail",
-            True,
-            "I've updated your cart, but the store's cart couldn't take everything you "
-            "asked for, so I've left out what it refused. Here are the details for that one.",
-        ),
-    ],
-)
-def test_a_fallen_back_reply_still_says_what_the_store_refused(
-    kind: str, changed: bool, expected: str
-) -> None:
-    from app.schemas.language import ReplyLanguage
-    from app.schemas.response import (
-        CartFactsView,
-        CartRefusalFactView,
-        ResponseGroundingView,
-        ResponseOutcomeKind,
-    )
-    from app.services.response_generator import _fallback
-
-    view = ResponseGroundingView(
-        kind=ResponseOutcomeKind(kind),
-        cart=CartFactsView(
-            item_count=3,
-            changed=changed,
-            refused=(CartRefusalFactView(name="Rug", reason="not_in_store", kept=0),),
-        ),
-    )
-
-    assert _fallback(view, ReplyLanguage.EN).message == expected
-    assert _fallback(view.model_copy(update={"cart": None}), ReplyLanguage.EN).message != expected
-
-
-async def test_a_typed_add_salla_could_not_confirm_stays_out_and_is_never_called_unavailable() -> (
-    None
-):
-    from app.schemas.next_step import NextStepKind
-
-    refuses = Refuses({20: (CartRefusalReason.UNCONFIRMED, 0, None)})
-
-    result = await _adding(20, refuses).run(
-        CustomerTurnInput(message="add the lamp", state=_two_sofas_and_a_lamp(), context=CONTEXT)
-    )
-
-    assert result.state.product_interaction.selected_product_ids == (10,)
-    assert [(r.name_english, r.reason) for r in result.cart_refusals] == [
-        ("Product 20", CartRefusalReason.UNCONFIRMED)
-    ]
-    assert result.next_step is None or result.next_step.kind is not NextStepKind.AFTER_REFUSAL
 
 
 async def test_a_tap_salla_could_not_confirm_says_to_try_again() -> None:

@@ -92,7 +92,14 @@ export function ZoryAvatar() {
   )
 }
 
-/** The assistant a reply is shown as: Sara, Salman or Nora. */
+/** "Sara → Salman" when more than one agent worked on the turn; null otherwise. */
+function handoffLine(data: ChatResponse): string | null {
+  const handoffs = data.workflow?.handoffs ?? []
+  if (handoffs.length < 2) return null
+  return handoffs.map((agent) => agentLook(agent).name).join(' → ')
+}
+
+/** The agent who wrote a reply: Sara, Nora, Salman or Faysal. */
 export function AgentAvatar({ agent }: { agent?: string | null }) {
   const look = agentLook(agent)
   return (
@@ -250,7 +257,9 @@ export function AssistantBubble({
     <div className="flex animate-rise gap-3">
       <AgentAvatar agent={data.agent} />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div className="-mb-2 text-xs font-medium text-muted">{agentLook(data.agent).name}</div>
+        <div className="-mb-2 text-xs font-medium text-muted">
+          {handoffLine(data) ?? agentLook(data.agent).name}
+        </div>
         <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tl-md border border-line bg-surface px-4 py-2.5 text-[15px] leading-relaxed text-ink shadow-card">
           {shownMessage}
           {revealing && <span className="ml-0.5 animate-pulse text-clay">▍</span>}

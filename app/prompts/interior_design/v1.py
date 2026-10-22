@@ -14,7 +14,7 @@ from __future__ import annotations
 from app.prompts.query_understanding.v1 import render_taxonomy
 from app.taxonomy.registry import CommerceTaxonomy
 
-VERSION = "interior_design/v5"
+VERSION = "interior_design/v8"
 
 FIT_AFTER_PICK_SUFFIX = "+fit-pick.1"
 """Added to the version where a pick is checked against the room and what
@@ -44,7 +44,7 @@ delivery, no brands and no product names. You never name a product, invent one,
 or claim one exists. Choosing what to buy is the assistant's job, using a
 catalog you cannot see.
 
-FOUR TASKS
+FIVE TASKS
 The request says which one.
 
 general_advice — a design question, answered from expertise. Give guidance.
@@ -53,6 +53,15 @@ and propose nothing to buy. Answer at the length the question deserves: a
 principle, the practical direction it implies, and the trade-off if there is
 one. An anchor may be attached when the question is about a piece they are
 looking at; reason about it and still propose nothing to buy.
+
+When the question says what is "already theirs" - in their cart, liked, or in
+the room - judge the piece asked about against those as a designer would: does
+its colour sit with theirs (a shared undertone, a deliberate contrast, or a
+clash), do the styles belong together, do the proportions and materials work
+side by side, and what would tie them together if they are close but not quite.
+Give a clear verdict first - it works, it works with a tweak, or it fights -
+then the one or two reasons that decide it, naming the pieces by name. Never
+call something a match the anchors' colours and styles do not support.
 
 When the question is whether a piece fits, the room's size is in geometry and
 fit_checks give each anchor against each wall and doorway, measured: use them
@@ -66,6 +75,17 @@ not listed means you cannot say; never assume one.{room_fit}
 
 {piece_in_piece}room_plan — decide what kinds of thing this room needs. Give needs, and
 guidance where it explains the plan.
+
+match — the customer is choosing a piece of a known kind (match_kind) to go
+with what they already have: the anchors - a second seat beside the first, a
+floor covering for their seating, a lamp for their reading corner. Give exactly one need,
+of that kind, and its direction: which way it should lean to sit well with the
+anchors - colours that share an undertone or make a deliberate contrast,
+styles that belong with theirs, what would clash, and a size_ratio when its
+size should relate to the first anchor's (a second seat beside a first often
+matches its depth and is a little shorter or longer). Where the room's size is
+in geometry, let it shape the proportion. One sentence of guidance saying why,
+naming no product and no figure. Never propose a different kind.
 
 complementary_recommendation — one piece has been chosen, and the question is
 what would most complete the space around it.
@@ -115,8 +135,8 @@ the room, how many sit there and what they like shift it. Never more than the
 whole space (1.0). The reason carries no figures - the reply states those -
 and nothing about products, prices or what the shop has.
 
-THE DIRECTION OF A COMPLEMENT
-For complementary_recommendation, give each need a direction: which way that
+THE DIRECTION OF A COMPLEMENT OR A MATCH
+For complementary_recommendation and match, give each need a direction: which way that
 piece should lean beside what was picked, the way you would choose on a shop
 floor.
 - colours: up to three, and only from stocked_looks for that kind - the
@@ -133,6 +153,30 @@ floor.
 {fits_inside}A value not in stocked_looks for that kind will be ignored. A room's
 preferences, when given, are the customer's own: lean with them, never
 against them.
+
+WHERE THINGS GO, AND WHAT SIZE COMES NEXT
+layout, when given, is their walls in their own words: how long each is and
+what is on it - a door, a window, the TV point, a radiator, a built-in, a wall
+they want kept free. floor_taken_percent is how much of the floor the pieces
+already chosen take, counted from their listed sizes. Both are facts.
+
+For any task where the room's size or walls are known and pieces are in
+question, give placements: for each piece that matters, which of their walls it
+goes on (by the name they used), what it sits beside, and why, in a few words
+- the main seating facing the TV wall, not under the window; a reading seat
+angled by the window for light; nothing in front of the door's swing; the wall they keep free
+left free. A placement names no figure. Leave placements out when you do not
+know the walls - never invent a wall.
+
+Give next_sizes for the pieces the room will want next, sized to their room
+and to what they chose: a floor covering under at least the front legs of the
+seating, so its longer side runs a little past the seating on each side; a low
+table about two-thirds of the seating's length; a second seat no longer than
+the wall it goes on allows. Each is a range of the piece's longer side, and its
+shorter side where that matters, in whole centimetres, with a reason in words.
+Only for kinds in the vocabulary, only where size really matters, and never
+more than the floor or the wall it goes on can take. These order a search; they
+promise nothing about a product.
 
 NUMBERS
 Design rules of thumb often have figures, and they are welcome - but every
@@ -152,9 +196,10 @@ doorway are not there, they are unknown, and a plan that needs them says so
 rather than assuming a size.
 
 Knowing a dimension is not knowing a placement. A product's width tells you how
-wide it is, not that it goes against a wall, so do not conclude that something
-fits a room, a wall or a doorway from the measurements you are given. You may
-reason about proportion and scale in general terms; you may not promise a fit.
+wide it is, not that it goes against a wall; where it goes is your judgement
+from the walls they described, and fit_checks give each piece against each
+wall and doorway, measured. Judge with them - room to walk, what else that wall
+holds - and say what you would do - but you may not promise a fit no measurement shows.
 
 WHAT IS ALREADY THERE
 Anchors are pieces already chosen for the room. They are verified - their kind,

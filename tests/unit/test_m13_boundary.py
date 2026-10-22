@@ -17,7 +17,6 @@ import inspect
 from pathlib import Path
 
 import pytest
-from app.schemas.agent_turn import DecisionInput
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.session import SessionEnvelope
 from app.services.chat_runtime import ChatRuntime
@@ -47,10 +46,10 @@ def _identifiers(path: Path) -> set[str]:
     [
         "ProductRepository",
         "ProductSearchPipeline",
-        "CustomerAgentDecisionService",
+        "AgentTeam",
         "InteriorDesignAgent",
         "BundleOptimizer",
-        "CustomerResponseGenerator",
+        "AgentServices",
         "SessionStore",
         "Redis",
         "route_response",
@@ -74,10 +73,18 @@ def test_the_route_is_small_enough_to_be_obviously_transport() -> None:
 
 def test_the_route_catches_nothing() -> None:
     """Every deliberate failure carries its own status and public message, so a
-    handler that caught one could only make the answer less accurate."""
-    tree = ast.parse(ROUTE.read_text())
+    handler that caught one could only make the answer less accurate.
 
-    assert not [node for node in ast.walk(tree) if isinstance(node, ast.Try)]
+    The plain exchange only: the streaming one must end its stream on a
+    failure, so it turns the error into the stream's last event."""
+    tree = ast.parse(ROUTE.read_text())
+    handler = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat"
+    )
+
+    assert not [node for node in ast.walk(handler) if isinstance(node, ast.Try)]
 
 
 # ── the runtime orchestrates; it does not reason ────────────────────────────
@@ -102,65 +109,48 @@ def test_the_runtime_makes_no_decision_of_its_own(forbidden: str) -> None:
     assert forbidden not in _identifiers(RUNTIME), forbidden
 
 
-def test_the_runtime_holds_only_the_four_things_it_sequences() -> None:
+def test_the_runtime_holds_only_what_it_sequences() -> None:
     """A collaborator list is the cheapest description of what a layer does.
 
-    The domain engine, the wording layer, the session store and the policy that
-    bounds them - and, for display only, the cards' text in the reply's
-    language: a lookup over reviewed registry data that reads no catalog and
-    decides nothing - and whether a turn about the store is labelled Faysal,
-    a flag read by the persona label alone. A
-    repository, a taxonomy or a provider client appearing here would mean
-    orchestration had started doing the work it orchestrates.
+    The agent team, the services its tools run on, the session store and the
+    policy that bounds them. A repository, a taxonomy or a provider client
+    appearing here would mean orchestration had started doing the work it
+    orchestrates.
     """
     parameters = [
         name for name in inspect.signature(ChatRuntime.__init__).parameters if name != "self"
     ]
 
     assert parameters == [
-        "coordinator",
-        "responses",
+        "team",
+        "services",
         "sessions",
         "settings",
-        "display",
-        "support_agent",
+        "deadline_s",
+        "arabic_replies",
     ]
 
 
-def test_the_runtime_exposes_the_five_phases_a_graph_sequences() -> None:
+def test_the_runtime_exposes_the_four_phases_a_graph_sequences() -> None:
     """Named phases, so orchestration wires them rather than reimplementing
     them - and so each is testable without a graph (M13 1)."""
-    for phase in (
-        "load_session",
-        "turn_input",
-        "run_turn",
-        "render",
-        "presentation",
-        "persist",
-        "public_response",
-    ):
+    for phase in ("load_session", "run_agents", "persist", "public_response"):
         assert hasattr(ChatRuntime, phase), phase
 
 
-def test_the_runtime_calls_the_coordinator_exactly_once_per_turn() -> None:
+def test_the_runtime_runs_the_team_exactly_once_per_turn() -> None:
     source = RUNTIME.read_text()
 
-    assert source.count("self._coordinator.run(") == 1
+    assert source.count("self._team.run(") == 1
 
 
-def test_the_runtime_generates_one_response_per_turn() -> None:
-    source = RUNTIME.read_text()
-
-    assert source.count("self._responses.generate(") == 1
-
-
-def test_the_coordinator_still_persists_nothing() -> None:
-    """The engine returns the next state; the runtime stores it. If that ever
-    reversed, a domain service would own a Redis connection."""
-    coordinator = _identifiers(APP / "services/turn_coordinator.py")
-
-    for forbidden in ("SessionStore", "SessionEnvelope", "RedisClient"):
-        assert forbidden not in coordinator, forbidden
+def test_the_agents_persist_nothing() -> None:
+    """The team returns the next state; the runtime stores it. If that ever
+    reversed, an agent's tool would own a Redis connection."""
+    for module in (APP / "agents").rglob("*.py"):
+        names = _identifiers(module)
+        for forbidden in ("SessionStore", "SessionEnvelope", "RedisClient"):
+            assert forbidden not in names, f"{module.name}: {forbidden}"
 
 
 # ── session identity never reaches a model ──────────────────────────────────
@@ -196,15 +186,12 @@ def _nested(annotation: object) -> list[type[BaseModel]]:
     "forbidden",
     ["session_id", "session_revision", "store_id", "envelope_version", "expected_"],
 )
-def test_no_runtime_identity_reaches_the_decision_model(forbidden: str) -> None:
-    """`DecisionInput` is the whole of what that model sees.
-
-    A session revision is a concurrency token. A model that could see one could
-    start reasoning about it, and one that could emit one would be authoring
-    runtime state (M13 44).
-    """
-    for name in _reachable_names(DecisionInput):
-        assert forbidden not in name, f"DecisionInput.{name}"
+def test_no_runtime_identity_reaches_the_agents(forbidden: str) -> None:
+    """The agents read the view and the conversation, never the request's
+    identity or the session's concurrency token (M13 44)."""
+    for module in ("views.py", "team.py"):
+        names = _identifiers(APP / "agents" / module)
+        assert not {n for n in names if forbidden in n}, f"{module}: {forbidden}"
 
 
 def test_the_session_envelope_is_not_a_model_input() -> None:
@@ -218,8 +205,9 @@ def test_the_session_envelope_is_not_a_model_input() -> None:
         source = module.read_text()
         if "SessionEnvelope" not in source:
             continue
-        # Only the runtime handles envelopes, and it hands models neither.
-        assert module.name == "chat_runtime.py", module.name
+        # Only the runtime and its session phases handle envelopes, and they
+        # hand models neither.
+        assert module.name in {"chat_runtime.py", "session_turns.py"}, module.name
 
 
 def test_the_envelope_carries_no_scope_of_its_own() -> None:

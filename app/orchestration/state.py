@@ -19,23 +19,17 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from app.schemas.agent_turn import (
-    CustomerResponse,
-    CustomerTurnInput,
-    CustomerTurnResult,
-)
-from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse
+from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.retailer import RetailerContext
-from app.services.chat_runtime import LoadedSession
+from app.services.chat_runtime import AgentTurn
+from app.services.session_turns import LoadedSession
 
 
 class ChatGraphState(TypedDict, total=False):
     """One exchange, accumulating.
 
-    Never handed to a model. The decision model gets `DecisionInput`, the
-    response model gets `ResponseInput` and the design specialist gets
-    `InteriorDesignRequest`; each is built by the service that calls it, from
-    the narrow slice it is allowed to see (M13 44).
+    Never handed to a model. Each agent is shown its own context, built by
+    the team from the narrow slice it is allowed to see.
     """
 
     request: ChatRequest
@@ -49,9 +43,6 @@ class ChatGraphState(TypedDict, total=False):
     session has become since.
     """
 
-    turn: CustomerTurnInput
-    result: CustomerTurnResult
-    response: CustomerResponse
-    presentation: ChatPresentation | None
+    turn: AgentTurn
     revision: int
     reply: ChatResponse

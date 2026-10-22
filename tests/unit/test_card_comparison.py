@@ -23,7 +23,6 @@ from app.schemas.agent_state import (
     PresentedList,
     ProductInteractionState,
 )
-from app.schemas.agent_turn import CustomerResponse
 from app.schemas.card_comparison import CardComparisonRequest, CardRef
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.product import CommerceClassification, ProductRow
@@ -38,10 +37,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from tests.unit.agents.fakes import CONTEXT
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 from tests.unit.test_picks import SESSION, STORE, _stored
 from tests.unit.test_reference_resolver import FakeRepository, _row
-from tests.unit.test_turn_coordinator import CONTEXT
 
 TAXONOMY = load_taxonomy()
 GROUPS = load_compare_groups(taxonomy=TAXONOMY)
@@ -75,35 +74,17 @@ def _state() -> AgentStateV1:
     )
 
 
-class Responses:
-    """The reply generator, recording what it was asked to word."""
-
-    def __init__(self) -> None:
-        self.results: list[Any] = []
-
-    async def generate(self, turn: Any, result: Any) -> CustomerResponse:
-        self.results.append(result)
-        return CustomerResponse(message="The sectional takes more room; the sofa costs less.")
-
-
-def _service(
-    sessions: FakeSessionStore, maximum: int = 10
-) -> tuple[CardComparisonService, Responses]:
+def _service(sessions: FakeSessionStore, maximum: int = 10) -> CardComparisonService:
     repository = cast(ProductRepository, FakeRepository([_product(pid) for pid in KINDS]))
-    responses = Responses()
-    return (
-        CardComparisonService(
-            ProductReferenceResolver(repository, load_catalog_attributes()),
-            ProductComparisonService(
-                repository,
-                load_dimension_semantics(taxonomy=TAXONOMY),
-                CustomerAgentSettings(comparison_max_products=maximum),
-            ),
-            responses,  # type: ignore[arg-type]
-            sessions,  # type: ignore[arg-type]
-            GROUPS,
+    return CardComparisonService(
+        ProductReferenceResolver(repository, load_catalog_attributes()),
+        ProductComparisonService(
+            repository,
+            load_dimension_semantics(taxonomy=TAXONOMY),
+            CustomerAgentSettings(comparison_max_products=maximum),
         ),
-        responses,
+        sessions,  # type: ignore[arg-type]
+        GROUPS,
     )
 
 
@@ -165,7 +146,7 @@ def test_a_malformed_group_fails_startup(tmp_path: Path, body: str, problem: str
 async def test_two_similar_cards_compare_and_nothing_is_saved() -> None:
     sessions = FakeSessionStore()
     stored = await _stored(sessions, _state())
-    service, responses = _service(sessions)
+    service = _service(sessions)
 
     reply = await service.compare(_request((1, 1), (1, 3)), CONTEXT)
 
@@ -173,9 +154,7 @@ async def test_two_similar_cards_compare_and_nothing_is_saved() -> None:
         "sofa",
         "sectional-sofa",
     ]
-    assert reply.message.startswith("The sectional")
-    # Worded as a comparison turn is, from the same table.
-    assert responses.results[0].grounding.comparison == reply.comparison
+    assert reply.message, "a fixed line beside the table"
     # A look, not a turn: the session is exactly as it was.
     assert sessions.saved[(STORE, SESSION)] == stored
 
@@ -183,7 +162,7 @@ async def test_two_similar_cards_compare_and_nothing_is_saved() -> None:
 async def test_cards_on_different_lists_can_be_compared() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, _ = _service(sessions)
+    service = _service(sessions)
 
     reply = await service.compare(_request((1, 2), (1, 1)), CONTEXT)
 
@@ -193,21 +172,20 @@ async def test_cards_on_different_lists_can_be_compared() -> None:
 async def test_a_sofa_and_a_coffee_table_are_refused() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, responses = _service(sessions)
+    service = _service(sessions)
 
     with pytest.raises(ComparisonRefusedError) as refused:
         await service.compare(_request((1, 3), (2, 1)), CONTEXT)
 
     assert refused.value.context["reason"] == "dissimilar"
     assert "same kind" in refused.value.public_message
-    assert responses.results == []
 
 
 @pytest.mark.parametrize("cards", [((9, 1), (1, 1)), ((1, 9), (1, 1))])
 async def test_a_card_no_longer_on_screen_is_refused(cards: tuple[tuple[int, int], ...]) -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, _ = _service(sessions)
+    service = _service(sessions)
 
     with pytest.raises(ComparisonRefusedError) as refused:
         await service.compare(_request(*cards), CONTEXT)
@@ -216,7 +194,7 @@ async def test_a_card_no_longer_on_screen_is_refused(cards: tuple[tuple[int, int
 
 
 async def test_with_no_session_there_is_nothing_to_compare() -> None:
-    service, _ = _service(FakeSessionStore())
+    service = _service(FakeSessionStore())
 
     with pytest.raises(ComparisonRefusedError):
         await service.compare(_request((1, 1), (1, 2)), CONTEXT)
@@ -242,7 +220,7 @@ async def test_three_similar_cards_compare_in_the_order_checked() -> None:
     """Two sofas and a sectional: one family, so all three side by side."""
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, responses = _service(sessions)
+    service = _service(sessions)
 
     reply = await service.compare(_request((1, 3), (1, 1), (1, 2)), CONTEXT)
 
@@ -252,17 +230,13 @@ async def test_three_similar_cards_compare_in_the_order_checked() -> None:
         "Sofa 102",
     ]
     assert all(len(row.cells) == 3 for row in reply.comparison.rows)
-    # Named by the comparison's own columns, never by positions that could
-    # repeat across lists.
-    decision = responses.results[0].decision
-    assert [ref.position for ref in decision.comparison_references] == [1, 2, 3]
 
 
 async def test_cards_sharing_a_position_on_different_lists_compare() -> None:
     """Card 1 of one list and card 1 of another are different products."""
     sessions = FakeSessionStore()
     await _stored(sessions, _sofas_on_two_lists())
-    service, _ = _service(sessions)
+    service = _service(sessions)
 
     reply = await service.compare(_request((1, 1), (2, 1)), CONTEXT)
 
@@ -272,7 +246,7 @@ async def test_cards_sharing_a_position_on_different_lists_compare() -> None:
 async def test_one_dissimilar_card_among_several_refuses_them_all() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, _ = _service(sessions)
+    service = _service(sessions)
 
     with pytest.raises(ComparisonRefusedError) as refused:
         await service.compare(_request((1, 1), (1, 2), (2, 1)), CONTEXT)
@@ -283,7 +257,7 @@ async def test_one_dissimilar_card_among_several_refuses_them_all() -> None:
 async def test_more_than_the_configured_limit_is_refused_in_our_words() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, _ = _service(sessions, maximum=2)
+    service = _service(sessions, maximum=2)
 
     with pytest.raises(ComparisonRefusedError) as refused:
         await service.compare(_request((1, 1), (1, 2), (1, 3)), CONTEXT)
@@ -317,7 +291,7 @@ async def _call(app: FastAPI, method: str, path: str, body: Any = None) -> Any:
 async def test_the_route_answers_with_the_table_and_the_take() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, _ = _service(sessions)
+    service = _service(sessions)
 
     reply = await _call(
         _app(service),
@@ -339,7 +313,7 @@ async def test_the_route_answers_with_the_table_and_the_take() -> None:
 async def test_the_route_refuses_dissimilar_cards_in_our_words() -> None:
     sessions = FakeSessionStore()
     await _stored(sessions, _state())
-    service, _ = _service(sessions)
+    service = _service(sessions)
 
     reply = await _call(
         _app(service),
@@ -357,7 +331,7 @@ async def test_the_route_refuses_dissimilar_cards_in_our_words() -> None:
 
 
 async def test_the_groups_route_lists_the_reviewed_families() -> None:
-    service, _ = _service(FakeSessionStore())
+    service = _service(FakeSessionStore())
 
     reply = await _call(_app(service), "GET", "/v1/compare-groups")
 

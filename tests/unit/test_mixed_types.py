@@ -18,18 +18,11 @@ from typing import Any, cast
 
 import pytest
 from app.core.exceptions import TaxonomyConfigurationError
-from app.prompts.customer_commerce.v1 import (
-    MIXED_TYPES_SUFFIX,
-    VERSION,
-    build_instructions,
-)
 from app.schemas.agent_decision import (
     AgentAction,
     CustomerAgentDecision,
-    with_mixed_types,
 )
 from app.schemas.agent_state import ActiveSearchState
-from app.schemas.agent_turn import DecisionInput
 from app.schemas.discovery import (
     DimensionConstraint,
     DimensionConstraintKind,
@@ -39,20 +32,14 @@ from app.schemas.discovery import (
 from app.schemas.grounding import TypeMix, TypeOnScreen
 from app.schemas.product import EligibleProduct
 from app.schemas.query import (
-    ConstraintSemantics,
     ConstraintStrength,
-    DimensionConstraintSemantics,
     ResolvedSearch,
     SemanticPreference,
 )
 from app.schemas.refinement import SearchRefinementDelta
 from app.schemas.relaxation import RelaxedCandidate
-from app.schemas.response import TypeMixView
 from app.schemas.retailer import RetailerContext
-from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.refinement_composer import SearchRefinementComposer
-from app.services.response_generator import _type_mix_counts
-from app.services.response_view import _type_mix_view
 from app.services.search_pipeline import _type_mix
 from app.services.semantic_ranking import SemanticRankingService
 from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
@@ -61,14 +48,7 @@ from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import load_seating_semantics
 from pydantic import BaseModel, ValidationError
 
-from tests.unit.test_turn_coordinator import (
-    SOFAS,
-    FakePipeline,
-    _coordinator,
-    _resolved,
-    _state,
-    _turn,
-)
+from tests.unit.agents.fakes import SOFAS
 
 TAXONOMY = load_taxonomy()
 SEATING = load_seating_semantics(taxonomy=TAXONOMY)
@@ -83,19 +63,6 @@ def _width(max_cm: str = "220") -> DimensionConstraint:
         max_cm=Decimal(max_cm),
         source_value=max_cm,
         source_unit="cm",
-    )
-
-
-def _sofa_with_width() -> ResolvedSearch:
-    return ResolvedSearch(
-        request=SOFAS.model_copy(update={"dimensions": (_width(),)}),
-        semantics=ConstraintSemantics(
-            dimensions=(
-                DimensionConstraintSemantics(
-                    role=DimensionRole.OVERALL_WIDTH, strength=ConstraintStrength.LOCKED
-                ),
-            )
-        ),
     )
 
 
@@ -353,196 +320,7 @@ def test_a_search_of_one_type_reports_no_mix() -> None:
     assert _type_mix(_mixed(alongside=()), cast(Any, searched), _shown("sofa")) is None
 
 
-def test_the_reply_reads_kinds_in_words_without_counting_the_page() -> None:
-    view = _type_mix_view(
-        TypeMix(
-            asked_type="sofa",
-            alongside=FAMILY,
-            asked_type_matches=1,
-            on_screen=(
-                TypeOnScreen(commerce_subcategory="sofa", count=1),
-                TypeOnScreen(commerce_subcategory="sofa-set", count=4),
-            ),
-        )
-    )
-
-    assert view == TypeMixView(
-        asked_kind="sofa",
-        shown_beside=("sofa set", "sectional sofa"),
-        asked_kind_matches=1,
-        on_screen=("sofa", "sofa set"),
-    )
-
-
-@pytest.mark.parametrize(
-    ("matches", "presented", "sayable"),
-    [(1, 5, (1,)), (0, 5, (0,)), (173, 5, ()), (5, 5, ()), (None, 5, ())],
-)
-def test_only_a_shortfall_of_the_asked_kind_may_be_counted(
-    matches: int | None, presented: int, sayable: tuple[int, ...]
-) -> None:
-    """ "I have only one sofa that seats 5" - never "2 sofas here", which
-    reads as the shop's stock when about 170 match."""
-    view = TypeMixView(asked_kind="sofa", asked_kind_matches=matches)
-
-    assert _type_mix_counts(view, presented) == sayable
-
-
 # ── the turn ────────────────────────────────────────────────────────────────
-
-
-async def test_a_new_sofa_search_also_searches_sets_and_sectionals() -> None:
-    pipeline = FakePipeline(ids=(20, 21))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_resolved(),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(_turn(_state(revision=1)))
-
-    assert pipeline.calls[0].request.alongside_subcategories == FAMILY
-    # Worked out on every run, never kept with the search.
-    assert result.state.active_search is not None
-    assert result.state.active_search.request.alongside_subcategories == ()
-
-
-async def test_switched_off_a_sofa_search_is_sofas_only() -> None:
-    pipeline = FakePipeline(ids=(20,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_resolved(),
-        pipeline=pipeline,
-        seating=SEATING,
-    )
-
-    await coordinator.run(_turn(_state(revision=1)))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
-
-
-async def test_a_size_keeps_the_search_to_sofas_and_says_why() -> None:
-    pipeline = FakePipeline(ids=(20,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_sofa_with_width(),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(_turn(_state(revision=1), "a sofa under 220 cm wide"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
-    assert result.grounding.search is not None
-    assert result.grounding.search.type_mix == TypeMix(
-        asked_type="sofa", left_out_for_size=FAMILY
-    )
-
-
-async def test_just_sofas_keeps_to_sofas_and_stays_with_the_search() -> None:
-    pipeline = FakePipeline(ids=(20, 21))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH, only_asked_type=True),
-        interpretation=_resolved(),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(_turn(_state(revision=1), "just sofas"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
-    assert result.state.active_search is not None
-    assert result.state.active_search.request.single_type
-
-
-async def test_showing_more_keeps_to_sofas_after_just_sofas() -> None:
-    kept = SOFAS.model_copy(update={"single_type": True})
-    pipeline = FakePipeline(ids=(22,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH, show_more=True),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    await coordinator.run(_turn(_state(request=kept), "show me more"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
-
-
-async def test_showing_more_of_a_mixed_search_stays_mixed() -> None:
-    pipeline = FakePipeline(ids=(22,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH, show_more=True),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    await coordinator.run(_turn(_state(), "show me more"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == FAMILY
-
-
-@pytest.mark.parametrize("origin", ["ordered_by_pick", "from_product"])
-async def test_what_goes_with_a_pick_and_more_like_this_keep_their_type(origin: str) -> None:
-    """Ours to order, not the customer's search: their paging stays one type."""
-    state = _state()
-    assert state.active_search is not None
-    state = state.model_copy(
-        update={"active_search": state.active_search.model_copy(update={origin: True})}
-    )
-    pipeline = FakePipeline(ids=(22,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH, show_more=True),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    await coordinator.run(_turn(state, "show me more"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
-
-
-async def test_a_refinement_saying_only_sofas_drops_the_others() -> None:
-    pipeline = FakePipeline(ids=(20,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.REFINE_SEARCH,
-            refinement=SearchRefinementDelta(),
-            only_asked_type=True,
-        ),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(_turn(_state(), "only regular sofas please"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
-    assert result.state.active_search is not None
-    assert result.state.active_search.request.single_type
-
-
-async def test_another_type_has_nothing_beside_it() -> None:
-    rugs = ProductSearchRequest(commerce_category="decor", commerce_subcategory="rug")
-    pipeline = FakePipeline(ids=(20,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_resolved(rugs),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    await coordinator.run(_turn(_state(revision=1), "show me rugs"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
 
 
 # ── a refinement keeps "just sofas" only for sofas ──────────────────────────
@@ -589,127 +367,7 @@ class _Client:
         return CustomerAgentDecision(action=AgentAction.ANSWER)
 
 
-@pytest.mark.parametrize("on", [True, False])
-async def test_the_decision_sees_only_asked_type_only_when_it_is_on(on: bool) -> None:
-    client = _Client()
-
-    await CustomerAgentDecisionService(client, mixed_types=on).decide(
-        DecisionInput(message="just sofas")
-    )
-
-    call = client.calls[0]
-    properties = call["schema"].model_json_schema()["properties"]
-    assert ("only_asked_type" in properties) is on
-    assert ("SOFAS, SETS AND SECTIONALS" in call["instructions"]) is on
-
-
-def test_off_the_instructions_are_exactly_as_before() -> None:
-    assert build_instructions() == build_instructions(mixed_types=False)
-    assert "only_asked_type" not in build_instructions()
-    assert "only_asked_type" in build_instructions(mixed_types=True)
-
-
-def test_the_plain_contract_hides_the_field_and_keeps_its_value() -> None:
-    assert "only_asked_type" not in CustomerAgentDecision.model_json_schema()["properties"]
-    shown = with_mixed_types(CustomerAgentDecision)
-    assert "only_asked_type" in shown.model_json_schema()["properties"]
-    assert VERSION + MIXED_TYPES_SUFFIX != VERSION
-
-
 # ── "a simple sofa" never brings the sets back (known issue 21) ─────────────
-
-
-class _ByAnyType(FakePipeline):
-    """Finds products for whichever type a search covers, recording each."""
-
-    def __init__(self, found: dict[str, tuple[int, ...]]) -> None:
-        super().__init__()
-        self.found = found
-
-    async def execute(self, resolved: Any, context: Any, **kwargs: Any) -> Any:
-        self.ids = tuple(
-            pid for kind in resolved.request.subcategories for pid in self.found.get(kind, ())
-        )
-        return await super().execute(resolved, context, **kwargs)
-
-
-def _sofas_for(seats: int, **fields: Any) -> ProductSearchRequest:
-    from app.schemas.discovery import SeatingCapacityConstraint
-
-    return SOFAS.model_copy(
-        update={"seating_capacity": SeatingCapacityConstraint(min_capacity=seats), **fields}
-    )
-
-
-async def test_a_sofa_for_six_finds_the_sets_in_the_same_search() -> None:
-    from tests.unit.test_seating_instead import Catalog
-
-    pipeline = _ByAnyType({"sofa-set": (31, 32)})
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_resolved(_sofas_for(6)),
-        pipeline=pipeline,
-        capabilities=Catalog(),
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(_turn(_state(request=None), "a sofa for 6"))
-
-    assert len(pipeline.calls) == 1
-    assert result.state.product_interaction.presented_product_ids == (31, 32)
-
-
-async def test_just_sofas_for_six_is_never_switched_to_the_sets() -> None:
-    from tests.unit.test_seating_instead import Catalog
-    from tests.unit.test_turn_coordinator import FakeSeatingPlanner
-
-    pipeline = _ByAnyType({"sofa-set": (31, 32)})
-    planner = FakeSeatingPlanner()
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH, only_asked_type=True),
-        interpretation=_resolved(_sofas_for(6)),
-        pipeline=pipeline,
-        capabilities=Catalog(),
-        seating=SEATING,
-        seating_planner=planner,
-        mixed_types=True,
-    )
-
-    await coordinator.run(_turn(_state(request=None), "a simple sofa for 6, not a set"))
-
-    assert [call.request.subcategories for call in pipeline.calls] == [("sofa",)]
-    assert planner.calls[0]["requirements"].single_type
-
-
-async def test_rather_a_simple_sofa_while_sets_show_keeps_to_sofas() -> None:
-    """The sets for seven were on screen beside the sofas; naming sofas again
-    is turning the sets down."""
-    from tests.unit.test_seating_instead import Catalog
-    from tests.unit.test_turn_coordinator import FakeSeatingPlanner
-
-    pipeline = _ByAnyType({"sofa-set": (31, 32)})
-    planner = FakeSeatingPlanner()
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.REFINE_SEARCH, taxonomy_change_requested=True
-        ),
-        interpretation=_resolved(_sofas_for(7)),
-        pipeline=pipeline,
-        capabilities=Catalog(),
-        seating=SEATING,
-        seating_planner=planner,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(
-        _turn(_state(request=_sofas_for(7)), "I dont want l shape sofa rather a simple sofa")
-    )
-
-    assert [call.request.subcategories for call in pipeline.calls] == [("sofa",)]
-    assert planner.calls[0]["requirements"].single_type
-    assert result.state.active_search is not None
-    assert result.state.active_search.request.single_type
 
 
 def test_a_combination_for_sofas_alone_uses_no_other_main_type() -> None:
@@ -731,103 +389,6 @@ def test_a_combination_for_sofas_alone_uses_no_other_main_type() -> None:
 # ── found by the QA review ──────────────────────────────────────────────────
 
 
-def test_a_tapped_kind_is_that_type_alone() -> None:
-    """Tapping "3-seater" means a 3-seat sofa: the kind is locked (10.4)."""
-    from app.schemas.product_brief import BriefKindOption
-    from app.services.product_brief import _with_kind
-
-    three = BriefKindOption(
-        key="kind-3", commerce_category="seating", commerce_subcategory="sofa", seats=3
-    )
-
-    tapped = _with_kind(_resolved(), three)
-
-    assert tapped.request.single_type
-    assert tapped.request.alongside_subcategories == ()
-
-
-async def test_show_more_but_only_regular_sofas_keeps_to_sofas() -> None:
-    pipeline = FakePipeline(ids=(22,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH, show_more=True, only_asked_type=True),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(_turn(_state(), "more, but only regular sofas"))
-
-    assert pipeline.calls[0].request.alongside_subcategories == ()
-    assert result.state.active_search is not None
-    assert result.state.active_search.request.single_type
-
-
-async def test_only_regular_sofas_holds_across_a_change_of_family() -> None:
-    tables = ProductSearchRequest(commerce_category="tables", commerce_subcategory="center-table")
-    pipeline = FakePipeline(ids=(20,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(
-            action=AgentAction.REFINE_SEARCH,
-            taxonomy_change_requested=True,
-            only_asked_type=True,
-        ),
-        interpretation=_resolved(),
-        pipeline=pipeline,
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    result = await coordinator.run(_turn(_state(request=tables), "now just regular sofas"))
-
-    assert pipeline.calls[-1].request.commerce_subcategory == "sofa"
-    assert pipeline.calls[-1].request.alongside_subcategories == ()
-    assert result.state.active_search is not None
-    assert result.state.active_search.request.single_type
-
-
-class _Cards:
-    """The cards on screen are of the given types."""
-
-    def __init__(self, kinds: dict[int, str]) -> None:
-        self.kinds = kinds
-        self.calls: list[list[int]] = []
-
-    async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
-        from tests.unit.test_turn_coordinator import _product
-
-        self.calls.append(list(product_ids))
-        return tuple(
-            _product(p, subcategory=self.kinds[p]) for p in product_ids if p in self.kinds
-        )
-
-
-@pytest.mark.parametrize(
-    ("on_screen", "kept_to_sofas"),
-    [
-        ({10: "sofa-set", 11: "sofa-set"}, True),
-        ({10: "sofa", 11: "sofa-set"}, False),
-    ],
-    ids=["only-sets-on-screen", "a-sofa-on-screen"],
-)
-async def test_sofas_asked_for_while_only_sets_show_means_sofas_alone(
-    on_screen: dict[int, str], kept_to_sofas: bool
-) -> None:
-    """Known issue 21, whichever way the model reads "show me sofas instead"."""
-    pipeline = FakePipeline(ids=(20,))
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_resolved(_sofas_for(7)),
-        pipeline=pipeline,
-        hydration=cast(Any, _Cards(on_screen)),
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    await coordinator.run(_turn(_state(request=_sofas_for(7)), "show me sofas instead"))
-
-    assert pipeline.calls[0].request.single_type is kept_to_sofas
-
-
 def test_refining_more_like_this_keeps_its_type(composer: SearchRefinementComposer) -> None:
     """ "Cheaper ones" after More like this on a sofa is still sofas."""
     state = ActiveSearchState(request=SOFAS, revision=1, from_product=True)
@@ -844,68 +405,3 @@ async def test_their_own_words_keep_the_closest_first_whatever_its_type() -> Non
     cards = [_card(1, "sofa"), _card(2, "sofa"), _card(3, "sofa-set")]
 
     assert await _order(worded, cards) == [1, 2, 3]
-
-
-async def test_types_already_covered_are_not_searched_again() -> None:
-    """A mixed search for six in purple found nothing: the sets were in it,
-    so they are not searched a second time as "another type"."""
-    from tests.unit.test_seating_instead import Catalog
-
-    pipeline = _ByAnyType({})
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_resolved(_sofas_for(6, colors_any_of=("Purple",))),
-        pipeline=pipeline,
-        capabilities=Catalog(),
-        seating=SEATING,
-        mixed_types=True,
-    )
-
-    await coordinator.run(_turn(_state(request=None), "a purple sofa for 6, only purple"))
-
-    assert len(pipeline.calls) == 1
-
-
-@pytest.mark.parametrize(("alone", "combining"), [(True, True), (False, False)])
-async def test_just_sofas_for_seven_needs_combining(alone: bool, combining: bool) -> None:
-    """Sofas seat four at most here and sets seven: for sofas alone, seven is
-    the seating-shape question, asked before anything else."""
-    from tests.unit.test_seating_instead import Catalog
-
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.ANSWER),
-        capabilities=Catalog(),
-        seating=SEATING,
-        mixed_types=True,
-    )
-    request = _sofas_for(7, single_type=alone)
-
-    assert await coordinator._needs_combining(_resolved(request), _turn(_state())) is combining
-
-
-async def test_switched_off_a_stored_sofas_alone_changes_nothing() -> None:
-    """A session that said "just sofas" while the mix was on: switched off,
-    the search for six still finds the sofa set, exactly as before."""
-    from tests.unit.test_seating_instead import ByType, Catalog
-
-    pipeline = ByType({"sofa-set": (31, 32)})
-    coordinator, _ = _coordinator(
-        CustomerAgentDecision(action=AgentAction.SEARCH),
-        interpretation=_resolved(_sofas_for(6, single_type=True)),
-        pipeline=pipeline,
-        capabilities=Catalog(),
-        seating=SEATING,
-    )
-
-    await coordinator.run(_turn(_state(request=None), "a sofa for 6"))
-
-    assert [call.request.commerce_subcategory for call in pipeline.calls] == ["sofa", "sofa-set"]
-
-
-def test_an_empty_refinement_is_allowed_only_for_sofas_alone() -> None:
-    with pytest.raises(ValidationError):
-        CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, refinement=SearchRefinementDelta())
-    CustomerAgentDecision(
-        action=AgentAction.REFINE_SEARCH, refinement=SearchRefinementDelta(), only_asked_type=True
-    )
-    assert "only_asked_type and no delta" in build_instructions(mixed_types=True)

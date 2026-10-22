@@ -13,10 +13,15 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.agents.loop import AgentLoop
+from app.agents.team import AgentTeam
+from app.agents.tools.catalog import build_registry
+from app.agents.tools.schemas import ToolSchemas
 from app.core.config import LLMSettings, Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
 from app.db.catalog_schema import verify_commerce_schema, verify_support_schema
+from app.integrations.chat_models import build_chat_model
 from app.integrations.embeddings import OpenAIQueryEmbedder
 from app.integrations.image_generation import (
     FallbackImageGenerator,
@@ -33,9 +38,10 @@ from app.integrations.salla_storefront import SallaStorefrontClient
 from app.integrations.store_knowledge import PineconeKnowledgeIndex
 from app.integrations.zory_finder import ZoryFinderClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
+from app.schemas.agent_persona import AgentPersona
+from app.schemas.query import build_constrained_interpretation
 from app.services.store_knowledge import StoreKnowledgeService
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
-from app.taxonomy.briefs import Briefs, load_briefs
 from app.taxonomy.compare_groups import CompareGroups, load_compare_groups
 from app.taxonomy.complements import Complements, load_complements
 from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
@@ -62,6 +68,9 @@ class AppResources:
     seating: SeatingSemantics
     chat_graph: ChatGraphRunner
     rooms: RoomPieces
+    # The supervisor and the four agents, compiled once. None until every one
+    # of them has a model: a team missing an agent cannot take every turn.
+    agent_team: AgentTeam | None = None
     # Both None when semantic ranking is not configured. Discovery still
     # works; results come back in deterministic order. Defaulted so a
     # deployment without them constructs exactly as it did before.
@@ -70,15 +79,6 @@ class AppResources:
     # None when store knowledge is not configured: the agent then never looks
     # in the store's documents and answers exactly as before.
     store_knowledge: StoreKnowledgeService | None = None
-    # None when the Customer Agent's decision step is not configured. A second
-    # client rather than a second parameter: the model identifier is fixed at
-    # construction, and one client per process is what CLAUDE.md 24 requires -
-    # building one per request would be the thing it forbids.
-    decision_llm: OpenAIStructuredClient | None = None
-    # None when the response capability is not configured. A third client for
-    # the same reason as the second: the model identifier is fixed at
-    # construction, and one client per process is what CLAUDE.md 24 requires.
-    response_llm: OpenAIStructuredClient | None = None
     # None when the interior-design specialist is not configured. A fourth
     # client for the same reason as the second and third: the model identifier
     # is fixed at construction (CLAUDE.md 24).
@@ -101,12 +101,9 @@ class AppResources:
     # built without them constructs as before: products open without
     # cross-sell, and nothing else changes.
     complements: Complements | None = None
-    # The cards of questions for a product search. Defaulted, like the
-    # pairings: without them every search simply runs.
-    briefs: Briefs | None = None
-    # Each sub-category's own questions, asked instead of its family's card
-    # when `customer_agent.subcategory_questions` is on. Defaulted like the
-    # cards: without them every type is asked as before.
+    # The questions the store's designers ask for each sub-category, given to
+    # the agents as knowledge with a search's results. Defaulted: without them
+    # an agent asks from its own sense of the piece.
     subcategory_questions: SubcategoryQuestions | None = None
     # Which types compare with which. Defaulted: without it the comparison
     # pop-up is refused rather than comparing anything with anything.
@@ -118,6 +115,40 @@ def get_resources(app: FastAPI) -> AppResources:
     if not isinstance(resources, AppResources):
         raise ResourceNotInitialisedError(resource="app.state.resources")
     return resources
+
+
+def _agent_team(
+    settings: Settings,
+    taxonomy: CommerceTaxonomy,
+    attributes: CatalogAttributes,
+    rooms: RoomPieces,
+) -> AgentTeam | None:
+    """The supervisor and the four agents, each its own model - or None when
+    any of them has none, and chat then refuses as not configured."""
+    agents = settings.agents
+    use_responses = agents.use_responses_api
+    supervisor = build_chat_model(settings.llm, agents.supervisor, use_responses_api=use_responses)
+    models = {
+        persona: build_chat_model(
+            settings.llm, getattr(agents, persona.value), use_responses_api=use_responses
+        )
+        for persona in AgentPersona
+    }
+    if supervisor is None or any(model is None for model in models.values()):
+        return None
+    registry = build_registry(
+        ToolSchemas(
+            interpretation=build_constrained_interpretation(taxonomy, attributes),
+            attributes=attributes,
+            room_pieces=rooms,
+        )
+    )
+    return AgentTeam(
+        supervisor,
+        {persona: model for persona, model in models.items() if model is not None},
+        agents,
+        AgentLoop(registry, max_tool_calls=agents.max_tool_calls),
+    )
 
 
 def design_llm_settings(settings: Settings) -> LLMSettings | None:
@@ -181,7 +212,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     seating = load_seating_semantics(taxonomy=taxonomy)
     rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
     complements = load_complements(taxonomy=taxonomy)
-    briefs = load_briefs(taxonomy=taxonomy)
     subcategory_questions = load_subcategory_questions(taxonomy=taxonomy)
     compare_groups = load_compare_groups(taxonomy=taxonomy)
     logger.info(
@@ -196,7 +226,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         seating_version=seating.version,
         room_pieces_version=rooms.version,
         complements_version=complements.version,
-        briefs_version=briefs.version,
         subcategory_questions_version=subcategory_questions.version,
         compare_groups_version=compare_groups.version,
     )
@@ -209,8 +238,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     llm_client = OpenAIStructuredClient(settings.llm)
     embedder: OpenAIQueryEmbedder | None = None
     semantic_index: SemanticIndex | None = None
-    decision_llm: OpenAIStructuredClient | None = None
-    response_llm: OpenAIStructuredClient | None = None
     design_llm: OpenAIStructuredClient | None = None
     if settings.pinecone is not None and settings.llm.embedding_model:
         embedder = OpenAIQueryEmbedder(settings.llm)
@@ -227,16 +254,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             shared,
             PineconeKnowledgeIndex(settings.store_knowledge),
             settings.store_knowledge,
-        )
-    decision_model = settings.customer_agent.decision_model
-    if decision_model:
-        decision_llm = OpenAIStructuredClient(
-            settings.llm.model_copy(update={"model": decision_model})
-        )
-    response_model = settings.customer_agent.response_model
-    if response_model:
-        response_llm = OpenAIStructuredClient(
-            settings.llm.model_copy(update={"model": response_model})
         )
     zory_finder: ZoryFinderClient | None = None
     if settings.furniture_finder is not None:
@@ -290,11 +307,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     design_settings = design_llm_settings(settings)
     if design_settings is not None:
         design_llm = OpenAIStructuredClient(design_settings)
-    logger.info("chat_graph_compiled", nodes=len(NODE_ORDER))
+    agent_team = _agent_team(settings, taxonomy, attributes, rooms)
+    logger.info("chat_graph_compiled", nodes=len(NODE_ORDER), agents=agent_team is not None)
     logger.info(
         "agents_configured",
-        decision_enabled=decision_llm is not None,
-        response_enabled=response_llm is not None,
         interior_design_enabled=design_llm is not None,
     )
     logger.info(
@@ -330,17 +346,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedder=embedder,
         semantic_index=semantic_index,
         store_knowledge=store_knowledge,
-        decision_llm=decision_llm,
-        response_llm=response_llm,
         design_llm=design_llm,
         taxonomy=taxonomy,
         attributes=attributes,
         dimensions=dimensions,
         seating=seating,
         chat_graph=chat_graph,
+        agent_team=agent_team,
         rooms=rooms,
         complements=complements,
-        briefs=briefs,
         subcategory_questions=subcategory_questions,
         compare_groups=compare_groups,
         zory_finder=zory_finder,
@@ -368,10 +382,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await room_checker.close()
         for closable in closables:
             await closable.close()
-        if decision_llm is not None:
-            await decision_llm.close()
-        if response_llm is not None:
-            await response_llm.close()
         if design_llm is not None:
             await design_llm.close()
         await llm_client.close()

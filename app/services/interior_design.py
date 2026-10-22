@@ -28,10 +28,12 @@ from app.prompts.interior_design.v1 import FIT_AFTER_PICK_SUFFIX, VERSION, build
 from app.schemas.design import (
     DesignCategoryNeed,
     DesignDirection,
+    DesignPriority,
     DesignTask,
     ExcludedDesignRole,
     InteriorDesignRequest,
     InteriorDesignResult,
+    NextSize,
     StockedLook,
 )
 from app.taxonomy.registry import CommerceTaxonomy
@@ -145,6 +147,18 @@ class InteriorDesignAgent:
             schema=InteriorDesignResult,
         )
         result = self._validate(proposed, request)
+        if request.task is not DesignTask.SPACE_FIT:
+            # Where things go and what size comes next are the designer's for
+            # every task but a bare proportion; each task's own checks leave
+            # them as they were proposed.
+            result = result.model_copy(
+                update={
+                    "placements": tuple(p for p in proposed.placements if not p.states_a_figure()),
+                    "next_sizes": tuple(
+                        n for n in proposed.next_sizes if n.is_usable() and self._approved(n)
+                    ),
+                }
+            )
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
         # Shape of the reasoning only: no brief, no guidance text, no room
@@ -157,11 +171,26 @@ class InteriorDesignAgent:
             guidance_count=len(result.guidance),
             proposed_need_count=len(proposed.needs),
             need_count=len(result.needs),
+            placement_count=len(result.placements),
+            next_size_count=len(result.next_sizes),
             has_geometry=request.geometry is not None,
             anchor_count=len(request.anchors),
             elapsed_ms=elapsed_ms,
         )
         return result
+
+    def _approved(self, size: NextSize) -> bool:
+        """A size for a kind outside the vocabulary is dropped alone - it would
+        search for nothing - while the answer it came with stands."""
+        try:
+            if size.commerce_subcategory is None:
+                self._taxonomy.subcategories(size.commerce_category)
+            else:
+                self._taxonomy.validate_pair(size.commerce_category, size.commerce_subcategory)
+        except TaxonomyValidationError:
+            logger.info("interior_design_next_size_unapproved")
+            return False
+        return True
 
     def _validate(
         self, result: InteriorDesignResult, request: InteriorDesignRequest
@@ -200,6 +229,9 @@ class InteriorDesignAgent:
 
         if request.task is DesignTask.COMPLEMENTARY_RECOMMENDATION:
             return self._complementary(result, request)
+
+        if request.task is DesignTask.MATCH:
+            return self._matched(result, request)
 
         violated = self._excluded_role(result, request)
         if violated is not None:
@@ -246,6 +278,28 @@ class InteriorDesignAgent:
             return result
         logger.warning("interior_design_needs_on_advice", dropped=len(result.needs))
         return InteriorDesignResult(guidance=result.guidance)
+
+    def _matched(
+        self, result: InteriorDesignResult, request: InteriorDesignRequest
+    ) -> InteriorDesignResult:
+        """One need of exactly the kind asked for, with its direction kept to
+        what the shop stocks. The kind is the customer's, so a need of another
+        kind lends only its direction - the specialist cannot change what they
+        are choosing."""
+        target = request.match_kind
+        assert target is not None
+        proposed = next(
+            (n for n in result.needs if n.commerce_subcategory == target.commerce_subcategory),
+            result.needs[0] if result.needs else None,
+        )
+        need = DesignCategoryNeed(
+            commerce_category=target.commerce_category,
+            commerce_subcategory=target.commerce_subcategory,
+            priority=DesignPriority.REQUIRED,
+            direction=proposed.direction if proposed is not None else None,
+        )
+        kept = _with_stocked_direction(need, request.stocked_looks)
+        return InteriorDesignResult(guidance=result.guidance, needs=(kept,))
 
     def _complementary(
         self, result: InteriorDesignResult, request: InteriorDesignRequest
@@ -300,8 +354,7 @@ class InteriorDesignAgent:
         if not request.anchors:
             return tuple(needs)
         already = {
-            (anchor.commerce_category, anchor.commerce_subcategory)
-            for anchor in request.anchors
+            (anchor.commerce_category, anchor.commerce_subcategory) for anchor in request.anchors
         }
         beside = tuple(
             need

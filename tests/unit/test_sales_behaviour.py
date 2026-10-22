@@ -26,9 +26,7 @@ from app.schemas.agent_decision import (
 from app.schemas.agent_state import AGENT_STATE_VERSION, AgentStateV1, RoomProjectState
 from app.schemas.agent_updates import AgentStateUpdate, RoomProjectUpdate
 from app.schemas.design import DesignTask, InteriorDesignRequest
-from app.schemas.response import ResponseGroundingView
 from app.services.agent_state import apply_update
-from app.services.agent_view import project_state
 from pydantic import ValidationError
 
 # ── the question is typed, never prose ──────────────────────────────────────
@@ -118,17 +116,6 @@ def test_the_customer_states_it_and_nothing_infers_it() -> None:
     assert "clear_regular_seating_count" in CustomerStateProposal.model_fields
 
 
-def test_the_agent_can_see_it_so_it_does_not_ask_twice() -> None:
-    state = apply_update(
-        AgentStateV1(),
-        AgentStateUpdate(room_project=RoomProjectUpdate(regular_seating_count=5)),
-    )
-
-    view = project_state(state).room_project
-    assert view is not None
-    assert view.regular_seating_count == 5
-
-
 def test_the_specialist_is_given_the_requirement_not_a_furniture_count() -> None:
     """Five regular users is a room requirement. What satisfies it - a
     sectional, a sofa and two chairs, two sofas - is the specialist's to decide
@@ -166,6 +153,7 @@ def test_a_complement_is_its_own_task() -> None:
         "room_plan",
         "complementary_recommendation",
         "space_fit",
+        "match",
     }
 
 
@@ -263,51 +251,13 @@ def test_the_prompt_forbids_the_claim_rather_than_making_it() -> None:
     """The exclusion above is safe only because the prompt states the ban."""
     from pathlib import Path
 
-    prompt = (Path(__file__).parents[2] / "app/prompts/customer_commerce/v1.py").read_text()
+    prompt = (Path(__file__).parents[2] / "app/prompts/agents/v2.py").read_text()
 
-    assert "Never say another customer bought it" in prompt
-    assert "frequently bought together" in prompt
+    assert 'never "usually bought together"' in prompt
 
 
 # ── the response model gained nothing it could misuse ───────────────────────
 
 
-@pytest.mark.parametrize(
-    "forbidden",
-    [
-        "product_id",
-        "price_amount",
-        "unit_price",
-        "total",
-        "url",
-        "store",
-        "line_id",
-        "need_id",
-        "score",
-    ],
-)
-def test_the_richer_grounding_carries_no_value(forbidden: str) -> None:
-    """Category and subcategory name a *kind*. Everything that could become a
-    claim about an item stayed out.
-
-    `relative_price_reason` survives this list on purpose: it is a reason enum
-    saying *why* a comparative price could not be resolved, and carries no
-    figure. The tokens here are the ones that would be a value.
-    """
-    for name in ResponseGroundingView.model_fields:
-        assert forbidden not in name, name
 
 
-def test_the_grounding_says_what_kind_without_saying_which_one() -> None:
-    view = ResponseGroundingView(
-        kind=__import__(
-            "app.schemas.response", fromlist=["ResponseOutcomeKind"]
-        ).ResponseOutcomeKind.SEARCH_RESULTS,
-        presented_count=5,
-        commerce_category="seating",
-        commerce_subcategory="sofa",
-        exact_match_count=5,
-    )
-
-    assert view.commerce_category == "seating"
-    assert view.presented_count == 5

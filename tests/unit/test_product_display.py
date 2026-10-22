@@ -16,6 +16,7 @@ from typing import Any, cast
 import pytest
 from app.core.config import CatalogSettings, SessionSettings
 from app.schemas.acquisition import BundleAcquisition
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1, ProductInteractionState
 from app.schemas.agent_turn import CustomerResponse
 from app.schemas.bundle import BundleStatus
@@ -30,16 +31,14 @@ from app.schemas.comparison import ComparisonField, ProductComparisonResult
 from app.schemas.dimensions import DimensionStatus, DimensionUnit, NormalisedDimensions
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
-from app.schemas.picks import PickView
 from app.schemas.product import CommerceClassification, ProductCandidate, ProductDisplay
 from app.schemas.seating_solution import SeatingBundle, SeatingBundleLine, SeatingShape
 from app.schemas.visualization import VisualizeRequest
 from app.services.bundle_presentation import build_state_bundle_presentation
 from app.services.card_labels import LABELS, card_labels
 from app.services.catalog import CatalogService, catalog_item
-from app.services.chat_runtime import ChatRuntime
+from app.services.chat_runtime import AgentTurn, ChatRuntime
 from app.services.furniture_finder import FinderTurnRuntime
-from app.services.numeric_guard import picks_figures
 from app.services.product_display import (
     ProductDisplayWords,
     arabic_name,
@@ -49,13 +48,13 @@ from app.services.product_display import (
 )
 from app.services.product_interaction import build_picks
 from app.services.refinement_composer import SearchRefinementComposer
-from app.services.screen_view import screen_from_presentation
 from app.services.seating_presentation import present_chosen_seating
 from app.services.similar_search import SimilarSearchBuilder
 
 from tests.unit import test_design_revision as design
 from tests.unit import test_furniture_finder as finder
 from tests.unit import test_room_visualization as visualization
+from tests.unit.agents.fakes import agent_services
 from tests.unit.test_catalog import (
     ATTRIBUTES,
     CONTEXT,
@@ -116,7 +115,13 @@ def _candidate(product_id: int) -> ProductCandidate:
 
 def _runtime(display: ProductDisplayWords | None = WORDS) -> ChatRuntime:
     unused = cast(Any, None)
-    return ChatRuntime(unused, unused, unused, unused, display=display)
+    return ChatRuntime(
+        unused,
+        agent_services(display=display),
+        unused,
+        SessionSettings(),
+        arabic_replies=True,
+    )
 
 
 def _reply(
@@ -124,12 +129,19 @@ def _reply(
     language: ReplyLanguage | None,
     runtime: ChatRuntime | None = None,
 ) -> ChatResponse:
+    turn = AgentTurn(
+        state=AgentStateV1(),
+        response=CustomerResponse(message="تفضل"),
+        presentation=presentation,
+        owner=AgentPersona.SARA,
+        handoffs=(AgentPersona.SARA,),
+        language=language or ReplyLanguage.EN,
+        picks=None,
+        liked=None,
+        cart=None,
+    )
     return (runtime or _runtime()).public_response(
-        ChatRequest(session_id="s-1", store_id=50, message="كنب"),
-        2,
-        CustomerResponse(message="تفضل"),
-        presentation,
-        reply_language=language,
+        ChatRequest(session_id="s-1", store_id=50, message="كنب"), 2, turn
     )
 
 
@@ -234,17 +246,6 @@ def test_every_reply_carries_its_labels_in_its_language() -> None:
     assert english.labels == LABELS[EN] and english.labels.select == "Add to cart"
     assert english.presentation is not None and english.presentation.products[0].display is not None
     assert english.presentation.products[0].display.price == "6,950 SAR"
-
-
-def test_a_reply_written_in_arabic_names_the_cards_as_the_store_does() -> None:
-    products = (_grounded(1), _grounded(2, name_arabic=""))
-
-    arabic = screen_from_presentation(products=products, arabic_names=True)
-
-    assert [card.name for card in arabic.products] == [
-        "طقم أريكة زاوية 4 مقاعد",
-        "4 Seater Fabric Corner Sofa Set 2",
-    ]
 
 
 # ── the room package ════════════════════════════════════════════════════════
@@ -373,20 +374,6 @@ def test_the_room_and_a_seating_choice_carry_the_stores_arabic_name() -> None:
     assert seating.items[0].name_arabic == "كنبة"
 
 
-def test_a_reply_written_in_arabic_names_the_room_pieces_as_the_cards_do() -> None:
-    package = _package(_piece(1), _piece(2, name_arabic=""))
-
-    arabic = screen_from_presentation(room=package, arabic_names=True)
-    english = screen_from_presentation(room=package)
-
-    assert arabic.room is not None and english.room is not None
-    assert [card.name for card in arabic.room.cards] == [
-        "سرير منجّد مفرد",
-        "Single Upholstered Bed 2",
-    ]
-    assert english.room.cards[0].name == "Single Upholstered Bed 1"
-
-
 # ── the labels ══════════════════════════════════════════════════════════════
 
 
@@ -460,17 +447,6 @@ def test_picks_read_in_the_conversations_language() -> None:
     assert bare.display is None
 
 
-def test_a_figure_in_a_picks_shown_name_may_be_said() -> None:
-    pick = PickView(
-        pick=1,
-        name_english="Fabric Sofa",
-        image_url="https://shop.test/1.jpg",
-        price_amount=Decimal("3200"),
-        price_unit="SAR",
-        display=ProductDisplay(name="أريكة 6 مقاعد"),
-    )
-
-    assert Decimal("6") in picks_figures([pick])
 
 
 # ── Browse Catalogue ════════════════════════════════════════════════════════

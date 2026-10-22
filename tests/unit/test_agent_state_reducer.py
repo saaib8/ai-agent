@@ -18,9 +18,7 @@ from app.schemas.agent_state import (
     AgentStateV1,
     BundleItemStatus,
     CustomerPreferenceState,
-    DerivedCommerceState,
     ProductInteractionState,
-    PurchaseStage,
     RoomProjectState,
 )
 from app.schemas.agent_updates import (
@@ -31,7 +29,6 @@ from app.schemas.agent_updates import (
     BundleLineSpec,
     ClearSemanticIntent,
     CustomerPreferenceUpdate,
-    DerivedCommerceUpdate,
     ProductInteractionUpdate,
     RemoveItems,
     ReplaceBundle,
@@ -108,21 +105,16 @@ def test_a_one_domain_update_leaves_the_others_identical() -> None:
         active_search=ActiveSearchState(request=_request(), revision=1, semantic_intent="cosy"),
         product_interaction=ProductInteractionState(selected_product_ids=(5,)),
         room_project=RoomProjectState(room_type="living room"),
-        derived_commerce=DerivedCommerceState(purchase_stage=PurchaseStage.EXPLORING),
     )
 
     after = apply_update(
-        state,
-        AgentStateUpdate(
-            derived_commerce=DerivedCommerceUpdate(purchase_stage=PurchaseStage.CONSIDERING)
-        ),
+        state, AgentStateUpdate(room_project=RoomProjectUpdate(room_type="living room"))
     )
 
     assert after.customer_preferences == state.customer_preferences
     assert after.active_search == state.active_search
     assert after.product_interaction == state.product_interaction
-    assert after.room_project == state.room_project
-    assert after.derived_commerce.purchase_stage is PurchaseStage.CONSIDERING
+    assert after.room_project is not None and after.room_project.room_type == "living room"
 
 
 def test_the_input_state_is_never_mutated() -> None:
@@ -341,9 +333,7 @@ def test_an_unrelated_domain_update_never_advances_the_revision() -> None:
 
     after = apply_update(
         state,
-        AgentStateUpdate(
-            derived_commerce=DerivedCommerceUpdate(purchase_stage=PurchaseStage.EXPLORING)
-        ),
+        AgentStateUpdate(customer_preferences=CustomerPreferenceUpdate(room="bedroom")),
     )
 
     assert after.active_search is not None
@@ -380,7 +370,6 @@ def test_only_a_commit_advances_the_revision() -> None:
             active_search=ActiveSearchUpdate(semantic_intent=SetSemanticIntent(value="airy")),
             product_interaction=ProductInteractionUpdate(selected_product_ids=AddItems(items=(5,))),
             room_project=RoomProjectUpdate(room_type="bedroom"),
-            derived_commerce=DerivedCommerceUpdate(purchase_stage=PurchaseStage.CONSIDERING),
         ),
     )
 
@@ -537,19 +526,6 @@ def test_room_scalars_can_be_cleared_explicitly() -> None:
     assert after.room_project is not None
     assert after.room_project.room_type is None
     assert after.room_project.budget is None
-
-
-def test_the_purchase_stage_can_be_reset_to_unassessed() -> None:
-    state = AgentStateV1(
-        derived_commerce=DerivedCommerceState(purchase_stage=PurchaseStage.CONSIDERING)
-    )
-
-    after = apply_update(
-        state,
-        AgentStateUpdate(derived_commerce=DerivedCommerceUpdate(clear_purchase_stage=True)),
-    )
-
-    assert after.derived_commerce.purchase_stage is None
 
 
 def test_a_commit_preserves_selected_products() -> None:

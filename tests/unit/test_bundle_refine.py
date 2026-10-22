@@ -31,7 +31,6 @@ from app.schemas.agent_state import (
     BundleItemStatus,
     RoomProjectState,
 )
-from app.schemas.agent_turn import CustomerTurnInput
 from app.schemas.agent_updates import (
     AgentStateUpdate,
     DesignNeedSpec,
@@ -39,37 +38,22 @@ from app.schemas.agent_updates import (
     ReplaceDesignPlan,
     RoomProjectUpdate,
 )
-from app.schemas.agent_view import RoomProjectView
 from app.schemas.bundle_reference import (
     BundleCategoryMatch,
     BundleItemOrdinal,
-    BundleReferenceSelector,
 )
 from app.schemas.design import DesignPriority
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.discovery import PriceConstraint
-from app.schemas.grounding import TurnFailureCode
 from app.schemas.product import CommerceClassification, ProductCandidate
 from app.schemas.product_reference import PresentedOrdinal
-from app.schemas.resolution import (
-    BundleReferenceFailureReason,
-    BundleReferenceUnresolved,
-    ResolvedBundleReference,
-)
-from app.schemas.response import DeterministicResponse, DeterministicResponseKind
 from app.services.agent_state import apply_update
-from app.services.agent_view import project_state
 from app.services.bundle_cards import group_bundle_cards
 from app.services.bundle_presentation import build_state_bundle_presentation
-from app.services.bundle_reference import BundleReferenceResolver
-from app.services.response_view import route_response
 from app.taxonomy.registry import load_taxonomy
 from pydantic import ValidationError
 
-from tests.unit.test_turn_coordinator import FakeHydration, _coordinator
-
 TAXONOMY = load_taxonomy()
-RESOLVER = BundleReferenceResolver(TAXONOMY)
 CONTEXT = __import__("app.schemas.retailer", fromlist=["RetailerContext"]).RetailerContext(
     store_id=50
 )
@@ -207,123 +191,6 @@ def test_a_card_belonging_to_no_need_has_none() -> None:
 # ── selectors ═══════════════════════════════════════════════════════════════
 
 
-def resolve(
-    selector: BundleReferenceSelector,
-    state: AgentStateV1,
-    products: tuple[ProductCandidate, ...],
-) -> Any:
-    return RESOLVER.resolve(selector, state.room_project, products)
-
-
-def test_an_ordinal_names_the_card_at_that_position() -> None:
-    state = room_with(line(10), line(11), needs=0)
-
-    outcome = resolve(BundleItemOrdinal(ordinal=2), state, (product(10), product(11)))
-
-    assert isinstance(outcome, ResolvedBundleReference)
-    assert outcome.product_id == 11
-    assert outcome.ordinal == 2
-
-
-def test_an_ordinal_counts_cards_rather_than_lines() -> None:
-    """Three lines, two cards: there is a second piece and no third."""
-    state = room_with(line(10), line(10), line(11), needs=0)
-
-    assert isinstance(
-        resolve(BundleItemOrdinal(ordinal=2), state, (product(10), product(11))),
-        ResolvedBundleReference,
-    )
-    beyond = resolve(BundleItemOrdinal(ordinal=3), state, (product(10), product(11)))
-    assert isinstance(beyond, BundleReferenceUnresolved)
-    assert beyond.reason is BundleReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-
-
-def test_an_ordinal_beyond_the_room_is_a_question() -> None:
-    state = room_with(line(10), needs=0)
-
-    outcome = resolve(BundleItemOrdinal(ordinal=4), state, (product(10),))
-
-    assert isinstance(outcome, BundleReferenceUnresolved)
-    assert outcome.reason is BundleReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-
-
-def test_no_room_means_nothing_to_count_into() -> None:
-    outcome = RESOLVER.resolve(BundleItemOrdinal(ordinal=1), None, ())
-
-    assert isinstance(outcome, BundleReferenceUnresolved)
-    assert outcome.reason is BundleReferenceFailureReason.NO_BUNDLE
-
-
-def test_a_unique_type_resolves() -> None:
-    state = room_with(line(10), line(11), needs=0)
-    products = (product(10), product(11, category="lighting", subcategory="floor-lamp"))
-
-    outcome = resolve(
-        BundleCategoryMatch(commerce_category="lighting", commerce_subcategory="floor-lamp"),
-        state,
-        products,
-    )
-
-    assert outcome.product_id == 11
-
-
-def test_a_parent_category_resolves_when_only_one_card_matches() -> None:
-    state = room_with(line(10), line(11), needs=0)
-    products = (product(10), product(11, category="lighting", subcategory="floor-lamp"))
-
-    outcome = resolve(BundleCategoryMatch(commerce_category="lighting"), state, products)
-
-    assert outcome.product_id == 11
-
-
-def test_two_pieces_of_one_kind_is_a_question_not_a_coin_toss() -> None:
-    state = room_with(line(10), line(11), needs=0)
-
-    outcome = resolve(
-        BundleCategoryMatch(commerce_category="seating", commerce_subcategory="sofa"),
-        state,
-        (product(10), product(11)),
-    )
-
-    assert isinstance(outcome, BundleReferenceUnresolved)
-    assert outcome.reason is BundleReferenceFailureReason.SEVERAL_CATEGORY_MATCHES
-
-
-def test_a_type_the_room_does_not_hold_is_a_question() -> None:
-    state = room_with(line(10), needs=0)
-
-    outcome = resolve(
-        BundleCategoryMatch(commerce_category="lighting", commerce_subcategory="floor-lamp"),
-        state,
-        (product(10),),
-    )
-
-    assert isinstance(outcome, BundleReferenceUnresolved)
-    assert outcome.reason is BundleReferenceFailureReason.NO_CATEGORY_MATCH
-
-
-def test_a_type_outside_the_vocabulary_names_nothing() -> None:
-    """Refused rather than matched to whatever looks closest."""
-    state = room_with(line(10), needs=0)
-
-    outcome = resolve(
-        BundleCategoryMatch(commerce_category="furniture", commerce_subcategory="couch"),
-        state,
-        (product(10),),
-    )
-
-    assert isinstance(outcome, BundleReferenceUnresolved)
-    assert outcome.reason is BundleReferenceFailureReason.UNAPPROVED_COMMERCE_TYPE
-
-
-def test_the_resolver_hardcodes_no_vocabulary() -> None:
-    from pathlib import Path
-
-    source = (Path(__file__).parents[2] / "app/services/bundle_reference.py").read_text()
-    for category in ("seating", "sofa", "lighting", "tables", "carpet"):
-        assert category not in source, category
-
-
 def test_there_is_no_focused_bundle_selector() -> None:
     """Nothing tracks a focused card, so nothing may claim one."""
     import app.schemas.bundle_reference as module
@@ -404,159 +271,7 @@ def test_the_operation_vocabulary_is_exactly_what_is_implemented() -> None:
 # ── execution ═══════════════════════════════════════════════════════════════
 
 
-async def run(
-    decision: CustomerAgentDecision,
-    state: AgentStateV1,
-    *,
-    available: tuple[int, ...] | None = None,
-    **parts: Any,
-) -> Any:
-    ids = available if available is not None else tuple(
-        i.product_id for i in room(state).bundle_items
-    )
-    coordinator, built = _coordinator(
-        decision, hydration=FakeHydration(available=ids), **parts
-    )
-    result = await coordinator.run(
-        CustomerTurnInput(message="keep that one", state=state, context=CONTEXT)
-    )
-    return result, built
-
-
-async def test_locking_changes_every_line_behind_the_card() -> None:
-    state = room_with(line(10), line(10), line(11), needs=0)
-
-    result, _ = await run(refine(), state)
-
-    after = room(result.state)
-    assert [i.status for i in after.bundle_items] == [
-        BundleItemStatus.LOCKED,
-        BundleItemStatus.LOCKED,
-        BundleItemStatus.SUGGESTED,
-    ]
-
-
-async def test_locking_preserves_everything_else_about_the_line() -> None:
-    state = room_with(
-        line(10, quantity=3, acquisition=BundleAcquisition.ALREADY_OWNED, need_index=0),
-        needs=1,
-    )
-    before = room(state).bundle_items[0]
-
-    result, _ = await run(refine(), state)
-
-    after = room(result.state).bundle_items[0]
-    assert (after.line_id, after.product_id, after.quantity, after.need_id) == (
-        before.line_id,
-        before.product_id,
-        before.quantity,
-        before.need_id,
-    )
-    assert after.acquisition is BundleAcquisition.ALREADY_OWNED
-
-
-async def test_a_room_edit_advances_the_revision_once() -> None:
-    state = room_with(line(10), line(10), needs=0)
-
-    result, _ = await run(refine(), state)
-
-    assert room(result.state).bundle_revision == room(state).bundle_revision + 1
-
-
-async def test_locking_something_already_kept_changes_nothing() -> None:
-    state = room_with(line(10, locked=True), needs=0)
-
-    result, _ = await run(refine(), state)
-
-    assert room(result.state).bundle_revision == room(state).bundle_revision
-
-
-async def test_unlocking_releases_without_replacing() -> None:
-    state = room_with(line(10, locked=True), needs=0)
-
-    result, parts = await run(refine(BundleInteractionOp.UNLOCK), state)
-
-    assert room(result.state).bundle_items[0].status is BundleItemStatus.SUGGESTED
-    assert not parts["design"].requests
-    assert not parts["design_discovery"].calls
-    assert not parts["optimizer"].requests
-    assert result.bundle_outcome is None
-
-
-async def test_nothing_is_planned_searched_or_optimised(
-) -> None:
-    state = room_with(line(10), needs=0)
-
-    _, parts = await run(refine(), state)
-
-    assert parts["capabilities"].calls == []
-    assert parts["design"].requests == []
-    assert parts["design_discovery"].calls == []
-    assert parts["optimizer"].requests == []
-    assert parts["pipeline"].calls == []
-
-
-async def test_a_missing_locked_product_stops_the_turn() -> None:
-    state = room_with(line(10, locked=True), line(11), needs=0)
-
-    result, _ = await run(refine(), state, available=(11,))
-
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE
-    assert room(result.state).bundle_items == room(state).bundle_items
-
-
-async def test_an_unresolvable_reference_changes_nothing() -> None:
-    state = room_with(line(10), needs=0)
-    decision = CustomerAgentDecision(
-        action=AgentAction.BUNDLE_REFINE,
-        bundle_interaction=BundleInteractionIntent(
-            op=BundleInteractionOp.LOCK, selector=BundleItemOrdinal(ordinal=9)
-        ),
-    )
-
-    result, _ = await run(decision, state)
-
-    assert result.grounding.deterministic_clarification is not None
-    assert (
-        result.grounding.deterministic_clarification.bundle_reason
-        is BundleReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-    )
-    assert room(result.state).bundle_items == room(state).bundle_items
-
-
 # ── the reply ═══════════════════════════════════════════════════════════════
-
-
-@pytest.mark.parametrize(
-    ("op", "kind"),
-    [
-        (BundleInteractionOp.LOCK, DeterministicResponseKind.BUNDLE_KEPT),
-        (BundleInteractionOp.UNLOCK, DeterministicResponseKind.BUNDLE_UNLOCKED),
-    ],
-)
-async def test_a_local_change_is_acknowledged_without_a_model(
-    op: BundleInteractionOp, kind: DeterministicResponseKind
-) -> None:
-    state = room_with(line(10, locked=op is BundleInteractionOp.UNLOCK), needs=0)
-
-    result, _ = await run(refine(op), state)
-    route = route_response(result)
-
-    assert isinstance(route.primary, DeterministicResponse)
-    assert route.primary.kind is kind
-    assert result.bundle_outcome is None, "no room was chosen, so none is invented"
-
-
-def test_the_acknowledgements_state_no_fact_and_ask_nothing() -> None:
-    from app.services.response_wording import (
-        BUNDLE_KEPT_WORDING,
-        BUNDLE_UNLOCKED_WORDING,
-    )
-
-    for wording in (BUNDLE_KEPT_WORDING, BUNDLE_UNLOCKED_WORDING):
-        assert not any(character.isdigit() for character in wording)
-        assert "?" not in wording
 
 
 # ── the room, rebuilt from state ════════════════════════════════════════════
@@ -664,19 +379,6 @@ def test_the_state_renderer_touches_no_float() -> None:
 # ── the model-facing view ═══════════════════════════════════════════════════
 
 
-def test_the_view_counts_cards_as_well_as_lines() -> None:
-    state = room_with(line(10), line(10), line(11), needs=0)
-
-    view = project_state(state).room_project
-    assert view is not None
-    assert view.bundle_line_count == 3
-    assert view.bundle_card_count == 2
-
-
-@pytest.mark.parametrize("forbidden", ["product_id", "line_id", "need_id", "group"])
-def test_the_view_still_names_nothing(forbidden: str) -> None:
-    for field in RoomProjectView.model_fields:
-        assert forbidden not in field, field
 
 
 # ── first view == next view ═════════════════════════════════════════════════
@@ -687,14 +389,14 @@ def test_the_view_still_names_nothing(forbidden: str) -> None:
 # different orders, and "the second one" would mean two different pieces.
 
 
+
+
 def _committed(
     *lines: PlannedBundleLineSpec, products: tuple[ProductCandidate, ...]
 ) -> tuple[Any, Any]:
     """The room as first shown, and as rebuilt from state afterwards."""
-    from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
-    from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
     from app.schemas.bundle import BundleLine, BundleStatus, RoomBundle
-    from app.services.bundle_presentation import build_bundle_presentation
+    from app.services.bundle_presentation import present_room_bundle
 
     state = room_with(*lines, needs=0)
     by_id = {p.product_id: p for p in products}
@@ -719,13 +421,7 @@ def _committed(
         new_spend_total=Decimal("1.00"),
         currency="SAR",
     )
-    result = CustomerTurnResult(
-        state=state,
-        decision=CustomerAgentDecision(action=AgentAction.DESIGN_HANDOFF),
-        grounding=TurnGrounding(design_handoff_requested=True),
-        bundle_outcome=outcome,
-    )
-    return build_bundle_presentation(result), rebuilt(state, *products)
+    return present_room_bundle(outcome, room(state)), rebuilt(state, *products)
 
 
 def _shape(rendered: Any) -> list[tuple[Any, ...]]:
@@ -768,91 +464,8 @@ def test_quantities_and_merging_agree_across_the_two_renderings() -> None:
     assert first.items[0].quantity == 3
 
 
-def test_an_infeasible_room_is_not_projected_from_current_state() -> None:
-    """It was never committed, so state describes a different room."""
-    from app.schemas.agent_decision import AgentAction, CustomerAgentDecision
-    from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
-    from app.schemas.bundle import BundleLine, BundleStatus, RoomBundle
-    from app.services.bundle_presentation import build_bundle_presentation
-
-    state = room_with(line(99), needs=0)
-    outcome = RoomBundle(
-        lines=(
-            BundleLine(
-                product=product(10),
-                quantity=1,
-                locked=True,
-                acquisition=BundleAcquisition.TO_BUY,
-            ),
-        ),
-        status=BundleStatus.INFEASIBLE,
-        new_spend_total=Decimal("1000.00"),
-        currency="SAR",
-    )
-    rendered = build_bundle_presentation(
-        CustomerTurnResult(
-            state=state,
-            decision=CustomerAgentDecision(action=AgentAction.DESIGN_HANDOFF),
-            grounding=TurnGrounding(design_handoff_requested=True),
-            bundle_outcome=outcome,
-        )
-    )
-
-    assert rendered is not None
-    assert [i.name_english for i in rendered.items] == ["Item 10"], "the outcome's own"
 
 
-async def test_a_reference_resolved_against_another_room_is_refused() -> None:
-    """The revision guard, exercised directly.
-
-    No ordinary turn can currently produce it: nothing between resolving the
-    reference and applying the edit touches the bundle. It is defensive for
-    E4C, where a refinement will re-optimise the room mid-turn - and a guard
-    with no test is a guard nobody will notice breaking.
-    """
-    pre_turn = room_with(line(10), line(11), needs=0)
-    # The same room after something else edited it: a different revision.
-    working = apply_update(
-        pre_turn,
-        AgentStateUpdate(
-            room_project=RoomProjectUpdate(
-                bundle_operations=(
-                    __import__(
-                        "app.schemas.agent_updates", fromlist=["SetBundleLineStatus"]
-                    ).SetBundleLineStatus(line_id=2, status=BundleItemStatus.LOCKED),
-                )
-            )
-        ),
-    )
-    assert room(working).bundle_revision != room(pre_turn).bundle_revision
-
-    coordinator, _ = _coordinator(refine(), hydration=FakeHydration(available=(10, 11)))
-    primary = await coordinator._bundle_refine(
-        refine(),
-        working,
-        pre_turn,
-        CustomerTurnInput(message="keep that one", state=pre_turn, context=CONTEXT),
-    )
-
-    assert primary.clarification is not None
-    assert (
-        primary.clarification.bundle_reason
-        is BundleReferenceFailureReason.STALE_BUNDLE_REFERENCE
-    )
-    assert primary.bundle_change is None
-    assert room(primary.state).bundle_items == room(working).bundle_items
-
-
-def test_the_model_never_learns_a_revision() -> None:
-    """Staleness is the application's business. And this protects one turn, not
-    a bundle shown several turns ago - that needs a transport token nothing
-    supplies yet."""
-    from app.schemas.agent_view import AgentStateView
-
-    assert "revision" not in str(RoomProjectView.model_fields)
-    for field in BundleInteractionIntent.model_fields:
-        assert "revision" not in field
-    assert "bundle_revision" not in str(AgentStateView.model_fields)
 
 
 # ── a stale card never moves the others ═════════════════════════════════════
@@ -866,159 +479,4 @@ def test_the_model_never_learns_a_revision() -> None:
 # else.
 
 
-def _abc() -> AgentStateV1:
-    """Three cards - sofa, lamp, rug - in that order."""
-    return room_with(line(10), line(11), line(12), needs=0)
-
-
 SOFA = product(10, category="seating", subcategory="sofa")
-LAMP = product(11, category="lighting", subcategory="floor-lamp")
-RUG = product(12, category="decor", subcategory="carpet")
-
-
-def test_a_stale_middle_card_does_not_renumber_the_one_after_it() -> None:
-    state = _abc()
-
-    third = resolve(BundleItemOrdinal(ordinal=3), state, (SOFA, RUG))
-
-    assert isinstance(third, ResolvedBundleReference)
-    assert third.product_id == 12, "still the rug, never compacted to position two"
-    assert third.ordinal == 3
-
-
-def test_the_stale_card_itself_still_occupies_its_position() -> None:
-    state = _abc()
-
-    second = resolve(BundleItemOrdinal(ordinal=2), state, (SOFA, RUG))
-
-    assert isinstance(second, BundleReferenceUnresolved)
-    assert second.reason is BundleReferenceFailureReason.TARGET_PRODUCT_UNAVAILABLE
-
-
-def test_an_unrelated_stale_card_does_not_block_a_readable_target() -> None:
-    state = _abc()
-
-    first = resolve(BundleItemOrdinal(ordinal=1), state, (SOFA, RUG))
-
-    assert isinstance(first, ResolvedBundleReference)
-    assert first.product_id == 10
-
-
-def test_the_visible_length_is_the_state_length() -> None:
-    """Three cards exist, so there is no fourth - however many hydrate."""
-    state = _abc()
-
-    beyond = resolve(BundleItemOrdinal(ordinal=4), state, (SOFA,))
-
-    assert isinstance(beyond, BundleReferenceUnresolved)
-    assert beyond.reason is BundleReferenceFailureReason.ORDINAL_OUT_OF_RANGE
-
-
-def test_a_category_match_refuses_over_a_room_it_cannot_fully_read() -> None:
-    """The unreadable card might have been another lamp."""
-    state = _abc()
-
-    outcome = resolve(
-        BundleCategoryMatch(commerce_category="lighting", commerce_subcategory="floor-lamp"),
-        state,
-        (SOFA, RUG),
-    )
-
-    assert isinstance(outcome, BundleReferenceUnresolved)
-    assert outcome.reason is BundleReferenceFailureReason.BUNDLE_NOT_VERIFIABLE
-
-
-def test_a_category_match_does_not_treat_a_stale_card_as_a_non_match() -> None:
-    """Even when the readable cards contain exactly one of the named kind."""
-    state = _abc()
-
-    outcome = resolve(
-        BundleCategoryMatch(commerce_category="seating", commerce_subcategory="sofa"),
-        state,
-        (SOFA, RUG),
-    )
-
-    assert isinstance(outcome, BundleReferenceUnresolved)
-    assert outcome.reason is not BundleReferenceFailureReason.NO_CATEGORY_MATCH
-
-
-async def test_a_stale_target_is_reported_as_a_fact_not_a_question() -> None:
-    """Asking again cannot make a product readable."""
-    state = _abc()
-    decision = CustomerAgentDecision(
-        action=AgentAction.BUNDLE_REFINE,
-        bundle_interaction=BundleInteractionIntent(
-            op=BundleInteractionOp.LOCK, selector=BundleItemOrdinal(ordinal=2)
-        ),
-    )
-
-    result, _ = await run(decision, state, available=(10, 12))
-
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.PRODUCT_UNAVAILABLE
-    assert result.grounding.deterministic_clarification is None
-    assert room(result.state).bundle_items == room(state).bundle_items
-
-
-async def test_an_unverifiable_room_says_so_rather_than_blaming_their_piece() -> None:
-    state = _abc()
-    decision = CustomerAgentDecision(
-        action=AgentAction.BUNDLE_REFINE,
-        bundle_interaction=BundleInteractionIntent(
-            op=BundleInteractionOp.LOCK,
-            selector=BundleCategoryMatch(
-                commerce_category="seating", commerce_subcategory="sofa"
-            ),
-        ),
-    )
-
-    result, _ = await run(decision, state, available=(10, 12))
-
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.BUNDLE_NOT_VERIFIABLE
-    assert room(result.state).bundle_revision == room(state).bundle_revision
-
-
-async def test_a_readable_target_commits_despite_an_unrelated_stale_card() -> None:
-    """Resolution did not depend on the stale card, so the edit stands. The
-    room simply cannot be rendered in full afterwards."""
-    from app.core.exceptions import BundlePresentationError
-
-    state = _abc()
-    decision = CustomerAgentDecision(
-        action=AgentAction.BUNDLE_REFINE,
-        bundle_interaction=BundleInteractionIntent(
-            op=BundleInteractionOp.LOCK, selector=BundleItemOrdinal(ordinal=1)
-        ),
-    )
-
-    result, _ = await run(decision, state, available=(10, 12))
-
-    after = room(result.state)
-    assert after.bundle_items[0].status is BundleItemStatus.LOCKED
-    assert after.bundle_revision == room(state).bundle_revision + 1
-    assert result.grounding.failure is None
-    with pytest.raises(BundlePresentationError):
-        rebuilt(result.state, SOFA, RUG)
-
-
-async def test_a_stale_locked_piece_still_stops_the_turn_outright() -> None:
-    """The stronger rule is unchanged: a lock cannot be dropped or unlocked."""
-    state = room_with(line(10, locked=True), line(11), needs=0)
-
-    result, _ = await run(refine(), state, available=(11,))
-
-    assert result.grounding.failure is not None
-    assert result.grounding.failure.code is TurnFailureCode.LOCKED_PRODUCT_UNAVAILABLE
-    assert room(result.state).bundle_items[0].status is BundleItemStatus.LOCKED
-
-
-async def test_none_of_this_reaches_a_search_or_a_model() -> None:
-    state = _abc()
-
-    _, parts = await run(refine(), state, available=(10, 12))
-
-    assert parts["design"].requests == []
-    assert parts["design_discovery"].calls == []
-    assert parts["optimizer"].requests == []
-    assert parts["pipeline"].calls == []

@@ -78,6 +78,10 @@ class SeatingSemantics:
         """Every product of this type seats exactly one person."""
         return self.implied_capacity(subcategory) == 1
 
+    def one_seat_types(self) -> tuple[str, ...]:
+        """Every reviewed type that seats exactly one person."""
+        return tuple(sorted(k for k, seats in self._implied.items() if seats == 1))
+
     def seats_several(self, subcategory: str | None) -> bool:
         """Every product of this type seats two or more."""
         return subcategory is not None and subcategory in self._multi_seat

@@ -14,6 +14,11 @@ from fastapi import Depends, Header, Request
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.operations.cart import CartOperations
+from app.agents.operations.rooms import RoomEngine
+from app.agents.operations.search import SearchRunner
+from app.agents.services import AgentServices
+from app.agents.writer import ReplyWriter
 from app.core.config import Environment
 from app.core.exceptions import ConfigurationError
 from app.core.lifespan import AppResources, get_resources
@@ -34,18 +39,15 @@ from app.schemas.furniture_finder import (
     ShopperCredentials,
 )
 from app.services.bundle_optimizer import BundleOptimizer
-from app.services.bundle_reference import BundleReferenceResolver
 from app.services.card_comparison import CardComparisonService
 from app.services.cart import CartService
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.chat_runtime import ChatRuntime
 from app.services.click_tracking import ClickTrackingService
-from app.services.closest_type import ClosestTypeResolver
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
 from app.services.cross_sell import CompanionSearchBuilder
-from app.services.customer_decision import CustomerAgentDecisionService
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.discovery import ProductDiscoveryService
 from app.services.furniture_finder import FinderTurnRuntime, FurnitureFinderService
@@ -53,14 +55,11 @@ from app.services.health import HealthService
 from app.services.hydration import ProductHydrationService
 from app.services.interior_design import InteriorDesignAgent
 from app.services.picks import PicksRuntime
-from app.services.product_brief import ProductBriefBuilder
 from app.services.product_display import ProductDisplayWords
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
-from app.services.relative_price import RelativePriceResolver
 from app.services.relaxation import RelaxationPlanner
-from app.services.response_generator import CustomerResponseGenerator
 from app.services.retailer_context import RetailerContextProvider
 from app.services.room_photo import RoomPhotoService
 from app.services.room_visualization import (
@@ -72,10 +71,10 @@ from app.services.search_pipeline import ProductSearchPipeline
 from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
+from app.services.stocked_looks import StockedLooks
 from app.services.store_cart_check import StoreCartCheck
 from app.services.support import SupportService
 from app.services.support_handover import SupportHandoverService
-from app.services.turn_coordinator import CustomerTurnCoordinator
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
@@ -251,156 +250,6 @@ def product_search_pipeline(
     )
 
 
-def customer_agent_decision_service(
-    app_resources: ResourcesDep,
-) -> CustomerAgentDecisionService:
-    """The Customer Agent's decision step, or a refusal to build one.
-
-    `decision_model` has no default: interpreting a message and deciding a turn
-    are different jobs, and quietly borrowing the query-understanding model
-    would hide that. So an absent model means this capability is not
-    configured, and asking for it fails here rather than at the provider.
-
-    Requested only where it is used, so a deployment that has not configured it
-    still starts and serves everything else.
-    """
-    client = app_resources.decision_llm
-    if client is None:
-        raise ConfigurationError(
-            detail=("customer_agent.decision_model must be set to use the customer agent"),
-            public_message="The customer agent is not configured.",
-        )
-    return CustomerAgentDecisionService(
-        client,
-        app_resources.attributes,
-        app_resources.rooms,
-        reply_language=app_resources.settings.customer_agent.arabic_replies,
-        mixed_types=app_resources.settings.customer_agent.mixed_types,
-        fit_after_pick=app_resources.settings.customer_agent.fit_after_pick,
-        store_knowledge=app_resources.store_knowledge is not None,
-    )
-
-
-CustomerAgentDecisionServiceDep = Annotated[
-    CustomerAgentDecisionService, Depends(customer_agent_decision_service)
-]
-
-
-def customer_turn_coordinator(
-    session: SessionDep, app_resources: ResourcesDep
-) -> CustomerTurnCoordinator:
-    """The whole customer turn, or a refusal to build one.
-
-    Everything it composes already exists; what it can lack is configuration.
-    Both the decision model and the presentation limit are requested through
-    their own factories, so an unconfigured deployment fails here with the
-    reason that applies rather than part-way through a turn.
-
-    Requested only where it is used. Nothing builds this at startup, so a
-    deployment without customer-agent configuration still starts and serves
-    everything else.
-    """
-    settings = app_resources.settings
-    # Configuration first, so an unconfigured deployment is refused before any
-    # collaborator is built rather than part-way through constructing one.
-    decisions = customer_agent_decision_service(app_resources)
-    pipeline = product_search_pipeline(session, app_resources)
-    # Optional on purpose. A deployment that has not configured the design
-    # specialist still sells furniture: searching, comparing and answering all
-    # work, and only a request for a whole room finds the capability missing.
-    design = optional_interior_design_agent(app_resources)
-
-    repository = ProductRepository(session)
-    resolver = ProductReferenceResolver(repository, app_resources.attributes)
-    capability = catalog_capability_service(session, app_resources)
-    return CustomerTurnCoordinator(
-        decisions,
-        query_understanding_service(
-            app_resources.llm,
-            app_resources.taxonomy,
-            app_resources.attributes,
-            app_resources.dimensions,
-        ),
-        SearchRefinementComposer(
-            app_resources.attributes, app_resources.dimensions, app_resources.seating
-        ),
-        resolver,
-        RelativePriceResolver(resolver, repository),
-        ProductComparisonService(repository, app_resources.dimensions, settings.customer_agent),
-        pipeline,
-        product_hydration_service(session),
-        SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
-        capability,
-        design,
-        design_discovery_service(session, app_resources),
-        BundleReferenceResolver(app_resources.taxonomy),
-        BundleOptimizer(),
-        SeatingSolutionPlanner(
-            capability,
-            product_discovery_service(session, app_resources),
-            product_hydration_service(session),
-            app_resources.seating,
-        ),
-        app_resources.dimensions,
-        app_resources.taxonomy,
-        app_resources.rooms,
-        app_resources.seating,
-        closest_type=ClosestTypeResolver(app_resources.llm, app_resources.taxonomy),
-        complements=app_resources.complements,
-        companion_search=CompanionSearchBuilder(app_resources.attributes),
-        store_knowledge=app_resources.store_knowledge,
-        support=(
-            SupportService(
-                SupportContactsRepository(session),
-                handover=app_resources.settings.customer_agent.support_handover,
-            )
-            if app_resources.settings.customer_agent.support_agent
-            else None
-        ),
-        briefs=(
-            ProductBriefBuilder(
-                repository,
-                app_resources.briefs,
-                app_resources.attributes,
-                app_resources.taxonomy,
-                ask_space=settings.customer_agent.designer_space_question,
-                sheet=(
-                    app_resources.subcategory_questions
-                    if settings.customer_agent.subcategory_questions
-                    else None
-                ),
-                named_chip_min=(
-                    settings.customer_agent.subcategory_chip_min_products
-                    if settings.customer_agent.subcategory_chips_from_names
-                    else None
-                ),
-            )
-            if app_resources.briefs is not None
-            else None
-        ),
-        arabic_replies=settings.customer_agent.arabic_replies,
-        product_display=product_display_words(app_resources),
-        compare_groups=app_resources.compare_groups,
-        cross_sell_shows_products=settings.customer_agent.cross_sell_shows_products,
-        designer_led_opening=settings.customer_agent.designer_led_opening,
-        designer_led_brief=settings.customer_agent.designer_led_brief,
-        designer_led_buttons=settings.customer_agent.designer_led_buttons,
-        designer_direction=settings.customer_agent.designer_direction,
-        designer_taste=settings.customer_agent.designer_taste,
-        designer_space_fit=settings.customer_agent.designer_space_fit,
-        designer_space_question=settings.customer_agent.designer_space_question,
-        room_handoff=settings.customer_agent.designer_room_handoff,
-        designer_fit=settings.customer_agent.designer_fit,
-        size=settings.size,
-        mixed_types=settings.customer_agent.mixed_types,
-        fit_after_pick=settings.customer_agent.fit_after_pick,
-        cart_max_quantity=settings.customer_agent.cart_max_quantity,
-        cart=CartService(repository),
-        max_picks=settings.customer_agent.max_picks,
-        cart_check=store_cart_check(session, app_resources),
-    )
-
-
 def optional_interior_design_agent(
     app_resources: ResourcesDep,
 ) -> InteriorDesignAgent | None:
@@ -479,33 +328,6 @@ def design_discovery_service(
 DesignDiscoveryServiceDep = Annotated[DesignDiscoveryService, Depends(design_discovery_service)]
 
 
-def customer_response_generator(
-    app_resources: ResourcesDep,
-) -> CustomerResponseGenerator:
-    """The response layer, or a refusal to build one.
-
-    `response_model` has no default. Deciding a turn and writing its reply are
-    different jobs with different prompts, so borrowing the decision model
-    would hide that - an absent model means this capability is not configured,
-    and asking for it fails here rather than at the provider.
-    """
-    client = app_resources.response_llm
-    if client is None:
-        raise ConfigurationError(
-            detail=("customer_agent.response_model must be set to generate responses"),
-            public_message="The customer agent is not configured.",
-        )
-    return CustomerResponseGenerator(
-        client,
-        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
-        support_agent=app_resources.settings.customer_agent.support_agent,
-    )
-
-
-CustomerResponseGeneratorDep = Annotated[
-    CustomerResponseGenerator, Depends(customer_response_generator)
-]
-CustomerTurnCoordinatorDep = Annotated[CustomerTurnCoordinator, Depends(customer_turn_coordinator)]
 SemanticRankingServiceDep = Annotated[SemanticRankingService, Depends(semantic_ranking_service)]
 ProductSearchPipelineDep = Annotated[ProductSearchPipeline, Depends(product_search_pipeline)]
 ProductHydrationServiceDep = Annotated[ProductHydrationService, Depends(product_hydration_service)]
@@ -590,7 +412,6 @@ def card_comparison_service(
         ProductComparisonService(
             repository, app_resources.dimensions, app_resources.settings.customer_agent
         ),
-        customer_response_generator(app_resources),
         session_store(app_resources),
         app_resources.compare_groups,
     )
@@ -599,20 +420,100 @@ def card_comparison_service(
 CardComparisonServiceDep = Annotated[CardComparisonService, Depends(card_comparison_service)]
 
 
-def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntime:
-    """One chat exchange, or a refusal to build one.
-
-    Both reasoning capabilities are requested through their own factories, so
-    an unconfigured deployment is refused here with the reason that applies
-    rather than part-way through a turn.
-    """
-    return ChatRuntime(
-        customer_turn_coordinator(session, app_resources),
-        customer_response_generator(app_resources),
-        session_store(app_resources),
-        app_resources.settings.session,
+def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentServices:
+    """What the agents' tools run on, for one request's database session."""
+    settings = app_resources.settings
+    pipeline = product_search_pipeline(session, app_resources)
+    repository = ProductRepository(session)
+    hydration = product_hydration_service(session)
+    capability = catalog_capability_service(session, app_resources)
+    seating_planner = SeatingSolutionPlanner(
+        capability,
+        product_discovery_service(session, app_resources),
+        hydration,
+        app_resources.seating,
+    )
+    design = optional_interior_design_agent(app_resources)
+    agent = settings.customer_agent
+    return AgentServices(
+        taxonomy=app_resources.taxonomy,
+        attributes=app_resources.attributes,
+        dimensions=app_resources.dimensions,
+        query_understanding=query_understanding_service(
+            app_resources.llm,
+            app_resources.taxonomy,
+            app_resources.attributes,
+            app_resources.dimensions,
+        ),
+        search=SearchRunner(
+            pipeline,
+            SearchRefinementComposer(
+                app_resources.attributes, app_resources.dimensions, app_resources.seating
+            ),
+            app_resources.seating if agent.mixed_types else None,
+        ),
+        hydration=hydration,
+        references=ProductReferenceResolver(repository, app_resources.attributes),
+        comparison=ProductComparisonService(repository, app_resources.dimensions, agent),
+        similar_search=SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
+        capabilities=capability,
+        seating_planner=seating_planner,
+        cart_operations=CartOperations(
+            max_picks=agent.max_picks,
+            max_quantity=agent.cart_max_quantity,
+            max_likes=agent.max_likes,
+            check=store_cart_check(session, app_resources),
+            refuse_unconfirmed=settings.salla.refuse_unconfirmed,
+        ),
+        rooms=RoomEngine(
+            design,
+            design_discovery_service(session, app_resources),
+            BundleOptimizer(),
+            seating_planner,
+            pipeline,
+            capability,
+            hydration,
+            app_resources.rooms,
+            app_resources.seating,
+            dimensions=app_resources.dimensions,
+            attributes=app_resources.attributes,
+        ),
+        design=design,
+        compare_groups=app_resources.compare_groups,
+        room_pieces=app_resources.rooms,
+        complements=app_resources.complements,
+        companion_search=CompanionSearchBuilder(app_resources.attributes),
+        cart=CartService(repository),
+        store_knowledge=app_resources.store_knowledge,
+        support=(
+            SupportService(SupportContactsRepository(session), handover=agent.support_handover)
+            if agent.support_agent
+            else None
+        ),
         display=product_display_words(app_resources),
-        support_agent=app_resources.settings.customer_agent.support_agent,
+        subcategory_questions=app_resources.subcategory_questions,
+        seating=app_resources.seating,
+        looks=StockedLooks(repository, app_resources.attributes),
+    )
+
+
+def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntime:
+    """One chat exchange, or a refusal to build one: the team needs every
+    agent's model, and the search its presentation limit."""
+    team = app_resources.agent_team
+    if team is None:
+        raise ConfigurationError(
+            detail="agents.supervisor and every agent's model must be set to chat",
+            public_message="The shopping assistant is not configured.",
+        )
+    settings = app_resources.settings
+    return ChatRuntime(
+        team,
+        agent_services(session, app_resources),
+        session_store(app_resources),
+        settings.session,
+        deadline_s=settings.agents.turn_deadline_s,
+        arabic_replies=settings.customer_agent.arabic_replies,
     )
 
 
@@ -662,6 +563,18 @@ def furniture_finder_service(
 FurnitureFinderServiceDep = Annotated[FurnitureFinderService, Depends(furniture_finder_service)]
 
 
+def reply_writer(session: AsyncSession, app_resources: AppResources) -> ReplyWriter | None:
+    """An agent to word replies outside a chat turn, when the team is configured."""
+    team = app_resources.agent_team
+    if team is None:
+        return None
+    return ReplyWriter(
+        team,
+        agent_services(session, app_resources),
+        deadline_s=app_resources.settings.agents.turn_deadline_s,
+    )
+
+
 def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> FinderTurnRuntime:
     """A pick as a conversation turn: the finder plus the session it commits to."""
     return FinderTurnRuntime(
@@ -675,6 +588,7 @@ def finder_turn_runtime(session: SessionDep, app_resources: ResourcesDep) -> Fin
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
         compare_groups=app_resources.compare_groups,
         display=product_display_words(app_resources),
+        writer=reply_writer(session, app_resources),
     )
 
 
@@ -734,6 +648,7 @@ def visualization_turn_runtime(
         app_resources.settings.session,
         _room_photo_store(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
+        writer=reply_writer(session, app_resources),
     )
 
 
@@ -749,6 +664,7 @@ def catalog_visualization_runtime(
         app_resources.attributes,
         _room_photo_store(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
+        writer=reply_writer(session, app_resources),
     )
 
 

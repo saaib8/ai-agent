@@ -11,14 +11,11 @@ It can be this small because the response model never receives a product fact.
 from __future__ import annotations
 
 import pytest
-from app.schemas.response import SeatingSolutionGroundingView
-from app.schemas.seating_solution import SeatingSolutionOutcome
 from app.services.numeric_guard import (
     build_allowance,
     canonical_number,
     check_numeric_policy,
     numbers_in,
-    seating_counts,
 )
 
 
@@ -166,19 +163,6 @@ def test_no_count_means_no_numbers_at_all() -> None:
     assert _check("there are 3", allowance) == "3"
 
 
-def test_a_seat_target_and_combination_count_are_allowed() -> None:
-    """The seat target is the customer's own figure and the combination count
-    is one the application established, so a reply may state both - but nothing
-    a card carries, like a price, comes with them."""
-    view = SeatingSolutionGroundingView(
-        outcome=SeatingSolutionOutcome.BUNDLES, target_seats=8, bundle_count=2
-    )
-    assert seating_counts(view) == (8, 2)
-
-    allowance = build_allowance("a sofa for eight people", counts=seating_counts(view))
-    assert _check("None seats 8 alone, so here are 2 combinations that do", allowance) is None
-    # A per-combination total is on the cards, never in the count set.
-    assert _check("the first comes to 3750", allowance) == "3750"
 
 
 @pytest.mark.parametrize(
@@ -291,30 +275,30 @@ def test_a_number_the_assistant_said_is_not_allowed() -> None:
     assert "30" not in allowance, "an assistant's 15-30 cm is not their figure"
 
 
-def test_the_helper_takes_only_the_customers_turns() -> None:
-    from app.schemas.agent_turn import CustomerTurnInput
+def test_the_reply_check_takes_only_the_customers_turns() -> None:
+    from app.agents.reply import unsupported_figure
+    from app.agents.tools.common import RespondArgs
+    from app.agents.work import TurnWork
+    from app.schemas.agent_state import AgentStateV1
     from app.schemas.conversation import (
         ConversationContext,
         ConversationMessage,
         ConversationRole,
     )
-    from app.schemas.retailer import RetailerContext
-    from app.services.response_generator import _their_own_words
 
-    turn = CustomerTurnInput(
-        message="m",
-        conversation=ConversationContext(
-            messages=(
-                ConversationMessage(role=ConversationRole.USER, content="5x5"),
-                ConversationMessage(
-                    role=ConversationRole.ASSISTANT, content="about 15-30 cm"
-                ),
-            )
-        ),
-        context=RetailerContext(store_id=50),
+    conversation = ConversationContext(
+        messages=(
+            ConversationMessage(role=ConversationRole.USER, content="5x5"),
+            ConversationMessage(role=ConversationRole.ASSISTANT, content="about 15-30 cm"),
+        )
     )
+    work = TurnWork.starting(AgentStateV1())
 
-    assert _their_own_words(turn) == ("5x5",)
+    def check(text: str) -> object:
+        return unsupported_figure(RespondArgs(message=text), work, "m", conversation, [{}])
+
+    assert check("A 5 by 5 room suits it.") is None
+    assert check("Keep 30 cm clear.") is not None, "the assistant's figure is not theirs"
 
 
 def test_nothing_else_was_widened() -> None:

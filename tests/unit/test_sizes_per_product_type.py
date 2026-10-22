@@ -35,7 +35,6 @@ from app.schemas.discovery import (
     DimensionConstraint,
     DimensionConstraintKind,
     PlanarDimensionConstraint,
-    PriceConstraint,
     ProductSearchRequest,
 )
 from app.schemas.query import (
@@ -58,8 +57,6 @@ from app.services.refinement_composer import SearchRefinementComposer
 from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
-
-from tests.unit.test_turn_coordinator import _coordinator, _turn
 
 LOCKED = ConstraintStrength.LOCKED
 WIDTH, DEPTH = DimensionRole.OVERALL_WIDTH, DimensionRole.DEPTH
@@ -395,128 +392,6 @@ RETYPE = CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, taxonomy_change
 CHEAPER = SearchRefinementDelta(
     price=PriceRefinement(op=PriceRefinementOp.SET, max_amount="3000", currency="SAR")
 )
-
-
-async def _run(
-    state: AgentStateV1,
-    decision: CustomerAgentDecision,
-    interpretation: ResolvedSearch | None = None,
-) -> tuple[AgentStateV1, ProductSearchRequest]:
-    coordinator, parts = _coordinator(decision, interpretation=interpretation)
-    result = await coordinator.run(_turn(state, "x"))
-    assert result.grounding.failure is None
-    return result.state, parts["pipeline"].calls[-1].request
-
-
-async def _sofa_then_chairs() -> AgentStateV1:
-    state, _ = await _run(AgentStateV1(), SEARCH, _resolved("seating", "sofa", (_size("200"),)))
-    state, executed = await _run(state, RETYPE, _resolved("seating", "chair"))
-    assert executed.dimensions == ()
-    return state
-
-
-async def test_the_size_comes_back_on_the_way_back() -> None:
-    state = await _sofa_then_chairs()
-
-    state, executed = await _run(state, RETYPE, _resolved("seating", "sofa"))
-
-    assert executed.dimensions == (_size("200"),)
-    assert _widths(state)["sofa"] == [Decimal("200")]
-
-
-async def test_any_size_on_the_way_back_drops_it() -> None:
-    state = await _sofa_then_chairs()
-    decision = RETYPE.model_copy(update={"drop_saved_sizes": True})
-
-    state, executed = await _run(state, decision, _resolved("seating", "sofa"))
-
-    assert executed.dimensions == ()
-    assert "sofa" not in _widths(state)
-
-
-async def test_any_size_on_a_new_search_drops_it() -> None:
-    state = await _sofa_then_chairs()
-    decision = SEARCH.model_copy(update={"drop_saved_sizes": True})
-
-    state, executed = await _run(state, decision, _resolved("seating", "sofa"))
-
-    assert executed.dimensions == ()
-    assert "sofa" not in _widths(state)
-
-
-async def test_a_plain_refinement_ignores_drop_saved_sizes() -> None:
-    state, _ = await _run(AgentStateV1(), SEARCH, _resolved("seating", "sofa", (_size("200"),)))
-    decision = CustomerAgentDecision(
-        action=AgentAction.REFINE_SEARCH, refinement=CHEAPER, drop_saved_sizes=True
-    )
-
-    state, executed = await _run(state, decision)
-
-    assert executed.dimensions == (_size("200"),)
-    assert _widths(state)["sofa"] == [Decimal("200")]
-
-
-async def test_a_price_refinement_after_a_sizeless_search_keeps_the_saved_size() -> None:
-    """A similar-product search states no size; a later "cheaper" must not save
-    that silence over the size the customer gave."""
-    state, _ = await _run(AgentStateV1(), SEARCH, _resolved("seating", "sofa", (_size("200"),)))
-    assert state.active_search is not None
-    sizeless = state.model_copy(
-        update={
-            "active_search": ActiveSearchState(
-                request=state.active_search.request.model_copy(update={"dimensions": ()}),
-                semantics=state.active_search.semantics.model_copy(update={"dimensions": ()}),
-                revision=state.active_search.revision,
-            )
-        }
-    )
-    decision = CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, refinement=CHEAPER)
-
-    state, executed = await _run(sizeless, decision)
-
-    assert executed.dimensions == ()
-    assert _widths(state)["sofa"] == [Decimal("200")]
-
-
-async def test_a_size_refinement_is_saved_and_a_clear_removes_it() -> None:
-    state, _ = await _run(AgentStateV1(), SEARCH, _resolved("seating", "sofa", (_size("200"),)))
-    narrower = CustomerAgentDecision(action=AgentAction.REFINE_SEARCH, refinement=_set_width("180"))
-    state, _ = await _run(state, narrower)
-    assert _widths(state)["sofa"] == [Decimal("180")]
-
-    clear = CustomerAgentDecision(
-        action=AgentAction.REFINE_SEARCH,
-        refinement=SearchRefinementDelta(
-            dimensions=(DimensionRefinement(op=RefinementOp.CLEAR, role=WIDTH),)
-        ),
-    )
-    state, executed = await _run(state, clear)
-
-    assert executed.dimensions == ()
-    assert "sofa" not in _widths(state)
-
-
-async def test_a_budget_survives_the_type_change_while_the_size_stays_behind() -> None:
-    budget = ProductSearchRequest(
-        commerce_category="seating",
-        commerce_subcategory="sofa",
-        price=PriceConstraint(currency="SAR", max_amount=Decimal("5000")),
-        dimensions=(_size("200"),),
-    )
-    state, _ = await _run(
-        AgentStateV1(),
-        SEARCH,
-        ResolvedSearch(
-            request=budget,
-            semantics=_semantics("sofa", (_size("200"),)).model_copy(update={"price_max": LOCKED}),
-        ),
-    )
-
-    _, executed = await _run(state, RETYPE, _resolved("seating", "sectional-sofa"))
-
-    assert executed.commerce_subcategory == "sectional-sofa"
-    assert executed.price is not None and executed.price.max_amount == Decimal("5000")
-    assert executed.dimensions == ()
 
 
 # ── the decision contract ───────────────────────────────────────────────────

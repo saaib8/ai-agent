@@ -250,6 +250,17 @@ class LLMResponseInvalidError(ZoryError):
     public_message = "We could not interpret that request. Please rephrase it."
 
 
+class AgentTurnIncompleteError(LLMResponseInvalidError):
+    """The agents spent the turn's budget without a reply we can send.
+
+    A kind of unusable model output (CLAUDE.md 21.1). The team first lets the
+    agent who was working word what was done, keeping its tools' work (17.1);
+    raised past that, the turn ends on the fixed reply with nothing kept.
+    """
+
+    code = "agent_turn_incomplete"
+
+
 # ── Taxonomy errors ─────────────────────────────────────────────────────────
 
 

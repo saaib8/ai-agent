@@ -73,7 +73,19 @@ Before the first reply: `GET /v1/labels?language=ar` (or `en`) returns the same 
 the first reply), `salman` (sales) or `nora` (interior design). `sara` was `sarah`
 until 2026-10-16 - map `sara` to "Sara" / "سارة" and its photo, and treat `sarah` the
 same while an old reply may still be on screen. The reply's own words introduce it
-by that name.
+by that name. `faysal` (store support) is a fourth.
+
+**Who worked on the turn (2026-10-21):** `workflow` is `{owner, handoffs}` -
+every agent that worked on the turn, in order, ending with the one who replied
+(`agent`). Two or more handoffs can be shown as "Sara → Salman".
+
+**Live progress:** `POST /v1/chat/stream` takes the same body as `/v1/chat` and
+answers with server-sent events: `event: progress` (`{"agent", "phase"}`, phase
+one of `routing`, `working`, `searching`, `designing`, `updating_cart`,
+`checking_store`, `writing`) while the agents work, then exactly one
+`event: reply` whose data is the committed chat response, or one `event: error`
+(`{"code", "message"}`). If the stream ends without a reply, re-read the session
+(`GET /v1/cart`, or the next turn with its revision) - never resend the message.
 
 ## 3. Browse Catalogue takes `language`
 

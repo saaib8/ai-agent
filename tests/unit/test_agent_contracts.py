@@ -85,7 +85,9 @@ def test_a_customer_may_repeat_themselves_word_for_word() -> None:
 
 
 def test_history_carries_no_transport_metadata() -> None:
-    assert set(ConversationMessage.model_fields) == {"role", "content"}
+    """Who said it, what, and what it offered to tap - the agent that wrote a
+    reply and its answers are conversation, not transport."""
+    assert set(ConversationMessage.model_fields) == {"role", "content", "agent", "choices"}
 
 
 def test_an_empty_message_is_refused() -> None:

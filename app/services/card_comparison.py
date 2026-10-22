@@ -1,7 +1,7 @@
 """The checked cards, compared in a pop-up.
 
 The customer checks "Compare" on two or more cards; the pop-up shows the side-by-side
-table and a short take on what differs. It is a look, not a turn: nothing is
+table and a line introducing it. It is a look, not a turn: nothing is
 added to the conversation and the session is not written, so closing the
 pop-up leaves the chat exactly as it was.
 
@@ -11,9 +11,8 @@ out dissimilar cards before asking; this service refuses them regardless,
 because a client's checkbox is not a rule (CLAUDE.md 20.2).
 
 Cards are resolved exactly as a tick is, against the result lists the session
-remembers; the table comes from the ordinary comparison service and the words
-from the ordinary response generator, so the pop-up and a typed "compare the
-first two" can never disagree about the facts.
+remembers; the table comes from the ordinary comparison service, so the pop-up and a
+typed "compare the first two" can never disagree about the facts.
 """
 
 from __future__ import annotations
@@ -21,15 +20,7 @@ from __future__ import annotations
 from app.core.exceptions import ComparisonRefusedError
 from app.core.logging import get_logger
 from app.repositories.sessions import SessionStore
-from app.schemas.agent_decision import (
-    AgentAction,
-    CommercialReason,
-    CustomerAgentDecision,
-    FollowUpPolicy,
-)
-from app.schemas.agent_turn import CustomerTurnInput, CustomerTurnResult, TurnGrounding
 from app.schemas.card_comparison import CardComparisonRequest, CardComparisonResponse
-from app.schemas.product_reference import ComparedOrdinal
 from app.schemas.resolution import (
     ComparisonFailureReason,
     ComparisonUnavailable,
@@ -38,7 +29,6 @@ from app.schemas.resolution import (
 from app.schemas.retailer import RetailerContext
 from app.services.comparison import ProductComparisonService
 from app.services.reference_resolver import ProductReferenceResolver
-from app.services.response_generator import CustomerResponseGenerator
 from app.taxonomy.compare_groups import CompareGroups
 
 logger = get_logger(__name__)
@@ -47,6 +37,7 @@ _GONE = "One of those products isn't on screen any more. Please pick from the la
 _TWICE = "Pick different products to compare."
 
 COMPARE_WORDS = "Compare these"
+_SIDE_BY_SIDE = "Here they are side by side."
 """What the reply is told the customer asked. Never recorded anywhere."""
 
 
@@ -55,13 +46,11 @@ class CardComparisonService:
         self,
         references: ProductReferenceResolver,
         comparison: ProductComparisonService,
-        responses: CustomerResponseGenerator,
         sessions: SessionStore,
         groups: CompareGroups,
     ) -> None:
         self._references = references
         self._comparison = comparison
-        self._responses = responses
         self._sessions = sessions
         self._groups = groups
 
@@ -95,38 +84,15 @@ class CardComparisonService:
             logger.info("card_comparison_refused", store_id=context.store_id, reason="dissimilar")
             raise ComparisonRefusedError(reason="dissimilar")
 
-        # Worded exactly as a comparison turn is, from the same table - but
-        # the result is thrown away afterwards, never persisted.
-        result = CustomerTurnResult(
-            state=state,
-            decision=CustomerAgentDecision(
-                action=AgentAction.COMPARE,
-                commercial_reason=CommercialReason.CUSTOMER_REQUEST,
-                follow_up_policy=FollowUpPolicy.NONE,
-                # The comparison's own columns: cards from different lists
-                # can share a position, and a comparison never repeats one.
-                comparison_references=tuple(
-                    ComparedOrdinal(position=column) for column in range(1, len(product_ids) + 1)
-                ),
-            ),
-            grounding=TurnGrounding(comparison=comparison, follow_up_policy=FollowUpPolicy.NONE),
-        )
-        response = await self._responses.generate(
-            CustomerTurnInput(
-                message=COMPARE_WORDS,
-                conversation=envelope.conversation,
-                state=state,
-                context=context,
-            ),
-            result,
-        )
+        # The table is the answer; the conversation's agents word comparisons
+        # asked for in the chat.
         logger.info(
             "card_comparison_completed",
             store_id=context.store_id,
             family=self._groups.family(first),
             compared_count=len(product_ids),
         )
-        return CardComparisonResponse(comparison=comparison, message=response.message)
+        return CardComparisonResponse(comparison=comparison, message=_SIDE_BY_SIDE)
 
 
 def _refusal(outcome: ComparisonUnavailable) -> str:

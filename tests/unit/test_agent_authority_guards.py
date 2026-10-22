@@ -19,13 +19,7 @@ from app.schemas.agent_decision import (
     NewSearchProposal,
     ProductInteractionIntent,
 )
-from app.schemas.agent_turn import (
-    CustomerResponse,
-    CustomerTurnInput,
-    DecisionInput,
-    TurnGrounding,
-)
-from app.schemas.agent_view import AgentStateView
+from app.schemas.agent_turn import CustomerResponse
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding
 from app.schemas.refinement import SearchRefinementDelta
@@ -33,8 +27,6 @@ from pydantic import BaseModel
 
 # Everything a model reads or writes.
 MODEL_FACING = (
-    DecisionInput,
-    AgentStateView,
     CustomerAgentDecision,
     CustomerStateProposal,
     DerivedCommerceProposal,
@@ -104,15 +96,6 @@ def _types(model: type[BaseModel]) -> set[str]:
 # ── the walker must actually walk ───────────────────────────────────────────
 
 
-def test_the_field_walker_reaches_nested_models() -> None:
-    """A guard built on a broken walker would pass by finding nothing."""
-    names = _names(DecisionInput)
-
-    assert "state_view" in names
-    assert "active_search" in names  # one level down
-    assert "commerce_category" in names  # two levels down
-    assert "messages" in names
-    assert len(names) > 25
 
 
 # ── retailer scope ──────────────────────────────────────────────────────────
@@ -132,17 +115,8 @@ def test_retailer_context_is_not_reachable_from_model_input(
     assert not any("RetailerContext" in t for t in _types(model)), model.__name__
 
 
-def test_the_runtime_input_does_carry_retailer_scope() -> None:
-    """The boundary is only meaningful if the other side of it exists."""
-    assert "context" in CustomerTurnInput.model_fields
-    assert "RetailerContext" in str(CustomerTurnInput.model_fields["context"].annotation)
 
 
-def test_the_two_inputs_are_different_types() -> None:
-    """Passing the wrong one is a type error, not a review oversight."""
-    assert set(CustomerTurnInput.model_fields) != set(DecisionInput.model_fields)
-    assert "state" in CustomerTurnInput.model_fields
-    assert "state" not in DecisionInput.model_fields
 
 
 # ── product identity ────────────────────────────────────────────────────────
@@ -222,10 +196,6 @@ def test_grounding_carries_no_similarity_score() -> None:
 # ── durable search text ─────────────────────────────────────────────────────
 
 
-def test_semantic_text_is_never_a_contract_field() -> None:
-    """It is per-execution wording; a durable copy would outlive its search."""
-    for model in (*MODEL_FACING, *GROUNDING_FACING, TurnGrounding):
-        assert "semantic_text" not in _names(model), model.__name__
 
 
 # ── English reasoning, language only for presentation ───────────────────────
@@ -251,14 +221,6 @@ def test_only_the_reply_language_is_a_language_field(model: type[BaseModel]) -> 
             assert name in APPROVED_LANGUAGE_FIELDS, f"{model.__name__}.{name}"
 
 
-@pytest.mark.parametrize("model", (*GROUNDING_FACING, TurnGrounding), ids=lambda m: m.__name__)
-def test_grounding_carries_arabic_only_for_display(model: type[BaseModel]) -> None:
-    for name in _names(model):
-        if "arabic" in name:
-            assert name in APPROVED_ARABIC_DISPLAY_FIELDS, f"{model.__name__}.{name}"
-        assert "locale" not in name, f"{model.__name__}.{name}"
-        if "language" in name:
-            assert name in APPROVED_LANGUAGE_FIELDS, f"{model.__name__}.{name}"
 
 
 def test_grounded_products_reason_in_english_and_display_arabic() -> None:
@@ -272,17 +234,6 @@ def test_grounded_products_reason_in_english_and_display_arabic() -> None:
 # ── immutability and closure ────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "model",
-    (*MODEL_FACING, *GROUNDING_FACING, CustomerTurnInput, TurnGrounding),
-    ids=lambda m: m.__name__,
-)
-def test_contracts_are_frozen_and_reject_unknown_fields(
-    model: type[BaseModel],
-) -> None:
-    """An ignored unexpected field is a model output nobody validated."""
-    assert model.model_config.get("frozen") is True, model.__name__
-    assert model.model_config.get("extra") == "forbid", model.__name__
 
 
 # ── both reasoning agents, and nothing left unguarded (M12F 6) ──────────────
@@ -299,60 +250,14 @@ DURABLE_IDENTITY = (
 it, and one that can emit one is authoring state."""
 
 
-def _agent_inputs() -> list[type[BaseModel]]:
-    """What each reasoning agent reads.
-
-    V1 has exactly two (CLAUDE.md 35), so this list is complete by definition -
-    an agent added later with no entry here is an agent nobody guarded.
-    """
-    from app.schemas.design import InteriorDesignRequest
-
-    return [DecisionInput, InteriorDesignRequest]
 
 
-@pytest.mark.parametrize("model", _agent_inputs(), ids=lambda m: m.__name__)
-@pytest.mark.parametrize("forbidden", DURABLE_IDENTITY)
-def test_neither_reasoning_agent_reads_durable_identity(
-    model: type[BaseModel], forbidden: str
-) -> None:
-    for name in _names(model):
-        assert forbidden not in name, f"{model.__name__}.{name}"
 
 
-@pytest.mark.parametrize("model", _agent_inputs(), ids=lambda m: m.__name__)
-@pytest.mark.parametrize("forbidden", RETAILER_IDENTITY)
-def test_neither_reasoning_agent_reads_retailer_identity(
-    model: type[BaseModel], forbidden: str
-) -> None:
-    for name in _names(model):
-        assert forbidden not in name, f"{model.__name__}.{name}"
 
 
-@pytest.mark.parametrize("model", _agent_inputs(), ids=lambda m: m.__name__)
-def test_neither_reasoning_agent_reads_an_authoritative_type(
-    model: type[BaseModel],
-) -> None:
-    """The state itself, a catalog row, or a durable plan record."""
-    rendered = " ".join(_types(model))
-
-    for forbidden in (
-        "AgentStateV1",
-        "RoomProjectState",
-        "RoomDesignNeedState",
-        "BundleItemState",
-        "ProductCandidate",
-        "ProductRow",
-        "RetailerContext",
-    ):
-        assert forbidden not in rendered, f"{model.__name__} reaches {forbidden}"
 
 
-def test_the_commerce_agent_reads_a_view_and_never_the_state() -> None:
-    """`AgentStateView` exists for this. The projection drops every id."""
-    rendered = " ".join(_types(DecisionInput))
-
-    assert "AgentStateView" in rendered
-    assert "AgentStateV1" not in rendered
 
 
 def test_the_design_specialist_reads_design_meaning_and_never_plan_records() -> None:

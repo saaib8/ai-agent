@@ -329,6 +329,15 @@ class ChatPresentation(BaseModel):
         )
 
 
+class WorkflowView(BaseModel):
+    """Who handled the turn: every agent that worked on it, in order."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    owner: AgentPersona
+    handoffs: tuple[AgentPersona, ...] = ()
+
+
 class ChatResponse(BaseModel):
     """One turn as the caller receives it."""
 
@@ -366,11 +375,12 @@ class ChatResponse(BaseModel):
     None where Arabic replies are off: English, as always."""
 
     agent: AgentPersona = AgentPersona.SARA
-    """Which assistant the reply is shown as: Sara (shopping), Salman (sales),
-    Nora (interior design) or Faysal (the store's support, where
-    `customer_agent.support_agent` is on). A label only - one assistant answers
-    every turn; decided in code from what the turn did
-    (`app/services/agent_persona.py`)."""
+    """The agent who wrote this reply: Sara (shopping), Salman (sales), Nora
+    (interior design) or Faysal (the store's support)."""
+
+    workflow: WorkflowView | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Which agents worked on this turn, in order, ending with the one who
+    replied - so a client can show a handoff ("Sara → Salman")."""
 
     labels: CardLabels | None = Field(default=None, exclude_if=lambda v: v is None)
     """The words a client draws around the products - card buttons, the picks

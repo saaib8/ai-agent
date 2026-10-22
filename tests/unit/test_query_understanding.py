@@ -341,9 +341,12 @@ async def test_an_overlong_message_is_refused_before_the_provider() -> None:
 
 
 async def test_the_service_has_no_tools() -> None:
-    """No repository, no database, no HTTP, no filesystem (CLAUDE.md 20.2)."""
+    """No repository, no database, no HTTP, no filesystem (CLAUDE.md 20.2).
+
+    Interpreting, and validating an interpretation an agent's search tool
+    wrote, with the approved schema it writes it in."""
     surface = {n for n in dir(QueryUnderstandingService) if not n.startswith("_")}
-    assert surface == {"interpret"}
+    assert surface == {"interpret", "interpretation_schema", "resolve"}
 
 
 # ── prompt construction ─────────────────────────────────────────────────────

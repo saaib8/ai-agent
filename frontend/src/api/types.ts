@@ -586,10 +586,17 @@ export interface ChatResponse {
   cart?: CartView | null
   /** The language this turn was answered in; null where Arabic replies are off. */
   reply_language?: 'en' | 'ar' | null
-  /** Which assistant the reply is shown as - a label the server decides. */
+  /** The agent who wrote this reply. */
   agent?: AgentKey
+  /** Every agent that worked on this turn, in order, ending with the one who replied. */
+  workflow?: WorkflowView | null
   /** The words drawn around the products, in this reply's language. */
   labels?: CardLabels | null
+}
+
+export interface WorkflowView {
+  owner: AgentKey
+  handoffs: AgentKey[]
 }
 
 export interface BundleAlternativesAction {

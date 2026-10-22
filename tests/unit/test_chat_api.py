@@ -1,10 +1,11 @@
 """The chat endpoint, and a conversation that spans requests.
 
-These run the real route, the real `ChatRuntime` and the real
-`CustomerTurnCoordinator`. What is faked is only what reaches outside the
-process: the providers, the catalog and Redis. So the multi-turn tests prove
-something a single-turn test cannot - that state written at the end of one HTTP
-request is the state a later request resolves "the second one" against.
+These run the real route, the real graph, the real `ChatRuntime`, the real
+agent team and the real tools. What is faked is only what reaches outside the
+process: the chat models (scripted), the catalog and Redis. So the multi-turn
+tests prove something a single-turn test cannot - that state written at the
+end of one HTTP request is the state a later request resolves "the second
+one" against.
 
 The session store is faked rather than the Redis client, because the store's
 own compare-and-set is proved against a real server in
@@ -19,6 +20,8 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
+from app.agents.reply import FALLBACK_REPLY
+from app.agents.team import AgentTeam
 from app.api.dependencies import (
     chat_graph,
     chat_runtime,
@@ -27,7 +30,7 @@ from app.api.dependencies import (
 )
 from app.api.errors import register_exception_handlers
 from app.api.routes.chat import router as chat_router
-from app.core.config import SessionSettings
+from app.core.config import AgentsSettings, SessionSettings
 from app.core.exceptions import (
     SessionStateInvalidError,
     SessionStoreUnavailableError,
@@ -35,38 +38,32 @@ from app.core.exceptions import (
 )
 from app.orchestration.graph import ChatGraphRunner
 from app.repositories.sessions import shopper_of
-from app.schemas.agent_decision import (
-    AgentAction,
-    CustomerAgentDecision,
-    ProductInteractionIntent,
-    ProductInteractionOp,
-)
-from app.schemas.agent_turn import CustomerResponse
+from app.schemas.agent_persona import AgentPersona
+from app.schemas.agent_state import AgentStateV1
 from app.schemas.product_reference import PresentedOrdinal
+from app.schemas.resolution import (
+    ReferenceFailureReason,
+    ReferenceUnresolved,
+    ResolvedProductReference,
+)
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, ShopperCart
 from app.services.chat_runtime import ChatRuntime
 from app.services.click_tracking import ClickTrackingService, tracking_url
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from langchain_core.messages import AIMessage
 
+from tests.unit.agents.fake_chat_model import ScriptedChatModel, call, step
+from tests.unit.agents.fakes import FakeHydration, FakePipeline, agent_services, real_loop
 from tests.unit.click_ids import FakeClickIds, no_click_ids
-from tests.unit.test_turn_coordinator import (
-    FakeHydration,
-    FakePipeline,
-    _coordinator,
-    _resolved,
-)
 
 GRAPH = ChatGraphRunner()
-"""One compiled graph for the whole module, as the process has one.
-
-Compiling per test would be the thing `test_the_graph_is_compiled_once`
-forbids, and would make these tests pass for a shape the service never uses.
-"""
+"""One compiled graph for the whole module, as the process has one."""
 
 STORE, OTHER_STORE = 50, 51
 SESSION = "sess-1"
+REPLY = "Here you are."
 
 
 # ── doubles for what leaves the process ═════════════════════════════════════
@@ -121,18 +118,6 @@ class FakeSessionStore:
         return self.carts.get((store_id, shopper)) if shopper is not None else None
 
 
-class FakeResponses:
-    """Wording, without a provider. Records what it was asked to word."""
-
-    def __init__(self, message: str = "Here you are.") -> None:
-        self.message = message
-        self.calls: list[Any] = []
-
-    async def generate(self, turn: Any, result: Any) -> CustomerResponse:
-        self.calls.append((turn, result))
-        return CustomerResponse(message=self.message)
-
-
 class FakeRetailers:
     def __init__(self, known: set[int] | None = None) -> None:
         self.known = known if known is not None else {STORE, OTHER_STORE}
@@ -143,65 +128,87 @@ class FakeRetailers:
         return RetailerContext(store_id=store_id)
 
 
-def a_search() -> CustomerAgentDecision:
-    """A plain new search. No durable proposal attached: nothing in these
-    tests turns on one, and a search does not need one."""
-    return CustomerAgentDecision(action=AgentAction.SEARCH)
+class ScreenReferences:
+    """ "The second one" counted into the list the restored state presented."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, AgentStateV1]] = []
+
+    async def resolve(self, selector: Any, state: AgentStateV1, context: Any) -> Any:
+        self.calls.append((selector, state))
+        presented = state.product_interaction.presented_product_ids
+        if not isinstance(selector, PresentedOrdinal) or not presented:
+            return ReferenceUnresolved(reason=ReferenceFailureReason.NO_PRESENTED_RESULTS)
+        if selector.position > len(presented):
+            return ReferenceUnresolved(reason=ReferenceFailureReason.ORDINAL_OUT_OF_RANGE)
+        return ResolvedProductReference(product_id=presented[selector.position - 1])
 
 
-def a_selection(position: int) -> CustomerAgentDecision:
-    return CustomerAgentDecision(
-        action=AgentAction.ANSWER,
-        interaction=ProductInteractionIntent(
-            op=ProductInteractionOp.SELECT,
-            reference=PresentedOrdinal(position=position),
-        ),
-    )
+# ── what the agent does each turn ═══════════════════════════════════════════
+
+Turn = list[AIMessage]
+"""Sara's steps for one turn; the supervisor always hands the turn to her."""
+
+
+def _reply(text: str = REPLY) -> AIMessage:
+    return step(call("respond", "r", message=text))
+
+
+def a_search(subcategory: str = "sofa") -> Turn:
+    search = {"commerce_category": "seating", "commerce_subcategory": subcategory}
+    return [step(call("search_products", "s", search=search)), _reply()]
+
+
+def an_answer(text: str = REPLY) -> Turn:
+    return [_reply(text)]
+
+
+def a_selection(position: int) -> Turn:
+    which = {"kind": "presented_ordinal", "position": position}
+    return [step(call("add_to_cart", "a", items=[{"which": which}])), _reply()]
 
 
 class Harness:
-    """One app, one session store, and a decision script to step through."""
+    """One app, one session store, one agent team, and a script of turns."""
 
     def __init__(
         self,
-        *decisions: CustomerAgentDecision,
+        *turns: Turn,
         product_ids: tuple[int, ...] = (10, 11, 12),
         store: FakeSessionStore | None = None,
-        responses: FakeResponses | None = None,
         retailers: FakeRetailers | None = None,
         arabic_replies: bool = False,
         click_ids: FakeClickIds | None = None,
     ) -> None:
-        self.script = list(decisions)
+        self.supervisor = ScriptedChatModel(
+            script=[step(call("transfer_to_sara", f"t{n}", need="shopping")) for n in turns]
+        )
+        self.sara = ScriptedChatModel(script=[s for turn in turns for s in turn])
+        models = {a: ScriptedChatModel(script=[]) for a in AgentPersona}
+        models[AgentPersona.SARA] = self.sara
+        self.team = AgentTeam(self.supervisor, models, AgentsSettings(), real_loop())
         self.click_ids = click_ids
         self.arabic_replies = arabic_replies
         self.sessions = store or FakeSessionStore()
-        self.responses = responses or FakeResponses()
         self.retailers = retailers or FakeRetailers()
-        self.product_ids = product_ids
-        self.coordinators: list[Any] = []
-        self.parts: list[Any] = []
+        self.pipeline = FakePipeline(ids=product_ids)
+        self.hydration = FakeHydration(available=product_ids)
+        self.references = ScreenReferences()
+        self.runtimes = 0
 
     def _runtime(self) -> ChatRuntime:
-        # One coordinator per request, exactly as the real dependency builds
-        # it. The decision for this turn comes off the script.
-        decision = self.script.pop(0) if self.script else a_search()
-        coordinator, parts = _coordinator(
-            decision,
-            # Query understanding is a provider step of its own; a search turn
-            # needs one resolved, and these tests are not about interpretation.
-            interpretation=_resolved(),
-            pipeline=FakePipeline(ids=self.product_ids),
-            hydration=FakeHydration(available=self.product_ids),
-            arabic_replies=self.arabic_replies,
-        )
-        self.coordinators.append(coordinator)
-        self.parts.append(parts)
+        """One runtime per request, exactly as the real dependency builds it."""
+        self.runtimes += 1
         return ChatRuntime(
-            coordinator,
-            self.responses,  # type: ignore[arg-type]
+            self.team,
+            agent_services(
+                pipeline=self.pipeline,
+                hydration=self.hydration,
+                references=self.references,  # type: ignore[arg-type]
+            ),
             self.sessions,  # type: ignore[arg-type]
             SessionSettings(max_history_messages=6),
+            arabic_replies=self.arabic_replies,
         )
 
     def app(self) -> FastAPI:
@@ -209,7 +216,6 @@ class Harness:
         register_exception_handlers(app)
         app.include_router(chat_router, prefix="/v1")
         app.dependency_overrides[chat_runtime] = self._runtime
-        # The real compiled graph: these tests drive the runtime through it.
         app.dependency_overrides[chat_graph] = lambda: GRAPH
         app.dependency_overrides[retailer_context_provider] = lambda: self.retailers
         click_ids = self.click_ids
@@ -217,6 +223,10 @@ class Harness:
             no_click_ids if click_ids is None else lambda: ClickTrackingService(click_ids)
         )
         return app
+
+    def told(self, model_call: int) -> list[str]:
+        """Every message Sara's n-th model call was given, as text."""
+        return [str(m.content) for m in self.sara.seen[model_call]]
 
 
 @pytest_asyncio.fixture
@@ -252,7 +262,8 @@ async def test_a_first_turn_answers_and_opens_the_session(client_for: Any) -> No
     payload = reply.json()
     assert payload["session_id"] == SESSION
     assert payload["session_revision"] == 1, "a persisted turn is revision one"
-    assert payload["response"]["message"] == "Here you are."
+    assert payload["response"]["message"] == REPLY
+    assert payload["agent"] == "sara"
     assert len(payload["presentation"]["products"]) == 3
 
 
@@ -314,18 +325,51 @@ async def test_no_internal_identity_reaches_the_caller(client_for: Any, forbidde
     assert f'"{forbidden}"' not in raw, forbidden
 
 
-async def test_an_answer_with_nothing_to_draw_still_offers_a_next_step(
-    client_for: Any,
-) -> None:
-    """Nothing on screen and nothing picked: no cards, and no chips - the
-    reply ends on its open question, answered in their own words."""
-    harness = Harness(CustomerAgentDecision(action=AgentAction.ANSWER))
+async def test_an_answer_with_nothing_to_draw_has_no_presentation(client_for: Any) -> None:
+    harness = Harness(an_answer("We sell furniture for every room."))
     client = await client_for(harness)
 
     payload = (await client.post("/v1/chat", json=body("what do you sell?"))).json()
 
     assert payload["presentation"] is None
     assert payload["session_revision"] == 1
+    assert harness.pipeline.calls == [], "nothing was searched"
+
+
+async def test_a_turn_the_agents_cannot_finish_gets_the_fixed_reply_and_keeps_nothing(
+    client_for: Any,
+) -> None:
+    """A search ran, then the agent produced nothing usable, twice - even when
+    told the turn stopped: the customer is answered with the fixed reply and
+    the search is not kept (CLAUDE.md 21.1)."""
+    search = a_search()[0]
+    harness = Harness([search, step(), step()])
+    client = await client_for(harness)
+
+    reply = await client.post("/v1/chat", json=body("sofas"))
+
+    assert reply.status_code == 200
+    assert reply.json()["response"]["message"] == FALLBACK_REPLY["en"]
+    assert reply.json()["presentation"] is None
+    stored = harness.sessions.saved[(STORE, SESSION)]
+    assert stored.state.product_interaction.presented_product_ids == ()
+    assert stored.state.active_search is None
+
+
+async def test_a_stopped_turn_is_worded_by_the_agent_and_keeps_its_work(
+    client_for: Any,
+) -> None:
+    """A search ran, then the agent's next step was unusable: it is told the
+    turn stopped, says what it did, and the search it ran is kept."""
+    search = a_search()[0]
+    harness = Harness([search, step(), _reply("I found these sofas.")])
+    client = await client_for(harness)
+
+    reply = await client.post("/v1/chat", json=body("sofas"))
+
+    assert reply.json()["response"]["message"] == "I found these sofas."
+    stored = harness.sessions.saved[(STORE, SESSION)]
+    assert stored.state.active_search is not None
 
 
 # ── a conversation across requests ══════════════════════════════════════════
@@ -334,7 +378,7 @@ async def test_an_answer_with_nothing_to_draw_still_offers_a_next_step(
 async def test_the_second_turn_sees_the_first_turns_state_and_words(
     client_for: Any,
 ) -> None:
-    """The M13 claim: state and history survive the round trip (M13 35)."""
+    """State and history survive the round trip."""
     harness = Harness(a_search(), a_selection(position=2))
     client = await client_for(harness)
 
@@ -343,44 +387,33 @@ async def test_the_second_turn_sees_the_first_turns_state_and_words(
 
     assert first["session_revision"] == 1
     assert second["session_revision"] == 2, "one increment per persisted turn"
-
-    # The second turn was handed the first turn's conversation and state.
-    turn = harness.responses.calls[1][0]
-    assert [m.content for m in turn.conversation.messages] == [
-        "show me modern sofas",
-        "Here you are.",
-    ]
-    assert turn.state.product_interaction.presented_product_ids == (10, 11, 12)
-    assert turn.message == "I like the second one", "the current message is separate"
+    # Sara's first call of the second turn (after two calls in the first).
+    told = harness.told(2)
+    assert told[1:3] == ["show me modern sofas", REPLY], "the earlier exchange, in order"
+    assert told[-1].endswith("The customer says:\nI like the second one")
 
 
 async def test_an_ordinal_is_resolved_against_the_restored_state(
     client_for: Any,
 ) -> None:
-    """ "The second one" is settled against the *previous* turn's products.
-
-    The resolver itself is faked here, so what this proves is the input it was
-    given: the selector, and a state carrying the ids the earlier request
-    persisted. That the resolver then picks the right one of them is M11B's,
-    and tested there against the real resolver.
-    """
+    """ "The second one" is settled against the *previous* turn's products,
+    and what it resolved to goes into the cart."""
     harness = Harness(a_search(), a_selection(position=2))
     client = await client_for(harness)
 
     await client.post("/v1/chat", json=body("show me modern sofas"))
-    await client.post("/v1/chat", json=body("I like the second one"))
+    reply = await client.post("/v1/chat", json=body("add the second one"))
 
-    selector, state = harness.parts[1]["references"].calls[0]
+    selector, state = harness.references.calls[0]
     assert selector == PresentedOrdinal(position=2)
     assert state.product_interaction.presented_product_ids == (10, 11, 12)
-
-    # And whatever it resolved to was recorded as the selection.
     stored = harness.sessions.saved[(STORE, SESSION)]
-    assert len(stored.state.product_interaction.selected_product_ids) == 1
+    assert stored.state.product_interaction.selected_product_ids == (11,)
+    assert len(reply.json()["picks"]) == 1
 
 
 async def test_history_is_not_duplicated_across_turns(client_for: Any) -> None:
-    harness = Harness(a_search(), a_search(), a_search())
+    harness = Harness(an_answer(), an_answer(), an_answer())
     client = await client_for(harness)
 
     for message in ("one", "two", "three"):
@@ -389,11 +422,11 @@ async def test_history_is_not_duplicated_across_turns(client_for: Any) -> None:
     stored = harness.sessions.saved[(STORE, SESSION)]
     assert [m.content for m in stored.conversation.messages] == [
         "one",
-        "Here you are.",
+        REPLY,
         "two",
-        "Here you are.",
+        REPLY,
         "three",
-        "Here you are.",
+        REPLY,
     ]
 
 
@@ -401,7 +434,7 @@ async def test_history_is_bounded_and_keeps_whole_exchanges(
     client_for: Any,
 ) -> None:
     """Six messages allowed, so the oldest exchanges fall out in pairs."""
-    harness = Harness(*[a_search() for _ in range(5)])
+    harness = Harness(*[an_answer() for _ in range(5)])
     client = await client_for(harness)
 
     for message in ("one", "two", "three", "four", "five"):
@@ -411,20 +444,30 @@ async def test_history_is_bounded_and_keeps_whole_exchanges(
     assert len(messages) == 6
     assert [m.content for m in messages] == [
         "three",
-        "Here you are.",
+        REPLY,
         "four",
-        "Here you are.",
+        REPLY,
         "five",
-        "Here you are.",
+        REPLY,
     ]
     assert messages[0].role.value == "user", "never an orphaned reply"
+
+
+async def test_each_reply_is_stored_under_the_agent_that_gave_it(client_for: Any) -> None:
+    harness = Harness(an_answer())
+    client = await client_for(harness)
+
+    await client.post("/v1/chat", json=body("hi"))
+
+    said = harness.sessions.saved[(STORE, SESSION)].conversation.messages[-1]
+    assert said.agent is AgentPersona.SARA
 
 
 # ── staleness and conflict ══════════════════════════════════════════════════
 
 
 async def test_a_stale_client_revision_is_refused(client_for: Any) -> None:
-    harness = Harness(a_search(), a_search())
+    harness = Harness(an_answer(), an_answer())
     client = await client_for(harness)
 
     await client.post("/v1/chat", json=body("one"))  # session is now revision 1
@@ -436,29 +479,27 @@ async def test_a_stale_client_revision_is_refused(client_for: Any) -> None:
     assert reply.json()["error"]["code"] == "session_conflict"
 
 
-async def test_a_stale_revision_costs_no_provider_call(client_for: Any) -> None:
-    """Refused before the decision model, the catalog and the response model.
-
-    Both correctness and cost: a turn resolved against a session that moved on
-    would answer a question the customer did not ask (M13 32).
-    """
+async def test_a_stale_revision_costs_no_model_or_catalog_call(client_for: Any) -> None:
+    """Refused before the supervisor, any agent and the catalog: a turn
+    resolved against a session that moved on would answer a question the
+    customer did not ask."""
     harness = Harness(a_search(), a_search())
     client = await client_for(harness)
 
     await client.post("/v1/chat", json=body("one"))
-    assert len(harness.parts[0]["decisions"].inputs) == 1, "the first turn did ask"
+    assert len(harness.supervisor.seen) == 1
+    assert len(harness.pipeline.calls) == 1
 
     await client.post("/v1/chat", json=body("two", expected_session_revision=0))
 
-    # A second coordinator was built, and asked nothing.
-    assert len(harness.parts) == 2
-    assert harness.parts[1]["decisions"].inputs == [], "no decision model"
-    assert harness.parts[1]["pipeline"].calls == [], "no catalog search"
-    assert len(harness.responses.calls) == 1, "nothing was worded"
+    assert harness.runtimes == 2, "a second runtime was built"
+    assert len(harness.supervisor.seen) == 1, "no supervisor call"
+    assert len(harness.sara.seen) == 2, "no agent call"
+    assert len(harness.pipeline.calls) == 1, "no catalog search"
 
 
 async def test_a_matching_revision_proceeds(client_for: Any) -> None:
-    harness = Harness(a_search(), a_search())
+    harness = Harness(an_answer(), an_answer())
     client = await client_for(harness)
 
     await client.post("/v1/chat", json=body("one"))
@@ -472,7 +513,7 @@ async def test_an_expired_session_with_a_client_revision_is_a_conflict(
     client_for: Any,
 ) -> None:
     """Not a fresh start: their screen shows a session that no longer exists."""
-    harness = Harness(a_search())
+    harness = Harness(an_answer())
     client = await client_for(harness)
 
     reply = await client.post("/v1/chat", json=body("keep that one", expected_session_revision=4))
@@ -484,7 +525,7 @@ async def test_an_expired_session_with_a_client_revision_is_a_conflict(
 async def test_a_first_request_with_no_client_revision_is_a_new_session(
     client_for: Any,
 ) -> None:
-    harness = Harness(a_search())
+    harness = Harness(an_answer())
     client = await client_for(harness)
 
     reply = await client.post("/v1/chat", json=body("hello"))
@@ -496,15 +537,10 @@ async def test_a_first_request_with_no_client_revision_is_a_new_session(
 async def test_a_lost_race_returns_a_conflict_not_the_computed_answer(
     client_for: Any,
 ) -> None:
-    """The loser's reply resolved words against a room that has since changed.
+    """The loser's reply resolved words against a session that has since
+    changed. Returning it would tell the customer their change took effect
+    when the stored session says otherwise."""
 
-    Returning it would tell the customer their change took effect when the
-    stored session says otherwise (M13 33).
-    """
-    harness = Harness(a_search())
-    client = await client_for(harness)
-
-    # Someone else commits revision 1 while this request is mid-flight.
     class Interfering(FakeSessionStore):
         async def load(self, store_id: int, session_id: str) -> SessionEnvelope | None:
             loaded = await super().load(store_id, session_id)
@@ -515,7 +551,7 @@ async def test_a_lost_race_returns_a_conflict_not_the_computed_answer(
             )
             return loaded
 
-    harness.sessions = Interfering()
+    harness = Harness(a_search(), store=Interfering())
     client = await client_for(harness)
 
     reply = await client.post("/v1/chat", json=body("show me sofas"))
@@ -531,19 +567,20 @@ async def test_an_unreachable_session_store_fails_rather_than_forgetting(
     client_for: Any,
 ) -> None:
     """Never a stateless fallback: it would reinterpret every reference."""
-    harness = Harness(a_search(), store=FakeSessionStore(error=SessionStoreUnavailableError()))
+    harness = Harness(an_answer(), store=FakeSessionStore(error=SessionStoreUnavailableError()))
     client = await client_for(harness)
 
     reply = await client.post("/v1/chat", json=body("show me sofas"))
 
     assert reply.status_code == 503
     assert "redis" not in reply.text.lower()
+    assert harness.supervisor.seen == []
 
 
 async def test_unreadable_session_state_is_refused_not_reset(
     client_for: Any,
 ) -> None:
-    harness = Harness(a_search(), store=FakeSessionStore(error=SessionStateInvalidError()))
+    harness = Harness(an_answer(), store=FakeSessionStore(error=SessionStateInvalidError()))
     client = await client_for(harness)
 
     reply = await client.post("/v1/chat", json=body("show me sofas"))
@@ -555,7 +592,7 @@ async def test_unreadable_session_state_is_refused_not_reset(
 async def test_an_unknown_store_is_refused_before_any_session_work(
     client_for: Any,
 ) -> None:
-    harness = Harness(a_search())
+    harness = Harness(an_answer())
     client = await client_for(harness)
 
     reply = await client.post(
@@ -588,7 +625,7 @@ async def test_an_unknown_store_is_refused_before_any_session_work(
 async def test_a_malformed_request_is_refused_without_echoing_it(
     client_for: Any, payload: dict[str, Any]
 ) -> None:
-    harness = Harness(a_search())
+    harness = Harness(an_answer())
     client = await client_for(harness)
 
     reply = await client.post("/v1/chat", json=payload)
@@ -604,7 +641,7 @@ async def test_one_session_id_under_two_stores_is_two_conversations(
     client_for: Any,
 ) -> None:
     """Structural: different keys, so it holds whatever the catalogs contain."""
-    harness = Harness(a_search(), a_search())
+    harness = Harness(an_answer(), an_answer())
     client = await client_for(harness)
 
     ours = await client.post(
@@ -621,6 +658,7 @@ async def test_one_session_id_under_two_stores_is_two_conversations(
 
 
 async def test_each_store_gets_its_own_scope(client_for: Any) -> None:
+    """The tools search the store the request resolved, never one a model named."""
     harness = Harness(a_search(), a_search())
     client = await client_for(harness)
 
@@ -630,46 +668,21 @@ async def test_each_store_gets_its_own_scope(client_for: Any) -> None:
         json={"session_id": SESSION, "store_id": OTHER_STORE, "message": "hi"},
     )
 
-    scopes = [call[0].context.store_id for call in harness.responses.calls]
-    assert scopes == [STORE, OTHER_STORE]
+    assert [c.store_id for c in harness.pipeline.contexts] == [STORE, OTHER_STORE]
 
 
-# ── the runtime adds no provider work (M13 43) ══════════════════════════════
-
-
-@pytest.mark.parametrize(
-    ("label", "decision"),
-    [
-        ("answer", CustomerAgentDecision(action=AgentAction.ANSWER)),
-        ("search", CustomerAgentDecision(action=AgentAction.SEARCH)),
-    ],
-)
-async def test_one_turn_asks_each_model_once(
-    client_for: Any, label: str, decision: CustomerAgentDecision
-) -> None:
-    """Orchestration sequences phases; it is not a second reasoning layer.
-
-    One decision call and one wording call per exchange, whatever the action -
-    the same counts the engine made before there was a runtime around it.
-    """
-    harness = Harness(decision)
-    client = await client_for(harness)
-
-    reply = await client.post("/v1/chat", json=body("something"))
-
-    assert reply.status_code == 200
-    assert len(harness.parts[0]["decisions"].inputs) == 1, label
-    assert len(harness.responses.calls) == 1, label
+# ── one exchange, one team run ══════════════════════════════════════════════
 
 
 async def test_a_second_turn_does_not_replay_the_first(client_for: Any) -> None:
     """Each request is one exchange. Nothing re-runs a committed turn."""
-    harness = Harness(a_search(), a_search())
+    harness = Harness(a_search(), an_answer())
     client = await client_for(harness)
 
     await client.post("/v1/chat", json=body("one"))
     await client.post("/v1/chat", json=body("two"))
 
-    assert [len(p["decisions"].inputs) for p in harness.parts] == [1, 1]
-    assert len(harness.responses.calls) == 2
+    assert len(harness.supervisor.seen) == 2
+    assert len(harness.sara.seen) == 3, "two calls for the search turn, one for the answer"
+    assert len(harness.pipeline.calls) == 1
     assert harness.sessions.saves == 2
