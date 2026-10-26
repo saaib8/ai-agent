@@ -48,6 +48,7 @@ RECOMMEND_PATH = "/api/get-recommendations/"
 WIDGET_KEY_HEADER = "X-Zory-Widget-Key"
 WIDGET_STORE_HEADER = "X-Zory-Widget-Store-Id"
 INTEGRATION_HEADER = "X-Zory-Integration-Id"
+ORIGIN_HEADER = "Origin"
 
 _UNSUPPORTED_CATEGORY = "category not supported"
 
@@ -420,6 +421,8 @@ def _shopper_headers(shopper: ShopperCredentials | None) -> dict[str, str]:
         headers[WIDGET_KEY_HEADER] = shopper.widget_key
     if shopper.store_public_id:
         headers[WIDGET_STORE_HEADER] = shopper.store_public_id
+    if shopper.origin:
+        headers[ORIGIN_HEADER] = shopper.origin
     return headers
 
 

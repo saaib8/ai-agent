@@ -30,6 +30,7 @@ from app.repositories.stores import StoreRepository
 from app.repositories.support_contacts import SupportContactsRepository
 from app.schemas.furniture_finder import (
     WIDGET_KEY_PATTERN,
+    WIDGET_ORIGIN_PATTERN,
     WIDGET_SESSION_PATTERN,
     WIDGET_STORE_PATTERN,
     ShopperCredentials,
@@ -714,6 +715,10 @@ def shopper_credentials(
     store_public_id: Annotated[
         str | None, Header(alias="X-Zory-Widget-Store-Id", pattern=WIDGET_STORE_PATTERN)
     ] = None,
+    origin: Annotated[
+        str | None,
+        Header(alias="X-Zory-Widget-Origin", max_length=270, pattern=WIDGET_ORIGIN_PATTERN),
+    ] = None,
 ) -> ShopperCredentials | None:
     """The shopper's widget session, as the gateway forwarded it, or None.
 
@@ -723,7 +728,10 @@ def shopper_credentials(
     if token is None:
         return None
     return ShopperCredentials(
-        token=SecretStr(token), widget_key=widget_key, store_public_id=store_public_id
+        token=SecretStr(token),
+        widget_key=widget_key,
+        store_public_id=store_public_id,
+        origin=origin,
     )
 
 

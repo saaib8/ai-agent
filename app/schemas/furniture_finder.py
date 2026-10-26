@@ -46,6 +46,7 @@ def is_plain_key(value: object) -> bool:
 WIDGET_SESSION_PATTERN = r"^[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+$"
 WIDGET_KEY_PATTERN = r"^[a-z0-9][a-z0-9-]{0,63}$"
 WIDGET_STORE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9-]{0,127}$"
+WIDGET_ORIGIN_PATTERN = r"^https?://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$"
 
 Point = tuple[int, int]
 
@@ -161,7 +162,9 @@ class ShopperCredentials(BaseModel):
 
     Forwarded by the gateway from the widget - a signed-in member's token or an
     anonymous visitor's. Opaque here: the platform verifies it and decides the
-    store from it; this service only passes it on, and never logs it.
+    store from it; this service only passes it on, and never logs it. `origin`
+    is the website the shopper's browser called the gateway from; the platform
+    refuses a widget token without an approved one, so it goes back as `Origin`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -169,6 +172,7 @@ class ShopperCredentials(BaseModel):
     token: SecretStr
     widget_key: str | None = Field(default=None, pattern=WIDGET_KEY_PATTERN)
     store_public_id: str | None = Field(default=None, pattern=WIDGET_STORE_PATTERN)
+    origin: str | None = Field(default=None, pattern=WIDGET_ORIGIN_PATTERN)
 
 
 class FinderPickRequest(BaseModel):
