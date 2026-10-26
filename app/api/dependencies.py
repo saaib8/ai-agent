@@ -26,6 +26,7 @@ from app.integrations.llm import StructuredLLMClient
 from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
 from app.orchestration.graph import ChatGraphRunner
+from app.repositories.catalog_cache import OverviewCache
 from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
@@ -53,7 +54,6 @@ from app.services.discovery import ProductDiscoveryService
 from app.services.furniture_finder import FinderTurnRuntime, FurnitureFinderService
 from app.services.health import HealthService
 from app.services.hydration import ProductHydrationService
-from app.services.interior_design import InteriorDesignAgent
 from app.services.picks import PicksRuntime
 from app.services.product_display import ProductDisplayWords
 from app.services.query_understanding import QueryUnderstandingService
@@ -68,7 +68,6 @@ from app.services.room_visualization import (
     VisualizationTurnRuntime,
 )
 from app.services.search_pipeline import ProductSearchPipeline
-from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.stocked_looks import StockedLooks
@@ -250,55 +249,23 @@ def product_search_pipeline(
     )
 
 
-def optional_interior_design_agent(
-    app_resources: ResourcesDep,
-) -> InteriorDesignAgent | None:
-    """The design specialist if it is configured, and None if it is not.
-
-    `interior_design.model` has no default and never borrows another agent's:
-    four agents, four prompts, four identifiers. An absent one means the
-    capability does not exist here, which is an ordinary deployment rather than
-    a misconfiguration - so a caller that can do without it gets None instead
-    of an exception.
-    """
-    client = app_resources.design_llm
-    if client is None:
-        return None
-    return InteriorDesignAgent(
-        client,
-        app_resources.taxonomy,
-        fit_after_pick=app_resources.settings.customer_agent.fit_after_pick,
-    )
-
-
-def interior_design_agent(app_resources: ResourcesDep) -> InteriorDesignAgent:
-    """The design specialist, or a refusal to build one.
-
-    For callers that *are* the design capability. Asking for it by name when it
-    is unconfigured is a configuration error; a commerce turn that merely might
-    reach it asks through :func:`optional_interior_design_agent` instead.
-    """
-    agent = optional_interior_design_agent(app_resources)
-    if agent is None:
-        raise ConfigurationError(
-            detail="interior_design.model must be set to use the design specialist",
-            public_message="Design guidance is not configured.",
-        )
-    return agent
-
-
-InteriorDesignAgentDep = Annotated[InteriorDesignAgent, Depends(interior_design_agent)]
-
-
 def catalog_capability_service(
     session: SessionDep, app_resources: ResourcesDep
 ) -> CatalogCapabilityService:
     """What the active retailer stocks, and how its sizes read (`size`)."""
+    settings = app_resources.settings
+    ttl = settings.catalog.overview_ttl_s
+    cache = (
+        OverviewCache(app_resources.redis.client, ttl, settings.session.operation_timeout_s)
+        if ttl
+        else None
+    )
     return CatalogCapabilityService(
         ProductRepository(session),
         app_resources.taxonomy,
         app_resources.seating,
-        app_resources.settings.size,
+        settings.size,
+        cache,
     )
 
 
@@ -322,6 +289,7 @@ def design_discovery_service(
         product_search_pipeline(session, app_resources),
         app_resources.taxonomy,
         app_resources.seating,
+        app_resources.attributes,
     )
 
 
@@ -427,13 +395,6 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
     repository = ProductRepository(session)
     hydration = product_hydration_service(session)
     capability = catalog_capability_service(session, app_resources)
-    seating_planner = SeatingSolutionPlanner(
-        capability,
-        product_discovery_service(session, app_resources),
-        hydration,
-        app_resources.seating,
-    )
-    design = optional_interior_design_agent(app_resources)
     agent = settings.customer_agent
     return AgentServices(
         taxonomy=app_resources.taxonomy,
@@ -457,7 +418,6 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         comparison=ProductComparisonService(repository, app_resources.dimensions, agent),
         similar_search=SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
         capabilities=capability,
-        seating_planner=seating_planner,
         cart_operations=CartOperations(
             max_picks=agent.max_picks,
             max_quantity=agent.cart_max_quantity,
@@ -466,19 +426,14 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
             refuse_unconfirmed=settings.salla.refuse_unconfirmed,
         ),
         rooms=RoomEngine(
-            design,
             design_discovery_service(session, app_resources),
-            BundleOptimizer(),
-            seating_planner,
+            BundleOptimizer(settings.agents.share_upgrade_similarity_margin),
             pipeline,
             capability,
             hydration,
             app_resources.rooms,
             app_resources.seating,
-            dimensions=app_resources.dimensions,
-            attributes=app_resources.attributes,
         ),
-        design=design,
         compare_groups=app_resources.compare_groups,
         room_pieces=app_resources.rooms,
         complements=app_resources.complements,
@@ -493,7 +448,9 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         display=product_display_words(app_resources),
         subcategory_questions=app_resources.subcategory_questions,
         seating=app_resources.seating,
-        looks=StockedLooks(repository, app_resources.attributes),
+        looks=StockedLooks(capability, app_resources.attributes),
+        shelf_depth=(settings.catalog.shelf_few_max, settings.catalog.shelf_some_max),
+        catalog_reset=session.rollback,
     )
 
 
@@ -513,6 +470,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         session_store(app_resources),
         settings.session,
         deadline_s=settings.agents.turn_deadline_s,
+        room_deadline_s=settings.agents.room_turn_deadline_s,
         arabic_replies=settings.customer_agent.arabic_replies,
     )
 

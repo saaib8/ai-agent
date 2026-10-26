@@ -16,12 +16,12 @@ discarded rather than handed back as though it took effect.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.agents.context import ToolContext
+from app.agents.deadline import within
 from app.agents.reply import customer_response, fallback, repaired, unsupported_figure
 from app.agents.screen import presentation as build_presentation
 from app.agents.screen_actions import tap_of
@@ -81,9 +81,11 @@ class ChatRuntime:
         settings: SessionSettings,
         *,
         deadline_s: float = 40.0,
+        room_deadline_s: float | None = None,
         arabic_replies: bool = False,
     ) -> None:
         self._deadline_s = deadline_s
+        self._room_deadline_s = room_deadline_s if room_deadline_s is not None else deadline_s
         self._team = team
         self._services = services
         self.on_event: Callable[[TraceEvent], None] | None = None
@@ -126,8 +128,11 @@ class ChatRuntime:
         )
         try:
             # One deadline for all of it: the agents, and the reply's rewrite.
-            result, reply = await asyncio.wait_for(
-                self._worked(turn, trace), timeout=self._deadline_s
+            result, reply = await within(
+                self._worked(turn, trace),
+                short_s=self._deadline_s,
+                long_s=self._room_deadline_s,
+                extended=lambda: trace.room_design,
             )
         except TimeoutError:
             trace.finish(owner=None, fallback="turn deadline")

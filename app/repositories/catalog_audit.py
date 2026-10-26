@@ -52,12 +52,8 @@ class CatalogAuditRepository:
                 active_count.label("active_count"),
             )
             .where(core_product.c.commerce_category.is_not(None))
-            .group_by(
-                core_product.c.commerce_category, core_product.c.commerce_subcategory
-            )
-            .order_by(
-                core_product.c.commerce_category, core_product.c.commerce_subcategory
-            )
+            .group_by(core_product.c.commerce_category, core_product.c.commerce_subcategory)
+            .order_by(core_product.c.commerce_category, core_product.c.commerce_subcategory)
         )
         result = await self._session.execute(statement)
         return [
@@ -75,9 +71,7 @@ class CatalogAuditRepository:
         statement = select(
             func.count().label("total"),
             func.count(core_product.c.commerce_category).label("classified"),
-            func.count()
-            .filter(core_product.c.commerce_category.is_(None))
-            .label("null_category"),
+            func.count().filter(core_product.c.commerce_category.is_(None)).label("null_category"),
             func.count()
             .filter(core_product.c.commerce_subcategory.is_(None))
             .label("null_subcategory"),

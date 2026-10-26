@@ -918,9 +918,7 @@ class ProductRepository:
         return FacetCounts(
             colors=tuple((row[0], int(row[1])) for row in colors.all()),
             styles=tuple((row[0], int(row[1])) for row in styles.all() if row[0]),
-            prices=tuple(
-                (row[0], row[1], row[2], int(row[3])) for row in prices.all() if row[0]
-            ),
+            prices=tuple((row[0], row[1], row[2], int(row[3])) for row in prices.all() if row[0]),
         )
 
     async def brief_facts(
@@ -978,9 +976,7 @@ class ProductRepository:
             .order_by(func.count().desc(), tokens.c.token)
         )
         return BriefFacts(
-            kinds=tuple(
-                (row[0], row[1], int(row[2])) for row in kinds.all() if row[0] is not None
-            ),
+            kinds=tuple((row[0], row[1], int(row[2])) for row in kinds.all() if row[0] is not None),
             currency=currency,
             price_quartiles=quartiles,
             colors=tuple((row[0], int(row[1])) for row in colors.all()),

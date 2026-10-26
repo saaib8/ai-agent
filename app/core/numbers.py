@@ -68,9 +68,7 @@ def _ascii(raw: str) -> str:
     rule below - grouping, ambiguity, magnitude - judges them identically.
     """
     return "".join(
-        str(unicodedata.decimal(char))
-        if char.isdecimal()
-        else _ARABIC_SEPARATORS.get(char, char)
+        str(unicodedata.decimal(char)) if char.isdecimal() else _ARABIC_SEPARATORS.get(char, char)
         for char in raw
     )
 

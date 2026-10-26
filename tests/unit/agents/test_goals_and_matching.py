@@ -6,20 +6,11 @@ from typing import Any
 
 from app.agents.views import session_brief
 from app.agents.work import TurnWork
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1, GoalKind
-from app.schemas.design import (
-    DesignCategoryNeed,
-    DesignDirection,
-    DesignGuidance,
-    DesignPriority,
-    DesignTask,
-    GuidanceTopic,
-    InteriorDesignResult,
-)
 from app.services.agent_state import set_goal
 
 from tests.unit.agents.fakes import (
-    FakeDesign,
     FakeHydration,
     FakePipeline,
     agent_services,
@@ -72,26 +63,19 @@ async def test_a_goal_is_closed_by_the_agent_never_by_code() -> None:
     assert done.state.goals[0].status == "done"
 
 
-async def test_a_search_matched_with_a_goal_leans_the_designers_way() -> None:
-    direction = DesignDirection(colours=("Beige",), styles=("Modern",), avoid_colours=("Red",))
-    design = FakeDesign(
-        result=InteriorDesignResult(
-            guidance=(
-                DesignGuidance(topic=GuidanceTopic.COLOR, summary="Warm neutrals tie the pair."),
-            ),
-            needs=(
-                DesignCategoryNeed(
-                    commerce_category="seating",
-                    commerce_subcategory="sofa",
-                    priority=DesignPriority.REQUIRED,
-                    direction=direction,
-                ),
-            ),
+class _Looks:
+    async def of(self, subcategory: str, context: Any) -> Any:
+        from app.schemas.design import StockedLook
+
+        return StockedLook(
+            commerce_subcategory=subcategory, colours=("Beige", "Ruby"), styles=("Modern",)
         )
-    )
+
+
+async def _matched(persona: AgentPersona, direction: dict[str, Any]) -> tuple[Any, FakePipeline]:
     pipeline = FakePipeline(ids=(10, 11))
     services = agent_services(
-        pipeline=pipeline, design=design, hydration=FakeHydration(available=(42, 10, 11))
+        pipeline=pipeline, hydration=FakeHydration(available=(42, 10, 11)), looks=_Looks()
     )
     state, _ = set_goal(
         AgentStateV1(), goal=None, kind=GoalKind.SEATING, summary="seat 10", seats=10
@@ -102,77 +86,53 @@ async def test_a_search_matched_with_a_goal_leans_the_designers_way() -> None:
         state,
         services,
     )
+    tool = LOOP._registry.get("search_products")
+    assert tool is not None and tool.handler is not None
+    work = TurnWork.starting(added.state)
+    work.working = persona
     search = {"commerce_category": "seating", "commerce_subcategory": "sofa"}
+    outcome = await tool.handler(
+        tool.args.model_validate({"search": search, "match_goal": 1, "direction": direction}),
+        tool_context(services),
+        work,
+    )
+    return outcome, pipeline
 
-    outcome = await _call(
-        "search_products", {"search": search, "match_goal": 1}, added.state, services
+
+async def test_a_search_matched_with_a_goal_leans_noras_way() -> None:
+    direction = {
+        "colours": ["Beige", "Olive"],
+        "styles": ["Modern"],
+        "avoid_colours": ["Ruby"],
+        "why": "Warm neutrals tie the pair.",
+    }
+
+    outcome, pipeline = await _matched(AgentPersona.NORA, direction)
+
+    lean = pipeline.calls[-1].lean
+    # Olive is not stocked for the kind: left out, never matched to something near.
+    assert lean.colours == ("Beige",) and lean.avoid_colours == ("Ruby",)
+    assert outcome.facts["direction"]["why"] == "Warm neutrals tie the pair."
+    assert "direction_dropped" in outcome.facts
+
+
+async def test_only_nora_gives_a_direction() -> None:
+    outcome, pipeline = await _matched(
+        AgentPersona.SARA, {"colours": ["Beige"], "why": "Warm neutrals tie the pair."}
     )
 
-    asked = design.requests[-1]
-    assert asked.task is DesignTask.MATCH and asked.match_kind.commerce_subcategory == "sofa"
-    assert len(asked.anchors) == 1
-    lean = pipeline.calls[-1].lean
-    assert lean.colours == ("Beige",) and lean.avoid_colours == ("Red",)
-    assert outcome.facts["direction"]["why"] == ["Warm neutrals tie the pair."]
+    # Refused before anything is searched, so no unmatched cards replace the screen.
+    assert outcome.code == "matching_is_noras" and outcome.facts["hand_to"] == "nora"
+    assert pipeline.calls == []
 
 
-async def test_a_search_matched_with_nothing_asks_no_designer() -> None:
-    design = FakeDesign()
-    services = agent_services(design=design)
-    search = {"commerce_category": "seating", "commerce_subcategory": "sofa"}
+async def test_a_direction_states_no_figure() -> None:
+    outcome, _ = await _matched(
+        AgentPersona.NORA, {"colours": ["Beige"], "why": "Keep it 20 cm shorter."}
+    )
 
-    await _call("search_products", {"search": search}, AgentStateV1(), services)
-
-    assert design.requests == []
+    assert outcome.code == "direction_why_states_a_figure"
 
 
 def test_a_saved_session_from_before_goals_still_reads() -> None:
     assert AgentStateV1.model_validate({"schema_version": "agent_state_v5"}).goals == ()
-
-
-async def test_the_specialist_keeps_to_the_kind_being_chosen() -> None:
-    from app.schemas.design import InteriorDesignRequest, MatchKind, StockedLook
-    from app.services.interior_design import InteriorDesignAgent
-
-    from tests.unit.agents.fakes import TAXONOMY, _product
-
-    class Client:
-        model = "test-model"
-
-        async def parse(self, **kwargs: Any) -> Any:
-            return InteriorDesignResult(
-                needs=(
-                    DesignCategoryNeed(
-                        commerce_category="decor",
-                        commerce_subcategory="carpet",
-                        priority=DesignPriority.OPTIONAL,
-                        direction=DesignDirection(colours=("Beige", "Purple"), size_ratio=0.8),
-                    ),
-                )
-            )
-
-    agent = InteriorDesignAgent(Client(), TAXONOMY)  # type: ignore[arg-type]
-    from app.services.design_facts import project_anchors
-
-    from tests.unit.agents.fakes import DIMENSIONS
-
-    result = await agent.plan(
-        InteriorDesignRequest(
-            task=DesignTask.MATCH,
-            match_kind=MatchKind(commerce_category="seating", commerce_subcategory="sofa"),
-            anchors=project_anchors((_product(1),), dimensions=DIMENSIONS),
-            catalog_capabilities=await _capabilities(),
-            stocked_looks=(StockedLook(commerce_subcategory="sofa", colours=("Beige",)),),
-        )
-    )
-
-    need = result.needs[0]
-    assert need.commerce_subcategory == "sofa"
-    assert need.direction is not None and need.direction.colours == ("Beige",)
-    assert need.direction.size_ratio == 0.8
-
-
-async def _capabilities() -> Any:
-    from tests.unit.agents.fakes import FakeCapabilities
-
-    return await FakeCapabilities().capabilities(tool_context().retailer)

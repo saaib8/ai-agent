@@ -82,7 +82,7 @@ def remember_taste_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             "avoid, or the room they are shopping for. Their likes lean every new product "
             "search; what they avoid is pushed down in every search, this one's next page "
             "included, and what goes with a pick. Nothing is hidden. A room does not read "
-            "it: pass their colours and styles to plan_room yourself."
+            "it: pass their colours and styles to design_room yourself."
         ),
         args=taste_args(schemas),
         owners=TASTE_KEEPERS,

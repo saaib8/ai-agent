@@ -139,7 +139,6 @@ def build_liked(
     return tuple(liked)
 
 
-
 def _lists_on_screen(state: AgentStateV1) -> list[tuple[int, tuple[int, ...]]]:
     interaction = state.product_interaction
     lists = [(entry.revision, entry.product_ids) for entry in interaction.earlier_lists]

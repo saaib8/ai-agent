@@ -39,8 +39,10 @@ class RespondArgs(ToolArgs):
         default=None,
         description=(
             "What the customer's screen shows beside your reply, from what your tools "
-            "produced this turn. Omit for the last thing a tool showed. 'unchanged' keeps "
-            "the screen as it was - when no result this turn is right to show."
+            "produced this turn. Omit for the last thing a tool showed - except a room "
+            "design_room built, which is shown only with 'room', once you have checked it. "
+            "'unchanged' keeps the screen as it was - when no result this turn is right to "
+            "show."
         ),
     )
 

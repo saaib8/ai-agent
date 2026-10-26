@@ -183,5 +183,3 @@ def _change(
         quantity_before=before,
         quantity_after=after,
     )
-
-

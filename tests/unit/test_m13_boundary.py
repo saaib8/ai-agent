@@ -127,6 +127,8 @@ def test_the_runtime_holds_only_what_it_sequences() -> None:
         "sessions",
         "settings",
         "deadline_s",
+        # A room-design turn gets the room's limit (agents.room_turn_deadline_s).
+        "room_deadline_s",
         "arabic_replies",
     ]
 

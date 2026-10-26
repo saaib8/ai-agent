@@ -1,6 +1,6 @@
 """Doubles for what the agents' services reach outside the process for.
 
-The catalog, the design specialist and the planners are faked; everything
+The catalog and the planners are faked; everything
 deterministic - taxonomy, query validation, the search runner's commit, the
 cart reducers - is real.
 """
@@ -39,7 +39,6 @@ from app.schemas.query import (
 from app.schemas.relaxation import StopReason
 from app.schemas.resolution import ProductSearchExecutionResult, ResolvedProductReference
 from app.schemas.retailer import RetailerContext
-from app.schemas.seating_solution import SeatingSolution, SeatingSolutionOutcome
 from app.services.comparison import ProductComparisonService
 from app.services.grounding_builder import to_grounded_product
 from app.services.query_understanding import QueryUnderstandingService
@@ -236,68 +235,12 @@ class FakeCapabilities:
         )
 
 
-class FakeDesign:
-    """The specialist, recording exactly what it was told."""
-
-    def __init__(self, result: Any = None, error: Exception | None = None) -> None:
-        from app.schemas.design import InteriorDesignResult
-
-        self.result = result if result is not None else InteriorDesignResult()
-        self.error = error
-        self.requests: list[Any] = []
-
-    async def plan(self, request: Any) -> Any:
-        self.requests.append(request)
-        if self.error is not None:
-            raise self.error
-        return self.result
-
-
-class FakeSeatingPlanner:
-    """Composes nothing unless a test injects the solution it expects."""
-
-    def __init__(self, solution: SeatingSolution | None = None) -> None:
-        self.solution = solution
-        self.calls: list[dict[str, Any]] = []
-
-    async def plan(
-        self,
-        *,
-        target_seats: int,
-        budget_amount: Any,
-        currency: str,
-        context: Any,
-        requirements: Any = None,
-        shape: Any = None,
-        exclude: Any = frozenset(),
-    ) -> SeatingSolution:
-        self.calls.append(
-            {
-                "target_seats": target_seats,
-                "budget_amount": budget_amount,
-                "currency": currency,
-                "context": context,
-                "requirements": requirements,
-                "shape": shape,
-                "exclude": exclude,
-            }
-        )
-        if self.solution is not None:
-            return self.solution
-        return SeatingSolution(
-            target_seats=target_seats,
-            currency=currency,
-            outcome=SeatingSolutionOutcome.NO_SEATING,
-        )
-
-
 def agent_services(
     *,
     pipeline: FakePipeline | None = None,
     hydration: FakeHydration | None = None,
     references: FakeReferences | None = None,
     capabilities: FakeCapabilities | None = None,
-    seating_planner: FakeSeatingPlanner | None = None,
     max_picks: int = 10,
     **optional: Any,
 ) -> AgentServices:
@@ -309,7 +252,6 @@ def agent_services(
     pipeline = pipeline or FakePipeline(ids=(10, 11, 12))
     hydration = hydration or FakeHydration(available=pipeline.ids)
     capabilities = capabilities or FakeCapabilities()
-    planner = seating_planner or FakeSeatingPlanner()
     return AgentServices(
         taxonomy=TAXONOMY,
         attributes=ATTRIBUTES,
@@ -325,7 +267,6 @@ def agent_services(
         comparison=cast(ProductComparisonService, FakeComparison(None)),
         similar_search=SimilarSearchBuilder(TAXONOMY, ATTRIBUTES),
         capabilities=cast(Any, capabilities),
-        seating_planner=cast(Any, planner),
         cart_operations=CartOperations(
             max_picks=max_picks, max_quantity=10, max_likes=20, check=None
         ),

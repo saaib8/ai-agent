@@ -127,15 +127,23 @@ class DimensionRelaxationChange(BaseModel):
             DimensionConstraintKind.MIN: ("original_min_cm", "applied_min_cm"),
             DimensionConstraintKind.MAX: ("original_max_cm", "applied_max_cm"),
             DimensionConstraintKind.RANGE: (
-                "original_min_cm", "original_max_cm", "applied_min_cm", "applied_max_cm",
+                "original_min_cm",
+                "original_max_cm",
+                "applied_min_cm",
+                "applied_max_cm",
             ),
             DimensionConstraintKind.TARGET: (
-                "original_target_cm", "applied_min_cm", "applied_max_cm",
+                "original_target_cm",
+                "applied_min_cm",
+                "applied_max_cm",
             ),
         }[self.kind]
         for name in (
-            "original_min_cm", "original_max_cm", "original_target_cm",
-            "applied_min_cm", "applied_max_cm",
+            "original_min_cm",
+            "original_max_cm",
+            "original_target_cm",
+            "applied_min_cm",
+            "applied_max_cm",
         ):
             value = getattr(self, name)
             if name in required and value is None:

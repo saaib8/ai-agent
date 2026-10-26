@@ -2,7 +2,7 @@
 
 Most of these tests are about what the bridge does *not* do. It copies three
 fields and calls one facade; every other piece of the design request — the
-brief, the budget, the room's measurements, the customer's colours — is
+budget, the room's measurements, the customer's colours — is
 something a careless implementation would helpfully turn into a filter, and
 each of those would silently answer a different question from the one asked.
 
@@ -20,7 +20,6 @@ from typing import Any, cast
 
 import pytest
 from app.core.exceptions import (
-    InvalidRequestError,
     UnknownCommerceSubcategoryError,
 )
 from app.schemas.design import (
@@ -174,11 +173,7 @@ def _need(
 
 def _request(**kwargs: Any) -> InteriorDesignRequest:
     kwargs.setdefault("catalog_capabilities", STOCKED)
-    return InteriorDesignRequest(
-        task=DesignTask.ROOM_PLAN,
-        design_brief="a calm living room for a family of six, no TV unit",
-        **kwargs,
-    )
+    return InteriorDesignRequest(task=DesignTask.ROOM_PLAN, **kwargs)
 
 
 async def _run(
@@ -191,22 +186,6 @@ async def _run(
         request or _request(), InteriorDesignResult(needs=needs), CONTEXT
     )
     return result, pipeline
-
-
-# ── the task boundary ───────────────────────────────────────────────────────
-
-
-async def test_general_advice_never_triggers_a_product_search() -> None:
-    """Guidance coming back is not a shopping request."""
-    pipeline = FakePipeline()
-    advice = InteriorDesignRequest(
-        task=DesignTask.GENERAL_ADVICE, question="what goes with walnut?"
-    )
-
-    with pytest.raises(InvalidRequestError):
-        await _service(pipeline).discover(advice, InteriorDesignResult(), CONTEXT)
-
-    assert pipeline.calls == []
 
 
 # ── one need, one search ────────────────────────────────────────────────────
@@ -374,9 +353,9 @@ async def test_design_preferences_reach_ranking_and_never_sql() -> None:
     assert resolved.request.styles_all_of == ()
 
 
-async def test_the_brief_is_never_reparsed_into_a_search() -> None:
-    """"No TV unit" and "a family of six" are prose the specialist already
-    turned into needs. Reading them again here would invent constraints."""
+async def test_no_constraint_is_invented_for_a_need() -> None:
+    """A need is searched as it was planned. Anything more here would invent
+    constraints."""
     _, pipeline = await _run(_need())
 
     resolved = pipeline.calls[0]
@@ -636,18 +615,17 @@ async def test_room_preferences_and_need_intent_stay_separate() -> None:
 
 
 async def test_the_query_text_is_the_field_and_never_composed_prose() -> None:
-    """Not the brief, not guidance, not a measurement, not an anchor. M12C
-    consumes the structured result only."""
-    brief = "a calm living room for a family of six, no TV unit"
-
+    """Not a measurement, not a room preference. M12C consumes the structured
+    result only."""
     _, pipeline = await _run(_need(intent="clean-lined"), request=_request())
 
     assert pipeline.calls[0].semantic_text == "clean-lined"
-    assert brief not in (pipeline.calls[0].semantic_text or "")
 
 
 def test_the_bridge_composes_no_text_of_its_own() -> None:
-    """Structural: the intent is copied, never concatenated or formatted."""
+    """Structural: the wording is the plan's (or a staged override), and a
+    designed piece's look words joined to it by one helper - nothing else
+    writes search language here (CLAUDE.md 10.1)."""
     source = (Path(__file__).parents[2] / "app/services/design_discovery.py").read_text()
     tree = ast.parse(source)
 
@@ -656,12 +634,20 @@ def test_the_bridge_composes_no_text_of_its_own() -> None:
             if node.func.id != "ResolvedSearch":
                 continue
             text = next(k for k in node.keywords if k.arg == "semantic_text")
-            # A call to the one helper that chooses between the plan's wording
-            # and a staged override. A JoinedStr, a BinOp or a .join() here
-            # would mean the bridge had started writing search language.
-            assert isinstance(text.value, ast.Call), ast.dump(text.value)
-            assert isinstance(text.value.func, ast.Name)
-            assert text.value.func.id == "_wording"
+            assert isinstance(text.value, ast.Name) and text.value.id == "wording"
+    # `wording` is only ever the plan's (`_wording`) or its look words added
+    # (`_look_words`): no JoinedStr, BinOp or .join() inline.
+    assigned = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "wording" for t in node.targets)
+    ]
+    assert assigned and all(
+        isinstance(v, ast.Call) and isinstance(v.func, ast.Name)
+        and v.func.id in {"_wording", "_look_words"}
+        for v in assigned
+    )
 
 
 # ── the M9 seam ─────────────────────────────────────────────────────────────

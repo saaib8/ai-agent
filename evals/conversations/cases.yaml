@@ -42,6 +42,8 @@
 #   combination_excludes: key  no combination uses this subcategory
 #   room_locked: N        the room holds exactly N locked pieces (the customer's picks)
 #   room_type_max: {type: N}  the room holds at most N of each listed type
+#   room_shown            the room package is on screen
+#   room_spend_min_percent: P  the room uses at least P% of its budget, never over it
 #
 # Product discovery (question card, picks, cross-sell, comparison):
 #   card: true|false      a question card is (not) asked before searching
@@ -374,7 +376,36 @@ cases:
     turns: ["a beige sofa for 8 people under 5000 SAR", "separate sofas please", "I don't like the second option"]
     checks: {not_fallback: true, min_combinations: 2, drops_previous_combination: 2}
 
-  # ── a room of chosen pieces: one question per turn, then the room ────────────
+  # ── Nora designs the room (agentic whole-room flow) ─────────────────────────
+  - id: room_designed_spends_the_budget
+    issue: "agentic room: a 40,000 SAR living room uses most of its budget, not a third"
+    turns:
+      - "Design my living room: it is 5 by 4 metres, budget 40000 SAR, 5 people usually sit there, I like beige and olive, modern style"
+      - "Just design it with what you know."
+    checks: {not_fallback: true, room_shown: true, max_products: 0, room_spend_min_percent: 80, room_has: [carpet]}
+
+  - id: room_designed_small_budget_stays_within
+    issue: "agentic room: a 15,000 SAR living room never goes over and still holds its main pieces"
+    turns:
+      - "Design my living room: it is 5 by 4 metres, budget 15000 SAR, 5 people, beige and olive, modern"
+      - "Just design it with what you know."
+    checks: {not_fallback: true, room_shown: true, room_spend_min_percent: 70}
+
+  - id: room_designed_bedroom
+    issue: "agentic room: a bedroom is designed from the shelf, generic across rooms"
+    turns:
+      - "Design my bedroom: 4 by 4 metres, budget 12000 SAR, grey and white, minimalist"
+      - "Just design it with what you know."
+    checks: {not_fallback: true, room_shown: true, room_has: [bed], room_spend_min_percent: 70}
+
+  - id: room_size_asked_once_then_built
+    issue: "agentic room: size unknown - asked once with why, then built when they decline"
+    turns:
+      - "Design my living room, budget 20000 SAR, 4 people, warm neutral colours"
+      - "I'd rather not say the size, just design it"
+    checks: {not_fallback: true, room_shown: true, room_spend_min_percent: 70}
+
+  # ── a room of chosen pieces (retired flow: piece chips are no longer drawn) ──
   - id: room_asks_budget_first
     issue: "room questions: budget first, nothing built yet"
     turns: ["I want to design my living room"]

@@ -51,9 +51,7 @@ _PREFERENCE_STRENGTH = ConstraintStrength.PREFERRED
 class SimilarSearchBuilder:
     """A verified product -> a new-task search for others like it."""
 
-    def __init__(
-        self, taxonomy: CommerceTaxonomy, attributes: CatalogAttributes
-    ) -> None:
+    def __init__(self, taxonomy: CommerceTaxonomy, attributes: CatalogAttributes) -> None:
         self._taxonomy = taxonomy
         self._attributes = attributes
 
@@ -64,16 +62,12 @@ class SimilarSearchBuilder:
             # No reviewed classification, so there is nothing to search for.
             # Deriving one from the name is exactly what this service must not
             # do (CLAUDE.md 6.1).
-            return SimilarSearchUnavailable(
-                reason=SimilarSearchFailureReason.NO_COMMERCE_CATEGORY
-            )
+            return SimilarSearchUnavailable(reason=SimilarSearchFailureReason.NO_COMMERCE_CATEGORY)
         if not self._taxonomy.is_category(category):
             return SimilarSearchUnavailable(
                 reason=SimilarSearchFailureReason.UNAPPROVED_COMMERCE_CATEGORY
             )
-        if subcategory is not None and not self._taxonomy.is_pair(
-            category, subcategory
-        ):
+        if subcategory is not None and not self._taxonomy.is_pair(category, subcategory):
             # A stale classification must not become a search filter.
             return SimilarSearchUnavailable(
                 reason=SimilarSearchFailureReason.UNAPPROVED_COMMERCE_SUBCATEGORY
@@ -84,9 +78,7 @@ class SimilarSearchBuilder:
             commerce_category=category,
             commerce_subcategory=subcategory,
             seating_capacity=(
-                SeatingCapacityConstraint.exactly(capacity)
-                if capacity is not None
-                else None
+                SeatingCapacityConstraint.exactly(capacity) if capacity is not None else None
             ),
             # The one product this search must not return.
             exclude_product_ids=(product.product_id,),
@@ -115,9 +107,7 @@ class SimilarSearchBuilder:
             reference_product_id=product.product_id,
         )
 
-    def _preferences(
-        self, product: ProductCandidate
-    ) -> tuple[SemanticPreference, ...]:
+    def _preferences(self, product: ProductCandidate) -> tuple[SemanticPreference, ...]:
         return leanings_of(product, self._attributes)
 
 

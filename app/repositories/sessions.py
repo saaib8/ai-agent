@@ -58,6 +58,10 @@ them has to be missed.
 
 SHOPPER_CART_KEY_TEMPLATE = "zory:store:{store_id}:shopper:{shopper}:cart"
 
+CATALOG_OVERVIEW_KEY_TEMPLATE = "zory:store:{store_id}:catalog_overview:{taxonomy_version}"
+"""The store's shelf summary (`repositories/catalog_cache.py`): keyed by store
+like every key here, so one shop's summary is never read for another."""
+
 _SHOPPER = re.compile(r"\A([0-9a-f]{16})\.")
 """The shopper the platform names at the front of every conversation id it
 sends: the first sixteen hex characters of the shopper's own opaque key, a dot,
@@ -83,6 +87,12 @@ def session_key(store_id: int, session_id: str) -> str:
             session_id_length=len(session_id),
         )
     return KEY_TEMPLATE.format(store_id=store_id, session_id=session_id)
+
+
+def catalog_overview_key(store_id: int, taxonomy_version: str) -> str:
+    return CATALOG_OVERVIEW_KEY_TEMPLATE.format(
+        store_id=store_id, taxonomy_version=taxonomy_version
+    )
 
 
 class SessionStore:

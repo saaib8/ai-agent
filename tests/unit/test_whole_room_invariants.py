@@ -18,15 +18,103 @@ from typing import Any
 
 import pytest
 from app.schemas.acquisition import BundleAcquisition
+from app.schemas.agent_state import AgentStateV1, BundleItemStatus, RoomProjectState
+from app.schemas.agent_updates import (
+    AgentStateUpdate,
+    DesignNeedSpec,
+    PlannedBundleLineSpec,
+    ReplaceDesignPlan,
+    RoomProjectUpdate,
+)
 from app.schemas.bundle import TotalUnavailableReason
+from app.schemas.design import DesignPriority
+from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.discovery import PriceConstraint
+from app.schemas.product import CommerceClassification, ProductCandidate
 from app.schemas.resolution import (
     BundleReferenceUnresolved,
 )
+from app.services.agent_state import apply_update
 from app.services.bundle_money import SpendLine, new_spend
 from app.services.bundle_presentation import build_state_bundle_presentation
 
-from tests.unit.test_design_revision import a_room, line, need, product, room
+# Room-state builders, shared with test_product_display (their old home,
+# test_design_revision, went with the design specialist).
+
+
+def product(
+    product_id: int,
+    *,
+    category: str = "seating",
+    subcategory: str | None = "sofa",
+    price: str = "1000.00",
+) -> ProductCandidate:
+    return ProductCandidate(
+        product_id=product_id,
+        name_english=f"Item {product_id}",
+        name_arabic="منتج",
+        price_amount=Decimal(price),
+        price_unit="SAR",
+        image_url=f"https://example.test/{product_id}.jpg",
+        product_url=f"https://example.test/{product_id}",
+        commerce=CommerceClassification(category=category, subcategory=subcategory),
+        dimensions=NormalisedDimensions(status=DimensionStatus.ABSENT),
+        main_color="Beige",
+        styles=("Modern",),
+    )
+
+
+def need(
+    category: str = "seating",
+    subcategory: str | None = "sofa",
+    *,
+    priority: DesignPriority = DesignPriority.REQUIRED,
+    quantity: int = 1,
+    intent: str | None = None,
+) -> DesignNeedSpec:
+    return DesignNeedSpec(
+        commerce_category=category,
+        commerce_subcategory=subcategory,
+        priority=priority,
+        quantity=quantity,
+        semantic_intent=intent,
+    )
+
+
+def line(
+    product_id: int, *, need_index: int | None = 0, locked: bool = False
+) -> PlannedBundleLineSpec:
+    return PlannedBundleLineSpec(
+        product_id=product_id,
+        quantity=1,
+        acquisition=BundleAcquisition.TO_BUY,
+        status=BundleItemStatus.LOCKED if locked else BundleItemStatus.SUGGESTED,
+        need_index=need_index,
+    )
+
+
+def a_room(
+    *,
+    needs: tuple[DesignNeedSpec, ...] = (),
+    lines: tuple[PlannedBundleLineSpec, ...] = (),
+    budget: str | None = None,
+) -> AgentStateV1:
+    return apply_update(
+        AgentStateV1(),
+        AgentStateUpdate(
+            room_project=RoomProjectUpdate(
+                budget=PriceConstraint.at_most(Decimal(budget), "SAR") if budget else None,
+                bundle_operations=(ReplaceDesignPlan(needs=needs, added=lines),),
+            )
+        ),
+    )
+
+
+def room(state: AgentStateV1) -> RoomProjectState:
+    project = state.room_project
+    assert isinstance(project, RoomProjectState)
+    return project
+
 
 # ── identity is never handed out twice (M12F 8) ═════════════════════════════
 

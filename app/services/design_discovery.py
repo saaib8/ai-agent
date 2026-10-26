@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
+from decimal import Decimal
 
 from app.core.exceptions import InvalidRequestError, UnknownCommerceCategoryError
 from app.core.logging import get_logger
@@ -40,10 +41,18 @@ from app.schemas.design_discovery import (
 )
 from app.schemas.design_override import DesignNeedSearchOverride
 from app.schemas.discovery import ProductSearchRequest, SeatingCapacityConstraint
-from app.schemas.query import ConstraintSemantics, ConstraintStrength, ResolvedSearch
+from app.schemas.product import ProductCandidate
+from app.schemas.query import (
+    ConstraintSemantics,
+    ConstraintStrength,
+    RankingLean,
+    ResolvedSearch,
+)
 from app.schemas.refinement import SemanticIntentOp
+from app.schemas.resolution import CandidatePoolResult, RankedProductCandidate
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.services.search_pipeline import ProductSearchPipeline
+from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.seating import SeatingSemantics
 
@@ -58,6 +67,7 @@ class DesignDiscoveryService:
         pipeline: ProductSearchPipeline,
         taxonomy: CommerceTaxonomy,
         seating: SeatingSemantics | None = None,
+        attributes: CatalogAttributes | None = None,
     ) -> None:
         self._pipeline = pipeline
         self._taxonomy = taxonomy
@@ -65,6 +75,9 @@ class DesignDiscoveryService:
         """Reviewed seat counts. A one-seat type never carries a seat filter:
         the catalog records no capacity for chairs, so one could only hide them
         all (CLAUDE.md 7)."""
+        self._attributes = attributes
+        """Reads a product's stored colour and styles as approved values, for
+        what a designed piece should avoid."""
 
     async def discover(
         self,
@@ -169,15 +182,90 @@ class DesignDiscoveryService:
             # alternatives, so there is nothing to search: the pool is that one
             # product, or empty if the catalog no longer carries it. Verifying it
             # belongs to this need happened before the override was built.
-            pool = await self._pipeline.execute_forced_pool(
-                override.forced_product_id, context
-            )
+            pool = await self._pipeline.execute_forced_pool(override.forced_product_id, context)
             return DesignNeedCandidates(need_index=index, need=need, pool=pool)
 
         pool = await self._pipeline.execute_candidate_pool(
             self._resolve(need, request, override), context
         )
-        return DesignNeedCandidates(need_index=index, need=need, pool=pool)
+        if need.design is None:
+            return DesignNeedCandidates(need_index=index, need=need, pool=pool)
+        return self._designed(index, need, pool, request)
+
+    def _designed(
+        self,
+        index: int,
+        need: DesignCategoryNeed,
+        pool: CandidatePoolResult,
+        request: InteriorDesignRequest,
+    ) -> DesignNeedCandidates:
+        """A designed piece's candidates, in the order the room is chosen from.
+
+        Nothing is left out here: whether a piece suits the room is Nora's
+        judgement, made when she reviews it (CLAUDE.md 10.1). The tier holds
+        only facts about what the piece was designed to be - a type that seats
+        where its types seat differently, its size in her range, nothing she
+        said to avoid, then the type she listed first - and the pool's own
+        order (relaxation depth, then the look by meaning) decides within it.
+        Colour and style are never compared by stored name here: they reach
+        the ranking as wording, so a Sage rug can serve an olive palette.
+        """
+        design = need.design
+        assert design is not None
+        types = (need.commerce_subcategory, *design.alternatives)
+        mixed_seats = self._seating is not None and (
+            len({self._seating.counts_as_seats(t) for t in types}) > 1
+        )
+        kept: list[tuple[tuple[int, ...], int, RankedProductCandidate]] = []
+        for position, candidate in enumerate(pool.candidates):
+            product = candidate.product
+            colour = self._canonical(AttributeFamily.COLOR, product.main_color)
+            own_styles = {
+                s for s in (self._canonical(AttributeFamily.STYLE, v) for v in product.styles) if s
+            }
+            kind = product.commerce.subcategory
+            # The first three are the piece's standing: share spending never
+            # moves a piece out of it (`bundle_optimizer._ATTRIBUTES`).
+            tier = (
+                int(mixed_seats and not self._counts(kind)),
+                max(
+                    _size_tier(_longer_side(product), design.longer_min_cm, design.longer_max_cm),
+                    _size_tier(
+                        _shorter_side(product), design.shorter_min_cm, design.shorter_max_cm
+                    ),
+                ),
+                int(
+                    (colour is not None and colour in design.avoid_colours)
+                    or bool(own_styles & set(design.avoid_styles))
+                ),
+                types.index(kind) if kind in types else len(types),
+                candidate.relaxation_depth,
+            )
+            kept.append((tier, position, candidate))
+        kept.sort(key=lambda entry: (entry[0], entry[1]))
+        return DesignNeedCandidates(
+            need_index=index,
+            need=need,
+            pool=pool.model_copy(update={"candidates": tuple(c for _, _, c in kept)}),
+            tiers=tuple(t for t, _, _ in kept),
+        )
+
+    def _counts(self, kind: str | None) -> bool:
+        return self._seating is None or self._seating.counts_as_seats(kind)
+
+    def _palette(self, request: InteriorDesignRequest, family: AttributeFamily) -> tuple[str, ...]:
+        return tuple(
+            p.canonical_value
+            for p in request.design_preferences
+            if p.family is family and p.canonical_value is not None
+        )
+
+    def _canonical(self, family: AttributeFamily, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if self._attributes is None:
+            return value
+        return self._attributes.canonical(family, value)
 
     def _capacity(self, need: DesignCategoryNeed) -> SeatingCapacityConstraint | None:
         """The need's seat filter - none for a type that seats one by nature,
@@ -233,10 +321,32 @@ class DesignDiscoveryService:
         specialist already did that reasoning, and re-reading its prose here
         would be this service interpreting language.
         """
+        design = need.design
+        preferences = request.design_preferences
+        wording = _wording(need, override)
+        lean: RankingLean | None = None
+        if design is not None:
+            # A designed piece's look - its own colours and styles, else the
+            # room's palette - is wording, ranked by meaning; never a stored
+            # name matched first (CLAUDE.md 10.1). Sara's searches keep 16.1.
+            colours = design.colours or self._palette(request, AttributeFamily.COLOR)
+            styles = design.styles or self._palette(request, AttributeFamily.STYLE)
+            wording = _look_words(colours, styles, wording)
+            preferences = ()
+            if design.avoid_colours or design.avoid_styles or design.size_target_cm():
+                target = design.size_target_cm()
+                lean = RankingLean(
+                    avoid_colours=design.avoid_colours,
+                    avoid_styles=design.avoid_styles,
+                    size_target_cm=Decimal(target) if target is not None else None,
+                )
         return ResolvedSearch(
             request=ProductSearchRequest(
                 commerce_category=need.commerce_category,
                 commerce_subcategory=need.commerce_subcategory,
+                # Every type the piece may be, searched together - the same
+                # seat rule applies to them alike (checked when designed).
+                alongside_subcategories=design.alternatives if design is not None else (),
                 seating_capacity=self._capacity(need),
                 # Both come from the application: a price derived from the
                 # product being replaced, and products the customer already
@@ -249,11 +359,42 @@ class DesignDiscoveryService:
             # Colour and style the customer leaned towards, reaching ranking
             # and never SQL. Filtering on them would hide products they never
             # ruled out (CLAUDE.md 12.4).
-            semantic_preferences=request.design_preferences,
+            semantic_preferences=preferences,
+            lean=lean,
             # This piece's design character, for the query embedding alone. It
             # reaches no filter, no bound and no relaxation policy.
-            semantic_text=_wording(need, override),
+            semantic_text=wording,
         )
+
+
+def _look_words(colours: tuple[str, ...], styles: tuple[str, ...], feel: str | None) -> str | None:
+    """A designed piece's look as search wording: its colours, its styles and
+    its feel, in plain words ("Olive Beige Modern Classic, soft and low")."""
+    words = [*colours, *(s.replace("_", " ") for s in styles)]
+    look = " ".join(words)
+    joined = ", ".join(part for part in (look, feel) if part)
+    return joined or None
+
+
+def _longer_side(product: ProductCandidate) -> Decimal | None:
+    sides = [v for v in (product.dimensions.length_cm, product.dimensions.width_cm) if v]
+    return max(sides) if sides else None
+
+
+def _shorter_side(product: ProductCandidate) -> Decimal | None:
+    sides = [v for v in (product.dimensions.length_cm, product.dimensions.width_cm) if v]
+    return min(sides) if len(sides) == 2 else None
+
+
+def _size_tier(longer: Decimal | None, low: int | None, high: int | None) -> int:
+    """In the designed range, then not listed, then outside it."""
+    if low is None and high is None:
+        return 0
+    if longer is None:
+        return 1
+    if (low is not None and longer < low) or (high is not None and longer > high):
+        return 2
+    return 0
 
 
 def _semantics_for(

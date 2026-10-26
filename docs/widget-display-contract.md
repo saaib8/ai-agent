@@ -133,6 +133,21 @@ Arabic lines that start with a number ("950 ريال للقطعة") need right-t
 direction to read in order - render text with `dir="auto"` (or `rtl` in an Arabic
 layout).
 
+### 4.1 A room piece's options: "Use this", never "Add to cart"
+
+When the cards are the alternatives for one piece of the room, the
+presentation says so: `product_source: "room_options"` and `options_for_piece`
+(the piece, by its card's place in the room package). Draw each card with one
+action, the `swap` label ("Use this"): it sends `bundle_action`
+`{"kind": "swap", "bundle_ordinal": options_for_piece, "alternative_ordinal": <the
+card's place>}` with `say_use_option` as the message. Do not offer Select / Add to
+cart or Like on these cards: the option replaces the piece in the room, and
+`POST /v1/picks` refuses a tick on them (`pick_unavailable`, reason
+`room_option`).
+
+A room just designed is drawn only once the agent has checked it - a reply
+may describe a room before its package appears on a later reply.
+
 ## 5. Furniture Finder runs as the shopper
 
 `POST /v1/furniture-finder/photos` and `POST /v1/furniture-finder/picks` keep their

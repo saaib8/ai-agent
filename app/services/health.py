@@ -40,6 +40,4 @@ class HealthService:
             "postgres": DependencyStatus.UP if postgres_ok else DependencyStatus.DOWN,
             "redis": DependencyStatus.UP if redis_ok else DependencyStatus.DOWN,
         }
-        return HealthReport(
-            healthy=postgres_ok and redis_ok, dependencies=dependencies
-        )
+        return HealthReport(healthy=postgres_ok and redis_ok, dependencies=dependencies)

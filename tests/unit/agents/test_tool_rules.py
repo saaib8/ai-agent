@@ -382,24 +382,38 @@ def test_a_search_that_cannot_run_says_what_would_settle_it() -> None:
 
 
 async def test_what_goes_with_lists_kinds_until_one_is_chosen() -> None:
+    from app.taxonomy.complements import load_complements
+
+    from tests.unit.agents.fakes import TAXONOMY, FakeCapabilities
+
     pipeline = FakePipeline(ids=(10, 11))
     services = agent_services(
         pipeline=pipeline,
         hydration=FakeHydration(available=(OFF_SCREEN, 10, 11)),
+        capabilities=FakeCapabilities(pairs=(("seating", "sofa"), ("decor", "carpet"))),
         companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
     )
     which = {"which": {"kind": "picked_ordinal", "position": 1}}
 
     listed = await _call("what_goes_with", which, _state(), services=services)
     shown = await _call(
+        "what_goes_with", {**which, "show_kind": "carpet"}, _state(), services=services
+    )
+    same = await _call(
         "what_goes_with", {**which, "show_kind": "sofa"}, _state(), services=services
     )
     refused = await _call(
         "what_goes_with", {**which, "show_kind": "chandelier"}, _state(), services=services
     )
 
-    assert listed.payload is None and "kinds" in listed.facts and not pipeline.calls[:-1]
-    assert shown.payload is not None and shown.facts["shown_kind"] == "sofa"
+    # The reviewed pairings the store stocks, marked; never the piece's own kind.
+    assert listed.payload is None and not pipeline.calls[:-1]
+    assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
+    assert "store_shelf" in listed.facts["other_kinds"]
+    assert shown.payload is not None and shown.facts["shown_kind"] == "carpet"
+    assert same.code == "same_kind_as_the_piece"
+    assert same.facts["use_instead"] == "more_like_this"
     assert refused.code == "kind_not_stocked"
 
 

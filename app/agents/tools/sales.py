@@ -1,7 +1,7 @@
 """Salman's tools: what goes with a pick, and the room into the cart.
 
-What goes with a piece is the design specialist's judgement over what the
-store stocks; the products shown are a real search. Nothing here is "usually
+What goes with a piece is Salman's choice among what the store stocks, the
+reviewed pairings marked; the products shown are a real search. Nothing here is "usually
 bought together": the store records no such thing.
 """
 
@@ -27,12 +27,11 @@ from app.agents.tools.shopping import (
     search_outcome,
 )
 from app.agents.work import ToolStatus, TurnWork
-from app.core.exceptions import IntegrationUnavailableError, LLMResponseInvalidError
+from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import MAX_FINISHED_ROOMS
-from app.schemas.design import DesignTask, InteriorDesignRequest
 from app.schemas.retailer import RetailerCatalogCapabilities
-from app.services.design_facts import project_anchors
+from app.services.design_checks import not_the_anchors_kind
 from app.services.room_cart import finished
 from app.taxonomy.complements import Companion
 from app.taxonomy.words import customer_words
@@ -66,23 +65,27 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
         if not products:
             return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
         anchor = products[0]
+        anchor_kinds = (anchor.commerce.subcategory,)
         try:
             capabilities = await services.capabilities.capabilities(context.retailer)
         except IntegrationUnavailableError:
             return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
         if args.show_kind is None:
-            # The kinds that could go with it - the designer's and the reviewed
-            # pairings - with what the store holds of each. Which to show is
-            # the agent's choice.
-            designed, reviewed = await _companion_kinds(services, products, context, work)
-            suggested = {k.commerce_subcategory for k in designed}
-            # In stock only, the most stocked first - never a count, which
-            # would read as the shop's stock (CLAUDE.md 10.12).
+            # Every kind the store stocks may go with it; the reviewed pairings
+            # are marked, the most stocked first - never a count, which would
+            # read as the shop's stock (CLAUDE.md 10.12). Which to show is the
+            # agent's choice.
+            reviewed = (
+                list(services.complements.for_type(anchor.commerce.subcategory))
+                if services.complements
+                else []
+            )
             stocked = sorted(
                 (
                     (count, kind)
-                    for kind in _unique((*designed, *reviewed))
-                    if (
+                    for kind in _unique(reviewed)
+                    if not_the_anchors_kind(kind.commerce_subcategory, anchor_kinds)
+                    and (
                         count := capabilities.product_count(
                             kind.commerce_category, kind.commerce_subcategory
                         )
@@ -95,17 +98,23 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                     "kind": kind.commerce_subcategory,
                     "label": kind.label,
                     **({"label_ar": kind.label_ar} if kind.label_ar else {}),
-                    **(
-                        {"designer_suggests": True}
-                        if kind.commerce_subcategory in suggested
-                        else {}
-                    ),
                 }
                 for _, kind in stocked
             ]
             return ToolOutcome(
                 code=None if kinds else "nothing_to_suggest",
-                facts={"goes_with": product_facts(anchor, None), "kinds": kinds},
+                facts={
+                    "goes_with": product_facts(anchor, None),
+                    "kinds": kinds,
+                    "other_kinds": "store_shelf lists every other kind the store stocks",
+                },
+            )
+        if not not_the_anchors_kind(args.show_kind, anchor_kinds):
+            # Another of its own kind is a similar-product search, not a pairing.
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="same_kind_as_the_piece",
+                facts={"use_instead": "more_like_this"},
             )
         kind = _stocked_kind(services, capabilities, args.show_kind)
         if kind is None:
@@ -123,10 +132,10 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
     return ZoryTool(
         name="what_goes_with",
         description=(
-            "What goes with a piece they chose. Without show_kind: the kinds in stock that "
-            "could go with it, the designer's suggestions marked, the most stocked first - "
-            "you choose which suits it best. With show_kind: products of that kind, leaning "
-            "to the piece's look."
+            "What goes with a piece they chose. Without show_kind: the reviewed pairings the "
+            "store stocks, the most stocked first - you choose which suits it best, or "
+            "another kind store_shelf lists. With show_kind: products of that kind, leaning "
+            "to the piece's look. Never its own kind (that is more_like_this)."
         ),
         args=GoesWithArgs,
         owners=SALMAN,
@@ -165,54 +174,6 @@ def _stocked_kind(
         commerce_subcategory=subcategory,
         label=customer_words(subcategory),
     )
-
-
-async def _companion_kinds(
-    services: AgentServices, products: Any, context: ToolContext, work: TurnWork
-) -> tuple[list[Companion], list[Companion]]:
-    """The designer's kinds for the piece, and its reviewed pairings."""
-    anchor = products[0]
-    reviewed = (
-        list(services.complements.for_type(anchor.commerce.subcategory))
-        if services.complements
-        else []
-    )
-    designed: list[Companion] = []
-    if services.design is not None:
-        try:
-            capabilities = await services.capabilities.capabilities(context.retailer)
-            room = work.staged.room_project
-            result = await services.design.plan(
-                InteriorDesignRequest(
-                    task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
-                    room_type=room.room_type if room else None,
-                    catalog_capabilities=capabilities,
-                    anchors=project_anchors(
-                        products,
-                        dimensions=services.dimensions,
-                        locked_product_ids=[p.product_id for p in products],
-                        quantities={p.product_id: 1 for p in products},
-                    ),
-                )
-            )
-            for need in result.needs:
-                if need.commerce_subcategory is None:
-                    continue
-                known = next(
-                    (c for c in reviewed if c.commerce_subcategory == need.commerce_subcategory),
-                    None,
-                )
-                designed.append(
-                    known
-                    or Companion(
-                        commerce_category=need.commerce_category,
-                        commerce_subcategory=need.commerce_subcategory,
-                        label=need.commerce_subcategory.replace("-", " "),
-                    )
-                )
-        except (LLMResponseInvalidError, IntegrationUnavailableError):
-            designed = []
-    return designed, reviewed
 
 
 def room_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
@@ -256,13 +217,12 @@ def finish_room_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
         state = work.staged.model_copy(
             update={"room_project": None, "finished_rooms": rooms, "swap_budget_offer": None}
         )
-        designed = {room.room_kind for room in rooms}
-        kinds = context.services.room_pieces.kinds if context.services.room_pieces else ()
+        # Which room comes next is theirs to say, asked in the agent's words -
+        # any room, not a list the registry knows.
         return ToolOutcome(
             facts={
                 "finished": done.room_words,
-                # The rooms the store's planner knows, less those they finished.
-                "rooms_to_design_next": [customer_words(k) for k in kinds if k not in designed],
+                "rooms_finished": [room.room_words for room in rooms],
             },
             state=state,
         )

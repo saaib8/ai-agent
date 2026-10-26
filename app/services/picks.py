@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from app.agents.operations.rooms import open_room_options
 from app.core.config import CustomerAgentSettings
 from app.core.exceptions import (
     CartQuantityError,
@@ -252,6 +253,15 @@ class PicksRuntime:
             return await self._liked_changed(request.action, state, context)
         match request.action:
             case SelectPickAction(ordinal=ordinal, list_revision=list_revision):
+                if open_room_options(state) is not None:
+                    # A room piece's options go into the room, not the cart.
+                    raise PickUnavailableError(
+                        public_message=(
+                            "These are options for a piece of your room - choose "
+                            "'Use this' to put one in the room."
+                        ),
+                        reason="room_option",
+                    )
                 outcome = await self._references.resolve_on_list(
                     ordinal, list_revision, state, context
                 )

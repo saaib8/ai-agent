@@ -60,7 +60,6 @@ class EligibleProduct(BaseModel):
     """Colour and style tokens, so ranking can put the products that match what
     the customer is drawn to first. Facts from the row, never inferred."""
 
-
     seating_capacity: int | None = None
     """The recorded seat count, or ``None`` when the catalog has none - never
     filled in here. A seating combination groups a type's products by it."""

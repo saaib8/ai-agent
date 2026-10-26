@@ -1,8 +1,8 @@
 """What M12A built, and the authority line every M12 contract answers to.
 
-The design specialist is internal. It reasons about rooms and never about
-identity: it cannot name a product, cannot see a store, and cannot reach the
-state it is reasoning from. These guards are the same recursive walk the
+A room's design reasons about rooms and never about identity: Nora's
+per-piece decisions cannot name a product, cannot see a store, and cannot
+reach the state they are reasoning from. These guards are the same recursive walk the
 customer-agent contracts get, applied to the design boundary — one authority
 policy, not a second weaker one for the new agent.
 """
@@ -10,16 +10,15 @@ policy, not a second weaker one for the new agent.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
 from app.schemas.design import (
-    AnchorProduct,
     InteriorDesignRequest,
     InteriorDesignResult,
+    PieceDesign,
 )
-from app.schemas.geometry import MeasurementAuthority, RoomGeometry
+from app.schemas.geometry import RoomGeometry
 from pydantic import BaseModel
 
 APP = Path(__file__).parents[2] / "app"
@@ -27,14 +26,13 @@ APP = Path(__file__).parents[2] / "app"
 MODEL_FACING_M12 = (
     InteriorDesignRequest,
     InteriorDesignResult,
-    AnchorProduct,
+    PieceDesign,  # Nora's per-piece decisions replaced the specialist's anchors
     RoomGeometry,
 )
 
 BUILT_IN_12A = {
     "app/schemas/geometry.py": "class RoomGeometry",
-    "app/schemas/design.py": "class AnchorProduct",
-    "app/services/design_facts.py": "def project_anchor",
+    "app/schemas/design.py": "class PieceDesign",
     "app/services/catalog_capability.py": "class CatalogCapabilityService",
 }
 
@@ -83,22 +81,6 @@ def test_this_phase_built_what_it_said(path: str, symbol: str) -> None:
 def test_bundle_refinement_does_not_exist_yet(symbol: str) -> None:
     for module in APP.rglob("*.py"):
         assert symbol not in module.read_text(), f"{module.name} defines {symbol}"
-
-
-def test_the_design_model_is_its_own_setting() -> None:
-    """M12B added it in its own block, not as another customer-agent field:
-    it is a different agent."""
-    from app.core.config import CustomerAgentSettings, InteriorDesignSettings
-
-    assert "model" in InteriorDesignSettings.model_fields
-    assert InteriorDesignSettings().model is None
-    assert "interior_design" not in str(CustomerAgentSettings.model_fields)
-
-
-def test_the_design_prompt_is_versioned() -> None:
-    from app.prompts.interior_design.v1 import VERSION
-
-    assert VERSION == "interior_design/v8"
 
 
 # ── the authority line ──────────────────────────────────────────────────────
@@ -157,30 +139,13 @@ def test_the_design_request_cannot_carry_retailer_scope() -> None:
     assert "store_id" not in InteriorDesignRequest.model_fields
 
 
-def test_the_three_numeric_authorities_are_visible_in_the_type_graph() -> None:
-    """A room measurement, a product dimension and a spacing convention must
-    stay distinguishable all the way to the response layer."""
-    from app.schemas.design import AnchorDimension, GuidanceMeasurement
-    from app.schemas.geometry import RoomMeasurement
-
-    fixed = {
-        RoomMeasurement: MeasurementAuthority.USER_PROVIDED,
-        AnchorDimension: MeasurementAuthority.CATALOG_VERIFIED,
-        GuidanceMeasurement: MeasurementAuthority.GENERAL_GUIDANCE,
-    }
-
-    for model, authority in fixed.items():
-        annotation = str(model.model_fields["authority"].annotation)  # type: ignore[attr-defined]
-        assert authority.name in annotation or authority.value in annotation
-
-
 def test_each_measurement_type_fixes_its_own_authority() -> None:
     """A `Literal`, so a measurement cannot be built with the wrong
     provenance — the tag is not a field anyone remembers to set."""
-    from app.schemas.design import AnchorDimension, GuidanceMeasurement
     from app.schemas.geometry import RoomMeasurement
 
-    for model in (RoomMeasurement, AnchorDimension, GuidanceMeasurement):
+    # The anchor and guidance measurements went with the design specialist.
+    for model in (RoomMeasurement,):
         annotation = str(model.model_fields["authority"].annotation)
         assert "Literal" in annotation, model.__name__
 
@@ -191,7 +156,7 @@ def test_each_measurement_type_fixes_its_own_authority() -> None:
 
 
 @pytest.mark.parametrize(
-    "module", ["services/design_facts.py", "services/catalog_capability.py"]
+    "module", ["services/room_design.py", "services/catalog_capability.py"]
 )
 def test_the_m12a_services_consult_no_model(module: str) -> None:
     source = (APP / module).read_text()
@@ -202,15 +167,6 @@ def test_the_m12a_services_consult_no_model(module: str) -> None:
 
     assert not any("llm" in name or "prompt" in name for name in imported)
     for forbidden in ("StructuredLLMClient", "parse(", "instructions"):
-        assert forbidden not in source, forbidden
-
-
-def test_the_anchor_projector_is_pure() -> None:
-    source = (APP / "services/design_facts.py").read_text()
-    tree = ast.parse(source)
-
-    assert not any(isinstance(node, ast.Await) for node in ast.walk(tree))
-    for forbidden in ("Repository", "RetailerContext", "datetime", "random"):
         assert forbidden not in source, forbidden
 
 
@@ -233,7 +189,6 @@ def test_the_design_foundations_hold_no_room_composition_table() -> None:
     }
 
     for module in (
-        APP / "services/design_facts.py",
         APP / "services/catalog_capability.py",
         APP / "schemas/design.py",
         APP / "schemas/geometry.py",
@@ -265,108 +220,26 @@ def _data_literals(module: Path) -> set[str]:
     }
 
 
-# ── the design specialist, added by M12B ────────────────────────────────────
-
-
-def test_the_design_agent_is_wired_lazily() -> None:
-    from app.api.dependencies import interior_design_agent
-
-    assert callable(interior_design_agent)
-
-
-def test_requesting_the_specialist_unconfigured_fails_typed() -> None:
-    from app.api.dependencies import interior_design_agent
-    from app.core.exceptions import ConfigurationError
-
-    from tests.conftest import build_settings
-
-    resources = type("R", (), {"settings": build_settings(), "design_llm": None})()
-
-    with pytest.raises(ConfigurationError, match=re.escape("interior_design.model")):
-        interior_design_agent(resources)
-
-
-def test_the_unconfigured_design_failure_says_nothing_internal() -> None:
-    from app.api.dependencies import interior_design_agent
-    from app.core.exceptions import ConfigurationError
-
-    from tests.conftest import build_settings
-
-    resources = type("R", (), {"settings": build_settings(), "design_llm": None})()
-
-    with pytest.raises(ConfigurationError) as caught:
-        interior_design_agent(resources)
-
-    assert "openai" not in caught.value.public_message.lower()
-    assert "model" not in caught.value.public_message.lower()
-
-
-@pytest.mark.parametrize(
-    "borrowed", ["llm.model", "decision_model", "response_model"]
-)
-@pytest.mark.parametrize(
-    "factory", ["optional_interior_design_agent", "interior_design_agent"]
-)
-def test_the_design_model_is_never_borrowed(borrowed: str, factory: str) -> None:
-    """Four agents, four prompts, four identifiers.
-
-    Both factories, since M12E-2.1: the optional one reads the client and the
-    required one wraps it, and either could start borrowing.
-    """
-    dependencies = (APP / "api/dependencies.py").read_text()
-    source = dependencies.split(f"def {factory}")[1].split("\ndef ")[0]
-
-    assert borrowed not in source
-
-
-def test_the_design_agent_is_built_from_its_own_client_in_one_place() -> None:
-    """One construction site, so there is nowhere a second client could be
-    invented for it."""
-    dependencies = (APP / "api/dependencies.py").read_text()
-
-    assert dependencies.count("InteriorDesignAgent(") == 1
-    assert "design_llm" in dependencies.split("def optional_interior_design_agent")[1]
-
-
-def test_a_commerce_turn_does_not_require_the_design_capability() -> None:
-    """M12B made the specialist optional. Agent services that demanded it
-    would have taken ordinary search and comparison down with it."""
-    dependencies = (APP / "api/dependencies.py").read_text()
-    factory = dependencies.split("def agent_services")[1].split("\ndef ")[0]
-
-    assert "optional_interior_design_agent(" in factory
-    # Word-boundary, because the optional factory's name ends with the
-    # required one's.
-    assert not re.search(r"(?<![_\w])interior_design_agent\(", factory)
-
-
-def test_the_design_client_is_conditional_and_closed() -> None:
-    source = (APP / "core/lifespan.py").read_text()
-
-    assert "if design_settings is not None:" in source
-    assert "await design_llm.close()" in source
-
-
 def test_an_unconfigured_deployment_still_starts() -> None:
     from tests.conftest import build_settings
 
     settings = build_settings()
 
-    assert settings.interior_design.model is None
     assert settings.agents.supervisor.model is None
 
 
 def test_redacted_settings_expose_status_not_identifiers() -> None:
+    import pydantic
+
     from tests.conftest import build_settings
 
-    redacted = build_settings(interior_design={"model": "some-design-model"}).redacted()
-
-    assert redacted["interior_design_configured"] is True
+    # The design specialist is merged into Nora: its settings are gone, and an
+    # environment still naming them is refused rather than silently ignored.
+    with pytest.raises(pydantic.ValidationError):
+        build_settings(interior_design={"model": "some-design-model"})
+    redacted = build_settings(agents={"nora": {"model": "some-design-model"}}).redacted()
+    assert not any("interior_design" in key for key in redacted)
     assert "some-design-model" not in str(redacted.values())
-    # No key carries the specialist's identifier. `llm_model` and
-    # `embedding_model` predate M12 and are deliberate: a model name is not a
-    # secret, and an operator needs to know which one query understanding runs.
-    assert "interior_design_model" not in redacted
     for key, value in redacted.items():
         if key.endswith("_configured"):
             assert isinstance(value, bool), key

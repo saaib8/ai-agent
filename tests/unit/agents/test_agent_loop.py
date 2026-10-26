@@ -299,3 +299,26 @@ def test_other_ways_to_name_a_record_stop_startup(unsafe: str) -> None:
     tool = ZoryTool(name="x", description="x", args=args, owners=frozenset({SARA}), handler=unused)
     with pytest.raises(ConfigurationError):
         ToolRegistry([tool])
+
+
+async def test_independent_calls_run_together_and_the_reply_waits_for_their_results() -> None:
+    handler = Calls()
+    model = ScriptedChatModel(
+        script=[
+            step(
+                call("count", "a", times=1),
+                call("count", "b", times=2),
+                call("respond", "c", message="Written before reading."),
+            ),
+            step(call("respond", "d", message="Done.")),
+        ]
+    )
+
+    end = await _run(_loop(handler), model)
+
+    # Both ran in one step, in order; the reply sent beside them was held.
+    assert handler.seen == [(1, 50), (2, 50)]
+    held = model.seen[1][-1]
+    assert isinstance(held, ToolMessage) and "read_the_results_first" in str(held.content)
+    assert isinstance(end, Responded) and end.reply.message == "Done."
+    assert model.bind_options[0]["parallel_tool_calls"] is True

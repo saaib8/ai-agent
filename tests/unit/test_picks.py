@@ -460,3 +460,26 @@ async def test_a_card_no_longer_on_screen_answers_with_our_words() -> None:
 
     assert reply.status_code == 409
     assert reply.json()["error"]["code"] == "pick_unavailable"
+
+
+async def test_a_room_pieces_option_is_never_ticked_into_the_cart() -> None:
+    from app.schemas.agent_state import RoomProjectState, RoomSwapState
+
+    sessions = FakeSessionStore()
+    state = _state()
+    assert state.active_search is not None
+    room = RoomProjectState(room_type="living room")
+    swap = RoomSwapState(
+        bundle_ordinal=1,
+        role="sofa",
+        bundle_revision=room.bundle_revision,
+        request=state.active_search.request,
+    )
+    await _stored(sessions, state.model_copy(update={"room_project": room, "room_swap": swap}))
+
+    with pytest.raises(PickUnavailableError) as raised:
+        await _runtime(sessions).apply(_tick(1), CONTEXT)
+
+    # The options go into the room in the piece's place ("Use this"), never the cart.
+    assert raised.value.context["reason"] == "room_option"
+    assert sessions.saved[(STORE, SESSION)].session_revision == 1

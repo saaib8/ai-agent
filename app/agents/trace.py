@@ -34,6 +34,9 @@ class TurnTrace:
     events: list[TraceEvent] = field(default_factory=list)
     listener: Callable[[TraceEvent], None] | None = None
     """Told of each event as it happens - how live progress reaches a client."""
+    room_design: bool = False
+    """Nora is designing a whole room this turn: its time limits are the
+    room's (`agents.room_*_deadline_s`)."""
 
     def add(self, event: TraceEvent) -> None:
         self.events.append(event)

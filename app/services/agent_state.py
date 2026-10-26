@@ -62,7 +62,7 @@ from app.schemas.agent_updates import (
     SetSemanticIntent,
     apply_items,
 )
-from app.schemas.design import MAX_NEXT_SIZES, NextSize
+from app.schemas.design import MAX_NEXT_SIZES, MAX_PLACEMENTS, NextSize, Placement
 from app.schemas.geometry import MAX_WALL_NOTES, REPEATABLE_ROLES, RoomGeometry, WallNote
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, SemanticPreference
 from app.taxonomy.attributes import AttributeFamily
@@ -502,6 +502,42 @@ def _room(
         design_preferences=apply_items(base.design_preferences, update.design_preferences),
         layout=_merged_layout(base, update),
         next_sizes=() if _another_room(base, update) else base.next_sizes,
+        placements=() if _another_room(base, update) else base.placements,
+        palette=(
+            update.palette
+            if update.palette is not None
+            else ()
+            if _another_room(base, update)
+            else base.palette
+        ),
+        palette_styles=(
+            update.palette_styles
+            if update.palette_styles is not None
+            else ()
+            if _another_room(base, update)
+            else base.palette_styles
+        ),
+        purpose=(
+            update.purpose
+            if update.purpose is not None
+            else None
+            if _another_room(base, update)
+            else base.purpose
+        ),
+        layout_idea=(
+            update.layout_idea
+            if update.layout_idea is not None
+            else None
+            if _another_room(base, update)
+            else base.layout_idea
+        ),
+        size_declined=(
+            update.size_declined
+            if update.size_declined is not None
+            else False
+            if _another_room(base, update)
+            else base.size_declined
+        ),
         seats_carried=(
             update.seats_carried
             if update.seats_carried is not None
@@ -723,6 +759,8 @@ def _refined_need(
         update["semantic_intent"] = None
     elif change.semantic_intent is not None:
         update["semantic_intent"] = change.semantic_intent
+    if change.design is not None:
+        update["design"] = change.design.model_dump()
     return RoomDesignNeedState.model_validate({**need.model_dump(), **update})
 
 
@@ -757,6 +795,7 @@ def _replanned(
             quantity=spec.quantity,
             seating_capacity=spec.seating_capacity,
             semantic_intent=spec.semantic_intent,
+            design=spec.design,
         )
         for offset, spec in enumerate(operation.needs)
     ]
@@ -770,7 +809,16 @@ def _replanned(
             raise InvalidRequestError(reason="a preserved bundle line must already exist")
         if existing.status is not BundleItemStatus.LOCKED:
             raise InvalidRequestError(reason="only a locked bundle line may be preserved")
-        kept.append(existing.model_copy(update={"need_id": None}))
+        position = dict(operation.locked_needs).get(entry.line_id)
+        if position is not None and position >= len(needs):
+            raise InvalidRequestError(
+                reason="a locked line names a design need the plan does not have"
+            )
+        kept.append(
+            existing.model_copy(
+                update={"need_id": needs[position].need_id if position is not None else None}
+            )
+        )
 
     created: list[BundleItemState] = []
     for offset, spec in enumerate(operation.added):
@@ -912,3 +960,15 @@ def keep_screen(staged: AgentStateV1, before: AgentStateV1) -> AgentStateV1:
             "room_swap": before.room_swap,
         }
     )
+
+
+def remember_placements(state: AgentStateV1, placements: Sequence[Placement]) -> AgentStateV1:
+    """Nora's placements for the room on record, replacing her last ones piece
+    by piece. Never creates a room: a placement belongs to the room it is for."""
+    room = state.room_project
+    if room is None or not placements:
+        return state
+    named = {p.piece.casefold(): p for p in placements}
+    kept = [p for p in room.placements if p.piece.casefold() not in named]
+    merged = (*kept, *named.values())[-MAX_PLACEMENTS:]
+    return state.model_copy(update={"room_project": room.model_copy(update={"placements": merged})})

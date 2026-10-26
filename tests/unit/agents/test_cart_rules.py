@@ -219,13 +219,10 @@ async def test_a_seat_for_one_on_a_sofa_tells_the_agent_the_one_seat_types() -> 
 
 
 async def test_nora_judges_a_card_against_what_they_already_have() -> None:
-    from tests.unit.agents.fakes import FakeDesign, FakeHydration
+    from tests.unit.agents.fakes import FakeHydration
 
-    design = FakeDesign()
-    services = agent_services(
-        design=design, hydration=FakeHydration(available=(OFF_SCREEN, 10, 11))
-    )
-    tool = LOOP._registry.get("design_advice")
+    services = agent_services(hydration=FakeHydration(available=(OFF_SCREEN, 10, 11)))
+    tool = LOOP._registry.get("measure_fit")
     assert tool is not None and tool.handler is not None
     state = AgentStateV1(
         product_interaction=ProductInteractionState(
@@ -233,7 +230,6 @@ async def test_nora_judges_a_card_against_what_they_already_have() -> None:
         )
     )
     args = {
-        "question": "Does it go with my sofa?",
         "about": [{"kind": "presented_ordinal", "position": 1}],
         "alongside": ["cart", "liked"],
     }
@@ -242,7 +238,7 @@ async def test_nora_judges_a_card_against_what_they_already_have() -> None:
         tool.args.model_validate(args), tool_context(services), TurnWork.starting(state)
     )
 
-    asked = design.requests[-1]
-    assert len(asked.anchors) == 3
-    assert "Already theirs" in asked.question and "(in their cart)" in asked.question
-    assert [j["where"] for j in outcome.facts["judged_with"]] == ["in their cart", "liked"]
+    # The facts her judgement needs - the verdict is hers, no model is asked.
+    assert len(outcome.facts["products"]) == 1
+    assert [j["where"] for j in outcome.facts["already_theirs"]] == ["in their cart", "liked"]
+    assert outcome.facts["room_size_known"] is False

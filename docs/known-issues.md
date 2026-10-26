@@ -1534,8 +1534,12 @@ clearly approximate fit checks by code, while still never guaranteeing a fit.
 
 ## 18. The store's catalog summary is re-read from the database every time
 
-**Status:** Open (2026-10-06). Not urgent for store 50; worth doing before a
-large store is onboarded.
+**Status:** Partly fixed 2026-10-25 (`feat/multi-agent-supervisor`): `overview()`
+is cached in Redis (`OverviewCache`, key `zory:store:{id}:catalog_overview:{versions}`,
+`catalog.overview_ttl_s`, 300 s by default, falling back to the database on a
+Redis failure); the store shelf, every direction's colour check and every room
+build read it. `capabilities()` is still read from the database each call.
+Originally open (2026-10-06).
 
 **What happens:** `CatalogCapabilityService` (`app/services/catalog_capability.py`)
 has no cache - its own docstring says "No model, no cache". Every
@@ -2047,3 +2051,26 @@ chat - the cart is the shopper's), a living room being designed: the room's
 `search_action` with its words, as the console does.
 
 **Reported:** by the user (2026-10-20).
+
+## 33. A second action while a turn is running is lost with "This conversation moved on"
+
+**Seen:** in the console (session `web-59afad784aa6`, 2026-10-23). The customer
+repeated "beige wardrobe, less than 250 cm" (10:53:01), then started a
+comparison (10:53:17) before that reply came back (10:53:22). The comparison
+ran, but its reply was replaced by "This conversation moved on while that was
+being prepared. Please try again."
+
+**Cause:**
+- Both turns started from the same saved revision (4). The first saved
+  revision 5; the comparison's compare-and-set save was then refused
+  (`SessionConflictError`) and its reply discarded - by design, so one turn
+  never silently overwrites another.
+- The console lets a second message or the Compare button go while a turn is
+  still in flight. Turns take 15-60 s, so this is easy to do.
+- The refused save is not logged, so the lost turn leaves no trace.
+
+**Still to do:** the console waits while a turn runs (send and Compare
+disabled, or the action queued and sent after); a refused save is logged as a
+warning. The widget needs the same.
+
+**Reported:** by the user (2026-10-23).

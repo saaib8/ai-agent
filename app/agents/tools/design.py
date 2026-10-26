@@ -1,12 +1,13 @@
 """Nora's tools: design advice, fit, and the room she designs.
 
-Design judgement is the specialist's, rooms are the room engine's, and every
-figure comes from code. A room's pieces are numbered as its cards show them.
+Design judgement is Nora's, written as checked arguments; finding the products
+is the room engine's, and every figure comes from code. A room's pieces are
+numbered as its cards show them.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -14,32 +15,47 @@ from typing import Any, Literal, cast
 from pydantic import Field, create_model
 
 from app.agents.context import ToolContext
-from app.agents.facts import design_notes, product_facts
-from app.agents.operations.rooms import RoomOutcome, RoomPlanInputs
+from app.agents.facts import product_facts
+from app.agents.operations.rooms import RoomDesignInputs, RoomOutcome
 from app.agents.payloads import OptionsShown, RoomShown
+from app.agents.services import AgentServices
 from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool, list_of, one_of
 from app.agents.tools.schemas import ToolSchemas
+from app.agents.tools.shelf import _room_hints
 from app.agents.tools.shopping import NoArgs, hydrated, resolve_product
 from app.agents.work import ToolStatus, TurnWork
-from app.core.exceptions import IntegrationUnavailableError, LLMResponseInvalidError
+from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import RoomProjectState, SwapBudgetOfferState
+from app.schemas.agent_state import MAX_ROOM_NOTE_CHARS, RoomProjectState, SwapBudgetOfferState
+from app.schemas.catalog_overview import CatalogOverview
 from app.schemas.design import (
-    MAX_DESIGN_QUESTION_CHARS,
+    MAX_NEXT_SIZES,
+    MAX_PLACEMENTS,
     MAX_REGULAR_SEATING_COUNT,
-    DesignTask,
-    InteriorDesignRequest,
+    InteriorDesignResult,
+    NextSize,
+    Placement,
 )
 from app.schemas.dimensions import CENTIMETRES_PER_UNIT, DimensionUnit
 from app.schemas.discovery import PriceConstraint
 from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
 from app.schemas.product import ProductCandidate
 from app.schemas.product_reference import ProductReferenceSelector
-from app.services.agent_state import remember_next_sizes
-from app.services.design_facts import project_anchors
-from app.services.fit import fit_checks, fit_words, floor_share, room_spaces
-from app.services.room_composition import piece_for
+from app.services.agent_state import remember_next_sizes, remember_placements
+from app.services.bundle_cards import group_bundle_cards
+from app.services.design_checks import usable_next_sizes
+from app.services.fit import fit_checks, fit_words, floor_share, knows_room_size, room_spaces
+from app.services.room_design import (
+    MAX_PIECE_QUANTITY,
+    MAX_ROOM_PIECES,
+    MAX_SEATS_EACH,
+    PieceSpec,
+    RoomDesignChecker,
+    RoomDesignProblem,
+)
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.rooms import RoomPieces
+from app.taxonomy.words import customer_words
 
 NORA = frozenset({AgentPersona.NORA})
 DESIGNERS = frozenset({AgentPersona.NORA, AgentPersona.SALMAN})
@@ -88,25 +104,24 @@ class Budget(ToolArgs):
 # ── advice and fit ──────────────────────────────────────────────────────────
 
 
-class AdviceArgs(ToolArgs):
-    question: str = Field(min_length=1, max_length=400, description="Their question, plainly.")
-    room_type: str | None = Field(default=None, max_length=60)
-    size: RoomSize | None = None
+class FitArgs(ToolArgs):
     about: list[ProductReferenceSelector] = Field(
-        default_factory=list, max_length=6, description="Products the question is about."
+        default_factory=list, max_length=6, description="The pieces to measure."
     )
     alongside: list[Literal["cart", "liked", "room"]] = Field(
         default_factory=list,
         description=(
-            "What they already have that the answer should be judged against - their "
-            "cart, what they liked, the room being designed - so the specialist says "
-            "whether a piece goes with it."
+            "What they already have, to judge the pieces beside: their cart, what they "
+            "liked, the room being designed."
         ),
+    )
+    size: RoomSize | None = Field(
+        default=None, description="A room size they just gave, when not recorded yet."
     )
 
 
 MAX_ALONGSIDE = 12
-"""Products the specialist sees beside the ones asked about."""
+"""Products given beside the ones measured."""
 
 
 def _alongside(
@@ -132,11 +147,17 @@ def _alongside(
     return [(role, pid) for pid, role in found.items()][:MAX_ALONGSIDE]
 
 
-def advice_tool(schemas: ToolSchemas) -> ZoryTool[AdviceArgs]:
-    async def advise(args: AdviceArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
+def measure_fit_tool(schemas: ToolSchemas) -> ZoryTool[FitArgs]:
+    """The facts a design judgement needs, measured - never the judgement.
+
+    Whether a piece looks right, goes with what they have or works in their
+    room is Nora's to say. This gives her the pieces as they are, what they
+    already have, and each piece against each of their walls and doorways, so
+    every figure she quotes is one code measured (CLAUDE.md 10.6).
+    """
+
+    async def measure(args: FitArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
         services = context.services
-        if services.design is None:
-            return ToolOutcome(status=ToolStatus.REFUSED, code="design_unavailable")
         ids: list[int] = []
         for which in args.about:
             product = await resolve_product(services, which, work, context)
@@ -151,61 +172,23 @@ def advice_tool(schemas: ToolSchemas) -> ZoryTool[AdviceArgs]:
         by_id = {p.product_id: p for p in everything}
         products = tuple(by_id[i] for i in ids if i in by_id)
         roles = [(role, by_id[pid]) for role, pid in beside if pid in by_id]
-        question = args.question
-        if roles:
-            # Who is which, by name: the specialist judges the asked-about
-            # pieces against what they already have.
-            question += "\n\nAsked about: " + (
-                "; ".join(p.name_english for p in products) or "the room as a whole"
-            )
-            question += "\nAlready theirs: " + "; ".join(
-                f"{p.name_english} ({role})" for role, p in roles
-            )
         room = work.staged.room_project
         geometry = geometry_of(args.size) or (room.geometry if room else None)
         measured = fit_checks(products, room_spaces(geometry))
-        try:
-            designed = await services.design.plan(
-                InteriorDesignRequest(
-                    task=DesignTask.GENERAL_ADVICE,
-                    question=question[:MAX_DESIGN_QUESTION_CHARS],
-                    room_type=args.room_type or (room.room_type if room else None),
-                    geometry=geometry,
-                    layout=room.layout if room else (),
-                    fit_checks=measured,
-                    floor_taken_percent=floor_share([p for _, p in roles], geometry)
-                    if roles
-                    else None,
-                    anchors=project_anchors(
-                        (*products, *(p for _, p in roles)), dimensions=services.dimensions
-                    ),
-                )
-            )
-        except (LLMResponseInvalidError, IntegrationUnavailableError):
-            return ToolOutcome(status=ToolStatus.REFUSED, code="design_unavailable")
-        facts = {
-            "guidance": [
-                {
-                    "topic": str(g.topic),
-                    "advice": g.summary,
-                    "rules_of_thumb": [
-                        {"label": m.label, "min_cm": m.minimum_cm, "max_cm": m.maximum_cm}
-                        for m in g.measurements
-                    ],
-                }
-                for g in designed.guidance
-            ],
+        facts: dict[str, object] = {
             "products": [product_facts(p, None) for p in products],
-            **(
-                {"judged_with": [{"where": role, **product_facts(p, None)} for role, p in roles]}
-                if roles
-                else {}
-            ),
-            **design_notes(designed),
+            "room_size_known": knows_room_size(geometry),
         }
+        if roles:
+            facts["already_theirs"] = [
+                {"where": role, **product_facts(p, None)} for role, p in roles
+            ]
+            taken = floor_share([p for _, p in roles], geometry)
+            if taken is not None:
+                facts["floor_taken_now_percent"] = taken
         if measured:
-            # The figures Nora may quote: each piece against each wall and
-            # doorway, as measured - never one she works out herself.
+            # The figures that may be quoted: each piece against each wall and
+            # doorway, as measured - never one worked out in a reply.
             facts["measured_fit"] = [
                 {
                     "piece": products[c.piece - 1].name_english,
@@ -214,95 +197,464 @@ def advice_tool(schemas: ToolSchemas) -> ZoryTool[AdviceArgs]:
                 }
                 for c in measured
             ]
-        state = remember_next_sizes(work.staged, designed.next_sizes)
-        return ToolOutcome(facts=facts, state=state if state is not work.staged else None)
+        return ToolOutcome(facts=facts)
 
     return ZoryTool(
-        name="design_advice",
+        name="measure_fit",
         description=(
-            "Ask the interior-design specialist: layout, sizing, whether a piece fits a "
-            "wall, doorway or room, colour and style pairing, whether a piece goes with "
-            "what they already have (alongside: their cart, liked products, the room), "
-            "what a room needs. Give the products and measurements the question is "
-            "about; its figures are rules of thumb, never facts about their room."
+            "Measure pieces for a design judgement: each against their walls and doorway, "
+            "how much floor what they have takes, and the pieces they already have "
+            "(alongside: cart, liked, room). You judge whether it looks right and works; "
+            "these are the only fit figures you may quote."
         ),
-        args=AdviceArgs,
+        args=FitArgs,
         owners=NORA,
-        handler=advise,
+        handler=measure,
+    )
+
+
+class DesignNotesArgs(ToolArgs):
+    placements: list[Placement] = Field(default_factory=list, max_length=MAX_PLACEMENTS)
+    next_sizes: list[NextSize] = Field(default_factory=list, max_length=MAX_NEXT_SIZES)
+
+
+def design_notes_tool(schemas: ToolSchemas) -> ZoryTool[DesignNotesArgs]:
+    """Where pieces go in their room and the size the next pieces should be -
+    Nora's judgement, kept on the room so every agent searches at her size on a
+    later turn, never at one it made up (CLAUDE.md 10.6)."""
+
+    async def record(args: DesignNotesArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        room = work.staged.room_project
+        if room is None:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_on_record")
+        # Words only: a placement with a figure in it is dropped on its own,
+        # the rest of the notes stand (CLAUDE.md 10.6, 21.1).
+        placements = tuple(p for p in args.placements if not p.states_a_figure())
+        broken = [p.piece for p in args.placements if p.states_a_figure()]
+        taxonomy = context.services.taxonomy
+        # A size's family is the registry's, never the agent's (CLAUDE.md 17.1).
+        filed = [
+            size.model_copy(update={"commerce_category": family})
+            if size.commerce_subcategory
+            and (family := taxonomy.category_of(size.commerce_subcategory)) is not None
+            else size
+            for size in args.next_sizes
+        ]
+        sizes = usable_next_sizes(filed, taxonomy)
+        dropped = len(args.next_sizes) - len(sizes)
+        state = remember_placements(remember_next_sizes(work.staged, sizes), placements)
+        # What was kept, by piece and kind - never the figures she wrote, which
+        # would then pass the number check as a tool's own facts. The brief
+        # carries her sizes for the next search (designer_size).
+        facts: dict[str, object] = {
+            "placements_kept": [p.piece for p in placements],
+            "sizes_kept_for": [
+                customer_words(s.commerce_subcategory or s.commerce_category) for s in sizes
+            ],
+        }
+        if broken:
+            facts["placements_dropped"] = {
+                "pieces": broken,
+                "why": "a placement is words only - its figure belongs to a size",
+            }
+        if dropped:
+            facts["sizes_dropped"] = (
+                "a size names no longer side, is out of order, states a figure in its "
+                "reason, or is not an approved kind"
+            )
+        return ToolOutcome(facts=facts, state=state)
+
+    return ZoryTool(
+        name="record_design_notes",
+        description=(
+            "Keep your design decisions for their room: where each piece goes (which of "
+            "their walls, beside what, why - words only) and the size the next pieces "
+            "should be (longer and shorter side ranges in cm, with a reason). Searches "
+            "with designer_size then sit near your size."
+        ),
+        args=DesignNotesArgs,
+        owners=NORA,
+        handler=record,
     )
 
 
 # ── rooms ───────────────────────────────────────────────────────────────────
 
 
-_ROOM_KIND = (
-    "Set it whenever the room is one of these. Only then does a call without pieces list "
-    "what the room could hold and build nothing; a room of no listed kind is designed at "
-    "once from what you pass."
+_PIECE_TYPES = (
+    "The approved types that may fill this piece, the one you prefer first - several "
+    "when they would do equally (an armchair, lounge chair or accent chair for a reading "
+    "seat). One family per piece."
 )
 
 
-def room_plan_args(schemas: ToolSchemas) -> type[ToolArgs]:
+def room_design_args(schemas: ToolSchemas) -> type[ToolArgs]:
+    """Nora's room design as arguments: approved colours and styles only;
+    types are checked against the registry when the room is built."""
     rooms = schemas.room_pieces
     kinds = tuple(rooms.kinds) if rooms is not None else ()
-    keys = tuple(
-        sorted(
-            {
-                piece.key
-                for kind in kinds
-                if rooms is not None and (template := rooms.template(kind)) is not None
-                for piece in template.pieces
-            }
-        )
-    )
     colour = one_of(tuple(sorted(schemas.attributes.colors)))
     style = one_of(tuple(sorted(schemas.attributes.styles)))
-    fields: dict[str, Any] = {
-        "room_type": (str, Field(min_length=1, max_length=60, description="The room, in words.")),
-        "budget": (Budget | None, None),
-        "size": (RoomSize | None, None),
-        "seats": (
-            int | None,
-            Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT, description="Who sits."),
+    piece_fields: dict[str, Any] = {
+        "role": (
+            str,
+            Field(min_length=1, max_length=40, description="What it is in the room, in words."),
         ),
-        "colours": (list_of(colour), Field(default_factory=list)),
-        "styles": (list_of(style), Field(default_factory=list)),
-        "around_picks": (bool, Field(default=False, description="Build it around their cart.")),
-        "same_room": (
-            bool | None,
+        "types": (list[str], Field(min_length=1, max_length=4, description=_PIECE_TYPES)),
+        "quantity": (int, Field(default=1, ge=1, le=MAX_PIECE_QUANTITY)),
+        "priority": (
+            Literal["must", "nice"],
             Field(
-                default=None,
-                description=(
-                    "True to change the room already being designed, false for a new room "
-                    "- however they name it ('the lounge' for the living room)."
-                ),
+                default="must",
+                description="must: the room does not work without it. nice: a refinement, "
+                "given up first when the budget is short.",
             ),
         ),
-        "room_kind": (
-            (one_of(kinds) | None, Field(default=None, description=_ROOM_KIND))
-            if kinds
-            else (str | None, None)
+        "colours": (list_of(colour), Field(default_factory=list, max_length=3)),
+        "styles": (list_of(style), Field(default_factory=list, max_length=2)),
+        "avoid_colours": (list_of(colour), Field(default_factory=list, max_length=2)),
+        "avoid_styles": (list_of(style), Field(default_factory=list, max_length=2)),
+        "feel": (
+            str | None,
+            Field(default=None, max_length=120, description="Its character, in words."),
         ),
-        "pieces": (
-            list_of(one_of(keys)) | None,
+        "longer_min_cm": (int | None, Field(default=None, ge=10, le=1200)),
+        "longer_max_cm": (int | None, Field(default=None, ge=10, le=1200)),
+        "shorter_min_cm": (
+            int | None,
             Field(
                 default=None,
-                description=(
-                    "The pieces the room holds, chosen with the customer. Omit to be told "
-                    "what this room could hold here, each with how much such a room needs "
-                    "it (essential, recommended, optional) - nothing is built until you "
-                    "choose. A short budget gives up optional pieces first."
-                ),
+                ge=10,
+                le=1200,
+                description="Its shorter floor side - a bed's width, a rug's short side.",
+            ),
+        ),
+        "shorter_max_cm": (int | None, Field(default=None, ge=10, le=1200)),
+        "share_percent": (
+            int | None,
+            Field(
+                default=None,
+                ge=1,
+                le=100,
+                description="How much of the budget this piece's line should take. Shares "
+                "add up to at most 100.",
+            ),
+        ),
+        "seats_each": (
+            int | None,
+            Field(
+                default=None,
+                ge=2,
+                le=MAX_SEATS_EACH,
+                description="How many one of it seats - only for a type that seats several.",
+            ),
+        ),
+        "wall": (
+            str | None,
+            Field(default=None, max_length=40, description="Their name for the wall it goes on."),
+        ),
+        "beside": (
+            str | None,
+            Field(default=None, max_length=40, description="The role of the piece beside it."),
+        ),
+        "from_pick": (
+            int | None,
+            Field(
+                default=None,
+                ge=1,
+                description="The cart place of their pick that is this piece - it is kept.",
             ),
         ),
     }
-    return cast(type[ToolArgs], create_model("PlanRoomArgs", __base__=ToolArgs, **fields))
+    piece = create_model("RoomPieceDesign", __base__=ToolArgs, **piece_fields)
+    fields: dict[str, Any] = {
+        "room_type": (str, Field(min_length=1, max_length=60, description="The room, in words.")),
+        "room_kind": (
+            (one_of(kinds) | None, Field(default=None, description="The room, if one of these."))
+            if kinds
+            else (str | None, None)
+        ),
+        "same_room": (
+            bool,
+            Field(
+                description="True to design again the room on record, keeping its locked pieces "
+                "- whatever they call it ('the lounge'); false for another room."
+            ),
+        ),
+        "budget": (Budget | None, None),
+        "size": (RoomSize | None, None),
+        "head_count": (
+            int | None,
+            Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT, description="Who sits there."),
+        ),
+        "palette": (
+            list_of(colour),
+            Field(default_factory=list, max_length=5, description="The room's colours."),
+        ),
+        "styles": (list_of(style), Field(default_factory=list, max_length=2)),
+        "around_picks": (
+            bool,
+            Field(default=False, description="Keep every pick in their cart that is a piece."),
+        ),
+        "replace_room": (
+            bool,
+            Field(
+                default=False,
+                description="Only when they said to start this room in place of the one being "
+                "designed (another_room_in_progress).",
+            ),
+        ),
+        "pieces": (list[piece], Field(min_length=1, max_length=MAX_ROOM_PIECES)),
+        "why": (
+            str | None,
+            Field(default=None, max_length=200, description="The idea of the room, in words."),
+        ),
+        "layout": (
+            str | None,
+            Field(
+                default=None,
+                max_length=MAX_ROOM_NOTE_CHARS,
+                description="How the pieces are arranged, in a sentence or two of your words "
+                "- any arrangement the room and its purpose call for ('an L in the corner "
+                "by the window, a second sofa facing the TV'). Words only.",
+            ),
+        ),
+    }
+    return cast(type[ToolArgs], create_model("DesignRoomArgs", __base__=ToolArgs, **fields))
+
+
+def design_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
+    async def design(args: Any, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        services = context.services
+        try:
+            overview = await services.capabilities.overview(context.retailer)
+        except IntegrationUnavailableError:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
+        current = work.staged.room_project
+        # The room on record counts only when this is that room - or one only
+        # noted so far, which the engine designs as the same room.
+        room = (
+            current
+            if current is not None
+            and (args.same_room or (not current.bundle_items and not current.in_cart))
+            else None
+        )
+        geometry = geometry_of(args.size)
+        walls = [w.wall for w in room.layout] if room is not None else []
+        walls += [
+            s.label for s in room_spaces(geometry or (room.geometry if room else None)) if s.label
+        ]
+        checked = RoomDesignChecker(services.taxonomy, services.attributes, services.seating).check(
+            [_spec(p) for p in args.pieces],
+            overview,
+            head_count=args.head_count or (room.regular_seating_count if room else None),
+            walls=walls,
+            texts=(args.why, args.layout),
+        )
+        if isinstance(checked, RoomDesignProblem):
+            # Our rule broken - said with what is right, so she corrects it.
+            facts: dict[str, object] = dict(checked.detail)
+            if checked.piece is not None:
+                facts["piece"] = checked.piece
+            kind = facts.get("type")
+            if isinstance(kind, str):
+                facts["approved_types_like_it"] = "store_shelf lists the kinds this store stocks"
+            return ToolOutcome(status=ToolStatus.INVALID, code=checked.code, facts=facts)
+        if not checked.needs:
+            return ToolOutcome(
+                status=ToolStatus.REFUSED, code="nothing_stocked", facts=checked.facts
+            )
+        inputs = RoomDesignInputs(
+            room_type=args.room_type,
+            room_kind=args.room_kind,
+            same_room=args.same_room,
+            budget=args.budget.constraint() if args.budget else None,
+            geometry=geometry,
+            head_count=args.head_count,
+            palette=tuple(args.palette),
+            styles=tuple(args.styles),
+            plan=InteriorDesignResult(needs=checked.needs),
+            pick_places=checked.picks,
+            around_picks=args.around_picks,
+            replace_room=args.replace_room,
+            layout_idea=args.layout,
+        )
+        outcome = room_outcome(await services.rooms.design(work.staged, context.retailer, inputs))
+        return replace(
+            outcome,
+            facts={
+                **(outcome.facts or {}),
+                "design": checked.facts,
+                **_still_to_add(services, outcome, overview),
+            },
+        )
+
+    return ZoryTool(
+        name="design_room",
+        description=(
+            "Build the whole room you designed from the store's real products: every piece "
+            "with the types that may fill it, how many, its colours, styles, size, share of "
+            "the budget and wall. Code finds the best match for each piece and keeps the "
+            "room within the budget. Changing the budget, size or look: design it again with "
+            "same_room true, restating the pieces."
+        ),
+        args=room_design_args(schemas),
+        owners=NORA,
+        handler=design,
+    )
+
+
+def revise_piece_args(schemas: ToolSchemas) -> type[ToolArgs]:
+    colour = one_of(tuple(sorted(schemas.attributes.colors)))
+    style = one_of(tuple(sorted(schemas.attributes.styles)))
+    fields: dict[str, Any] = {
+        "piece": (int, Field(ge=1, description="The room piece, by its card's place.")),
+        "colours": (list_of(colour) | None, Field(default=None, max_length=3)),
+        "styles": (list_of(style) | None, Field(default=None, max_length=2)),
+        "avoid_colours": (list_of(colour) | None, Field(default=None, max_length=2)),
+        "avoid_styles": (list_of(style) | None, Field(default=None, max_length=2)),
+        "feel": (str | None, Field(default=None, max_length=120)),
+        "longer_min_cm": (int | None, Field(default=None, ge=10, le=1200)),
+        "longer_max_cm": (int | None, Field(default=None, ge=10, le=1200)),
+        "shorter_min_cm": (
+            int | None,
+            Field(
+                default=None,
+                ge=10,
+                le=1200,
+                description="Its shorter floor side - a bed's width, a rug's short side.",
+            ),
+        ),
+        "shorter_max_cm": (int | None, Field(default=None, ge=10, le=1200)),
+        "share_percent": (int | None, Field(default=None, ge=1, le=100)),
+        "wall": (str | None, Field(default=None, max_length=40)),
+    }
+    return cast(type[ToolArgs], create_model("RevisePieceArgs", __base__=ToolArgs, **fields))
+
+
+def revise_piece_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
+    async def revise(args: Any, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        services = context.services
+        room = work.staged.room_project
+        if room is None or not room.bundle_items:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="no_room")
+        cards = group_bundle_cards(room.bundle_items)
+        card = cards[args.piece - 1] if 1 <= args.piece <= len(cards) else None
+        need = (
+            next((n for n in room.design_needs if n.need_id == card.need_ids[0]), None)
+            if card is not None and len(card.need_ids) == 1
+            else None
+        )
+        if need is None or need.design is None or need.commerce_subcategory is None:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="piece_not_designed")
+        try:
+            overview = await services.capabilities.overview(context.retailer)
+        except IntegrationUnavailableError:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
+        old = need.design
+
+        def kept(new: Any, before: Any) -> Any:
+            return before if new is None else new
+
+        spec = PieceSpec(
+            role=old.role,
+            types=(need.commerce_subcategory, *old.alternatives),
+            quantity=need.quantity,
+            colours=tuple(kept(args.colours, old.colours)),
+            styles=tuple(kept(args.styles, old.styles)),
+            avoid_colours=tuple(kept(args.avoid_colours, old.avoid_colours)),
+            avoid_styles=tuple(kept(args.avoid_styles, old.avoid_styles)),
+            feel=kept(args.feel, need.semantic_intent),
+            longer_min_cm=kept(args.longer_min_cm, old.longer_min_cm),
+            longer_max_cm=kept(args.longer_max_cm, old.longer_max_cm),
+            shorter_min_cm=kept(args.shorter_min_cm, old.shorter_min_cm),
+            shorter_max_cm=kept(args.shorter_max_cm, old.shorter_max_cm),
+            share_percent=kept(args.share_percent, old.share_percent),
+            wall=kept(args.wall, old.wall),
+            beside=old.beside,
+        )
+        walls = [w.wall for w in room.layout] + [
+            s.label for s in room_spaces(room.geometry) if s.label
+        ]
+        checked = RoomDesignChecker(services.taxonomy, services.attributes, services.seating).check(
+            [spec], overview, head_count=None, walls=walls
+        )
+        if isinstance(checked, RoomDesignProblem):
+            return ToolOutcome(
+                status=ToolStatus.INVALID, code=checked.code, facts=dict(checked.detail)
+            )
+        design = checked.needs[0].design if checked.needs else None
+        if design is None:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="nothing_stocked")
+        outcome = room_outcome(
+            await services.rooms.revise_piece(
+                work.staged, context.retailer, args.piece, design, feel=args.feel
+            )
+        )
+        return replace(
+            outcome,
+            facts={
+                **(outcome.facts or {}),
+                "revised": checked.facts,
+                **_still_to_add(services, outcome, overview),
+            },
+        )
+
+    return ZoryTool(
+        name="revise_room_piece",
+        description=(
+            "Find one piece of the room again with new directions - its colours, styles, what "
+            "to avoid, feel, size, share or wall - every other piece staying the product it "
+            "is, within the budget. What you leave out stays as designed."
+        ),
+        args=revise_piece_args(schemas),
+        owners=NORA,
+        handler=revise,
+    )
+
+
+def _still_to_add(
+    services: AgentServices, outcome: ToolOutcome, overview: CatalogOverview
+) -> dict[str, object]:
+    """When a built room leaves budget unspent, the stocked kinds whose
+    cheapest piece fits what is left - so Nora sees, as she reviews it, what
+    could finish the room within its budget (CLAUDE.md 10.1)."""
+    state = outcome.state
+    room = state.room_project if state is not None else None
+    left = _budget_left(outcome.facts)
+    if room is None or left is None or left <= 0:
+        return {}
+    could = _could_add(services, room, overview, left, only_fitting=True)
+    return {"could_still_add": could} if could else {}
+
+
+def _spec(piece: Any) -> PieceSpec:
+    return PieceSpec(
+        role=piece.role,
+        types=tuple(piece.types),
+        quantity=piece.quantity,
+        must=piece.priority == "must",
+        colours=tuple(piece.colours),
+        styles=tuple(piece.styles),
+        avoid_colours=tuple(piece.avoid_colours),
+        avoid_styles=tuple(piece.avoid_styles),
+        feel=piece.feel,
+        longer_min_cm=piece.longer_min_cm,
+        longer_max_cm=piece.longer_max_cm,
+        shorter_min_cm=piece.shorter_min_cm,
+        shorter_max_cm=piece.shorter_max_cm,
+        share_percent=piece.share_percent,
+        seats_each=piece.seats_each,
+        wall=piece.wall,
+        beside=piece.beside,
+        from_pick=piece.from_pick,
+    )
 
 
 def room_outcome(outcome: RoomOutcome) -> ToolOutcome:
     ok = outcome.code == "ok"
     view = outcome.presentation()
-    shown = ok or outcome.committed or outcome.code in {"over_budget", "choose_pieces"}
+    shown = ok or outcome.committed or outcome.code == "over_budget"
     return ToolOutcome(
         status=ToolStatus.OK if shown else ToolStatus.REFUSED,
         code=None if ok else outcome.code,
@@ -311,75 +663,6 @@ def room_outcome(outcome: RoomOutcome) -> ToolOutcome:
         # A proposal that waits on their yes is described, never drawn: the
         # room on screen stays the room they have.
         payload=RoomShown(room=view) if view is not None and (ok or outcome.committed) else None,
-    )
-
-
-def plan_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
-    async def plan(args: Any, context: ToolContext, work: TurnWork) -> ToolOutcome:
-        services = context.services
-        inputs = RoomPlanInputs(
-            room_kind=args.room_kind,
-            room_type=args.room_type,
-            budget=args.budget.constraint() if args.budget else None,
-            geometry=geometry_of(args.size),
-            pieces=tuple(args.pieces) if args.pieces else None,
-            seats=args.seats,
-            colours=tuple(args.colours),
-            styles=tuple(args.styles),
-            around_picks=args.around_picks,
-            same_room=args.same_room,
-        )
-        return room_outcome(await services.rooms.plan(work.staged, context.retailer, inputs))
-
-    return ZoryTool(
-        name="plan_room",
-        description=(
-            "Design a whole room from the store's real products within a budget: the "
-            "designer shapes it, discovery finds each piece, the optimiser chooses the set. "
-            "Planning again with changed inputs replans the same room, keeping locked pieces."
-        ),
-        args=room_plan_args(schemas),
-        owners=NORA,
-        handler=plan,
-    )
-
-
-class ReviseArgs(ToolArgs):
-    budget: Budget | None = None
-    size: RoomSize | None = None
-    seats: int | None = Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT)
-    colours: list[str] | None = Field(
-        default=None, max_length=6, description="Approved colour names; replaces the room's."
-    )
-    styles: list[str] | None = Field(
-        default=None, max_length=6, description="Approved style names; replaces the room's."
-    )
-
-
-def revise_room_tool(schemas: ToolSchemas) -> ZoryTool[ReviseArgs]:
-    async def revise(args: ReviseArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
-        services = context.services
-        return room_outcome(
-            await services.rooms.revise(
-                work.staged,
-                context.retailer,
-                budget=args.budget.constraint() if args.budget else None,
-                geometry=geometry_of(args.size),
-                seats=args.seats,
-                colours=tuple(args.colours) if args.colours is not None else None,
-                styles=tuple(args.styles) if args.styles is not None else None,
-            )
-        )
-
-    return ZoryTool(
-        name="revise_room",
-        description=(
-            "Change the room's budget, size, head count, colours or styles and re-choose its "
-            "pieces; what you leave out stays as it is."
-        ),
-        args=ReviseArgs,
-        owners=DESIGNERS,
-        handler=revise,
     )
 
 
@@ -441,7 +724,7 @@ def _held(
     )
     offer = SwapBudgetOfferState(
         bundle_ordinal=piece,
-        added_piece=None if piece is not None else _added_piece(added, room, rooms),
+        added_piece=None if piece is not None else _added_piece(added),
         chosen_product_id=product_id,
         bundle_revision=room.bundle_revision,
         room_total=bundle.new_spend_total if bundle is not None else None,
@@ -454,21 +737,10 @@ def _held(
     )
 
 
-def _added_piece(
-    added: ProductCandidate | None, room: RoomProjectState, rooms: RoomPieces | None
-) -> str:
-    """The piece an addition fills, as the room registry names it - the same
-    words `add_to_room` reports - else the product's own kind."""
+def _added_piece(added: ProductCandidate | None) -> str:
+    """The kind an addition is - the same words `add_to_room` reports."""
     if added is None:
         return "piece"
-    template = rooms.template(room.room_kind) if rooms is not None else None
-    filled = (
-        piece_for(template, added.commerce.category, added.commerce.subcategory)
-        if template is not None
-        else None
-    )
-    if filled is not None:
-        return filled.commerce_subcategory or filled.commerce_category
     return added.commerce.subcategory or added.commerce.category or "piece"
 
 
@@ -502,7 +774,15 @@ def accept_over_budget_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
         room = work.staged.room_project
         if offer is None or room is None or offer.bundle_revision != room.bundle_revision:
             return ToolOutcome(status=ToolStatus.REFUSED, code="no_offer_to_accept")
-        if offer.bundle_ordinal is None:
+        if offer.is_change:
+            outcome = await services.rooms.change(
+                work.staged,
+                context.retailer,
+                remove_pieces=offer.removed_pieces,
+                add_products=offer.added_product_ids,
+                allow_over_budget=True,
+            )
+        elif offer.bundle_ordinal is None:
             outcome = await services.rooms.add_product(
                 work.staged, context.retailer, offer.chosen_product_id, allow_over_budget=True
             )
@@ -585,32 +865,97 @@ def piece_status_tool(schemas: ToolSchemas) -> ZoryTool[PieceStatusArgs]:
     )
 
 
+def _could_add(
+    services: AgentServices,
+    room: RoomProjectState,
+    overview: CatalogOverview,
+    budget_left: Decimal | None,
+    *,
+    only_fitting: bool = False,
+) -> list[dict[str, object]]:
+    """The stocked kinds the room could take - those it holds none of before
+    those it already has, then the widest choice first; the room guide's kinds
+    and the reviewed pairings are marked, never put first - each with whether
+    its cheapest piece fits what the budget has left and whether it comes in the room's colours. A
+    kind it already holds stays on the list with how many (`in_room`): a
+    second artwork for a long wall or a second lamp is often what finishes a
+    room. Facts for Nora to choose from, never a list to add."""
+    held: dict[str, int] = {}
+    for need in room.design_needs:
+        for kind in (need.commerce_subcategory, *(need.design.alternatives if need.design else ())):
+            if kind:
+                held[kind] = held.get(kind, 0) + need.quantity
+    hints = _room_hints(services.room_pieces, room.room_kind)
+    paired = {
+        c.commerce_subcategory
+        for kind in held
+        if services.complements
+        for c in services.complements.for_type(kind)
+    }
+    palette = set(room.palette)
+    kinds = [
+        shelf
+        for shelf in overview.shelves
+        if shelf.commerce_subcategory
+        and (not only_fitting or budget_left is None or shelf.price_minimum <= budget_left)
+    ]
+    kinds.sort(
+        key=lambda s: (
+            s.commerce_subcategory in held,
+            -s.active_count,
+        )
+    )
+    could: list[dict[str, object]] = []
+    for shelf in kinds[:MAX_COULD_ADD]:
+        kind = shelf.commerce_subcategory or ""
+        entry: dict[str, object] = {"kind": kind, "label": customer_words(kind)}
+        if kind in held:
+            entry["in_room"] = held[kind]
+        if kind in hints:
+            entry["in_this_room"] = True
+        if kind in paired:
+            entry["usually_paired"] = True
+        if budget_left is not None:
+            entry["fits_budget_left"] = shelf.price_minimum <= budget_left
+        if palette:
+            colours = {
+                services.attributes.canonical(AttributeFamily.COLOR, c) for c in shelf.colours
+            }
+            entry["in_room_colours"] = bool(colours & palette)
+        could.append(entry)
+    return could
+
+
+def _budget_left(facts: Mapping[str, object] | None) -> Decimal | None:
+    left = (facts or {}).get("budget_left")
+    return left if isinstance(left, Decimal) else None
+
+
 def room_additions_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
     async def additions(args: NoArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
         services = context.services
-        keys = await services.rooms.pieces_it_could_take(work.staged, context.retailer)
-        rooms = services.room_pieces
         room = work.staged.room_project
-        template = rooms.template(room.room_kind) if rooms and room else None
-        pieces = [
-            {
-                "piece": key,
-                "kind": p.commerce_subcategory or p.commerce_category,
-                "label": p.label,
-                **({"label_ar": p.label_ar} if p.label_ar else {}),
-                "tier": str(p.tier),
-            }
-            for key in keys
-            if template and (p := template.piece(key))
-        ]
-        return ToolOutcome(facts={"could_add": pieces})
+        if room is None or not room.bundle_items:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="no_room")
+        try:
+            overview = await services.capabilities.overview(context.retailer)
+        except IntegrationUnavailableError:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
+        current = await services.rooms.current(work.staged, context.retailer)
+        left = _budget_left(current.facts if current else None)
+        facts: dict[str, object] = {"could_add": _could_add(services, room, overview, left)}
+        if left is not None:
+            facts["budget_left"] = left
+        return ToolOutcome(facts=facts)
 
     return ZoryTool(
         name="room_could_add",
         description=(
-            "Every piece the store stocks that the room does not hold yet, with how much "
-            "such a room needs it. You choose which would finish this room best and in what "
-            "order to suggest them; show one with search_products, then add_to_room."
+            "The kinds the store stocks that could finish the room - those the room guide "
+            "often puts in such a room and those reviewed to go with its pieces first, "
+            "including kinds it already has (in_room: how many) - with whether each fits "
+            "the budget left and comes in the room's colours. You choose which would "
+            "finish this room best; show one with search_products, then add_to_room."
         ),
         args=NoArgs,
         owners=DESIGNERS,
@@ -618,8 +963,91 @@ def room_additions_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
     )
 
 
+MAX_COULD_ADD = 20
+"""Kinds offered as finishing touches in one answer."""
+
+
 class AddToRoomArgs(ToolArgs):
     which: ProductReferenceSelector
+
+
+MAX_CHANGE = 6
+"""Pieces taken out, or products put in, by one change."""
+
+
+class ChangeRoomArgs(ToolArgs):
+    remove: list[int] = Field(
+        default_factory=list,
+        max_length=MAX_CHANGE,
+        description="Room pieces to take out, by their card's place in the room.",
+    )
+    add: list[ProductReferenceSelector] = Field(
+        default_factory=list,
+        max_length=MAX_CHANGE,
+        description="Products on screen to put in - a piece's options included.",
+    )
+
+
+def change_room_tool(schemas: ToolSchemas) -> ZoryTool[ChangeRoomArgs]:
+    async def change(args: ChangeRoomArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        services = context.services
+        if any(piece < 1 for piece in args.remove):
+            return ToolOutcome(status=ToolStatus.REFUSED, code="piece_not_found")
+        products: list[int] = []
+        for which in args.add:
+            product = await resolve_product(services, which, work, context)
+            if isinstance(product, ToolOutcome):
+                return product
+            products.append(product)
+        outcome = await services.rooms.change(
+            work.staged,
+            context.retailer,
+            remove_pieces=tuple(args.remove),
+            add_products=tuple(products),
+            allow_over_budget=False,
+        )
+        told = room_outcome(outcome)
+        room = work.staged.room_project
+        if outcome.code != "over_budget" or room is None or not products:
+            return told
+        bundle = outcome.bundle
+        offer = SwapBudgetOfferState(
+            added_piece=_added_piece(
+                next(
+                    (
+                        line.product
+                        for line in (bundle.lines if bundle is not None else ())
+                        if line.product.product_id == products[0]
+                    ),
+                    None,
+                )
+            ),
+            chosen_product_id=products[0],
+            bundle_revision=room.bundle_revision,
+            room_total=bundle.new_spend_total if bundle is not None else None,
+            room_currency=bundle.currency if bundle is not None else None,
+            removed_pieces=tuple(dict.fromkeys(args.remove)),
+            added_product_ids=tuple(dict.fromkeys(products)),
+        )
+        return replace(
+            told,
+            facts={**(told.facts or {}), "needs_their_yes": True},
+            state=work.staged.model_copy(update={"swap_budget_offer": offer}),
+        )
+
+    return ZoryTool(
+        name="change_room",
+        description=(
+            "One change to the room: take pieces out and put products in together - "
+            '"these two instead of that pair", a piece\'s options, several finishing '
+            "touches at once. Every other piece stays as it is and the room is costed "
+            "once. Over budget nothing changes: tell them the one new total and ask; "
+            "their yes is accept_over_budget, which applies the whole change."
+        ),
+        args=ChangeRoomArgs,
+        owners=DESIGNERS,
+        handler=change,
+    )
 
 
 def add_to_room_tool(schemas: ToolSchemas) -> ZoryTool[AddToRoomArgs]:
@@ -666,9 +1094,10 @@ def show_room_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
 
 def design_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
     return [
-        advice_tool(schemas),
-        plan_room_tool(schemas),
-        revise_room_tool(schemas),
+        measure_fit_tool(schemas),
+        design_notes_tool(schemas),
+        design_room_tool(schemas),
+        revise_piece_tool(schemas),
         piece_options_tool(schemas),
         swap_piece_tool(schemas),
         accept_over_budget_tool(schemas),
@@ -677,5 +1106,6 @@ def design_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
         piece_status_tool(schemas),
         room_additions_tool(schemas),
         add_to_room_tool(schemas),
+        change_room_tool(schemas),
         show_room_tool(schemas),
     ]

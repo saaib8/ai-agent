@@ -65,10 +65,20 @@ class DesignNeedCandidates(BaseModel):
     pool: CandidatePoolResult | None = None
     skipped: DesignNeedSkipReason | None = None
 
+    tiers: tuple[tuple[int, ...], ...] = ()
+    """Each candidate's tier, aligned with the pool - lower is closer to what
+    the piece was designed to be (its type where seats differ, size, nothing it
+    should avoid, type preference, relaxation depth); its look is the pool's
+    meaning-based order within a tier. Empty for
+    a need nobody designed: then every candidate is alike and the pool's own
+    order decides. The pool is already in tier order."""
+
     @model_validator(mode="after")
     def _exactly_one_outcome(self) -> Self:
         if (self.pool is None) == (self.skipped is None):
             raise ValueError("a need was either searched or skipped, not both")
+        if self.tiers and (self.pool is None or len(self.tiers) != len(self.pool.candidates)):
+            raise ValueError("a tier for each candidate, or none")
         return self
 
     @property
@@ -101,9 +111,7 @@ class DesignDiscoveryResult(BaseModel):
         A gap would mean a need was dropped without saying so, which is the one
         thing a partial room must never do quietly.
         """
-        if tuple(entry.need_index for entry in self.needs) != tuple(
-            range(len(self.needs))
-        ):
+        if tuple(entry.need_index for entry in self.needs) != tuple(range(len(self.needs))):
             raise ValueError("need indices must be the plan's own positions, in order")
         return self
 

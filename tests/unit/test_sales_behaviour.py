@@ -6,8 +6,8 @@ Four claims, each of which the UAT found the service failing before this pass:
   written as prose by the decision model;
 * how many people use a room is a durable requirement, not a furniture count,
   and it survives the turns between being said and being used;
-* a piece the customer settles on earns the *next* furnishing role, chosen by
-  the design specialist and found in the real catalog - one step, not a room;
+* a piece the customer settles on earns the *next* furnishing role, found in
+  the real catalog - one step, not a room;
 * none of that gives any model a product, a price or an identity it did not
   already have.
 """
@@ -116,14 +116,16 @@ def test_the_customer_states_it_and_nothing_infers_it() -> None:
     assert "clear_regular_seating_count" in CustomerStateProposal.model_fields
 
 
-def test_the_specialist_is_given_the_requirement_not_a_furniture_count() -> None:
+def test_the_room_keeps_the_requirement_not_a_furniture_count() -> None:
     """Five regular users is a room requirement. What satisfies it - a
-    sectional, a sofa and two chairs, two sofas - is the specialist's to decide
-    from what this retailer stocks (CLAUDE.md 10.1)."""
-    assert "regular_seating_count" in InteriorDesignRequest.model_fields
+    sectional, a sofa and two chairs, two sofas - is Nora's to decide from
+    what this retailer stocks (CLAUDE.md 10.1)."""
+    # The specialist's request carried it; the room it is designed for does now.
+    assert "regular_seating_count" in RoomProjectState.model_fields
 
-    for forbidden in ("sofa_count", "sofa_quantity", "seat_count_per_product"):
-        assert forbidden not in InteriorDesignRequest.model_fields
+    for model in (RoomProjectState, InteriorDesignRequest):
+        for forbidden in ("sofa_count", "sofa_quantity", "seat_count_per_product"):
+            assert forbidden not in model.model_fields
 
 
 def test_nothing_maps_household_size_onto_a_quantity() -> None:
@@ -145,46 +147,11 @@ def test_nothing_maps_household_size_onto_a_quantity() -> None:
 # ── the next piece, not a room ──────────────────────────────────────────────
 
 
-def test_a_complement_is_its_own_task() -> None:
+def test_room_planning_is_the_only_design_task() -> None:
     """A customer who likes a sofa has not asked to furnish a room."""
-    assert DesignTask.COMPLEMENTARY_RECOMMENDATION
-    assert {t.value for t in DesignTask} == {
-        "general_advice",
-        "room_plan",
-        "complementary_recommendation",
-        "space_fit",
-        "match",
-    }
-
-
-def test_a_complement_needs_the_piece_it_complements() -> None:
-    """Without an anchor the question becomes "what furniture is nice", which
-    is a different question."""
-    from tests.unit.test_design_revision import _capabilities
-
-    with pytest.raises(ValidationError):
-        InteriorDesignRequest(
-            task=DesignTask.COMPLEMENTARY_RECOMMENDATION,
-            design_brief="what else?",
-            catalog_capabilities=_capabilities(("seating", "sofa")),
-        )
-
-
-def test_a_complement_carries_a_short_ordered_shortlist() -> None:
-    """One role is shown; the others are fallbacks for a thin category.
-
-    The cap was two when the first role was the only one ever run. It is three
-    now because a role the retailer *supports* can still return nothing - which
-    is how a customer came to see an empty screen and a remark about lounge
-    chairs they had never mentioned (CLAUDE.md 26).
-
-    Small enough that the specialist still has to choose. It is not a licence
-    to furnish a room nobody asked about: everything past the first viable role
-    is discarded.
-    """
-    from app.services.interior_design import MAX_COMPLEMENTARY_NEEDS
-
-    assert MAX_COMPLEMENTARY_NEEDS == 3
+    # Advice, complements, space fit and matching went with the specialist:
+    # Nora answers them herself, and only a designed room is searched.
+    assert {t.value for t in DesignTask} == {"room_plan"}
 
 
 def test_the_handoff_says_which_scope_it_means() -> None:
@@ -226,10 +193,9 @@ def test_no_merchandising_relationship_is_claimed() -> None:
     from pathlib import Path
 
     app = Path(__file__).parents[2] / "app"
-    # Identifiers, not prose. Prompts must be able to name what they forbid,
-    # and so must the docstring on `COMPLEMENTARY_RECOMMENDATION` explaining
-    # why nothing records this - a guard that read words would fire on the
-    # very sentences preventing the claim.
+    # Identifiers, not prose. Prompts and docstrings must be able to name what
+    # they forbid - a guard that read words would fire on the very sentences
+    # preventing the claim.
     for module in app.rglob("*.py"):
         tree = ast.parse(module.read_text())
         names = {

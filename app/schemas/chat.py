@@ -215,8 +215,15 @@ class ChatPresentation(BaseModel):
     one" is resolved against this sequence next turn.
     """
 
-    product_source: Literal["search", "selection", "liked", "detail"] | None = None
+    product_source: Literal["search", "selection", "liked", "detail", "room_options"] | None = None
+    options_for_piece: int | None = Field(default=None, ge=1)
+    """For room options: the room piece they are for, by its card's place."""
     """Which of those `products` is.
+
+    "room_options" are the alternatives for one piece of the room
+    (`options_for_piece`): each card's action is "Use this" - a swap into the
+    room in that piece's place (`bundle_action` swap) - never Select, which
+    would put it in the cart.
 
     "liked" is their liked list (♡): each card can be selected, unliked or
     asked more like of, named by its place in the liked list.

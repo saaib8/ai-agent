@@ -51,9 +51,9 @@ from app.services.refinement_composer import SearchRefinementComposer
 from app.services.seating_presentation import present_chosen_seating
 from app.services.similar_search import SimilarSearchBuilder
 
-from tests.unit import test_design_revision as design
 from tests.unit import test_furniture_finder as finder
 from tests.unit import test_room_visualization as visualization
+from tests.unit import test_whole_room_invariants as design
 from tests.unit.agents.fakes import agent_services
 from tests.unit.test_catalog import (
     ATTRIBUTES,

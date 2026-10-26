@@ -155,9 +155,7 @@ def validate_dimension_correspondence(
     wanted = sorted(constraint.role for constraint in request.dimensions)
     recorded = sorted(entry.role for entry in semantics.dimensions)
     if wanted != recorded:
-        raise ValueError(
-            "every request dimension needs exactly one recorded strength"
-        )
+        raise ValueError("every request dimension needs exactly one recorded strength")
     if (request.planar_dimensions is None) != (semantics.planar_dimension is None):
         raise ValueError("a planar pair and its strength must be present together")
 

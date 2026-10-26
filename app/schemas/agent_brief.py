@@ -134,6 +134,16 @@ class RoomBrief(_Brief):
     room: str
     kind: str | None = None
     size: tuple[RoomSizeBrief, ...] | None = None
+    size_known: bool | None = None
+    """Its length and width are on record."""
+    size_declined: bool | None = None
+    """They would rather not give its size: do not ask again."""
+    palette: tuple[str, ...] | None = None
+    """The room's colours as designed."""
+    purpose: str | None = None
+    """What the room is mostly for, in their words."""
+    layout_idea: str | None = None
+    """How Nora arranged it, in her words."""
     walls: tuple[WallBrief, ...] | None = None
     head_count: int | None = None
     pieces_chosen: tuple[str, ...] | None = None
@@ -144,6 +154,8 @@ class RoomBrief(_Brief):
     in_cart: bool | None = None
     plan: dict[str, Any] | None = None
     """The built room as the room engine reports it: pieces by card, totals."""
+    placements: list[dict[str, Any]] | None = None
+    """Where Nora would put each piece on their walls, and why - words only."""
     next_sizes: list[dict[str, Any]] | None = None
     """The designer's sizes for the pieces the room wants next: search at one
     with `designer_size`."""

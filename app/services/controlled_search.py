@@ -153,9 +153,7 @@ class ControlledRelaxationService:
         even that finds too little.
         """
         original = resolved.request
-        attempts.append(
-            RelaxationAttempt(depth=0, request=original, changes=(), eligible_count=0)
-        )
+        attempts.append(RelaxationAttempt(depth=0, request=original, changes=(), eligible_count=0))
         changes = tuple(
             AttributeRelaxationChange(field=field, required=words)
             for field, words in (

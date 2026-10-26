@@ -753,7 +753,10 @@ async def test_the_two_paths_agree_on_what_the_customer_would_have_seen() -> Non
 
 @pytest.mark.parametrize(
     "forbidden",
-    ["ordinal", "grounding", "presented", "similarity", "score", "rank"],
+    # `similarity` travels on a pool candidate for one agreed use (a room
+    # piece's upgrade only to an equally close look) and is excluded from every
+    # dump - see the test below.
+    ["ordinal", "grounding", "presented", "score", "rank"],
 )
 def test_the_pool_contract_holds_no_presentation_concept(forbidden: str) -> None:
     for model in (CandidatePoolResult, RankedProductCandidate):
@@ -761,15 +764,17 @@ def test_the_pool_contract_holds_no_presentation_concept(forbidden: str) -> None
             assert forbidden not in name, f"{model.__name__}.{name}"
 
 
-def test_the_pool_contract_reaches_no_similarity() -> None:
-    """Ranking's numbers stop at ranking. Carrying them forward is how a
-    blended relevance score gets invented later (CLAUDE.md 16.1)."""
+def test_the_pool_carries_similarity_for_the_optimiser_only() -> None:
+    """Ranking's numbers never reach a dump: the one carried forward,
+    similarity, serves only a room piece's upgrade to an equally close look
+    (agreed 2026-10-26) and is never blended into a score (CLAUDE.md 16.1)."""
     definitions = CandidatePoolResult.model_json_schema().get("$defs", {})
+    candidate = RankedProductCandidate(product=_candidate(1), relaxation_depth=0, similarity=0.8)
 
     assert "SemanticRankedCandidate" not in definitions
-    for definition in definitions.values():
-        for name in definition.get("properties", {}):
-            assert "similarity" not in name
+    assert candidate.similarity == 0.8
+    assert "similarity" not in candidate.model_dump()
+    assert "similarity" not in candidate.model_dump_json()
 
 
 def test_a_hydrated_pool_cannot_exceed_the_pool_that_was_ranked() -> None:

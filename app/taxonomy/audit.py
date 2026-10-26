@@ -71,9 +71,7 @@ class TaxonomyAuditReport(BaseModel):
     @property
     def conforms(self) -> bool:
         """True when every classified row uses an approved category/subcategory pair."""
-        return not (
-            self.invalid_categories or self.invalid_pairs or self.missing_subcategories
-        )
+        return not (self.invalid_categories or self.invalid_pairs or self.missing_subcategories)
 
     @property
     def unused_categories(self) -> tuple[str, ...]:
@@ -98,9 +96,7 @@ def _verdict(taxonomy: CommerceTaxonomy, pair: CommercePairCount) -> PairVerdict
 
 
 class TaxonomyAuditService:
-    def __init__(
-        self, repository: CatalogAuditRepository, taxonomy: CommerceTaxonomy
-    ) -> None:
+    def __init__(self, repository: CatalogAuditRepository, taxonomy: CommerceTaxonomy) -> None:
         self._repository = repository
         self._taxonomy = taxonomy
 
@@ -149,8 +145,7 @@ def render(report: TaxonomyAuditReport) -> str:
     ):
         lines += ["", f"{title} ({len(entries)})"]
         lines += [
-            f"  {p.category:20} / {p.subcategory!s:26} total={p.product_count}"
-            for p in entries
+            f"  {p.category:20} / {p.subcategory!s:26} total={p.product_count}" for p in entries
         ] or ["  none"]
     lines += [
         "",
@@ -173,9 +168,7 @@ async def _main() -> int:
     database = Database.create(settings.db)
     try:
         async with database.session() as session:
-            service = TaxonomyAuditService(
-                CatalogAuditRepository(session), load_taxonomy()
-            )
+            service = TaxonomyAuditService(CatalogAuditRepository(session), load_taxonomy())
             report = await service.run()
     finally:
         await database.dispose()

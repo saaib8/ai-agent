@@ -16,7 +16,6 @@ its fixed reply and nothing changed.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from collections.abc import Hashable, Mapping
@@ -27,12 +26,15 @@ from typing import Any, TypedDict
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.agents.context import ToolContext
+from app.agents.deadline import within
 from app.agents.loop import AgentLoop, HandedBack, Responded, TurnBudget, json_facts
 from app.agents.reply import unsupported_figure
 from app.agents.screen_actions import Tap
 from app.agents.tools.common import HandBackReason, RespondArgs
+from app.agents.tools.shelf import stocked_kinds
 from app.agents.trace import TraceEvent, TurnTrace, elapsed_ms
 from app.agents.views import agent_messages, assistant_said, done_so_far, turn_view
 from app.agents.work import ToolRecord, ToolStatus, TurnWork
@@ -189,8 +191,11 @@ class AgentTeam:
             "next": SUPERVISOR_ROLE,
         }
         try:
-            final = await asyncio.wait_for(
-                self._graph.ainvoke(initial), timeout=self._settings.work_deadline_s
+            final = await within(
+                self._graph.ainvoke(initial),
+                short_s=self._settings.work_deadline_s,
+                long_s=self._settings.room_work_deadline_s,
+                extended=lambda: trace.room_design,
             )
             reply = final.get("reply")
             if reply is None:
@@ -203,6 +208,11 @@ class AgentTeam:
             # Out of working time. Each tool's change lands whole, so what
             # finished is kept - a room they described is not lost to a slow
             # step after it - and the agent who was working says where it is.
+            # The step cancelled may have been mid-query: the catalog session
+            # is reset before the room is read again.
+            reset = getattr(turn.context.services, "catalog_reset", None)
+            if reset is not None:
+                await reset()
             out_of_time = LLMResponseInvalidError(reason="out of working time")
             return await self._stopped(turn, work, view, out_of_time, trace)
         return TeamResult(
@@ -241,7 +251,8 @@ class AgentTeam:
                 else first_view
             )
             model = self._model(agent)
-        except ZoryError:
+        except (ZoryError, SQLAlchemyError):
+            # Nothing to describe the work with: the fixed reply, never a 500.
             raise stopped from None
         messages = [
             *agent_messages(
@@ -466,12 +477,22 @@ class AgentTeam:
             reply_only = state.get("next", "").endswith(":reply")
             work.working = agent
             state["trace"].add(TraceEvent(agent.value, "handoff", "enter", 0))
+            if agent is AgentPersona.NORA and _planning_a_room(work):
+                # A whole room is one long careful step: the room's limits.
+                state["trace"].room_design = True
             # After an earlier agent changed the screen or the cart this turn,
             # the next one sees them as they are now.
             view = (
                 await turn_view(turn.context.services, work.staged, turn.context)
                 if work.staged is not work.pre_turn
                 else state["view"]
+            )
+            # Planning a room, Nora reads the kinds the store stocks (names only)
+            # rather than calling store_shelf: one model step fewer.
+            extra = (
+                await stocked_kinds(turn.context.services, turn.context.retailer)
+                if agent is AgentPersona.NORA and not reply_only and _planning_a_room(work)
+                else None
             )
             messages = agent_messages(
                 agent_instructions(agent),
@@ -481,6 +502,7 @@ class AgentTeam:
                 work,
                 history=self._settings.history_messages,
                 asked_for=state.get("need"),
+                extra=extra,
             )
             end = await self._loop.run(
                 agent,
@@ -549,10 +571,12 @@ def _route(state: _GraphState) -> str:
 
 
 _STOPPED = (
-    "The team ran out of steps before finishing this turn. Reply now with respond: tell "
-    "the customer plainly what was done (done_this_turn) and what was not, and offer the "
-    "next step. Do not mention steps, tools or rules. Write figures as {key} from figures, "
-    "or as the customer said them."
+    "The team ran out of steps before finishing this turn. Reply now with respond, to the "
+    "customer: what they now have from this turn (done_this_turn), described as the "
+    "result, and anything still to do offered plainly as their next step. Never narrate "
+    "the work itself - what you looked at, tried, found or did not apply. Do not mention "
+    "steps, tools or rules. Write figures as {key} from figures, or as the customer said "
+    "them."
 )
 
 _NO_CHOICE = (
@@ -609,3 +633,10 @@ def _said(turn: TeamTurn) -> str:
         return turn.message
     shown = turn.message.strip()
     return turn.tap.said + (f'\nThe button read: "{shown}"' if shown else "")
+
+
+def _planning_a_room(work: TurnWork) -> bool:
+    """A room is being planned: none is on record, or the one on record is not
+    built yet."""
+    room = work.staged.room_project
+    return room is None or (not room.bundle_items and not room.in_cart)

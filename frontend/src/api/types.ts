@@ -371,7 +371,10 @@ export interface ChatPresentation {
   /** Which kind of list `products` is. Only search results are the list that
    *  ticks and "Not this one" count into; picks and a single product are
    *  cards with no position there. */
-  product_source?: 'search' | 'selection' | 'liked' | 'detail' | null
+  product_source?: 'search' | 'selection' | 'liked' | 'detail' | 'room_options' | null
+  /** For room options: the room piece they are for (1-based). Their cards'
+   *  action is "Use this" - a swap into the room, never Select. */
+  options_for_piece?: number | null
   /** Which result list these cards are, for ticks. Set on search results. */
   list_revision?: number | null
   /** The first card is the closest to what they described. */

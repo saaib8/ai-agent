@@ -260,14 +260,14 @@ it, and one that can emit one is authoring state."""
 
 
 
-def test_the_design_specialist_reads_design_meaning_and_never_plan_records() -> None:
-    """`CurrentDesignNeed` is the projection; `RoomDesignNeedState` is the
-    record it was projected from, and carries the identity it dropped."""
+def test_the_design_request_never_reaches_plan_records() -> None:
+    """`RoomDesignNeedState` carries identity (need ids, rejected products);
+    the request discovery reads beside a plan must not. The specialist's
+    `CurrentDesignNeed` projection went with it."""
     from app.schemas.design import InteriorDesignRequest
 
     rendered = " ".join(_types(InteriorDesignRequest))
 
-    assert "CurrentDesignNeed" in rendered
     assert "RoomDesignNeedState" not in rendered
 
 

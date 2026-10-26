@@ -17,7 +17,7 @@ from app.agents.loop import AgentLoop
 from app.agents.team import AgentTeam
 from app.agents.tools.catalog import build_registry
 from app.agents.tools.schemas import ToolSchemas
-from app.core.config import LLMSettings, Settings, get_settings
+from app.core.config import Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
 from app.db.catalog_schema import verify_commerce_schema, verify_support_schema
@@ -79,10 +79,6 @@ class AppResources:
     # None when store knowledge is not configured: the agent then never looks
     # in the store's documents and answers exactly as before.
     store_knowledge: StoreKnowledgeService | None = None
-    # None when the interior-design specialist is not configured. A fourth
-    # client for the same reason as the second and third: the model identifier
-    # is fixed at construction (CLAUDE.md 24).
-    design_llm: OpenAIStructuredClient | None = None
     # None when Furniture Finder is not configured: the main platform's own
     # finder answers it, so one client is the whole capability.
     zory_finder: ZoryFinderClient | None = None
@@ -148,20 +144,6 @@ def _agent_team(
         {persona: model for persona, model in models.items() if model is not None},
         agents,
         AgentLoop(registry, max_tool_calls=agents.max_tool_calls),
-    )
-
-
-def design_llm_settings(settings: Settings) -> LLMSettings | None:
-    """The provider settings for the design specialist, or None when it is not
-    configured: its own model, and its own reasoning effort when one is set."""
-    design = settings.interior_design
-    if not design.model:
-        return None
-    return settings.llm.model_copy(
-        update={
-            "model": design.model,
-            "reasoning_effort": design.reasoning_effort or settings.llm.reasoning_effort,
-        }
     )
 
 
@@ -238,7 +220,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     llm_client = OpenAIStructuredClient(settings.llm)
     embedder: OpenAIQueryEmbedder | None = None
     semantic_index: SemanticIndex | None = None
-    design_llm: OpenAIStructuredClient | None = None
     if settings.pinecone is not None and settings.llm.embedding_model:
         embedder = OpenAIQueryEmbedder(settings.llm)
         semantic_index = PineconeSemanticIndex(settings.pinecone)
@@ -304,15 +285,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             max_bytes=visualization.reference_max_bytes,
         )
         closables.extend([*generators.values(), render_photos])
-    design_settings = design_llm_settings(settings)
-    if design_settings is not None:
-        design_llm = OpenAIStructuredClient(design_settings)
     agent_team = _agent_team(settings, taxonomy, attributes, rooms)
     logger.info("chat_graph_compiled", nodes=len(NODE_ORDER), agents=agent_team is not None)
-    logger.info(
-        "agents_configured",
-        interior_design_enabled=design_llm is not None,
-    )
     logger.info(
         "semantic_ranking_configured",
         enabled=semantic_index is not None,
@@ -346,7 +320,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedder=embedder,
         semantic_index=semantic_index,
         store_knowledge=store_knowledge,
-        design_llm=design_llm,
         taxonomy=taxonomy,
         attributes=attributes,
         dimensions=dimensions,
@@ -382,8 +355,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await room_checker.close()
         for closable in closables:
             await closable.close()
-        if design_llm is not None:
-            await design_llm.close()
         await llm_client.close()
         await redis_client.close()
         await database.dispose()

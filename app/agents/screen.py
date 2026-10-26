@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from app.agents.operations.rooms import open_room_options
 from app.agents.payloads import (
     ComparisonShown,
     KnowledgeShown,
@@ -30,6 +31,9 @@ from app.schemas.text_choice import TextReplyChoice
 from app.services.room_cart import room_in_cart
 from app.services.seating_presentation import present_seating_solution
 from app.services.support_channels import channels_for
+
+_REVIEWED_BEFORE_SHOWN = frozenset({"design_room"})
+"""Tools whose result is checked by the agent before the customer sees it."""
 
 _SHOWN_AS: dict[str, tuple[type, ...]] = {
     "list": (SearchShown, OptionsShown),
@@ -56,6 +60,13 @@ def presentation(
     last thing a tool showed when it chose nothing this turn produced."""
     shown = [r.payload for r in work.records if r.status is ToolStatus.OK and r.payload is not None]
     screens = [p for p in shown if not isinstance(p, SupportShown | KnowledgeShown)]
+    # A room just designed is a draft until Nora has read it: it is drawn only
+    # when she says so (show: "room"), never as the default.
+    drafts = [
+        r.payload
+        for r in work.records
+        if r.tool in _REVIEWED_BEFORE_SHOWN and r.status is ToolStatus.OK and r.payload is not None
+    ]
     # A list the turn showed is the list "the second one" means from now on:
     # nothing shown before it may be chosen over it.
     last_list = max(
@@ -68,7 +79,7 @@ def presentation(
         and isinstance(p, _SHOWN_AS[show])
         and (not isinstance(p, SelectionShown) or p.liked == (show == "liked"))
     ]
-    candidates = chosen or screens
+    candidates = chosen or [p for p in screens if not any(p is d for d in drafts)]
     # "unchanged": the agent judged this turn's results wrong to show - they
     # were drafts, and the screen stays as the customer last saw it.
     screen = candidates[-1] if candidates and show != "unchanged" else None
@@ -82,9 +93,11 @@ def presentation(
                 list_revision=state.product_interaction.presented_search_revision,
             )
         case OptionsShown(products=products) if products:
+            piece = open_room_options(state)
             fields.update(
                 products=products,
-                product_source="search",
+                product_source="search" if piece is None else "room_options",
+                options_for_piece=piece,
                 list_revision=state.product_interaction.presented_search_revision,
             )
         case SelectionShown(products=products, liked=liked):

@@ -333,6 +333,14 @@ def _check(
         present = {(i.get("commerce") or {}).get("subcategory") for i in turn.room.get("items", [])}
         if not set(kinds) <= present:
             failures.append(f"room holds {sorted(map(str, present))}, missing some of {kinds}")
+    if (share := checks.get("room_spend_min_percent")) is not None:
+        totals = turn.room.get("totals") or {}
+        spent, budget = totals.get("new_spend_total"), totals.get("budget_max_amount")
+        used = float(spent) * 100 / float(budget) if spent and budget else 0.0
+        if used < share or (budget and float(spent or 0) > float(budget)):
+            failures.append(f"room uses {used:.0f}% of its budget, expected {share}-100%")
+    if checks.get("room_shown") and not turn.has_room:
+        failures.append("no room package on screen")
     if (locked := checks.get("room_locked")) is not None:
         count = sum(1 for i in turn.room.get("items", []) if i.get("locked"))
         if count != locked:

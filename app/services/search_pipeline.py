@@ -195,9 +195,7 @@ class ProductSearchPipeline:
             was_relaxed=grounding.was_relaxed,
             stop_reason=str(grounding.stop_reason),
             semantic_used=grounding.semantic_used,
-            semantic_skip_reason=(
-                str(ranked.skip_reason) if ranked.skip_reason else None
-            ),
+            semantic_skip_reason=(str(ranked.skip_reason) if ranked.skip_reason else None),
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return ProductSearchExecutionResult(
@@ -263,11 +261,17 @@ class ProductSearchPipeline:
         hydrated = await self._hydration.hydrate_ids(ranked.product_ids, context)
 
         depth_by_id = {c.product_id: c.relaxation_depth for c in ranked.candidates}
+        # Kept beside the order for one use only: a room piece is upgraded to
+        # a dearer product only when its look is as close (`bundle_optimizer`).
+        similarity_by_id = {
+            c.product_id: getattr(c, "semantic_similarity", None) for c in ranked.candidates
+        }
         pool = CandidatePoolResult(
             candidates=tuple(
                 RankedProductCandidate(
                     product=product,
                     relaxation_depth=depth_by_id[product.product_id],
+                    similarity=similarity_by_id.get(product.product_id),
                 )
                 for product in hydrated
             ),
@@ -310,8 +314,7 @@ class ProductSearchPipeline:
         """
         hydrated = await self._hydration.hydrate_ids((product_id,), context)
         candidates = tuple(
-            RankedProductCandidate(product=product, relaxation_depth=0)
-            for product in hydrated
+            RankedProductCandidate(product=product, relaxation_depth=0) for product in hydrated
         )
         return CandidatePoolResult(
             candidates=candidates,
@@ -357,9 +360,7 @@ def _require_conserved(
         missing_count=len(set(eligible_ids) - set(ranked_ids)),
         unexpected_count=len(set(ranked_ids) - set(eligible_ids)),
     )
-    raise RankingIntegrityError(
-        eligible_count=len(eligible_ids), ranked_count=len(ranked_ids)
-    )
+    raise RankingIntegrityError(eligible_count=len(eligible_ids), ranked_count=len(ranked_ids))
 
 
 def _summarise(
@@ -484,9 +485,7 @@ def _summary_item(change: AppliedRelaxation) -> RelaxationSummaryItem:
     )
 
 
-def _render(
-    minimum: Decimal | None, maximum: Decimal | None, target: Decimal | None
-) -> str:
+def _render(minimum: Decimal | None, maximum: Decimal | None, target: Decimal | None) -> str:
     """A measurement as the customer would recognise it.
 
     A widened target executes as a band, so both edges are shown; a single

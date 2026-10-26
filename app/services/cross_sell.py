@@ -44,6 +44,7 @@ MAX_COMPANION_CHIPS: Final[int] = 4
 """A row of chips, not a menu. The chips lead with the kinds the store has
 most of, so the ones left off are the least stocked."""
 
+
 class CompanionSearchBuilder:
     """A verified product and one of its companion types -> a search."""
 
@@ -83,9 +84,3 @@ class CompanionSearchBuilder:
             semantic_preferences=preferences,
             semantic_text=None,
         )
-
-
-
-
-
-

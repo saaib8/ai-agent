@@ -131,8 +131,13 @@ class RelaxationPlanner:
                 if changes:
                     planned.append(
                         self._build(
-                            request, price_min, price_max, seats_min, seats_max,
-                            dimensions, changes,
+                            request,
+                            price_min,
+                            price_max,
+                            seats_min,
+                            seats_max,
+                            dimensions,
+                            changes,
                         )
                     )
 
@@ -167,8 +172,13 @@ class RelaxationPlanner:
             if changes:
                 planned.append(
                     self._build(
-                        request, price_min, price_max, seats_min, seats_max,
-                        dimensions, changes,
+                        request,
+                        price_min,
+                        price_max,
+                        seats_min,
+                        seats_max,
+                        dimensions,
+                        changes,
                     )
                 )
 
@@ -182,8 +192,13 @@ class RelaxationPlanner:
                 if changes:
                     planned.append(
                         self._build(
-                            request, price_min, price_max, seats_min, seats_max,
-                            dimensions, changes,
+                            request,
+                            price_min,
+                            price_max,
+                            seats_min,
+                            seats_max,
+                            dimensions,
+                            changes,
                         )
                     )
 
@@ -214,9 +229,7 @@ class RelaxationPlanner:
             ):
                 # The allowlist widens an along-wall width - the long side.
                 continue
-            if not self._may_relax(
-                semantics.strength_for_dimension(original.role), strength
-            ):
+            if not self._may_relax(semantics.strength_for_dimension(original.role), strength):
                 continue
             constraint, change = self._widen_dimension(original, fraction, strength, stage)
             if constraint == widened[index]:
@@ -299,9 +312,7 @@ class RelaxationPlanner:
     # ── permission ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _may_relax(
-        recorded: ConstraintStrength | None, strength: ConstraintStrength
-    ) -> bool:
+    def _may_relax(recorded: ConstraintStrength | None, strength: ConstraintStrength) -> bool:
         """Only an explicitly recorded, matching, non-locked strength permits it.
 
         `None` means the constraint is absent or its strength was never

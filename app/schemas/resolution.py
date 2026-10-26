@@ -317,17 +317,12 @@ class DeterministicClarification(BaseModel):
     @model_validator(mode="after")
     def _only_customer_resolvable_reasons(self) -> Self:
         if self.reference_reason in _UNAVAILABILITY_REASONS:
-            raise ValueError(
-                "an unavailable product is a failure, not a clarification"
-            )
+            raise ValueError("an unavailable product is a failure, not a clarification")
         if (
             self.relative_price_reason is not None
-            and self.relative_price_reason
-            is not RelativePriceFailureReason.CURRENCY_CONFLICT
+            and self.relative_price_reason is not RelativePriceFailureReason.CURRENCY_CONFLICT
         ):
-            raise ValueError(
-                "only a currency conflict is a customer-resolvable relative price"
-            )
+            raise ValueError("only a currency conflict is a customer-resolvable relative price")
         return self
 
 
@@ -352,16 +347,22 @@ class RankedProductCandidate(BaseModel):
     request as asked, depth 1 or more needed a widening. It is not a score and
     must never be presented as relevance.
 
-    There is deliberately **no similarity**. Ranking's job ended when it
-    produced this order; carrying its numbers forward would invite a later
-    layer to blend them with a price or a fit into one relevance figure, which
-    is what CLAUDE.md 16.1 forbids. The order is the output.
+    The order is the output. `similarity` travels beside it for one narrow
+    use, agreed with the user: a room piece is upgraded to a dearer product
+    only when its look is as close as the best match's - the two scores
+    within a small margin. It is never blended with a price or a fit into one
+    relevance figure (CLAUDE.md 16.1), never ranks anything, and never reaches
+    facts, payloads or any customer-facing shape.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     product: ProductCandidate
     relaxation_depth: int = Field(ge=0)
+    similarity: float | None = Field(default=None, exclude=True)
+    """How close its text vector is to the search, when ranking had one;
+    None when the index was not asked, unavailable, or the product has no
+    vector - never zero."""
 
 
 class CandidatePoolResult(BaseModel):

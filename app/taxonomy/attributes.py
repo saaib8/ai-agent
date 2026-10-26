@@ -124,9 +124,7 @@ def _spelling_index(family: AttributeFamily, members: frozenset[str]) -> dict[st
 def _parse_family(document: Any, key: str, *, source: str) -> frozenset[str]:
     raw = document.get(key)
     if not isinstance(raw, list) or not raw:
-        raise TaxonomyConfigurationError(
-            detail=f"{source}: '{key}' must be a non-empty list"
-        )
+        raise TaxonomyConfigurationError(detail=f"{source}: '{key}' must be a non-empty list")
     seen: set[str] = set()
     for value in raw:
         if not isinstance(value, str) or not value.strip():

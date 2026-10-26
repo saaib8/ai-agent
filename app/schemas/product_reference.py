@@ -31,7 +31,7 @@ class ExtremumDirection(StrEnum):
 
 
 class PresentedOrdinal(BaseModel):
-    """"the second one" - a position in what the customer is looking at."""
+    """ "the second one" - a position in what the customer is looking at."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -40,7 +40,7 @@ class PresentedOrdinal(BaseModel):
 
 
 class ComparedOrdinal(BaseModel):
-    """"the second one" - a column in the comparison they are looking at.
+    """ "the second one" - a column in the comparison they are looking at.
 
     A comparison creates a numbering of its own. Sofas three and five of a list
     of five are columns one and two, and a customer who has been reading a
@@ -60,7 +60,7 @@ class ComparedOrdinal(BaseModel):
 
 
 class PickedOrdinal(BaseModel):
-    """"my second pick" - a position in the products the customer picked.
+    """ "my second pick" - a position in the products the customer picked.
 
     Picks are a list of their own, kept across searches and shown in a tray,
     so they have their own numbering: the first product they picked is pick
@@ -78,7 +78,7 @@ class PickedOrdinal(BaseModel):
 
 
 class FocusedProduct(BaseModel):
-    """"it", "that one", "this sofa"."""
+    """ "it", "that one", "this sofa"."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -86,7 +86,7 @@ class FocusedProduct(BaseModel):
 
 
 class SoleSelectedProduct(BaseModel):
-    """"the one I picked" - resolvable only when exactly one is selected."""
+    """ "the one I picked" - resolvable only when exactly one is selected."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -94,7 +94,7 @@ class SoleSelectedProduct(BaseModel):
 
 
 class LikedProduct(BaseModel):
-    """"the one I liked", "the one I hearted", "my second like" - a product
+    """ "the one I liked", "the one I hearted", "my second like" - a product
     in their liked list (♡), which is a list of its own, apart from the picks.
 
     Without a position it means their only like, and is a question when they
@@ -107,7 +107,7 @@ class LikedProduct(BaseModel):
 
 
 class PresentedAttributeMatch(BaseModel):
-    """"the beige one" - resolved against freshly hydrated presented products."""
+    """ "the beige one" - resolved against freshly hydrated presented products."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -117,7 +117,7 @@ class PresentedAttributeMatch(BaseModel):
 
 
 class PresentedExtremum(BaseModel):
-    """"the cheaper one" - an extreme of a verified fact, not a judgement."""
+    """ "the cheaper one" - an extreme of a verified fact, not a judgement."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

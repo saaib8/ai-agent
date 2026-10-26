@@ -15,7 +15,7 @@ from pydantic import Field, create_model
 
 from app.agents.context import ToolContext
 from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool, one_of
-from app.agents.tools.design import Measure
+from app.agents.tools.design import Budget, Measure
 from app.agents.tools.schemas import ToolSchemas
 from app.agents.work import ToolStatus, TurnWork
 from app.schemas.agent_persona import AgentPersona
@@ -53,6 +53,31 @@ def room_note_args(schemas: ToolSchemas) -> type[ToolArgs]:
         "width": (Measure | None, None),
         "doorway": (Measure | None, Field(default=None, description="The way in, its width.")),
         "walls": (list[WallArgs], Field(default_factory=list, max_length=MAX_WALL_NOTES)),
+        "budget": (
+            Budget | None,
+            Field(
+                default=None,
+                description="The room's budget, as soon as they say it - kept before anything "
+                "is built, so it is never asked again.",
+            ),
+        ),
+        "purpose": (
+            str | None,
+            Field(
+                default=None,
+                min_length=1,
+                max_length=120,
+                description="What the room is mostly for, in their words: hosting guests, "
+                "family time and TV, reading, children playing.",
+            ),
+        ),
+        "declined_size": (
+            bool,
+            Field(
+                default=False,
+                description="They would rather not give the room's size - it is not asked again.",
+            ),
+        ),
     }
     return cast(type[ToolArgs], create_model("NoteRoomArgs", __base__=ToolArgs, **fields))
 
@@ -112,6 +137,9 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                     # carries into a note about a different one.
                     clear_geometry=not measured and another,
                     walls=walls,
+                    budget=args.budget.constraint() if args.budget else None,
+                    size_declined=True if args.declined_size else (False if measured else None),
+                    purpose=args.purpose,
                 )
             ),
         )
@@ -121,6 +149,13 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             facts={
                 "room": room.room_type or room.room_kind,
                 "size_known": knows_room_size(room.geometry),
+                **({"size_declined": True} if room.size_declined else {}),
+                **({"purpose": room.purpose} if room.purpose else {}),
+                **(
+                    {"budget": room.budget.max_amount, "currency": room.budget.currency}
+                    if room.budget is not None and room.budget.max_amount is not None
+                    else {}
+                ),
                 "walls_noted": [w.wall for w in room.layout],
             },
             state=state,
@@ -129,10 +164,10 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
     return ZoryTool(
         name="note_room",
         description=(
-            "Record what they say about their room: its kind, length and width, the doorway, "
-            "and each wall with what is on it (door, window, TV point, radiator, built-in, "
-            "keep free). Say it once and every fit, placement and size after it uses it. "
-            "Builds nothing."
+            "Record what they say about their room: its kind, budget, length and width, the "
+            "doorway, and each wall with what is on it (door, window, TV point, radiator, "
+            "built-in, keep free). Say it once and every fit, placement and size after it "
+            "uses it. Builds nothing."
         ),
         args=room_note_args(schemas),
         owners=ROOM_KEEPERS,

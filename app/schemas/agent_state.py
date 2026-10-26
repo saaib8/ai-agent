@@ -30,9 +30,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.design import (
     MAX_NEXT_SIZES,
+    MAX_PLACEMENTS,
     MAX_REGULAR_SEATING_COUNT,
     DesignPriority,
     NextSize,
+    PieceDesign,
+    Placement,
 )
 from app.schemas.design_intent import (
     MAX_DESIGN_INTENT_CHARS,
@@ -547,6 +550,12 @@ class RoomDesignNeedState(BaseModel):
     ordinary substitution must not do.
     """
 
+    design: PieceDesign | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Nora's decisions for this role - its name, other types, look, size,
+    share and wall - so a swap, a removal or a re-costing keeps the piece she
+    designed rather than its bare type. Plan-owned like the rest of the need.
+    A need saved before it is read as the bare type."""
+
     rejected_product_ids: tuple[int, ...] = ()
     """Products the customer turned down **for this role**.
 
@@ -580,6 +589,9 @@ class RoomDesignNeedState(BaseModel):
 MAX_ROOM_ANCHORS = 12
 """How many picked products a room may be built around. A room, not a catalogue:
 more than a dozen named pieces is not a room to design around."""
+
+
+MAX_ROOM_NOTE_CHARS = 500
 
 
 class RoomProjectState(BaseModel):
@@ -653,6 +665,20 @@ class RoomProjectState(BaseModel):
     recommended pieces, so it is an answer like any other. Only keys of this
     room's template, checked before they are stored (CLAUDE.md 10.3)."""
 
+    palette: tuple[str, ...] = Field(default=(), max_length=5, exclude_if=lambda v: not v)
+    """The room's colours as Nora designed it - each piece leans to its own
+    colours, then these. Apart from `design_preferences` on purpose: a simple
+    search never leans to a room's palette."""
+    palette_styles: tuple[str, ...] = Field(default=(), max_length=2, exclude_if=lambda v: not v)
+    size_declined: bool = Field(default=False, exclude_if=lambda v: not v)
+    """They would rather not give the room's size: it is not asked again."""
+    purpose: str | None = Field(default=None, max_length=MAX_ROOM_NOTE_CHARS)
+    """What the room is mostly for, in their words ("hosting guests")."""
+    layout_idea: str | None = Field(default=None, max_length=MAX_ROOM_NOTE_CHARS)
+    """How Nora arranged it, in her words ("an L in the corner by the window,
+    a second sofa facing the TV") - so every later turn describes the same
+    arrangement. Words only, never figures."""
+
     seats_carried: bool = Field(default=False, exclude_if=lambda v: not v)
     """The head count was carried from shopping, not given for this room - so
     the seats their picks provide are still confirmed when they ask to build
@@ -678,6 +704,12 @@ class RoomProjectState(BaseModel):
     )
     """The room's walls as the customer described them - what is on each -
     for placing pieces. Defaulted, so every saved session still reads."""
+
+    placements: tuple[Placement, ...] = Field(
+        default=(), max_length=MAX_PLACEMENTS, exclude_if=lambda v: not v
+    )
+    """Where Nora would put each piece in their room - her judgement, words
+    only, kept so every agent can say where a piece goes."""
 
     next_sizes: tuple[NextSize, ...] = Field(
         default=(), max_length=MAX_NEXT_SIZES, exclude_if=lambda v: not v
@@ -913,11 +945,23 @@ class SwapBudgetOfferState(BaseModel):
     """What the room would total with the change, as the optimiser costed it -
     so a later turn can say it without working it out."""
 
+    removed_pieces: tuple[int, ...] = Field(default=(), exclude_if=lambda v: not v)
+    added_product_ids: tuple[int, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """A whole change held as one (`change_room`): the pieces it takes out, by
+    their place among the room cards, and every product it puts in. One yes
+    applies all of it."""
+
     @model_validator(mode="after")
     def _a_swap_or_an_addition(self) -> Self:
         if (self.bundle_ordinal is None) == (self.added_piece is None):
             raise ValueError("a held change swaps a piece or adds one, never both")
+        if self.removed_pieces and not self.added_product_ids:
+            raise ValueError("a held change that takes pieces out puts one in")
         return self
+
+    @property
+    def is_change(self) -> bool:
+        return bool(self.added_product_ids)
 
 
 class PurchaseStage(StrEnum):

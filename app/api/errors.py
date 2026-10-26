@@ -54,9 +54,7 @@ async def handle_zory_error(request: Request, exc: Exception) -> JSONResponse:
         log.error("request_failed", exc_info=exc)
     else:
         log.info("request_rejected")
-    return _response(
-        request, status=exc.http_status, code=exc.code, message=exc.public_message
-    )
+    return _response(request, status=exc.http_status, code=exc.code, message=exc.public_message)
 
 
 async def handle_validation_error(request: Request, exc: Exception) -> JSONResponse:

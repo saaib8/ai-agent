@@ -100,9 +100,7 @@ class PriceConstraint(BaseModel):
         ):
             # An exclusive bound on a single point admits nothing at all: a
             # contradiction, not a very narrow search.
-            raise ValueError(
-                "an exclusive bound on equal min and max can never be satisfied"
-            )
+            raise ValueError("an exclusive bound on equal min and max can never be satisfied")
         return self
 
     @classmethod
@@ -340,9 +338,7 @@ class ProductSearchRequest(BaseModel):
     @classmethod
     def _bounded_exclusions(cls, value: tuple[int, ...]) -> tuple[int, ...]:
         if len(value) > MAX_EXCLUDED_PRODUCT_IDS:
-            raise ValueError(
-                f"a request may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products"
-            )
+            raise ValueError(f"a request may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products")
         if len(value) != len(set(value)):
             raise ValueError("exclude_product_ids must not repeat a product id")
         return value

@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field, create_model
 from app.agents.context import ToolContext
 from app.agents.facts import (
     cart_facts,
-    design_notes,
     product_facts,
     search_facts,
     searched_for,
 )
+from app.agents.operations.rooms import open_room_options
 from app.agents.payloads import (
     ComparisonShown,
     ProductShown,
@@ -41,7 +41,7 @@ from app.schemas.agent_state import (
 )
 from app.schemas.agent_updates import AgentStateUpdate, ProductInteractionUpdate
 from app.schemas.comparison import MAX_COMPARED_PRODUCTS
-from app.schemas.design import DesignTask, InteriorDesignRequest, MatchKind, NextSize
+from app.schemas.design import DesignDirection, NextSize
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.grounding import GroundedProduct
 from app.schemas.product import ProductCandidate
@@ -68,8 +68,8 @@ from app.services.agent_state import (
     designer_size,
     remember_next_sizes,
 )
-from app.services.design_facts import project_anchors
-from app.services.fit import fit_checks, floor_share, room_fit, room_spaces
+from app.services.design_checks import figure_free, stocked_direction
+from app.services.fit import room_fit
 from app.services.grounding_builder import to_grounded_product
 from app.services.query_document import ranking_words
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
@@ -239,6 +239,44 @@ def as_interpretation(
     )
 
 
+def direction_args(attributes: CatalogAttributes) -> type[ToolArgs]:
+    """Nora's design direction in approved values only, within the bounds
+    every direction is held to (CLAUDE.md 10.5)."""
+    colours: Any = list[Literal[tuple(sorted(attributes.colors))]]  # type: ignore[misc]
+    styles: Any = list[Literal[tuple(sorted(attributes.styles))]]  # type: ignore[misc]
+    return cast(
+        type[ToolArgs],
+        create_model(
+            "Direction",
+            __base__=ToolArgs,
+            colours=(colours, Field(default_factory=list, max_length=3)),
+            styles=(styles, Field(default_factory=list, max_length=2)),
+            avoid_colours=(colours, Field(default_factory=list, max_length=2)),
+            avoid_styles=(styles, Field(default_factory=list, max_length=2)),
+            size_ratio=(
+                float | None,
+                Field(
+                    default=None,
+                    ge=0.2,
+                    le=3.0,
+                    description=(
+                        "This piece's longer side as a share of the first matched piece's: "
+                        "0.66 for a table two thirds of the sofa."
+                    ),
+                ),
+            ),
+            why=(
+                str,
+                Field(
+                    min_length=1,
+                    max_length=200,
+                    description="Why it sits well beside theirs, in words - no figures.",
+                ),
+            ),
+        ),
+    )
+
+
 def search_args(
     interpretation: type[CommerceInterpretation], attributes: CatalogAttributes
 ) -> type[ToolArgs]:
@@ -263,9 +301,9 @@ def search_args(
                     default_factory=list,
                     max_length=6,
                     description=(
-                        "Products this search should go with - cards, cart picks, liked. The "
-                        "designer gives a direction (colours, styles, what to avoid, size) "
-                        "that orders the results; nothing is hidden."
+                        "Products this search should go with - cards, cart picks, liked. "
+                        "Nora's direction (colours, styles, what to avoid, size) orders the "
+                        "results; nothing is hidden."
                     ),
                 ),
             ),
@@ -280,6 +318,18 @@ def search_args(
             match_room=(
                 bool,
                 Field(default=False, description="Match the room being designed, its pieces."),
+            ),
+            direction=(
+                direction_args(attributes) | None,
+                Field(
+                    default=None,
+                    description=(
+                        "Nora's design direction for this kind beside what they chose "
+                        "(match_with, match_goal, match_room): colours and styles that sit "
+                        "well, what would clash, and a size in proportion to the first "
+                        "piece. It orders the results, never hides any. Nora's alone."
+                    ),
+                ),
             ),
             designer_size=(
                 bool,
@@ -392,11 +442,19 @@ async def _design_direction(
     context: ToolContext,
     resolved: ResolvedSearch,
 ) -> tuple[RankingLean | None, dict[str, Any], tuple[ProductCandidate, ...], tuple[NextSize, ...]]:
-    """The designer's direction for this kind beside what they already chose:
-    a ranking lean - it orders, never filters - the facts to explain it, and
-    the products it was matched with. No lean when nothing is matched or no
-    designer can answer."""
+    """What the search is matched with, and Nora's direction for this kind
+    beside it - a ranking lean that orders and never filters (CLAUDE.md 10.5).
+
+    The direction is hers, written as arguments; code only keeps it to the
+    colours and styles the store stocks for the kind and works out the size
+    from the first matched piece. No model is consulted here."""
     state = work.staged
+    direction = args.direction
+    if direction is not None and work.working is not AgentPersona.NORA:
+        # Whether a piece goes with theirs is the designer's judgement.
+        return None, {"direction": "matching_is_noras"}, (), ()
+    if direction is not None and not figure_free(direction.why):
+        return None, {"direction": "why_states_a_figure"}, (), ()
     ids: list[int] = []
     for which in args.match_with:
         product = await resolve_product(services, which, work, context)
@@ -414,53 +472,51 @@ async def _design_direction(
     if not ids:
         return None, {}, (), ()
     request = resolved.request
-    products: tuple[ProductCandidate, ...] = ()
     try:
         products = tuple(await services.hydration.hydrate_ids(tuple(ids), context.retailer))
-        if not products or services.design is None:
-            return None, {}, products, ()
-        geometry = room.geometry if room else None
-        capabilities = await services.capabilities.capabilities(context.retailer)
-        looks = (
-            (await services.looks.of(request.commerce_subcategory, context.retailer),)
-            if services.looks is not None and request.commerce_subcategory
-            else ()
+    except (IntegrationUnavailableError, InvalidRequestError):
+        return None, {"direction": "unavailable"}, (), ()
+    matched: dict[str, Any] = {"matched_with": [p.name_english for p in products]}
+    if not products or direction is None:
+        return None, matched, products, ()
+    look = None
+    if services.looks is not None and request.commerce_subcategory:
+        try:
+            look = await services.looks.of(request.commerce_subcategory, context.retailer)
+        except IntegrationUnavailableError:
+            look = None
+    if look is None:
+        # What the kind comes in is unknown, so nothing can be checked and
+        # nothing leans - not a sign the values are unstocked.
+        return None, {**matched, "direction": "looks_unknown"}, products, ()
+    kept, dropped = stocked_direction(
+        DesignDirection(
+            colours=tuple(direction.colours),
+            styles=tuple(direction.styles),
+            avoid_colours=tuple(direction.avoid_colours),
+            avoid_styles=tuple(direction.avoid_styles),
+            size_ratio=direction.size_ratio,
+        ),
+        look,
+    )
+    if dropped:
+        matched["direction_dropped"] = (
+            "values this kind is not stocked in were left out of the direction"
         )
-        designed = await services.design.plan(
-            InteriorDesignRequest(
-                task=DesignTask.MATCH,
-                match_kind=MatchKind(
-                    commerce_category=request.commerce_category,
-                    commerce_subcategory=request.commerce_subcategory,
-                ),
-                anchors=project_anchors(products, dimensions=services.dimensions),
-                catalog_capabilities=capabilities,
-                stocked_looks=looks,
-                room_type=room.room_type if room else None,
-                geometry=geometry,
-                layout=room.layout if room else (),
-                fit_checks=fit_checks(products, room_spaces(geometry)),
-                floor_taken_percent=floor_share(products, geometry),
-            )
-        )
-    except (LLMResponseInvalidError, IntegrationUnavailableError, InvalidRequestError):
-        return None, {"direction": "unavailable"}, products, ()
-    direction = designed.needs[0].direction if designed.needs else None
-    matched = {"matched_with": [p.name_english for p in products], **design_notes(designed)}
-    if direction is None:
-        return None, {**matched, "direction": "none"}, products, designed.next_sizes
+    if kept is None:
+        return None, {**matched, "direction": "none_stocked"}, products, ()
     anchor = products[0].dimensions
     longer = max((v for v in (anchor.length_cm, anchor.width_cm) if v is not None), default=None)
     target = (
-        (longer * Decimal(str(direction.size_ratio))).quantize(Decimal(1))
-        if longer is not None and direction.size_ratio is not None
+        (longer * Decimal(str(kept.size_ratio))).quantize(Decimal(1))
+        if longer is not None and kept.size_ratio is not None
         else None
     )
     lean = RankingLean(
-        colours=direction.colours,
-        styles=direction.styles,
-        avoid_colours=direction.avoid_colours,
-        avoid_styles=direction.avoid_styles,
+        colours=kept.colours,
+        styles=kept.styles,
+        avoid_colours=kept.avoid_colours,
+        avoid_styles=kept.avoid_styles,
         size_target_cm=target,
     )
     return (
@@ -468,15 +524,15 @@ async def _design_direction(
         {
             **matched,
             "direction": {
-                "colours": list(direction.colours),
-                "styles": list(direction.styles),
-                "avoid": [*direction.avoid_colours, *direction.avoid_styles],
+                "colours": list(kept.colours),
+                "styles": list(kept.styles),
+                "avoid": [*kept.avoid_colours, *kept.avoid_styles],
                 **({"longer_side_near_cm": str(target)} if target is not None else {}),
-                "why": [g.summary for g in designed.guidance][:2],
+                "why": direction.why,
             },
         },
         products,
-        designed.next_sizes,
+        (),
     )
 
 
@@ -545,6 +601,17 @@ def search_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
         lean, matched, chosen, sizes = await _design_direction(
             services, args, work, context, resolved
         )
+        refused = matched.get("direction")
+        if refused == "matching_is_noras":
+            # Whether a piece goes with theirs is Nora's: nothing is searched
+            # as matched on anyone else's word.
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="matching_is_noras",
+                facts={"hand_to": "nora", "need": "needs_design"},
+            )
+        if refused == "why_states_a_figure":
+            return ToolOutcome(status=ToolStatus.INVALID, code="direction_why_states_a_figure")
         state = remember_next_sizes(work.staged, sizes)
         if args.designer_size:
             request = resolved.request
@@ -802,6 +869,12 @@ class AddToCartArgs(ToolArgs):
     for_goal: int | None = Field(
         default=None, ge=1, description="The open goal these were chosen for, by its number."
     )
+    instead_of_room: bool = Field(
+        default=False,
+        description=(
+            "Only when they said to put a room piece's option in the cart rather than in the room."
+        ),
+    )
 
 
 def add_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[AddToCartArgs]:
@@ -813,6 +886,16 @@ def add_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[AddToCartArgs]:
             if isinstance(product, ToolOutcome):
                 return product
             wanted.append((product, item.quantity))
+        piece = open_room_options(work.staged)
+        shown = work.staged.product_interaction.presented_product_ids
+        if piece is not None and not args.instead_of_room and any(p in shown for p, _ in wanted):
+            # A room piece's option goes into the room in its place - the cart
+            # is changed only when they say so.
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="option_is_for_the_room",
+                facts={"piece": piece, "use_instead": "swap_room_piece"},
+            )
         change = await services.cart_operations.add(work.staged, context.retailer, wanted)
         if args.for_goal is not None and change.added:
             change.state = add_to_goal(change.state, args.for_goal, change.added)

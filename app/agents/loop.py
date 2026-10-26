@@ -49,6 +49,7 @@ from app.core.exceptions import (
     TaxonomyValidationError,
     ZoryError,
 )
+from app.core.logging import get_logger
 from app.integrations.chat_models import call_chat_model
 from app.integrations.llm import schema_violations
 from app.schemas.agent_persona import AgentPersona
@@ -109,6 +110,8 @@ def json_facts(facts: Mapping[str, Any] | None) -> dict[str, JsonValue]:
         return {}
     loaded: dict[str, JsonValue] = json.loads(json.dumps(facts, ensure_ascii=False, default=str))
     return loaded
+
+logger = get_logger(__name__)
 
 
 class AgentLoop:
@@ -184,6 +187,15 @@ class AgentLoop:
                 return Responded(agent, RespondArgs(message=plain[:MAX_RESPONSE_CHARS]))
 
             ended: HopEnd | None = None
+            # Several calls in one step run in order, each on the state the
+            # last left. A reply or a hand-back is written only once the
+            # step's other results are read: sent beside them, it is answered
+            # after them and asked for again.
+            acting = any(
+                (t := self._registry.get(c["name"])) is not None
+                and t.kind not in (ToolKind.RESPOND, ToolKind.HAND_BACK)
+                for c in reply.tool_calls
+            )
             for call in reply.tool_calls:
                 call_id = _call_id(call.get("id"))
                 name = call["name"]
@@ -210,6 +222,13 @@ class AgentLoop:
                     args = tool.args.model_validate(call["args"])
                 except ValidationError as exc:
                     violations = schema_violations(exc)
+                    # The rules broken, never the values (CLAUDE.md 21.1, 22).
+                    logger.warning(
+                        "agent_tool_arguments_invalid",
+                        agent=agent.value,
+                        tool=name,
+                        rules=list(violations),
+                    )
                     budget.correct(agent=agent.value, tool=name, violations=violations)
                     trace.add(TraceEvent(agent.value, "tool", name, 0, "invalid"))
                     exchange.append(
@@ -222,6 +241,11 @@ class AgentLoop:
                     )
                     continue
 
+                if acting and tool.kind in (ToolKind.RESPOND, ToolKind.HAND_BACK):
+                    exchange.append(
+                        _answer(call_id, ToolStatus.REFUSED, "read_the_results_first")
+                    )
+                    continue
                 if tool.kind is ToolKind.RESPOND:
                     assert isinstance(args, RespondArgs)
                     written, rules = render_reply(args, figure_table(work))
@@ -317,11 +341,12 @@ class AgentLoop:
 
 
 def _bind(model: BaseChatModel, tools: Sequence[ZoryTool[Any]]) -> Any:
-    """The model offered these tools, one call at a time, never in strict
-    mode - the arguments are validated here, with one correction."""
+    """The model offered these tools - several in one step when they do not
+    depend on each other, run in order - never in strict mode: the arguments
+    are validated here, with one correction."""
     return model.bind_tools(
         [t.openai_schema() for t in tools],
-        parallel_tool_calls=False,
+        parallel_tool_calls=len(tools) > 1,
         strict=False,
         **({"tool_choice": tools[0].name} if len(tools) == 1 else {}),
     )

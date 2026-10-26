@@ -25,7 +25,7 @@ class BundleReferenceKind(StrEnum):
 
 
 class BundleItemOrdinal(BaseModel):
-    """"The second one" - a position among the visible cards.
+    """ "The second one" - a position among the visible cards.
 
     Counted over what is shown, so a room of four lines rendered as three cards
     has a third and no fourth.
@@ -38,7 +38,7 @@ class BundleItemOrdinal(BaseModel):
 
 
 class BundleCategoryMatch(BaseModel):
-    """"The lamp" - the piece of a given kind, when there is only one.
+    """ "The lamp" - the piece of a given kind, when there is only one.
 
     Values are approved taxonomy, validated by the resolver against the
     registry: a type the vocabulary does not contain names nothing, and is

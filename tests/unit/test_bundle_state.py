@@ -38,7 +38,6 @@ from app.schemas.agent_updates import (
     SetBundleLineStatus,
 )
 from app.services.agent_state import apply_update
-from app.services.design_facts import project_anchors
 from pydantic import ValidationError
 
 APP = Path(__file__).parents[2] / "app"
@@ -325,17 +324,6 @@ def test_the_derived_view_is_not_a_stored_field() -> None:
 
     assert "locked_product_ids" not in RoomProjectState.model_fields
     assert "locked_product_ids" not in state.model_dump()["room_project"]
-
-
-def test_an_anchor_never_learns_a_line_or_product_id() -> None:
-    """The design agent's safe boundary is unchanged by V2."""
-    from app.schemas.design import AnchorProduct
-
-    fields = set(AnchorProduct.model_fields)
-    assert "line_id" not in fields
-    assert "product_id" not in fields
-    assert "acquisition" not in fields
-    assert callable(project_anchors)
 
 
 # ── the model-facing view ───────────────────────────────────────────────────

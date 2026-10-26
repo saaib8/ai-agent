@@ -140,7 +140,7 @@ class FinishingTouchesAction(BaseModel):
 
 
 class RoomDoneAction(BaseModel):
-    """"I'm done with this room": the room in their cart is finished, and the
+    """ "I'm done with this room": the room in their cart is finished, and the
     next room is asked about (CLAUDE.md 36)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")

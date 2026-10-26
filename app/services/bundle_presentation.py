@@ -61,8 +61,6 @@ def present_room_bundle(
     )
 
 
-
-
 def _items(bundle: RoomBundle, room: RoomProjectState | None) -> tuple[GroundedBundleItem, ...]:
     """One card per distinguishable piece, in the room's canonical order.
 

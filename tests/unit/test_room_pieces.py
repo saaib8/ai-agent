@@ -1,30 +1,15 @@
 """A room made of the pieces the customer chose (CLAUDE.md 10.1, 10.3).
 
 The registry says which pieces a living room or a bedroom may hold, and how
-much each matters; the store's stock says which can be offered. The questions
-before a room is built come one per turn, each at most once, in a fixed order -
-and nothing the customer already said is asked again.
+much each matters. Which of them a room gets is Nora's design (design_room).
 """
 
 from __future__ import annotations
 
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from app.core.exceptions import TaxonomyConfigurationError
-from app.schemas.agent_state import RoomProjectState
-from app.schemas.design import DesignCategoryNeed, DesignPriority, InteriorDesignResult
-from app.schemas.discovery import PriceConstraint
-from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
-from app.schemas.query import ConstraintStrength, SemanticPreference
-from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
-from app.services.room_composition import (
-    composed_needs,
-    default_pieces,
-    seating_piece,
-)
-from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.rooms import PieceTier, load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
@@ -35,50 +20,6 @@ ROOMS = load_room_pieces(taxonomy=TAXONOMY, seating=SEATING)
 LIVING = ROOMS.template("living_room")
 BEDROOM = ROOMS.template("bedroom")
 assert LIVING is not None and BEDROOM is not None
-
-
-def _stock(*pairs: tuple[str, str]) -> RetailerCatalogCapabilities:
-    return RetailerCatalogCapabilities(
-        capabilities=tuple(
-            RetailerCatalogCapability(
-                commerce_category=category, commerce_subcategory=subcategory, active_product_count=5
-            )
-            for category, subcategory in dict.fromkeys(pairs)
-        )
-    )
-
-
-EVERYTHING = _stock(
-    *(
-        (piece.commerce_category, subcategory)
-        for template in (LIVING, BEDROOM)
-        for piece in template.pieces
-        for subcategory in piece.types
-    )
-)
-
-BEIGE = SemanticPreference(
-    family=AttributeFamily.COLOR,
-    raw_value="beige",
-    canonical_value="Beige",
-    strength=ConstraintStrength.PREFERRED,
-)
-BUDGET = PriceConstraint.at_most(Decimal("12000"), "SAR")
-
-
-SIZED = RoomGeometry(
-    measurements=(
-        RoomMeasurement(role=RoomMeasurementRole.ROOM_LENGTH, centimetres=Decimal(500)),
-        RoomMeasurement(role=RoomMeasurementRole.ROOM_WIDTH, centimetres=Decimal(400)),
-    )
-)
-"""A room whose size they gave - so a test about another question is not asked
-the size first."""
-
-
-def _living(**fields: object) -> RoomProjectState:
-    fields.setdefault("geometry", SIZED)
-    return RoomProjectState(room_kind="living_room", **fields)
 
 
 # ── the registry ────────────────────────────────────────────────────────────
@@ -96,7 +37,8 @@ def test_the_agreed_tiers_hold() -> None:
     assert bedroom["bed"] is PieceTier.ESSENTIAL
     assert bedroom["mattress"] is PieceTier.OPTIONAL
     for template in (LIVING, BEDROOM):
-        assert {"wall-art", "tv-table"} <= set(default_pieces(template))
+        selected = {piece.key for piece in template.pieces if piece.tier.starts_selected}
+        assert {"wall-art", "tv-table"} <= selected
 
 
 def test_living_room_seating_is_built_from_the_agreed_types() -> None:
@@ -150,77 +92,3 @@ def test_a_malformed_registry_stops_startup(tmp_path: Path, pieces: str, problem
 
     with pytest.raises(TaxonomyConfigurationError, match=problem):
         load_room_pieces(_write(tmp_path, body), taxonomy=TAXONOMY, seating=SEATING)
-
-
-# ── the pieces they chose ───────────────────────────────────────────────────
-
-
-
-
-
-
-# ── the questions, one per turn ─────────────────────────────────────────────
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ── the room's needs ────────────────────────────────────────────────────────
-
-
-def test_each_chosen_piece_is_one_need_at_its_tier() -> None:
-    designed = InteriorDesignResult(
-        needs=(
-            DesignCategoryNeed(
-                commerce_category="decor",
-                commerce_subcategory="carpet",
-                priority=DesignPriority.OPTIONAL,
-                semantic_intent="soft and textured",
-            ),
-            # Not chosen: the specialist may not add a piece.
-            DesignCategoryNeed(
-                commerce_category="lighting",
-                commerce_subcategory="chandelier",
-                priority=DesignPriority.REQUIRED,
-            ),
-        )
-    )
-
-    needs = composed_needs(BEDROOM, ("bed", "rug", "nightstands"), EVERYTHING, designed)
-
-    assert [(n.commerce_subcategory, n.priority, n.quantity) for n in needs] == [
-        ("bed", DesignPriority.REQUIRED, 1),
-        ("nightstand", DesignPriority.REQUIRED, 2),
-        ("carpet", DesignPriority.RECOMMENDED, 1),
-    ]
-    assert needs[2].semantic_intent == "soft and textured"
-
-
-def test_seating_is_left_to_the_head_count_and_an_unstocked_piece_is_skipped() -> None:
-    stock = _stock(("seating", "sofa"), ("decor", "carpet"))
-    keys = ("sofa", "rug", "center-table")
-
-    needs = composed_needs(LIVING, keys, stock, InteriorDesignResult())
-
-    assert [n.commerce_subcategory for n in needs] == ["carpet"]
-    assert seating_piece(LIVING, keys, stock) is LIVING.seating
-    assert seating_piece(LIVING, ("rug",), stock) is None
-
-
-
-
-
-

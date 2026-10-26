@@ -23,6 +23,7 @@ import re
 
 from app.core.config import SizeSettings
 from app.core.logging import get_logger
+from app.repositories.catalog_cache import OverviewCache
 from app.repositories.products import CatalogOverviewRow, ProductRepository
 from app.schemas.catalog_overview import (
     CatalogOverview,
@@ -54,8 +55,10 @@ class CatalogCapabilityService:
         taxonomy: CommerceTaxonomy,
         seating: SeatingSemantics,
         size: SizeSettings | None = None,
+        cache: OverviewCache | None = None,
     ) -> None:
         self._repository = repository
+        self._cache = cache
         self._taxonomy = taxonomy
         self._seating = seating
         self._size = size or SizeSettings()
@@ -111,9 +114,20 @@ class CatalogCapabilityService:
         when no single piece fits, or offer the nearest type when the exact one
         is absent, instead of running a search that comes back empty.
 
-        Not cached in this first cut: it is one grouped scan, and correctness
-        comes before the cache TTL the design calls for (CLAUDE.md 9).
+        Held briefly in Redis when a cache is given (`catalog.overview_ttl_s`),
+        keyed by store and taxonomy version, so the shelf, every colour check
+        and every room build in a turn read one scan (CLAUDE.md 9).
         """
+        if self._cache is not None:
+            cached = await self._cache.load(context.store_id, self._version)
+            if cached is not None:
+                return cached
+        overview = await self._scan(context)
+        if self._cache is not None:
+            await self._cache.save(overview, self._version)
+        return overview
+
+    async def _scan(self, context: RetailerContext) -> CatalogOverview:
         rows = await self._repository.catalog_overview(context, size=self._size)
         shelves: list[SubcategoryShelf] = []
         units: set[str] = set()
@@ -145,6 +159,14 @@ class CatalogCapabilityService:
             currency=_single_currency(units),
             shelves=tuple(shelves),
         )
+
+    @property
+    def _version(self) -> str:
+        """What a cached summary was built under: the vocabulary, the reviewed
+        seat counts and the size rule - a change to any one is a new summary."""
+        size = self._size
+        rule = f"{size.min_measured}-{size.long_and_shallow_share}"
+        return f"{self._taxonomy.version}.{self._seating.version}.{rule}"
 
     def _is_approved(self, category: str, subcategory: str | None) -> bool:
         if subcategory is None:

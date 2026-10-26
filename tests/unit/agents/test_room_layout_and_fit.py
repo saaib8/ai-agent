@@ -10,10 +10,7 @@ from app.agents.views import session_brief
 from app.agents.work import TurnWork
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.design import (
-    DesignTask,
-    InteriorDesignResult,
     NextSize,
-    Placement,
 )
 from app.schemas.dimensions import DimensionStatus, DimensionUnit, NormalisedDimensions
 from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
@@ -21,7 +18,6 @@ from app.services.agent_state import remember_next_sizes
 from app.services.fit import fit_checks, fit_words, floor_share, room_spaces
 
 from tests.unit.agents.fakes import (
-    FakeDesign,
     FakeHydration,
     FakePipeline,
     _product,
@@ -151,35 +147,53 @@ async def test_a_search_in_a_known_room_reports_each_cards_fit() -> None:
 
 
 async def test_the_designers_placements_and_next_sizes_reach_the_agents() -> None:
-    design = FakeDesign(
-        result=InteriorDesignResult(
-            placements=(Placement(piece="the sofa", wall="TV wall", note="facing the screen"),),
-            next_sizes=(
-                NextSize(
-                    commerce_category="decor",
-                    commerce_subcategory="carpet",
-                    longer_min_cm=240,
-                    longer_max_cm=280,
-                    reason="under the front legs of the seating",
-                ),
-            ),
-        )
-    )
-    services = agent_services(design=design)
+    services = agent_services()
     state = await _noted_room(services)
+    notes = {
+        "placements": [{"piece": "the sofa", "wall": "TV wall", "note": "facing the screen"}],
+        "next_sizes": [
+            {
+                # The wrong family: corrected from the registry, never dropped.
+                "commerce_category": "seating",
+                "commerce_subcategory": "carpet",
+                "longer_min_cm": 240,
+                "longer_max_cm": 280,
+                "reason": "under the front legs of the seating",
+            }
+        ],
+    }
 
-    advised = await _call(
-        "design_advice", {"question": "Where should the sofa go?"}, state, services
+    noted = await _call("record_design_notes", notes, state, services)
+
+    # What was kept, never the figures she wrote - those reach the brief.
+    assert noted.facts == {"placements_kept": ["the sofa"], "sizes_kept_for": ["carpet"]}
+    room = noted.state.room_project
+    assert room.placements[0].wall == "TV wall"
+    size = room.next_sizes[0]
+    assert (size.commerce_category, size.commerce_subcategory) == ("decor", "carpet")
+    assert size.longer_target_cm() == 260
+
+
+async def test_design_notes_need_a_room_and_keep_figures_out_of_placements() -> None:
+    services = agent_services()
+    placement = {"piece": "the sofa", "wall": "TV wall", "note": "facing the screen"}
+
+    no_room = await _call(
+        "record_design_notes", {"placements": [placement]}, AgentStateV1(), services
+    )
+    state = await _noted_room(services)
+    figured = await _call(
+        "record_design_notes",
+        {"placements": [placement, {**placement, "piece": "the rug", "note": "30 cm out"}]},
+        state,
+        services,
     )
 
-    asked = design.requests[-1]
-    assert asked.task is DesignTask.GENERAL_ADVICE
-    assert [w.wall for w in asked.layout] == ["TV wall", "window wall"]
-    assert advised.facts["placements"] == [
-        {"piece": "the sofa", "wall": "TV wall", "note": "facing the screen"}
-    ]
-    size = advised.facts["next_sizes"][0]
-    assert size["longer_side_near_cm"] == 260 and size["reason"].startswith("under")
+    assert no_room.code == "no_room_on_record"
+    # Only the placement with a figure goes; the rest stands.
+    assert figured.facts["placements_kept"] == ["the sofa"]
+    assert figured.facts["placements_dropped"]["pieces"] == ["the rug"]
+    assert [p.piece for p in figured.state.room_project.placements] == ["the sofa"]
 
 
 async def test_a_designers_size_orders_the_search_and_hides_nothing() -> None:

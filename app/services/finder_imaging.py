@@ -131,9 +131,7 @@ def bounded_box(x1: int, y1: int, x2: int, y2: int, width: int, height: int) -> 
 
 
 def clamp_polygon(points: tuple[Point, ...], width: int, height: int) -> tuple[Point, ...]:
-    return tuple(
-        (min(max(x, 0), width - 1), min(max(y, 0), height - 1)) for x, y in points
-    )
+    return tuple((min(max(x, 0), width - 1), min(max(y, 0), height - 1)) for x, y in points)
 
 
 def _flattened(image: Image.Image) -> Image.Image:

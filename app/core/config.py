@@ -527,12 +527,26 @@ class CatalogSettings(BaseModel):
     """Share of the floor furniture may cover before the room reads as
     crowded. Advisory only: the customer is warned, never stopped."""
 
+    overview_ttl_s: int = Field(default=300, ge=0, le=3600)
+    """How long the store's shelf summary (what it stocks, price ranges,
+    colours, styles, seats) is reused before it is read again. The catalog is
+    Django's and changes are not signalled, so this is how stale the summary
+    may be. 0 switches the cache off."""
+
+    shelf_few_max: int = Field(default=3, ge=1)
+    shelf_some_max: int = Field(default=15, ge=2)
+    """A kind with at most `shelf_few_max` products offers "few" to choose
+    from, at most `shelf_some_max` "some", more "many" - how wide a choice
+    the store shelf shows a designer, never said as a count."""
+
     @model_validator(mode="after")
     def _bounds_are_ordered(self) -> CatalogSettings:
         if self.page_size > self.max_page_size:
             raise ValueError("catalog page_size cannot exceed max_page_size")
         if self.min_room_side_m >= self.max_room_side_m:
             raise ValueError("catalog min_room_side_m must be below max_room_side_m")
+        if self.shelf_few_max >= self.shelf_some_max:
+            raise ValueError("catalog shelf_few_max must be below shelf_some_max")
         return self
 
 
@@ -628,10 +642,8 @@ class CustomerAgentSettings(BaseModel):
     the agents' `like_product` and `more_like_this` tools are not affected."""
 
     fit_after_pick: bool = True
-    """The design specialist's instructions include how to judge a piece that
-    goes inside another (a mattress in a bed) and the space around a picked
-    bed (`app/prompts/interior_design`), and its suggestions keep the size it
-    reads for a piece that goes inside. Off, both are left out."""
+    """The scripted decision schema's fit-after-pick fields
+    (`with_fit_after_pick`). Off, they are left out."""
 
     mixed_types: bool = True
     """A customer's search for a type also shows the types reviewed to stand
@@ -668,21 +680,6 @@ class CustomerAgentSettings(BaseModel):
     """
 
 
-class InteriorDesignSettings(BaseModel):
-    """The interior-design specialist's own model.
-
-    Its own settings block rather than another field on `CustomerAgentSettings`,
-    because it is a different agent. Absent means the specialist is not
-    configured, and nothing falls back to another agent's or the
-    query-understanding model.
-    """
-
-    model: str | None = Field(default=None, min_length=1)
-    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
-    """The specialist's own effort, for a model that accepts one. Unset, it
-    spends what `llm.reasoning_effort` does. Kept apart because a design
-    direction is a short structured answer, and every customer waits on it
-    after a selection."""
 
 
 class AgentRoleSettings(BaseModel):
@@ -720,8 +717,13 @@ class AgentsSettings(BaseModel):
     max_model_calls: int = Field(default=12, ge=2, le=20)
     """Every model call in one turn - the supervisor's and every agent's."""
 
-    max_tool_calls: int = Field(default=6, ge=1, le=20)
+    max_tool_calls: int = Field(default=10, ge=1, le=20)
     """Tools one agent may run in one hop, `respond` and `hand_back` excepted."""
+
+    share_upgrade_similarity_margin: float = Field(default=0.02, ge=0, le=1)
+    """A room piece moves up to a dearer product of the same standing only when
+    its look is this close to the best match's (similarity difference). 0 means
+    only an equally close look; larger trades a little look for premium."""
 
     turn_deadline_s: float = Field(default=40.0, gt=0)
     """The whole agent turn, reply included; past it the turn ends on the fixed
@@ -733,10 +735,23 @@ class AgentsSettings(BaseModel):
     working says what was done and what was not, in the time left before
     `turn_deadline_s`."""
 
+    room_work_deadline_s: float = Field(default=110.0, gt=0)
+    room_turn_deadline_s: float = Field(default=140.0, gt=0)
+    """The same two limits for a turn in which Nora designs a whole room - one
+    long careful step, shown complete in one reply. Every other turn keeps the
+    short ones. Clients and the gateway in front must wait longer than
+    `room_turn_deadline_s`."""
+
     @model_validator(mode="after")
     def _work_leaves_time_to_reply(self) -> Self:
         if self.work_deadline_s >= self.turn_deadline_s:
             raise ValueError("work_deadline_s must leave time to reply before turn_deadline_s")
+        if self.room_work_deadline_s >= self.room_turn_deadline_s:
+            raise ValueError(
+                "room_work_deadline_s must leave time to reply before room_turn_deadline_s"
+            )
+        if self.room_work_deadline_s < self.work_deadline_s:
+            raise ValueError("a room's working time is never shorter than any turn's")
         return self
 
     history_messages: int = Field(default=12, ge=0, le=40)
@@ -813,7 +828,6 @@ class Settings(BaseSettings):
     session: SessionSettings = SessionSettings()
     llm: LLMSettings
     customer_agent: CustomerAgentSettings = CustomerAgentSettings()
-    interior_design: InteriorDesignSettings = InteriorDesignSettings()
     agents: AgentsSettings = AgentsSettings()
     discovery: DiscoverySettings = DiscoverySettings()
     size: SizeSettings = SizeSettings()
@@ -975,7 +989,6 @@ class Settings(BaseSettings):
             "presentation_configured": self.customer_agent.presentation_limit is not None,
             # Booleans, never the identifiers: an operator needs to know
             # whether a capability is configured, not which model serves it.
-            "interior_design_configured": self.interior_design.model is not None,
             "agents_configured": all(
                 getattr(self.agents, name).model is not None
                 for name in ("supervisor", "sara", "nora", "salman", "faysal")

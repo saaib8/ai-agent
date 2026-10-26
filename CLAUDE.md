@@ -20,9 +20,10 @@ V1 must support two primary journeys:
 The customer sees one conversation, answered by a team of agents (section 17):
 a supervisor that delegates each turn, and four tool-calling agents - Sara
 (shopping), Nora (interior design), Salman (sales) and Faysal (store support) -
-each its own model with its own tools, sharing one memory. The design
-specialist (`InteriorDesignAgent`) is a model behind tools - `design_advice`,
-which every agent may call, and the room and pairing tools Nora and Salman use.
+each its own model with its own tools, sharing one memory. Nora is the
+interior designer: the design judgement - what goes, where it stands, what a
+room holds - is hers, written as checked tool arguments (there is no separate
+design model).
 
 Facts, scope and money stay in deterministic services the agents reach only
 through typed tools. Do not add an agent where a tool would do.
@@ -151,7 +152,7 @@ Agents call typed domain tools such as:
 - compare_products
 - get_catalog_capabilities
 - get_product
-- plan_room_furnishing
+- design_room
 
 Repositories own SQL.
 
@@ -432,9 +433,9 @@ Reviewed domain data, loaded and validated at startup:
 
 | File | What it says | Used by |
 |---|---|---|
-| `app/taxonomy/room_pieces_v1.yaml` | the pieces each room kind may hold, each essential, recommended or optional | `plan_room`, `room_could_add`, `add_to_room` |
-| `app/taxonomy/seating_v1.yaml` | how many each seating type seats; which types stand beside a sofa | seat filters, a room's seating (27.1), mixed sofa searches |
-| `app/taxonomy/complements_v1.yaml` | the kinds that go with each kind | `what_goes_with`, beside the design specialist's own |
+| `app/taxonomy/room_pieces_v1.yaml` | the pieces each room kind often holds, each essential, recommended or optional - a guide Nora reads, never a rule | `store_shelf` (`in_this_room`), `room_could_add` |
+| `app/taxonomy/seating_v1.yaml` | how many each seating type seats; which never count as seats (chaise lounge, recliner); which types stand beside a sofa | seat filters, a room's seats (27.1), `store_shelf`, mixed sofa searches |
+| `app/taxonomy/complements_v1.yaml` | the kinds reviewed to go with each kind | `what_goes_with`, `room_could_add` (`usually_paired`) |
 | `app/taxonomy/compare_groups_v1.yaml` | which kinds compare with which | `compare_products` |
 | `app/taxonomy/subcategory_questions_v1.yaml` | the questions the store's designers ask for each kind, with their usual answers | `search_products` facts (`a_designer_might_ask`) - knowledge the agent chooses from, never a script |
 
@@ -443,52 +444,118 @@ kinds (`BriefQuestionKind`) are still imported.
 
 ### 10.1 A whole room (Nora)
 
-A room commits the customer to a set of pieces and a total, so Nora asks
-before building - one question per turn, never what the session brief already
-holds: the budget first, then the room's size, then (a living room) how many
-usually sit there, then the colours they like, and the pieces last. "Just
-design it" builds from what is known. An amount said without a currency is in
-the store's (`store_currency`).
+Nora designs the room; code finds the products, does the sums and keeps the
+rules. A room is a path of its own: the customer sees the room package, never
+a list of search cards while it is built.
 
-- **Each answer is kept as it comes.** `plan_room` without `pieces` - always
-  with `room_kind` for a room the registry lists - saves what it is given
-  (budget, size, head count, colours, styles, the picks it is built around) and
-  builds nothing while the room has no pieces on record: it returns
-  `room_could_hold`, the pieces this store can
-  supply for the room with their tier and whether a pick already fills one.
-  Another room still being designed is never given up for one whose pieces are
-  being chosen: then nothing is saved (`inputs_kept: false`) and Nora restates
-  it all when she plans. A room of no listed kind is built at once.
-- **A room is exactly the chosen pieces**, one need per piece at its tier's
-  priority (essential -> required, recommended -> recommended, optional ->
-  optional), so a short budget gives up optional pieces first and essential
-  ones last. The design specialist shapes how each piece should feel; it cannot
-  add or drop one.
-- **Living-room seating is sized to the head count**: one piece when one seats
-  everyone, otherwise a combination (27.1), tried together with the rest of the
-  room so the seats are kept and the most pieces fit.
-- **Built around their picks** (`around_picks`): the picks that belong in the
-  room are saved (`anchor_product_ids`) and locked into its first build; their
-  seats count, they fill their own slots and their prices count against the
-  budget.
-- **A missing piece is named**, with why - not stocked, or not within the
-  budget alongside the rest, with the lowest real price that would fill it -
-  never only a count.
-- **Refine, never replan**: piece options and swaps, remove, lock or mark
-  owned, revise the budget. A locked piece is kept by every later
-  optimisation. A change that would go over budget is held, never applied
-  (`swap_budget_offer`): the reply says what the room would total
-  (`room_total_if_accepted`) and asks; yes is `accept_over_budget` (the budget
-  rises to the new total), no is `decline_over_budget` and cheaper options for
-  that piece.
-- **Finishing touches**: `room_could_add` lists every stocked piece the room
-  could still take, with its tier; the agent chooses which would finish it and
-  in what order, shows one with `search_products`, and `add_to_room` adds a
-  card - every other piece pinned to the product it is, over budget asked
-  first exactly as above.
-- **Their room, fit and placement** are Nora's (10.6): the room's size and
-  walls are recorded as they are said, and the plan comes back with where each
-  piece goes and the sizes the next pieces should be.
+- **Asking first, one question a turn**, only what changes the design and the
+  brief does not hold: the budget (only when unknown; saved with `note_room` the
+  moment it is said), what the room is mostly for (`note_room` `purpose` -
+  hosting guests, family TV, reading, children), the room's size once and why
+  ("I can design your room better if I know its size" - declined is `note_room`
+  `declined_size`, never asked again), how many sit there, the colours (several
+  may be given) and look, what they must have, would rather not have, or already
+  own. The budget, purpose, head count and colours or look are known before it is
+  built; "just design it" builds now. An amount said without a currency is in the
+  store's (`store_currency`).
+- **What the store stocks** is in Nora's context while a room is planned
+  (`store_stocks`: the kinds by family, names only - a few dozen words), so she
+  plans without a tool call. `store_shelf` (Nora, Salman) gives a kind's price
+  range, colours, styles and seats when asked (`range_depth` few, some, many -
+  never a count; `seats_counted: false` for a chaise lounge or recliner). The
+  room guide's `in_this_room` only marks kinds such a room often holds - never
+  first or last; any stocked kind may belong. Cached in Redis
+  (`catalog.overview_ttl_s`). (The whole shelf in her context was tried and made
+  each design step several times slower.)
+- **Nora plans the whole room first, then `design_room` builds it** (Nora
+  alone), with no default shape: the layout in her words (`layout`, kept as
+  `room_project.layout_idea`) - two sofas facing, an L, a U, majlis seating, a
+  sofa with chairs, a reading corner, whatever the purpose, people and size
+  call for; a palette (up to five colours from the approved list) and styles;
+  `same_room`; the head count; and every piece - its role, the types that may
+  fill it (one family; several when they would do equally), how many, must or
+  nice, its colours, styles, what to avoid, its feel, size ranges (longer and
+  shorter side), `seats_each` for a type that seats several, the wall it goes
+  on, what it stands beside, `share_percent`, and `from_pick`. Everything is in this one
+  plan, so the room is shown complete in one reply: the pieces it needs are
+  must, finishing pieces (lamps, a ceiling light, a console, art, statues, a
+  small vase, a plant) are nice - included when the budget allows, given up
+  first when it is short; pairs and sets are a quantity, bought whole or not
+  at all. No second build: budget still left is said, with what could finish
+  it offered for the next message. `app/services/room_design.py` checks it: approved types
+  only (a refusal names the family), unstocked types and looks left out and
+  said, `seats_each` only on multi-seat types, shares at most the whole budget,
+  no figure in prose. The seats it gives are a fact, never a refusal.
+- **Found by fit and look first, then the money** (27): each piece is one search
+  across its types with no price bound. Its colours and styles (else the
+  palette) are search wording, ranked by meaning in Pinecone - never a stored
+  name matched first, so a Sage rug can serve an olive room (12.4 / 16.1 stay
+  for Sara's searches). Code orders only by facts - a type that counts as seats
+  where its types differ, size in range, nothing to avoid, the type she listed
+  first, relaxation depth - and the meaning order decides within. Nothing is
+  excluded for fit. The optimiser keeps must before nice and never exceeds the
+  budget; the best match the room can afford stays the pick, and a share only
+  moves a piece **up** to a dearer product of the same standing whose look
+  similarity is within `agents.share_upgrade_similarity_margin` of it - never
+  down, never to a weaker look, never without a score.
+- **Fit is Nora's judgement**, for the feel of the room, not a floor plan: she
+  reads each piece's listed size beside the room's size and walls and her
+  rules of thumb (a path through the room, space at the low table and beside
+  the bed, the way in and windows clear, open floor left), swaps what does not
+  sit naturally, and speaks of fit in rough terms ("about a metre"). No code
+  check, no exclusion. `measure_fit` answers a customer's direct "will it fit?".
+- **Checked before shown**: a room `design_room` built is drawn only when Nora
+  replies with `show: "room"`. Each piece comes back with its actual colour and
+  styles, its listed size and `size_in_range`, its share planned and used, the
+  room's colours in one line (`colours_in_room`), the seats and each missing
+  piece with why (not stocked, or not within the budget with the lowest real
+  price) - whether it works and carries their colours is hers to judge. A piece
+  that is not right is `revise_room_piece` - that piece found again, every other
+  piece pinned. A piece she judges wrong is put right before the room is shown, in
+  one round of fixes sent together (a finishing piece may be removed instead), at
+  most two revisions, then the room is shown; a colour they asked for that the room
+  misses is brought in through a small piece. Options are never fetched while
+  building.
+  And the room as a whole: `budget_left` (summed in code) and, when budget is
+  left, `could_still_add` - the stocked kinds whose cheapest piece fits what is
+  left (kinds it already has stay on the list with `in_room`), marked when the
+  guide lists them, when they pair with its pieces and when they come in its
+  colours. Budget left buys dearer pieces of the same look first, then
+  accessories - statues and antiques, small vases, a console, a chandelier,
+  pendants, wall lights, mirrors, plants; ceiling and wall lights and what sits
+  on a surface take no floor. A spare room stays spare and says so. Salman
+  offers finishing touches within `budget_left` first (10.3).
+- **The palette is the room's** (`room_project.palette`), apart from the
+  customer's own preferences: a simple search never leans to a room's palette.
+- **Styling** - cushions, candles, small vases - is offered after the room, on
+  top of its budget (Salman, 10.3), unless they said everything must fit
+  within it, when it is part of the design. Lighting, rugs, wall art and
+  statement decor are pieces of the room. Pieces they own are designed around.
+- **Built around their picks**: `from_pick` makes a pick that piece; with
+  `around_picks` every pick of one of the room's types is locked in; locks
+  keep their seats and their prices count against the budget.
+- **Refine, never replan**: piece options and swaps, `revise_room_piece`,
+  remove, lock or mark owned (taken off the bill; nothing else re-chosen), or
+  `design_room` again with `same_room` for a new budget, size or look. A
+  locked piece is kept by every later build. A change that would go over
+  budget is held, never applied (`swap_budget_offer`): the reply says what the
+  room would total (`room_total_if_accepted`) and asks; yes is
+  `accept_over_budget` (the budget rises to the new total), no is
+  `decline_over_budget` and cheaper options for that piece. A change to several
+  pieces at once - two products in place of a pair, several finishing touches -
+  is one `change_room`: what comes out and what goes in, costed once with every
+  other piece pinned, and over budget held whole (`swap_budget_offer`
+  `removed_pieces`, `added_product_ids`), so one yes applies all of it.
+- **A piece's options are for the room** (`product_source: "room_options"`,
+  `options_for_piece`): their card action is "Use this", a swap into the room.
+  Neither `add_to_cart` (`option_is_for_the_room`, unless `instead_of_room`)
+  nor a tap on `POST /v1/picks` (`room_option`) puts one in the cart.
+- **Finishing touches**: `room_could_add` lists every stocked kind the room
+  could take - those it has none of first, then the widest choice, kinds it
+  already has with `in_room`; the guide's kinds and reviewed pairings are
+  marked, never put first. The agent chooses, shows one with `search_products`, and `add_to_room` adds it - any
+  stocked product, every other piece pinned, over budget asked first as above.
+- **Their room, fit and placement** are Nora's (10.6).
 
 ### 10.2 A product search (Sara)
 
@@ -559,13 +626,17 @@ Salman comes in when what they set out to choose is chosen - a goal met, or a
 pick with no goal open - never in the middle of one: a first sofa of ten seats
 is followed by the next sofa, not a rug. With the room known, Nora's
 `next_sizes` and `placements` come first: the next piece is searched at her
-size (`designer_size`) beside their choice (`match_with`). Otherwise
-`what_goes_with` without a kind lists the kinds in
-stock that could go with the piece - the design specialist's suggestions
-marked, beside the reviewed pairings, most stocked first, no counts - and Salman
-chooses one and calls it again with `show_kind`: a page of that kind leaning to
-the piece's look. It is a design suggestion, never "usually bought together".
-The other kinds are offered as choices.
+size (`designer_size`). Otherwise `what_goes_with` without a kind lists the
+reviewed pairings the store stocks, most stocked first, no counts (never the
+piece's own kind - that is `more_like_this`); Salman chooses one, or another
+kind `store_shelf` lists, and calls it again with `show_kind`: a page of that
+kind leaning to the piece's look. It is a reason it could suit, never "usually
+bought together" and never a verdict that it goes - whether it goes is Nora's.
+
+After a room is in the cart he offers its styling, on top of the room's budget,
+and `finish_room` asks in his own words which room is next. Once a main piece
+and another are chosen for one room, Sara or Salman may offer to design the
+rest of that room around them; on yes Nora designs it with `around_picks`.
 
 ### 10.4 What every agent is told, and what the screen shows
 
@@ -604,13 +675,16 @@ no recorded seats counts none) and the seats left. The next step comes from the
 open goals: an unmet goal first, and only when it is met, what goes with it
 (10.3).
 
-**Matching** what they already have is the designer's: `search_products` with
+**Matching** what they already have is Nora's: `search_products` with
 `match_with` (cards, picks, liked), `match_goal` (a goal's members) or
-`match_room` asks the design specialist one direction for the kind searched
-(`DesignTask.MATCH`) - colours and styles the store stocks for that kind, what
-to avoid, a size in proportion to the first anchor - turned into a ranking lean
-that orders and never filters (`RankingLean`); the facts carry the direction
-and why. A tap on a card's Select is the customer's words ("I've added X to my
+`match_room` and her `direction` - colours and styles that sit with theirs,
+what to avoid, a size in proportion to the first anchor (`size_ratio`) and why
+in words. Code keeps it to what the store stocks for that kind
+(`direction_dropped`; `looks_unknown` when that cannot be read) and turns it
+into a ranking lean that orders and never filters (`RankingLean`). A direction
+from anyone else is refused before anything is searched (`matching_is_noras`):
+Sara and Salman hand matching to her - the next piece of a seating goal
+included. A tap on a card's Select is the customer's words ("I've added X to my
 cart") routed like any message (17.3).
 
 ### 10.6 Their room: walls, fit, placement and the next size
@@ -632,27 +706,28 @@ rug, a whole room.
 - how much of the floor the chosen pieces take, and each card beside them,
   only when every size is known.
 
-A search in a known room carries `room_fit` per card; `design_advice` and a
-match give the specialist the layout, the measured fit and the floor taken. The
-specialist (`interior_design/v8`) returns, beside its guidance:
+A search in a known room carries `room_fit` per card. `measure_fit` (Nora)
+gives the pieces asked about against each wall and doorway (`measured_fit`),
+what is already theirs and the floor it takes - the only figures of fit an
+agent may quote. Nora judges and keeps her decisions with
+`record_design_notes` (needs a room on record):
 
 - **`placements`** - which of their walls each piece goes on, what beside it,
   and why, in words only (no figures), and only for walls they described;
 - **`next_sizes`** - the size the next pieces should be for their room and what
   they chose (a rug's longer side, a coffee table's length), as ranges in whole
-  centimetres with a reason, for approved kinds only.
+  centimetres with a reason, for approved kinds only (the family is filed by
+  the registry).
 
 A placement with a figure in it, or a size that is out of order, has a figure
 in its reason or names a kind outside the vocabulary, is dropped on its own;
-the rest of her answer stands (21.1). They reach every agent as facts
-(`design_notes`), and her sizes are kept on the room (`room_project.next_sizes`,
-newest per kind, shown in the brief), so a later turn searches at her size
+the rest stands (21.1). The tool echoes no figure she wrote. Both are kept on
+the room (`room_project.placements`, `room_project.next_sizes`, newest per
+kind) and shown in every agent's brief, so a later turn searches at her size
 rather than one an agent made up: `search_products` `designer_size` orders by
 closeness to her longer side, never filters and never becomes a product fact,
-and the reply says why that size suits their room (`size_reason`).
-`design_advice` returns each piece's measured fit (`measured_fit`), the only
-figures of fit an agent may quote. Whether a piece works there is never stated
-beyond what was measured.
+and the reply says why that size suits their room (`size_reason`). Whether a
+piece works there is never stated beyond what was measured.
 
 `note_room` never gives up a room being designed or in the cart for another
 (`another_room_in_progress`); the same room in other words ("the lounge") keeps
@@ -1536,13 +1611,13 @@ A supervisor and four agents, built on LangGraph (`app/agents/`).
 |---|---|---|
 | Supervisor | who handles the turn | `transfer_to_<agent>`, `finish` - it never talks to the customer |
 | Sara | finding, comparing, the cart, a group's seating one piece at a time | `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room` - the only owner of the cart's adds and of comparisons |
-| Nora | how it looks and whether it works: design, their room, fit and placement, whole rooms | `design_advice` (hers alone), `plan_room`, `revise_room`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
-| Salman | what goes with a finished choice, finishing a designed room, rooms into the cart, value | `what_goes_with` and `add_room_to_cart` (his alone), `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
+| Nora | how it looks and whether it works: design, matching, their room, fit and placement, whole rooms | `design_room`, `revise_room_piece`, `measure_fit`, `record_design_notes` and a search `direction` (hers alone), `store_shelf`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `change_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
+| Salman | what goes with a finished choice, finishing a designed room and its styling, rooms into the cart, value | `what_goes_with` and `add_room_to_cart` (his alone), `store_shelf`, `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
 | Faysal | the store itself | `store_policy`, `contact_store`, `product_details` |
 
 **One owner per job.** Only the owner has a job's tools, so no agent can
-answer another's question from its own judgement: a design question that
-reaches Salman is handed to Nora, an "add it" that reaches Nora or Salman is
+answer another's question from its own judgement: a design or matching
+question that reaches Salman or Sara is handed to Nora, an "add it" that reaches Nora or Salman is
 handed to Sara. The supervisor routes by what is asked, never by who spoke last:
 "yes", "the second one" or a tapped button is sent to the owner of what it
 does, whoever offered it. Every agent also has `calculate` (17.1).
@@ -1552,7 +1627,10 @@ Every agent also has `respond` (its reply to the customer) and `hand_back`
 (`to`) with a need (`needs_*`) goes straight to them, with what was done this
 turn and what they are asked for - no routing call; without one, or back to the
 agent who just passed it on, the supervisor decides. The hop limit and the
-turn's budget bound both. The agents work within `agents.work_deadline_s`; past
+turn's budget bound both. A turn in which Nora designs a whole room has the
+room's limits instead (`agents.room_work_deadline_s`, `room_turn_deadline_s`;
+the gateway in front must wait longer). The agents work within
+`agents.work_deadline_s`; past
 it the work stops where it stands, every finished tool's change kept, and the
 agent whose hop was under way says what was done and what was not, before
 `agents.turn_deadline_s`.
@@ -2107,22 +2185,19 @@ agents are never handed a ready-made combination; a product with no recorded
 seat count never fills a seat, and "seating for all ten" is said only when the
 cart's pieces add up to it.
 
-**In a room**, the room engine sizes living-room seating to the head count
-(10.1) with the combination planner (`app/services/seating_solution.py`): one
-piece when one seats everyone, otherwise two or three multi-seat pieces, or one
-or two with up to three extra seats of one kind, the seats adding to the
-target exactly (one spare only if nothing is exact) and the total within the
-room's budget - both summed in code.
+**In a room**, Nora chooses the seating as a whole (10.1): how many pieces,
+which types, the seats each multi-seat piece should have (`seats_each`, an
+exact seat filter) and their colours and styles. Code only counts.
 
-- Types come from reviewed data (`app/taxonomy/seating_v1.yaml`): the
-  multi-seat types seating is built around (`combination_main`), and the
-  one-seat types allowed as extra seats (`combination_extras`).
-- Every piece goes through Product Discovery, held to the room's colours and
-  styles, which rank.
-- Each seating piece of a room carries its own seat count, so swapping one
-  brings back a piece that seats the same; the reply says the room seats
-  everyone only when the real pieces add up to it, and says plainly when they
-  fall short.
+- Seats come from reviewed data (`app/taxonomy/seating_v1.yaml`): a recorded
+  capacity, or one for every one-seat type. A chaise lounge or recliner may be
+  a piece of the room but never counts as a seat (`never_counts_as_seats`).
+- The seats the design gives are a fact beside the head count
+  (`seats_planned`, `seats_short`), and the built room's are summed from its
+  real pieces (`seats`); the reply says the room seats everyone only when
+  those add up to it, and says plainly when they fall short.
+- Each seating piece keeps its seat filter, so swapping one brings back a
+  piece that seats the same.
 
 ## 28. Prompt Management
 
@@ -2346,7 +2421,7 @@ Customer
    -> supervisor -> Sara / Nora / Salman / Faysal (typed tools, shared staged state)
        -> services: query understanding + taxonomy validation, search pipeline
           (PostgreSQL -> relaxation -> Pinecone ranking), comparison, seating,
-          room engine (design specialist -> discovery -> bundle optimiser),
+          room engine (Nora's checked design -> discovery -> bundle optimiser),
           cart + store cart check, store documents, support
    -> reply figures checked against tool facts
    -> screen built from tool payloads
@@ -2395,8 +2470,8 @@ keeps a cart of its own.
 - **"I'm done with this room"** - its chip or typed - is Salman's
   `finish_room`: the room's products stay in the cart, still named by it
   (`finished_rooms`), the room is no longer the one on record, and the reply
-  asks which room to design next, from `rooms_to_design_next` (the registry's
-  rooms less every room already finished). Only a room in the cart is closed.
+  asks in the agent's own words which room they would like next - never one
+  in `rooms_finished`. Only a room in the cart is closed.
 - **Liking is not adding.** "I like the fifth one" is not an add: the agent says
   what it costs and offers to add it; ♡ keeps it in the liked list. An
   explicit "add it", "I'll take it", a tap, or their yes is an add.

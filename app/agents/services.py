@@ -6,6 +6,7 @@ store they serve.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from app.agents.operations.cart import CartOperations
@@ -16,11 +17,9 @@ from app.services.catalog_capability import CatalogCapabilityService
 from app.services.comparison import ProductComparisonService
 from app.services.cross_sell import CompanionSearchBuilder
 from app.services.hydration import ProductHydrationService
-from app.services.interior_design import InteriorDesignAgent
 from app.services.product_display import ProductDisplayWords
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
-from app.services.seating_solution import SeatingSolutionPlanner
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.stocked_looks import StockedLooks
 from app.services.store_knowledge import StoreKnowledgeService
@@ -47,10 +46,8 @@ class AgentServices:
     comparison: ProductComparisonService
     similar_search: SimilarSearchBuilder
     capabilities: CatalogCapabilityService
-    seating_planner: SeatingSolutionPlanner
     cart_operations: CartOperations
     rooms: RoomEngine
-    design: InteriorDesignAgent | None = None
     compare_groups: CompareGroups | None = None
     room_pieces: RoomPieces | None = None
     complements: Complements | None = None
@@ -63,6 +60,15 @@ class AgentServices:
     """What each kind comes in at this store - for a design direction."""
     seating: SeatingSemantics | None = None
     """How many each seating type seats - reviewed data."""
+    catalog_reset: Callable[[], Awaitable[None]] | None = None
+    """Rolls the request's catalog session back. Work stopped by the deadline
+    can be cancelled mid-query, leaving the session unusable; it is reset
+    before anything reads the catalog again. The agent service only reads the
+    catalog, so a rollback loses nothing."""
+    shelf_depth: tuple[int, int] = (3, 15)
+    """Where a kind's range stops being "few" and "some" on the store shelf -
+    the depth of a choice as a word, never a count (`catalog.shelf_few_max`,
+    `catalog.shelf_some_max`)."""
     subcategory_questions: SubcategoryQuestions | None = None
     """The questions the store's designers ask for each kind - knowledge an
     agent chooses from, never a script."""

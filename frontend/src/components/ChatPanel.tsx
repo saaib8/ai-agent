@@ -55,6 +55,8 @@ interface ChatPanelProps {
   onPickAlternative: (alternativeOrdinal: number) => void
   /** A finishing touch's card chosen for the room still being designed. */
   onAddToRoom: (ordinal: number, piece: string) => void
+  /** "Use this" on a room piece's options: the swap into the room, never the cart. */
+  onUseRoomOption: (piece: number, ordinal: number) => void
   onShowMoreOptions: () => void
   onExcludeProduct: (product: GroundedProduct) => void
   onVisualize: (view: RenderView, viewLabel: string) => void
@@ -141,6 +143,7 @@ export function ChatPanel({
   onRemovePiece,
   onPickAlternative,
   onAddToRoom,
+  onUseRoomOption,
   onShowMoreOptions,
   onExcludeProduct,
   onVisualize,
@@ -426,7 +429,18 @@ export function ChatPanel({
                           : undefined
                         : turn.id === lastAssistantId && turn.data.presentation?.room_addition
                           ? addToRoomPick(turn.data.presentation.room_addition)
-                          : undefined
+                          : turn.id === lastAssistantId &&
+                              turn.data.presentation?.product_source === 'room_options' &&
+                              turn.data.presentation.options_for_piece
+                            ? {
+                                role: 'room piece',
+                                onPick: (ordinal: number) =>
+                                  onUseRoomOption(
+                                    turn.data.presentation!.options_for_piece!,
+                                    ordinal,
+                                  ),
+                              }
+                            : undefined
                     }
                     refine={
                       turn.id === lastAssistantId

@@ -127,9 +127,7 @@ class RetailerCatalogCapabilities(BaseModel):
                 if not taxonomy.is_category(entry.commerce_category):
                     raise UnknownCommerceCategoryError(category=entry.commerce_category)
             else:
-                taxonomy.validate_pair(
-                    entry.commerce_category, entry.commerce_subcategory
-                )
+                taxonomy.validate_pair(entry.commerce_category, entry.commerce_subcategory)
 
     def product_count(self, category: str, subcategory: str | None = None) -> int:
         """How many active products of exactly this type the store holds, or
@@ -139,8 +137,7 @@ class RetailerCatalogCapabilities(BaseModel):
             (
                 entry.active_product_count
                 for entry in self.capabilities
-                if entry.commerce_category == category
-                and entry.commerce_subcategory == subcategory
+                if entry.commerce_category == category and entry.commerce_subcategory == subcategory
             ),
             0,
         )

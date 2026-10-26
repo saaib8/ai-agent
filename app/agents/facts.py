@@ -60,6 +60,11 @@ def _size(product: GroundedProduct | ProductCandidate) -> dict[str, str]:
     return {k: plain(v) for k, v in sides.items() if v is not None}
 
 
+def listed_size(product: GroundedProduct | ProductCandidate) -> dict[str, str]:
+    """The piece's listed floor sides and height, as the agents read sizes."""
+    return _size(product)
+
+
 def plain(value: Decimal) -> str:
     """A figure as a person writes it: 220, 92.5 - never 2.2E+2."""
     return format(value.normalize(), "f")

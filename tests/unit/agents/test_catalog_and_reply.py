@@ -55,10 +55,22 @@ def test_the_whole_catalogue_builds_with_no_tool_able_to_name_a_record() -> None
 @pytest.mark.parametrize(
     ("agent", "owns", "never"),
     [
-        (AgentPersona.SARA, {"search_products", "add_to_cart", "compare_products"}, {"plan_room"}),
-        (AgentPersona.NORA, {"plan_room", "swap_room_piece", "design_advice"}, {"store_policy"}),
-        (AgentPersona.SALMAN, {"what_goes_with", "add_room_to_cart"}, {"plan_room"}),
-        (AgentPersona.FAYSAL, {"store_policy", "contact_store"}, {"add_to_cart", "plan_room"}),
+        (
+            AgentPersona.SARA,
+            {"search_products", "add_to_cart", "compare_products"},
+            {"design_room"},
+        ),
+        (
+            AgentPersona.NORA,
+            {"design_room", "swap_room_piece", "measure_fit", "record_design_notes"},
+            {"store_policy", "what_goes_with"},
+        ),
+        (
+            AgentPersona.SALMAN,
+            {"what_goes_with", "add_room_to_cart"},
+            {"design_room", "measure_fit"},
+        ),
+        (AgentPersona.FAYSAL, {"store_policy", "contact_store"}, {"add_to_cart", "design_room"}),
     ],
 )
 def test_each_agent_holds_its_own_tools_only(

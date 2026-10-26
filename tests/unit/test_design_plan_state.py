@@ -142,6 +142,8 @@ def test_a_need_carries_exactly_these_fields() -> None:
         "seating_capacity",
         "semantic_intent",
         "rejected_product_ids",
+        # Deliberate: Nora's per-piece decisions are plan-owned, never customer preference.
+        "design",
     }
 
 

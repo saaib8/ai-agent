@@ -149,12 +149,11 @@ def test_a_room_plan_request_is_accepted() -> None:
     assert request.budget is not None
 
 
-def test_a_design_result_carries_guidance_and_needs() -> None:
+def test_a_design_result_carries_needs_and_placement() -> None:
     """No design_preferences: the customer's preferences have one home."""
+    # guidance and space_fit went with the design specialist's advice tasks.
     assert set(InteriorDesignResult.model_fields) == {
-        "guidance",
         "needs",
-        "space_fit",
         "placements",
         "next_sizes",
     }
@@ -189,9 +188,7 @@ def test_a_design_result_validates_its_needs_against_the_taxonomy() -> None:
 def test_a_need_may_name_a_category_without_a_subcategory() -> None:
     result = InteriorDesignResult(
         needs=(
-            DesignCategoryNeed(
-                commerce_category="lighting", priority=DesignPriority.RECOMMENDED
-            ),
+            DesignCategoryNeed(commerce_category="lighting", priority=DesignPriority.RECOMMENDED),
         )
     )
 
@@ -231,7 +228,8 @@ def test_the_capability_service_exists_and_owns_no_vocabulary() -> None:
         if name != "self"
     ]
 
-    assert parameters == ["repository", "taxonomy", "seating", "size"]
+    # `cache`: the shelf summary is reused briefly (catalog.overview_ttl_s).
+    assert parameters == ["repository", "taxonomy", "seating", "size", "cache"]
 
 
 def test_capabilities_carry_no_products_or_prices() -> None:
@@ -301,9 +299,7 @@ def test_design_intent_is_trimmed() -> None:
         ("2 of these", "a quantity"),
     ],
 )
-def test_a_figure_in_a_design_intent_is_refused_not_stripped(
-    hostile: str, why: str
-) -> None:
+def test_a_figure_in_a_design_intent_is_refused_not_stripped(hostile: str, why: str) -> None:
     """Every prohibited structured fact is a number, and each already has a
     typed home. Removing the digits would leave wording the design never asked
     for; keeping them would put an unprovenanced figure into rankable text."""
@@ -328,6 +324,7 @@ def test_the_need_carries_exactly_these_fields() -> None:
         "semantic_intent",
         "quantity",
         "direction",
+        "design",  # Nora's per-piece decisions (PieceDesign), set by design_room
     }
 
 
@@ -350,6 +347,4 @@ def test_no_state_domain_holds_a_design_intent() -> None:
 
     assert "semantic_intent" not in RoomProjectState.model_fields
     assert "design_intent" not in str(AgentStateV1.model_fields)
-    assert "DesignCategoryNeed" not in set(
-        AgentStateV1.model_json_schema().get("$defs", {})
-    )
+    assert "DesignCategoryNeed" not in set(AgentStateV1.model_json_schema().get("$defs", {}))

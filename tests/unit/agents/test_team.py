@@ -43,7 +43,7 @@ class _Hydration:
 
 class _Capabilities:
     async def overview(self, context: Any) -> Any:
-        return SimpleNamespace(currency="SAR")
+        return SimpleNamespace(currency="SAR", shelves=())
 
 
 SERVICES = cast(
@@ -350,3 +350,70 @@ async def test_a_stopped_turn_may_correct_its_one_broken_reply() -> None:
     assert result.work.records[0].tool == "note"
     told = str(sara.seen[2][-1].content)
     assert "ran out of steps" in told and "empty step" not in told
+
+
+async def test_work_stopped_by_the_deadline_resets_the_catalog_and_still_answers() -> None:
+    import asyncio
+
+    resets: list[bool] = []
+
+    async def slow(args: NoteArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        await asyncio.sleep(5)  # cancelled mid-query by the deadline
+        return ToolOutcome()
+
+    async def reset() -> None:
+        resets.append(True)
+
+    slow_tool = ZoryTool(
+        name="note", description="note", args=NoteArgs, owners=frozenset(AgentPersona), handler=slow
+    )
+    supervisor = ScriptedChatModel(script=[transfer(NORA)])
+    nora = ScriptedChatModel(script=[step(call("note", "n1")), reply("I'm still working on it.")])
+    loop = AgentLoop(ToolRegistry([slow_tool, RESPOND, HAND_BACK]), max_tool_calls=3)
+    models = {a: ScriptedChatModel(script=[]) for a in AgentPersona} | {NORA: nora}
+    team = AgentTeam(
+        supervisor, models, AgentsSettings(work_deadline_s=0.2, room_work_deadline_s=0.3), loop
+    )
+    services = cast(
+        AgentServices,
+        SimpleNamespace(
+            hydration=_Hydration(), rooms=None, capabilities=_Capabilities(), catalog_reset=reset
+        ),
+    )
+    turn = TeamTurn(
+        message="design my room",
+        conversation=ConversationContext(),
+        state=AgentStateV1(),
+        context=ToolContext(retailer=RetailerContext(store_id=50), services=services),
+    )
+
+    result = await _run(team, loop, turn)
+
+    assert resets == [True]
+    assert result.reply.message == "I'm still working on it."
+
+
+async def test_nora_planning_a_room_gets_the_rooms_time_limit() -> None:
+    from app.agents.trace import TurnTrace
+
+    supervisor = ScriptedChatModel(script=[transfer(NORA)])
+    nora = ScriptedChatModel(script=[reply("Let me design it.")])
+    team, _ = _team(supervisor, {NORA: nora})
+    trace = TurnTrace(store_id=50, path="typed")
+
+    await team.run(_turn("design my living room"), trace)
+
+    assert trace.room_design is True
+
+
+async def test_other_agents_keep_the_short_limit() -> None:
+    from app.agents.trace import TurnTrace
+
+    supervisor = ScriptedChatModel(script=[transfer(SARA)])
+    sara = ScriptedChatModel(script=[reply("Here are sofas.")])
+    team, _ = _team(supervisor, {SARA: sara})
+    trace = TurnTrace(store_id=50, path="typed")
+
+    await team.run(_turn("show me sofas"), trace)
+
+    assert trace.room_design is False
