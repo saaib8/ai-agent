@@ -84,6 +84,7 @@ def remember_taste_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             "included, and what goes with a pick. Nothing is hidden. A room does not read "
             "it: pass their colours and styles to design_room yourself."
         ),
+        beside_reply=True,
         args=taste_args(schemas),
         owners=TASTE_KEEPERS,
         handler=remember,

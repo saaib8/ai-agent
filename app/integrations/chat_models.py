@@ -24,6 +24,26 @@ from app.integrations.llm import raise_provider_error
 logger = get_logger(__name__)
 
 
+_EFFORT_RANK = {"none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4}
+
+
+def build_wording_model(
+    llm: LLMSettings, role: AgentRoleSettings, *, use_responses_api: bool
+) -> ChatOpenAI | None:
+    """The same model at the wording effort, or None when there is none or it
+    is the effort the agent already spends."""
+    wording = role.wording_reasoning_effort
+    own = role.reasoning_effort or llm.reasoning_effort
+    if role.model is None or wording is None or own is None or own == "none":
+        # A model that takes no effort is never sent one.
+        return None
+    if _EFFORT_RANK[wording] >= _EFFORT_RANK[own]:
+        # Only ever less thought for the wording, never more.
+        return None
+    worded = role.model_copy(update={"reasoning_effort": wording})
+    return build_chat_model(llm, worded, use_responses_api=use_responses_api)
+
+
 def build_chat_model(
     llm: LLMSettings, role: AgentRoleSettings, *, use_responses_api: bool
 ) -> ChatOpenAI | None:

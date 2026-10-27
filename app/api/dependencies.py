@@ -8,6 +8,8 @@ trivially replaceable with fakes in tests (CLAUDE.md 24).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from functools import partial
 from typing import Annotated
 
 from fastapi import Depends, Header, Request
@@ -290,7 +292,18 @@ def design_discovery_service(
         app_resources.taxonomy,
         app_resources.seating,
         app_resources.attributes,
+        fresh=partial(_fresh_pipeline, app_resources),
+        concurrency=app_resources.settings.agents.room_search_concurrency,
+        embedder=app_resources.embedder if app_resources.semantic_index is not None else None,
     )
+
+
+@asynccontextmanager
+async def _fresh_pipeline(app_resources: AppResources) -> AsyncIterator[ProductSearchPipeline]:
+    """The search pipeline on a database session of its own, for one of a
+    room's pieces searched beside the others; the session closes on exit."""
+    async with app_resources.database.session() as session:
+        yield product_search_pipeline(session, app_resources)
 
 
 DesignDiscoveryServiceDep = Annotated[DesignDiscoveryService, Depends(design_discovery_service)]

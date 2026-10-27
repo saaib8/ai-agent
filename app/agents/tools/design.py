@@ -12,11 +12,11 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal, cast
 
-from pydantic import Field, create_model
+from pydantic import Field, create_model, model_validator
 
 from app.agents.context import ToolContext
 from app.agents.facts import product_facts
-from app.agents.operations.rooms import RoomDesignInputs, RoomOutcome
+from app.agents.operations.rooms import PieceRevision, RoomDesignInputs, RoomOutcome
 from app.agents.payloads import OptionsShown, RoomShown
 from app.agents.services import AgentServices
 from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool, list_of, one_of
@@ -34,6 +34,7 @@ from app.schemas.design import (
     MAX_REGULAR_SEATING_COUNT,
     InteriorDesignResult,
     NextSize,
+    PieceDesign,
     Placement,
 )
 from app.schemas.dimensions import CENTIMETRES_PER_UNIT, DimensionUnit
@@ -529,7 +530,41 @@ def revise_piece_args(schemas: ToolSchemas) -> type[ToolArgs]:
         "share_percent": (int | None, Field(default=None, ge=1, le=100)),
         "wall": (str | None, Field(default=None, max_length=40)),
     }
-    return cast(type[ToolArgs], create_model("RevisePieceArgs", __base__=ToolArgs, **fields))
+    revision = create_model("PieceRevisionArgs", __base__=ToolArgs, **fields)
+    return cast(
+        type[ToolArgs],
+        create_model(
+            "RevisePieceArgs",
+            __base__=_OneOrMoreRevisions,
+            revisions=(
+                list[revision],
+                Field(
+                    min_length=1,
+                    max_length=MAX_REVISIONS,
+                    description=(
+                        "Every piece to put right, together: they are found again as one "
+                        "change, costed once."
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+MAX_REVISIONS = 2
+"""Pieces one correction round may find again."""
+
+
+class _OneOrMoreRevisions(ToolArgs):
+    """A single revision sent flat - `{piece, colours}` rather than inside
+    `revisions` - is read as a round of one, not refused as broken arguments."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _a_single_revision(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "revisions" not in data and "piece" in data:
+            return {"revisions": [data]}
+        return data
 
 
 def revise_piece_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
@@ -538,64 +573,30 @@ def revise_piece_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
         room = work.staged.room_project
         if room is None or not room.bundle_items:
             return ToolOutcome(status=ToolStatus.REFUSED, code="no_room")
-        cards = group_bundle_cards(room.bundle_items)
-        card = cards[args.piece - 1] if 1 <= args.piece <= len(cards) else None
-        need = (
-            next((n for n in room.design_needs if n.need_id == card.need_ids[0]), None)
-            if card is not None and len(card.need_ids) == 1
-            else None
-        )
-        if need is None or need.design is None or need.commerce_subcategory is None:
-            return ToolOutcome(status=ToolStatus.REFUSED, code="piece_not_designed")
         try:
             overview = await services.capabilities.overview(context.retailer)
         except IntegrationUnavailableError:
             return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
-        old = need.design
-
-        def kept(new: Any, before: Any) -> Any:
-            return before if new is None else new
-
-        spec = PieceSpec(
-            role=old.role,
-            types=(need.commerce_subcategory, *old.alternatives),
-            quantity=need.quantity,
-            colours=tuple(kept(args.colours, old.colours)),
-            styles=tuple(kept(args.styles, old.styles)),
-            avoid_colours=tuple(kept(args.avoid_colours, old.avoid_colours)),
-            avoid_styles=tuple(kept(args.avoid_styles, old.avoid_styles)),
-            feel=kept(args.feel, need.semantic_intent),
-            longer_min_cm=kept(args.longer_min_cm, old.longer_min_cm),
-            longer_max_cm=kept(args.longer_max_cm, old.longer_max_cm),
-            shorter_min_cm=kept(args.shorter_min_cm, old.shorter_min_cm),
-            shorter_max_cm=kept(args.shorter_max_cm, old.shorter_max_cm),
-            share_percent=kept(args.share_percent, old.share_percent),
-            wall=kept(args.wall, old.wall),
-            beside=old.beside,
-        )
-        walls = [w.wall for w in room.layout] + [
-            s.label for s in room_spaces(room.geometry) if s.label
-        ]
-        checked = RoomDesignChecker(services.taxonomy, services.attributes, services.seating).check(
-            [spec], overview, head_count=None, walls=walls
-        )
-        if isinstance(checked, RoomDesignProblem):
-            return ToolOutcome(
-                status=ToolStatus.INVALID, code=checked.code, facts=dict(checked.detail)
+        revisions: list[PieceRevision] = []
+        checked_facts: list[dict[str, object]] = []
+        for one in args.revisions:
+            designed = _revised_design(services, room, overview, one)
+            if isinstance(designed, ToolOutcome):
+                # Which piece was refused, so the rest of the round is not lost.
+                return replace(designed, facts={"piece": one.piece, **(designed.facts or {})})
+            design, facts = designed
+            revisions.append(PieceRevision(one.piece, design, one.feel))
+            checked_facts.append(
+                {"piece": one.piece, **(dict(facts) if isinstance(facts, Mapping) else {})}
             )
-        design = checked.needs[0].design if checked.needs else None
-        if design is None:
-            return ToolOutcome(status=ToolStatus.REFUSED, code="nothing_stocked")
         outcome = room_outcome(
-            await services.rooms.revise_piece(
-                work.staged, context.retailer, args.piece, design, feel=args.feel
-            )
+            await services.rooms.revise_pieces(work.staged, context.retailer, revisions)
         )
         return replace(
             outcome,
             facts={
                 **(outcome.facts or {}),
-                "revised": checked.facts,
+                "revised": checked_facts,
                 **_still_to_add(services, outcome, overview),
             },
         )
@@ -603,14 +604,62 @@ def revise_piece_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
     return ZoryTool(
         name="revise_room_piece",
         description=(
-            "Find one piece of the room again with new directions - its colours, styles, what "
-            "to avoid, feel, size, share or wall - every other piece staying the product it "
-            "is, within the budget. What you leave out stays as designed."
+            "Find pieces of the room again with new directions - their colours, styles, "
+            "what to avoid, feel, size, share or wall - every other piece staying the "
+            "product it is, within the budget, as one change. What you leave out stays as "
+            "designed."
         ),
         args=revise_piece_args(schemas),
         owners=NORA,
         handler=revise,
     )
+
+
+def _revised_design(
+    services: AgentServices, room: RoomProjectState, overview: CatalogOverview, args: Any
+) -> tuple[PieceDesign, object] | ToolOutcome:
+    """One piece's revised design, checked like a new one - or why not."""
+    cards = group_bundle_cards(room.bundle_items)
+    card = cards[args.piece - 1] if 1 <= args.piece <= len(cards) else None
+    need = (
+        next((n for n in room.design_needs if n.need_id == card.need_ids[0]), None)
+        if card is not None and len(card.need_ids) == 1
+        else None
+    )
+    if need is None or need.design is None or need.commerce_subcategory is None:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="piece_not_designed")
+    old = need.design
+
+    def kept(new: Any, before: Any) -> Any:
+        return before if new is None else new
+
+    spec = PieceSpec(
+        role=old.role,
+        types=(need.commerce_subcategory, *old.alternatives),
+        quantity=need.quantity,
+        colours=tuple(kept(args.colours, old.colours)),
+        styles=tuple(kept(args.styles, old.styles)),
+        avoid_colours=tuple(kept(args.avoid_colours, old.avoid_colours)),
+        avoid_styles=tuple(kept(args.avoid_styles, old.avoid_styles)),
+        feel=kept(args.feel, need.semantic_intent),
+        longer_min_cm=kept(args.longer_min_cm, old.longer_min_cm),
+        longer_max_cm=kept(args.longer_max_cm, old.longer_max_cm),
+        shorter_min_cm=kept(args.shorter_min_cm, old.shorter_min_cm),
+        shorter_max_cm=kept(args.shorter_max_cm, old.shorter_max_cm),
+        share_percent=kept(args.share_percent, old.share_percent),
+        wall=kept(args.wall, old.wall),
+        beside=old.beside,
+    )
+    walls = [w.wall for w in room.layout] + [s.label for s in room_spaces(room.geometry) if s.label]
+    checked = RoomDesignChecker(services.taxonomy, services.attributes, services.seating).check(
+        [spec], overview, head_count=None, walls=walls
+    )
+    if isinstance(checked, RoomDesignProblem):
+        return ToolOutcome(status=ToolStatus.INVALID, code=checked.code, facts=dict(checked.detail))
+    design = checked.needs[0].design if checked.needs else None
+    if design is None:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="nothing_stocked")
+    return design, checked.facts
 
 
 def _still_to_add(

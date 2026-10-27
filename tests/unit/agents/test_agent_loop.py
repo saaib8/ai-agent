@@ -322,3 +322,178 @@ async def test_independent_calls_run_together_and_the_reply_waits_for_their_resu
     assert isinstance(held, ToolMessage) and "read_the_results_first" in str(held.content)
     assert isinstance(end, Responded) and end.reply.message == "Done."
     assert model.bind_options[0]["parallel_tool_calls"] is True
+
+
+def test_a_model_step_records_the_model_and_its_reasoning() -> None:
+    from types import SimpleNamespace
+
+    from app.agents.loop import _model_event
+    from langchain_core.messages import AIMessage
+
+    reply = AIMessage(content="", response_metadata={"model_name": "gpt-test-answered"})
+    model = SimpleNamespace(model_name="gpt-test", reasoning_effort="medium")
+
+    event = _model_event(AgentPersona.NORA, reply, 0.0, cast(Any, model))
+
+    assert event.kind == "model" and event.model == "gpt-test-answered"
+    assert event.reasoning == "medium"
+    unnamed = _model_event(AgentPersona.NORA, AIMessage(content=""), 0.0, cast(Any, model))
+    assert unnamed.model == "gpt-test"
+
+
+# ── a record beside the reply; the wording after a room's fixes ────────────
+
+
+def _loop_with(*tools: ZoryTool[Any]) -> AgentLoop:
+    return AgentLoop(ToolRegistry([*tools, RESPOND, HAND_BACK]), max_tool_calls=6)
+
+
+async def test_a_record_kept_beside_the_reply_runs_first_and_costs_no_step() -> None:
+    handler = Calls()
+    noting = ZoryTool(
+        name="note",
+        description="note",
+        args=CountArgs,
+        owners=frozenset({SARA}),
+        handler=handler,
+        beside_reply=True,
+    )
+    model = ScriptedChatModel(
+        script=[step(call("respond", "b", message="Done."), call("note", "a", times=1))]
+    )
+
+    end = await _run(_loop_with(noting), model)
+
+    assert isinstance(end, Responded) and end.reply.message == "Done."
+    assert handler.seen == [(1, 50)]
+    assert len(model.seen) == 1  # one model call: no step of its own
+
+
+async def test_a_tool_that_is_not_a_record_still_waits_for_its_result() -> None:
+    handler = Calls()
+    model = ScriptedChatModel(
+        script=[
+            step(call("count", "a", times=1), call("respond", "b", message="Too soon.")),
+            step(call("respond", "c", message="Now.")),
+        ]
+    )
+
+    end = await _run(_loop(handler), model)
+
+    assert isinstance(end, Responded) and end.reply.message == "Now."
+
+
+async def test_after_a_rooms_fixes_the_reply_is_written_on_the_wording_model() -> None:
+    from app.agents.loop import ROOM_FIXES
+
+    fix_name = sorted(ROOM_FIXES)[0]
+    fixing = ZoryTool(
+        name=fix_name, description="fix", args=CountArgs, owners=frozenset({NORA}), handler=Calls()
+    )
+    design = ScriptedChatModel(script=[step(call(fix_name, "a", times=1))])
+    wording = ScriptedChatModel(script=[step(call("respond", "b", message="Here it is."))])
+    trace = TurnTrace(store_id=50, path="typed")
+    trace.room_design = True
+
+    end = await _loop_with(fixing).run(
+        NORA,
+        design,
+        [HumanMessage("design my room")],
+        TurnWork.starting(AgentStateV1()),
+        CONTEXT,
+        TurnBudget(max_model_calls=4),
+        trace,
+        wording_model=wording,
+    )
+
+    assert isinstance(end, Responded) and end.reply.message == "Here it is."
+    assert len(design.seen) == 1 and len(wording.seen) == 1
+
+
+async def test_without_a_room_being_designed_the_agent_keeps_its_own_model() -> None:
+    from app.agents.loop import ROOM_FIXES
+
+    fix_name = sorted(ROOM_FIXES)[0]
+    fixing = ZoryTool(
+        name=fix_name, description="fix", args=CountArgs, owners=frozenset({NORA}), handler=Calls()
+    )
+    own = ScriptedChatModel(
+        script=[step(call(fix_name, "a", times=1)), step(call("respond", "b", message="Ok."))]
+    )
+    wording = ScriptedChatModel(script=[])
+
+    end = await _loop_with(fixing).run(
+        NORA,
+        own,
+        [HumanMessage("swap the rug")],
+        TurnWork.starting(AgentStateV1()),
+        CONTEXT,
+        TurnBudget(max_model_calls=4),
+        TurnTrace(store_id=50, path="typed"),
+        wording_model=wording,
+    )
+
+    assert isinstance(end, Responded) and len(own.seen) == 2 and wording.seen == []
+
+
+def test_the_wording_model_is_built_only_when_it_spends_less() -> None:
+    from app.core.config import AgentRoleSettings
+    from app.integrations.chat_models import build_wording_model
+
+    from tests.conftest import build_settings
+
+    llm = build_settings().llm.model_copy(update={"reasoning_effort": "medium"})
+    nora = AgentRoleSettings(model="gpt-test", wording_reasoning_effort="low")
+    same = AgentRoleSettings(model="gpt-test", wording_reasoning_effort="medium")
+    off = AgentRoleSettings(model="gpt-test", wording_reasoning_effort=None)
+
+    built = build_wording_model(llm, nora, use_responses_api=False)
+
+    assert built is not None and built.reasoning_effort == "low"
+    assert build_wording_model(llm, same, use_responses_api=False) is None
+    assert build_wording_model(llm, off, use_responses_api=False) is None
+
+
+async def test_a_record_that_did_not_land_holds_the_reply_back() -> None:
+    class Refusing:
+        async def __call__(self, args: CountArgs, context: ToolContext, work: TurnWork) -> Any:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="no_such_goal")
+
+    noting = ZoryTool(
+        name="note",
+        description="note",
+        args=CountArgs,
+        owners=frozenset({SARA}),
+        handler=Refusing(),
+        beside_reply=True,
+    )
+    model = ScriptedChatModel(
+        script=[
+            step(call("note", "a", times=1), call("respond", "b", message="Noted.")),
+            step(call("respond", "c", message="That goal is not on record.")),
+        ]
+    )
+
+    end = await _run(_loop_with(noting), model)
+
+    assert isinstance(end, Responded) and end.reply.message == "That goal is not on record."
+    first_answers = [m.content for m in model.seen[1] if isinstance(m, ToolMessage)]
+    assert any("read_the_results_first" in str(a) for a in first_answers)
+
+
+def test_the_wording_model_never_thinks_more_and_skips_a_model_without_effort() -> None:
+    from app.core.config import AgentRoleSettings
+    from app.integrations.chat_models import build_wording_model
+
+    from tests.conftest import build_settings
+
+    llm = build_settings().llm.model_copy(update={"reasoning_effort": "medium"})
+
+    def wording(**role: Any) -> Any:
+        return build_wording_model(
+            llm, AgentRoleSettings(model="gpt-test", **role), use_responses_api=False
+        )
+
+    assert wording(reasoning_effort="none", wording_reasoning_effort="low") is None
+    assert wording(reasoning_effort="minimal", wording_reasoning_effort="low") is None
+    assert wording(reasoning_effort="high", wording_reasoning_effort="low") is not None

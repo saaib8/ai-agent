@@ -58,6 +58,10 @@ from app.schemas.agent_turn import MAX_RESPONSE_CHARS
 UNKNOWN_TOOL = "<unknown>"
 """What a tool name the model made up is logged as: its text is the model's."""
 
+ROOM_FIXES = frozenset({"revise_room_piece", "remove_room_piece", "change_room"})
+"""The calls that put a built room right; after them, only its reply is left
+(`agents.<agent>.wording_reasoning_effort`)."""
+
 
 @dataclass(frozen=True, slots=True)
 class Responded:
@@ -111,6 +115,7 @@ def json_facts(facts: Mapping[str, Any] | None) -> dict[str, JsonValue]:
     loaded: dict[str, JsonValue] = json.loads(json.dumps(facts, ensure_ascii=False, default=str))
     return loaded
 
+
 logger = get_logger(__name__)
 
 
@@ -133,11 +138,16 @@ class AgentLoop:
         trace: TurnTrace,
         *,
         only: frozenset[str] | None = None,
+        wording_model: BaseChatModel | None = None,
     ) -> HopEnd:
         """Run the agent until it replies or hands back.
 
         `only` narrows what is offered - a tap's owner is offered `respond`
-        alone - but never widens it past the agent's allowlist.
+        alone - but never widens it past the agent's allowlist. Once a room
+        built this turn has had its fixes (`ROOM_FIXES`), the calls left in the
+        hop - the reply, and any record kept beside it - run on `wording_model`
+        when one is given; the instructions allow one round of fixes, so no
+        design work is left for it.
         """
         tools = [t for t in self.tools_for(agent) if only is None or t.name in only]
         if not tools:
@@ -158,7 +168,7 @@ class AgentLoop:
             budget.spend()
             started = time.perf_counter()
             reply = await call_chat_model(bound, exchange)
-            trace.add(_model_event(agent, reply, started))
+            trace.add(_model_event(agent, reply, started, model))
             exchange.append(reply)
 
             if reply.invalid_tool_calls:
@@ -194,9 +204,17 @@ class AgentLoop:
             acting = any(
                 (t := self._registry.get(c["name"])) is not None
                 and t.kind not in (ToolKind.RESPOND, ToolKind.HAND_BACK)
+                and not t.beside_reply
                 for c in reply.tool_calls
             )
-            for call in reply.tool_calls:
+            fixed = False
+            # A record kept beside the reply that did not land holds the reply
+            # back, so the agent sees why rather than replying as if it had.
+            beside_failed = False
+            done_this_step: list[JsonValue] = []
+            # A record kept beside the reply runs before it, whatever order
+            # the model wrote them in.
+            for call in sorted(reply.tool_calls, key=self._ends_the_hop):
                 call_id = _call_id(call.get("id"))
                 name = call["name"]
                 if ended is not None:
@@ -230,6 +248,7 @@ class AgentLoop:
                         rules=list(violations),
                     )
                     budget.correct(agent=agent.value, tool=name, violations=violations)
+                    beside_failed = beside_failed or tool.beside_reply
                     trace.add(TraceEvent(agent.value, "tool", name, 0, "invalid"))
                     exchange.append(
                         _answer(
@@ -241,10 +260,11 @@ class AgentLoop:
                     )
                     continue
 
-                if acting and tool.kind in (ToolKind.RESPOND, ToolKind.HAND_BACK):
-                    exchange.append(
-                        _answer(call_id, ToolStatus.REFUSED, "read_the_results_first")
-                    )
+                if (acting or beside_failed) and tool.kind in (
+                    ToolKind.RESPOND,
+                    ToolKind.HAND_BACK,
+                ):
+                    exchange.append(_answer(call_id, ToolStatus.REFUSED, "read_the_results_first"))
                     continue
                 if tool.kind is ToolKind.RESPOND:
                     assert isinstance(args, RespondArgs)
@@ -260,7 +280,11 @@ class AgentLoop:
                                 call_id,
                                 ToolStatus.INVALID,
                                 "reply_figures",
-                                {"rules_broken": list(rules)},
+                                {
+                                    "rules_broken": list(rules),
+                                    # Not to be sent again: they already ran.
+                                    **({"done_already": done_this_step} if done_this_step else {}),
+                                },
                             )
                         )
                         continue
@@ -281,9 +305,22 @@ class AgentLoop:
                 exchange.append(
                     await self.execute(agent, tool, args, call_id, work, context, trace)
                 )
+                landed = work.records[-1].status is ToolStatus.OK
+                fixed = fixed or (name in ROOM_FIXES and landed)
+                beside_failed = beside_failed or (tool.beside_reply and not landed)
+                done_this_step.append(name)
 
             if ended is not None:
                 return ended
+            if fixed and wording_model is not None and trace.room_design:
+                # The room is built and put right: what is left is saying it,
+                # which needs less thought than designing it did.
+                model = wording_model
+                bound = _bind(model, tools)
+
+    def _ends_the_hop(self, call: Mapping[str, Any]) -> bool:
+        tool = self._registry.get(call["name"])
+        return tool is not None and tool.kind in (ToolKind.RESPOND, ToolKind.HAND_BACK)
 
     async def execute(
         self,
@@ -376,8 +413,11 @@ def _answer(
     return ToolMessage(content=json.dumps(body, ensure_ascii=False), tool_call_id=call_id)
 
 
-def _model_event(agent: AgentPersona, reply: AIMessage, started: float) -> TraceEvent:
+def _model_event(
+    agent: AgentPersona, reply: AIMessage, started: float, model: BaseChatModel
+) -> TraceEvent:
     usage = reply.usage_metadata
+    answered = (reply.response_metadata or {}).get("model_name")
     return TraceEvent(
         agent.value,
         "model",
@@ -385,6 +425,8 @@ def _model_event(agent: AgentPersona, reply: AIMessage, started: float) -> Trace
         elapsed_ms(started),
         input_tokens=usage["input_tokens"] if usage else None,
         output_tokens=usage["output_tokens"] if usage else None,
+        model=answered if isinstance(answered, str) else getattr(model, "model_name", None),
+        reasoning=getattr(model, "reasoning_effort", None),
     )
 
 

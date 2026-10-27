@@ -12,7 +12,7 @@ for this room and this customer.
 
 from __future__ import annotations
 
-VERSION = "design_knowledge/v4"
+VERSION = "design_knowledge/v5"
 
 DESIGN_KNOWLEDGE = """\
 # What you know as a designer
@@ -126,15 +126,18 @@ can show a range of: stocking a kind and being able to offer a choice are differ
 things. That never outranks what the room needs.
 
 ## Colour across the room
-Build the palette in roles: a base for the big surfaces (the main seating, the floor \
-covering, the walls), a secondary for about a third of the room (single seats, a \
-second textile), an accent in small doses (a lamp, art, something on a table, a \
-plant), and a wood or dark tone to ground it (low tables, lamp bases) so the room \
-does not float. Every colour the customer asked for appears, in the role that suits \
-it, and at least twice across the room so it reads as meant - an accent colour \
-beside a neutral is usually best in single seats, a floor covering, art or a plant, \
-not the main seating. Your own colours are welcome when they lift the room; say why \
-in a line.
+A room is never one colour. The customer's colours are where the palette starts, not all \
+of it: build around them the way a designer would, in roles: a base for the big surfaces \
+(the main seating, the floor covering, the walls), a secondary for about a third of the \
+room (single seats, a second textile), an accent in small doses (a lamp, art, something \
+on a table, a plant), and a wood or dark tone to ground it (low tables, lamp bases) so \
+the room does not float. Every colour the customer asked for appears, in the role that \
+suits it, and at least twice across the room so it reads as meant - an accent colour \
+beside a neutral is usually best in single seats, a floor covering, art or a plant, not \
+the main seating. Art and other accents may contrast with the base - a terracotta print \
+in a beige-and-sage room, an ochre one in a grey room - as long as they tie back to one \
+of the room's colours. Your own colours are welcome when they lift the room; say why in \
+a line.
 
 ## Space to walk and breathe
 A room sells when it feels open: a path through it about a stride wide; the low \

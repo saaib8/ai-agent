@@ -18,16 +18,29 @@ those three becomes a filter here, and each has a guard test saying so.
 Every product lookup goes through `ProductSearchPipeline.execute_candidate_pool`
 - one need, one search - so M6, M8 and M9 keep their single implementation and
 this service holds no repository, no index and no SQL.
+
+The needs are independent, so they may be searched side by side
+(`agents.room_search_concurrency`). A database session serves one task at a
+time, so each concurrent search runs on a pipeline of its own (`fresh`), and
+the results keep the plan's order: the room is the same either way.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
+from typing import Protocol
 
-from app.core.exceptions import InvalidRequestError, UnknownCommerceCategoryError
+from app.core.exceptions import (
+    EmbeddingUnavailableError,
+    InvalidRequestError,
+    UnknownCommerceCategoryError,
+)
 from app.core.logging import get_logger
+from app.integrations.embeddings import BatchQueryEmbedder
 from app.schemas.design import (
     DesignCategoryNeed,
     DesignTask,
@@ -51,12 +64,30 @@ from app.schemas.query import (
 from app.schemas.refinement import SemanticIntentOp
 from app.schemas.resolution import CandidatePoolResult, RankedProductCandidate
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
+from app.services.embedding_prefetch import prefetched
+from app.services.query_document import build_query_document, has_semantic_intent
 from app.services.search_pipeline import ProductSearchPipeline
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.seating import SeatingSemantics
 
 logger = get_logger(__name__)
+
+
+class PoolSource(Protocol):
+    """What discovery reads products through: the search pipeline's pools."""
+
+    async def execute_candidate_pool(
+        self, resolved: ResolvedSearch, context: RetailerContext
+    ) -> CandidatePoolResult: ...
+
+    async def execute_forced_pool(
+        self, product_id: int, context: RetailerContext
+    ) -> CandidatePoolResult: ...
+
+
+FreshPools = Callable[[], AbstractAsyncContextManager[PoolSource]]
+"""A pool source on a database session of its own, closed on exit."""
 
 
 class DesignDiscoveryService:
@@ -68,8 +99,19 @@ class DesignDiscoveryService:
         taxonomy: CommerceTaxonomy,
         seating: SeatingSemantics | None = None,
         attributes: CatalogAttributes | None = None,
+        *,
+        fresh: FreshPools | None = None,
+        concurrency: int = 1,
+        embedder: BatchQueryEmbedder | None = None,
     ) -> None:
-        self._pipeline = pipeline
+        self._pipeline: PoolSource = pipeline
+        self._fresh = fresh
+        self._concurrency = max(1, concurrency)
+        """How many needs are searched at once; 1, or no `fresh`, is one after
+        another on the request's own pipeline."""
+        self._embedder = embedder
+        """Embeds every piece's ranking text in one request before the searches
+        (`app/services/embedding_prefetch.py`); None, each embeds its own."""
         self._taxonomy = taxonomy
         self._seating = seating
         """Reviewed seat counts. A one-seat type never carries a seat filter:
@@ -114,18 +156,40 @@ class DesignDiscoveryService:
         assert capabilities is not None, "a room plan carries capabilities"
 
         started = time.perf_counter()
-        entries: list[DesignNeedCandidates] = []
-        for index, need in enumerate(result.needs):
-            entries.append(
-                await self._for_need(
-                    need,
-                    index,
-                    capabilities,
-                    request,
-                    context,
-                    (overrides or {}).get(index),
-                )
+
+        async def piece(
+            pipeline: PoolSource, index: int, need: DesignCategoryNeed
+        ) -> tuple[DesignNeedCandidates, float]:
+            piece_started = time.perf_counter()
+            entry = await self._for_need(
+                pipeline, need, index, capabilities, request, context, (overrides or {}).get(index)
             )
+            ms = round((time.perf_counter() - piece_started) * 1000, 1)
+            logger.info(
+                "room_piece_searched",
+                store_id=context.store_id,
+                need_index=index,
+                commerce_subcategory=need.commerce_subcategory,
+                candidate_count=entry.candidate_count,
+                elapsed_ms=ms,
+            )
+            return entry, ms
+
+        fresh = self._fresh
+        side_by_side_used = fresh is not None and self._concurrency > 1 and len(result.needs) > 1
+        vectors, batch_failed = await self._vectors_ahead(
+            result, capabilities, request, overrides or {}, context
+        )
+        with prefetched(vectors, failed=batch_failed):
+            if fresh is None or not side_by_side_used:
+                found = [
+                    await piece(self._pipeline, index, need)
+                    for index, need in enumerate(result.needs)
+                ]
+            else:
+                found = await self._side_by_side(fresh, result.needs, piece)
+        entries = [entry for entry, _ in found]
+        piece_ms = [ms for _, ms in found]
 
         discovered = DesignDiscoveryResult(needs=tuple(entries))
         logger.info(
@@ -136,12 +200,116 @@ class DesignDiscoveryService:
             skipped_count=len(discovered.needs) - discovered.searched_count,
             candidate_counts=[entry.candidate_count for entry in discovered.needs],
             empty_need_count=sum(1 for entry in discovered.needs if entry.candidate_count == 0),
+            # Wall time beside the sum of the pieces': equal while the pieces
+            # are searched one after another, less when side by side.
+            concurrency=self._concurrency if side_by_side_used else 1,
+            pieces_ms=round(sum(piece_ms), 1),
+            slowest_piece_ms=max(piece_ms, default=0.0),
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return discovered
 
+    async def _vectors_ahead(
+        self,
+        result: InteriorDesignResult,
+        capabilities: RetailerCatalogCapabilities,
+        request: InteriorDesignRequest,
+        overrides: Mapping[int, DesignNeedSearchOverride],
+        context: RetailerContext,
+    ) -> tuple[dict[str, tuple[float, ...]], bool]:
+        """Every piece's ranking text embedded in one request, ahead of the
+        searches - or nothing, when there is one text or no batch embedder -
+        and whether that request failed.
+
+        A failed batch is not a failed room: the provider is down, so every
+        search keeps deterministic order at once (CLAUDE.md 16.1) instead of
+        each waiting out the same timeout.
+        """
+        if self._embedder is None:
+            return {}, False
+        documents: list[str] = []
+        for index, need in enumerate(result.needs):
+            override = overrides.get(index)
+            if override is not None and override.forced_product_id is not None:
+                continue
+            if not capabilities.supports(need.commerce_category, need.commerce_subcategory):
+                continue
+            self._require_approved(need)
+            resolved = self._resolve(need, request, override)
+            if has_semantic_intent(resolved):
+                documents.append(build_query_document(resolved))
+        documents = list(dict.fromkeys(documents))
+        if len(documents) < 2:
+            return {}, False
+        try:
+            vectors = await self._embedder.embed_queries(documents)
+        except EmbeddingUnavailableError as exc:
+            logger.warning(
+                "room_vectors_ahead_skipped",
+                store_id=context.store_id,
+                document_count=len(documents),
+                reason=exc.code,
+            )
+            return {}, True
+        return dict(zip(documents, vectors, strict=True)), False
+
+    async def _side_by_side(
+        self,
+        fresh: FreshPools,
+        needs: Sequence[DesignCategoryNeed],
+        piece: Callable[
+            [PoolSource, int, DesignCategoryNeed],
+            Awaitable[tuple[DesignNeedCandidates, float]],
+        ],
+    ) -> list[tuple[DesignNeedCandidates, float]]:
+        """Every need searched, at most `concurrency` at once.
+
+        One search runs on the request's own pipeline, whose connection the
+        request already holds, and the rest each on a fresh session - so a
+        room holds `concurrency` connections, never one more. One failed search
+        stops the room with its own error, the rest cancelled; a turn being
+        stopped stays a stop, whatever a cancelled search raised on the way out.
+        """
+        gate = asyncio.Semaphore(self._concurrency)
+        home_free = True
+
+        async def one(index: int, need: DesignCategoryNeed) -> tuple[DesignNeedCandidates, float]:
+            nonlocal home_free
+            async with gate:
+                if home_free:
+                    home_free = False
+                    try:
+                        return await piece(self._pipeline, index, need)
+                    finally:
+                        home_free = True
+                try:
+                    async with fresh() as pipeline:
+                        return await piece(pipeline, index, need)
+                except Exception:
+                    # A search being stopped - a sibling failed, or the turn ran
+                    # out of time - ends as a stop, whatever its session raised
+                    # on the way out, so it never hides the real failure.
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise asyncio.CancelledError from None
+                    raise
+
+        try:
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(one(index, need)) for index, need in enumerate(needs)]
+        except ExceptionGroup as failed:
+            first, *rest = failed.exceptions
+            if rest:
+                logger.warning(
+                    "room_piece_searches_failed",
+                    error_types=sorted({type(e).__name__ for e in failed.exceptions}),
+                )
+            raise first from None
+        return [task.result() for task in tasks]
+
     async def _for_need(
         self,
+        pipeline: PoolSource,
         need: DesignCategoryNeed,
         index: int,
         capabilities: RetailerCatalogCapabilities,
@@ -182,10 +350,10 @@ class DesignDiscoveryService:
             # alternatives, so there is nothing to search: the pool is that one
             # product, or empty if the catalog no longer carries it. Verifying it
             # belongs to this need happened before the override was built.
-            pool = await self._pipeline.execute_forced_pool(override.forced_product_id, context)
+            pool = await pipeline.execute_forced_pool(override.forced_product_id, context)
             return DesignNeedCandidates(need_index=index, need=need, pool=pool)
 
-        pool = await self._pipeline.execute_candidate_pool(
+        pool = await pipeline.execute_candidate_pool(
             self._resolve(need, request, override), context
         )
         if need.design is None:

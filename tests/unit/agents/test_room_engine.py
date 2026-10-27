@@ -130,6 +130,7 @@ class FakePipeline:
         self.similarity: dict[int, float] = {}
         """Look scores Pinecone would give, by product; none by default."""
         self.searched: list[Any] = []
+        self.forced_reads: list[tuple[int, ...]] = []
 
     def _matching(self, resolved: Any) -> list[ProductCandidate]:
         request = resolved.request
@@ -157,6 +158,12 @@ class FakePipeline:
 
     async def execute_forced_pool(self, product_id: int, context: Any) -> CandidatePoolResult:
         return _pool([_product(product_id)] if product_id in self.catalog.available else [])
+
+    async def execute_forced_pools(
+        self, product_ids: Sequence[int], context: Any
+    ) -> dict[int, CandidatePoolResult]:
+        self.forced_reads.append(tuple(product_ids))
+        return {p: await self.execute_forced_pool(p, context) for p in product_ids}
 
     async def execute(
         self, resolved: Any, context: Any, *, presentation_limit: int | None = None
@@ -987,3 +994,126 @@ def test_a_held_change_keeps_every_product_it_puts_in() -> None:
         SwapBudgetOfferState(
             added_piece="art canvas", chosen_product_id=21, bundle_revision=3, removed_pieces=(4,)
         )
+
+
+async def test_the_pinned_pieces_are_read_together_not_one_query_each() -> None:
+    engine, _, pipeline = _engine()
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000"))
+    pipeline.forced_reads.clear()
+
+    added = await engine.add_product(planned.state, CONTEXT, 30, allow_over_budget=True)
+
+    assert added.committed
+    assert len(pipeline.forced_reads) == 1
+    assert set(pipeline.forced_reads[0]) == set(_ids(added.state))
+
+
+async def test_two_revisions_are_one_change_committed_once() -> None:
+    from app.agents.operations.rooms import PieceRevision
+
+    engine, _, pipeline = _engine()
+    needs = (
+        _need("seating", "chair", "reading chair", alternatives=("lounge-chair",)),
+        _need("tables", "center-table", "coffee table"),
+        _need("decor", "carpet", "rug"),
+    )
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000", needs))
+    revision_before = planned.state.room_project.bundle_revision  # type: ignore[union-attr]
+    pipeline.searched.clear()
+    pipeline.forced_reads.clear()
+
+    revised = await engine.revise_pieces(
+        planned.state,
+        CONTEXT,
+        (
+            PieceRevision(
+                1,
+                PieceDesign(
+                    role="reading chair", alternatives=("lounge-chair",), avoid_colours=("Olive",)
+                ),
+            ),
+            PieceRevision(3, PieceDesign(role="rug", colours=("Beige",))),
+        ),
+    )
+
+    room = revised.state.room_project
+    assert revised.committed and room is not None
+    assert room.bundle_revision == revision_before + 1  # one commit, not two
+    assert len(pipeline.searched) == 2  # both pieces found again
+    assert len(pipeline.forced_reads) == 1  # the coffee table read once, pinned
+    assert room.design_needs[0].design.avoid_colours == ("Olive",)
+    assert room.design_needs[2].design.colours == ("Beige",)
+
+
+async def test_one_bad_revision_changes_nothing() -> None:
+    from app.agents.operations.rooms import PieceRevision
+
+    engine, _, _ = _engine()
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000"))
+
+    refused = await engine.revise_pieces(
+        planned.state,
+        CONTEXT,
+        (
+            PieceRevision(1, PieceDesign(role="main sofa", colours=("Beige",))),
+            PieceRevision(9, PieceDesign(role="nothing")),
+        ),
+    )
+    twice = await engine.revise_pieces(
+        planned.state,
+        CONTEXT,
+        (
+            PieceRevision(1, PieceDesign(role="main sofa")),
+            PieceRevision(1, PieceDesign(role="main sofa", colours=("Beige",))),
+        ),
+    )
+
+    assert refused.code == "piece_not_found" and refused.state is planned.state
+    assert twice.code == "piece_revised_twice" and twice.state is planned.state
+
+
+async def test_two_revisions_together_choose_what_two_in_a_row_would() -> None:
+    from app.agents.operations.rooms import PieceRevision
+
+    chair = PieceDesign(
+        role="reading chair", alternatives=("lounge-chair",), avoid_colours=("Olive",)
+    )
+    rug = PieceDesign(role="rug", colours=("Beige",))
+    needs = (
+        _need("seating", "chair", "reading chair", alternatives=("lounge-chair",)),
+        _need("tables", "center-table", "coffee table"),
+        _need("decor", "carpet", "rug"),
+    )
+    engine, _, _ = _engine()
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000", needs))
+
+    together = await engine.revise_pieces(
+        planned.state, CONTEXT, (PieceRevision(1, chair), PieceRevision(3, rug))
+    )
+    first = await engine.revise_piece(planned.state, CONTEXT, 1, chair)
+    in_a_row = await engine.revise_piece(first.state, CONTEXT, 3, rug)
+
+    assert _ids(together.state) == _ids(in_a_row.state)
+
+
+async def test_two_revisions_never_take_the_room_over_its_budget() -> None:
+    """A size range orders, never excludes: when the piece the revision prefers
+    is too dear, the room keeps one it can afford rather than breaking budget."""
+    from app.agents.operations.rooms import PieceRevision
+
+    engine, _, _ = _engine()
+    # 3300 buys the shorter sofa; the revision prefers the longer, dearer one.
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("3300"))
+    assert 2 in _ids(planned.state)
+
+    revised = await engine.revise_pieces(
+        planned.state,
+        CONTEXT,
+        (
+            PieceRevision(1, PieceDesign(role="main sofa", longer_min_cm=250)),
+            PieceRevision(3, PieceDesign(role="rug", colours=("Beige",))),
+        ),
+    )
+
+    assert revised.committed and 2 in _ids(revised.state)
+    assert revised.facts["total"] <= Decimal(3300)

@@ -23,7 +23,7 @@ shows (`group_bundle_cards`), the same order `present_room_bundle` renders.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal, Protocol
@@ -102,6 +102,7 @@ from app.schemas.geometry import RoomGeometry
 from app.schemas.grounding import GroundedProduct
 from app.schemas.product import ProductCandidate
 from app.schemas.query import ConstraintStrength, ResolvedSearch, SemanticPreference
+from app.schemas.relaxation import StopReason
 from app.schemas.resolution import CandidatePoolResult, ProductSearchExecutionResult
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.services.agent_state import apply_update, commit_search_results
@@ -165,6 +166,10 @@ class _Pipeline(Protocol):
     async def execute_forced_pool(
         self, product_id: int, context: RetailerContext
     ) -> CandidatePoolResult: ...
+
+    async def execute_forced_pools(
+        self, product_ids: Sequence[int], context: RetailerContext
+    ) -> dict[int, CandidatePoolResult]: ...
 
 
 class _Capabilities(Protocol):
@@ -242,6 +247,15 @@ class PieceOptions:
 class _Built:
     plan: InteriorDesignResult
     outcome: BundleOptimizationOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class PieceRevision:
+    """One room piece, by its card's place, as Nora revised its design."""
+
+    piece: int
+    design: PieceDesign
+    feel: str | None = None
 
 
 class RoomEngine:
@@ -584,7 +598,7 @@ class RoomEngine:
             if not _is_piece(product, _plan_from(room).needs[room.design_needs.index(need)]):
                 return _refused(state, "option_not_for_piece")
             outcome = await self._pinned_outcome(
-                state, context, released_need_id=need_id, forced={need_id: chosen}
+                state, context, released=(need_id,), forced={need_id: chosen}
             )
         except _CATALOG_FAILURES:
             return _refused(state, "catalog_unavailable")
@@ -627,28 +641,56 @@ class RoomEngine:
         """Find one piece again as Nora revised it - its look, size, share or
         wall - with every other piece pinned to the product it is, within the
         room's budget. Nothing else is re-chosen."""
+        return await self.revise_pieces(state, context, (PieceRevision(piece, design, feel),))
+
+    async def revise_pieces(
+        self,
+        state: AgentStateV1,
+        context: RetailerContext,
+        revisions: Sequence[PieceRevision],
+    ) -> RoomOutcome:
+        """Find several pieces again as Nora revised them, as one change: the
+        revised pieces searched together, every other piece pinned, the room
+        costed once within its budget and committed once - all of them or
+        none, never half a correction."""
         room = state.room_project
         if room is None or not room.bundle_items:
             return _refused(state, "no_room")
         if room.in_cart:
             return _refused(state, "room_in_cart")
-        card = _card(room, piece)
-        if card is None:
-            return _refused(state, "piece_not_found")
-        need_id = card.need_ids[0] if len(card.need_ids) == 1 else None
-        stored = next((n for n in room.design_needs if n.need_id == need_id), None)
-        if stored is None or need_id is None:
-            return _refused(state, "piece_not_swappable")
-        current = _plan_from(room).needs[room.design_needs.index(stored)]
-        revised = current.model_copy(
-            update={"design": design, **({"semantic_intent": feel} if feel else {})}
-        )
+        if not revisions:
+            return _refused(state, "nothing_to_change")
+        plan = _plan_from(room)
+        searched: dict[int, DesignCategoryNeed] = {}
+        refinements: list[DesignNeedRefinement] = []
+        for revision in revisions:
+            card = _card(room, revision.piece)
+            if card is None:
+                return _refused(state, "piece_not_found")
+            need_id = card.need_ids[0] if len(card.need_ids) == 1 else None
+            stored = next((n for n in room.design_needs if n.need_id == need_id), None)
+            if stored is None or need_id is None:
+                return _refused(state, "piece_not_swappable")
+            if need_id in searched:
+                return _refused(state, "piece_revised_twice")
+            current = plan.needs[room.design_needs.index(stored)]
+            searched[need_id] = current.model_copy(
+                update={
+                    "design": revision.design,
+                    **({"semantic_intent": revision.feel} if revision.feel else {}),
+                }
+            )
+            refinements.append(
+                DesignNeedRefinement(
+                    need_id=need_id, design=revision.design, semantic_intent=revision.feel
+                )
+            )
         try:
             outcome = await self._pinned_outcome(
                 state,
                 context,
-                released_need_id=need_id,
-                searched={need_id: revised},
+                released=tuple(searched),
+                searched=searched,
                 budget=room.budget,
             )
         except _CATALOG_FAILURES:
@@ -659,13 +701,10 @@ class RoomEngine:
             return _unavailable(state, outcome)
         if outcome.status is BundleStatus.INFEASIBLE:
             return self._proposal(state, outcome, "infeasible", room.budget, [])
-        committed = _commit_refinement(
-            state,
-            outcome,
-            None,
-            revised=DesignNeedRefinement(need_id=need_id, design=design, semantic_intent=feel),
+        committed = _commit_refinement(state, outcome, None, revised=refinements)
+        logger.info(
+            "room_engine_piece_revised", store_id=context.store_id, revised=len(refinements)
         )
-        logger.info("room_engine_piece_revised", store_id=context.store_id)
         return self._committed(committed, outcome)
 
     # ── removing a piece ────────────────────────────────────────────────────
@@ -1032,7 +1071,7 @@ class RoomEngine:
         state: AgentStateV1,
         context: RetailerContext,
         *,
-        released_need_id: int | None = None,
+        released: Collection[int] = (),
         forced: Mapping[int, int] | None = None,
         searched: Mapping[int, DesignCategoryNeed] | None = None,
         pinned_from: RoomProjectState | None = None,
@@ -1049,7 +1088,7 @@ class RoomEngine:
         """
         room = state.room_project
         assert room is not None
-        locks = await self._verify_locks(state, context, released_need_id)
+        locks = await self._verify_locks(state, context, released)
         if locks is None:
             return "locked_unavailable"
         source = pinned_from or room
@@ -1057,32 +1096,51 @@ class RoomEngine:
         for line in source.bundle_items:
             if line.need_id is not None and line.status is not BundleItemStatus.LOCKED:
                 current.setdefault(line.need_id, line.product_id)
-        if released_need_id is not None:
-            # The released role's own lock is not a lock for this costing.
-            for line in source.bundle_items:
-                if line.need_id == released_need_id:
-                    current.setdefault(line.need_id, line.product_id)
+        # A released role's own lock is not a lock for this costing.
+        for line in source.bundle_items:
+            if line.need_id is not None and line.need_id in released:
+                current.setdefault(line.need_id, line.product_id)
         current.update(forced or {})
         plan = _plan_from(room)
+        # Every pinned product re-read in one query, not one per piece.
+        pinned = [
+            current[need.need_id]
+            for need in room.design_needs
+            if need.need_id in current and not (searched and need.need_id in searched)
+        ]
+        pools = await self._pipeline.execute_forced_pools(
+            (*pinned, *(product_id for _, product_id in added)), context
+        )
+        # The revised roles are found afresh together - side by side, their
+        # ranking texts embedded in one request - and the rest stay pinned.
+        positions = [
+            index
+            for index, stored in enumerate(room.design_needs)
+            if searched and stored.need_id in searched
+        ]
+        found_again: dict[int, DesignNeedCandidates] = {}
+        if searched and positions:
+            capabilities = await self._capabilities.capabilities(context)
+            found = await self._design_discovery.discover(
+                _room_request(room, capabilities),
+                InteriorDesignResult(
+                    needs=tuple(searched[room.design_needs[i].need_id] for i in positions)
+                ),
+                context,
+            )
+            found_again = {
+                index: entry.model_copy(update={"need_index": index})
+                for index, entry in zip(positions, found.needs, strict=True)
+            }
         entries: list[DesignNeedCandidates] = []
         for index, need in enumerate(plan.needs):
-            need_id = room.design_needs[index].need_id
-            if searched and need_id in searched:
-                # This one role is found afresh as revised; the rest stay pinned.
-                capabilities = await self._capabilities.capabilities(context)
-                found = await self._design_discovery.discover(
-                    _room_request(room, capabilities),
-                    InteriorDesignResult(needs=(searched[need_id],)),
-                    context,
-                )
-                entries.append(found.needs[0].model_copy(update={"need_index": index}))
+            if index in found_again:
+                entries.append(found_again[index])
                 continue
-            product_id = current.get(need_id)
-            entries.append(await self._forced_entry(index, need, product_id, context))
+            need_id = room.design_needs[index].need_id
+            entries.append(_forced_entry(index, need, current.get(need_id), pools))
         for offset, (need, product_id) in enumerate(added):
-            entries.append(
-                await self._forced_entry(len(plan.needs) + offset, need, product_id, context)
-            )
+            entries.append(_forced_entry(len(plan.needs) + offset, need, product_id, pools))
         return self._optimizer.optimize(
             BundleOptimizationRequest(
                 discovery=DesignDiscoveryResult(needs=tuple(entries)),
@@ -1091,25 +1149,11 @@ class RoomEngine:
             )
         )
 
-    async def _forced_entry(
-        self,
-        index: int,
-        need: DesignCategoryNeed,
-        product_id: int | None,
-        context: RetailerContext,
-    ) -> DesignNeedCandidates:
-        if product_id is None:
-            return DesignNeedCandidates(
-                need_index=index, need=need, skipped=DesignNeedSkipReason.RETAILER_CANNOT_SUPPLY
-            )
-        pool = await self._pipeline.execute_forced_pool(product_id, context)
-        return DesignNeedCandidates(need_index=index, need=need, pool=pool)
-
     async def _verify_locks(
         self,
         state: AgentStateV1,
         context: RetailerContext,
-        released_need_id: int | None = None,
+        released: Collection[int] = (),
     ) -> list[tuple[BundleItemState, LockedBundleProduct]] | None:
         """Every locked line with its product re-read, or None if one is gone.
 
@@ -1120,8 +1164,7 @@ class RoomEngine:
         lines = [
             line
             for line in (room.bundle_items if room else ())
-            if line.status is BundleItemStatus.LOCKED
-            and (released_need_id is None or line.need_id != released_need_id)
+            if line.status is BundleItemStatus.LOCKED and line.need_id not in released
         ]
         if not lines:
             return []
@@ -1381,6 +1424,31 @@ def _plan_from(room: RoomProjectState) -> InteriorDesignResult:
     )
 
 
+def _forced_entry(
+    index: int,
+    need: DesignCategoryNeed,
+    product_id: int | None,
+    pools: Mapping[int, CandidatePoolResult],
+) -> DesignNeedCandidates:
+    """A role fixed to one product, from the pools read together; a role with
+    no product is one the store cannot supply."""
+    if product_id is None:
+        return DesignNeedCandidates(
+            need_index=index, need=need, skipped=DesignNeedSkipReason.RETAILER_CANNOT_SUPPLY
+        )
+    pool = pools.get(product_id)
+    if pool is None:
+        # Not read with the rest: treated as the store no longer carrying it.
+        pool = CandidatePoolResult(
+            candidates=(),
+            eligible_count=0,
+            was_relaxed=False,
+            stop_reason=StopReason.EXACT_SUFFICIENT,
+            semantic_used=False,
+        )
+    return DesignNeedCandidates(need_index=index, need=need, pool=pool)
+
+
 def _replacing_need(
     product: ProductCandidate, removed: Iterable[RoomDesignNeedState]
 ) -> DesignCategoryNeed:
@@ -1510,11 +1578,11 @@ def _commit_refinement(
     outcome: RoomBundle,
     override: DesignNeedSearchOverride | None,
     *,
-    revised: DesignNeedRefinement | None = None,
+    revised: Sequence[DesignNeedRefinement] = (),
 ) -> AgentStateV1:
     """The refined room under the same plan identity, locks preserved - except
-    the lock of the one role re-chosen (`override` or `revised`), which is
-    released into its new product."""
+    the locks of the roles re-chosen (`override` or `revised`), released into
+    their new products."""
     room = state.room_project
     assert room is not None
     by_position = {position: need.need_id for position, need in enumerate(room.design_needs)}
@@ -1527,12 +1595,9 @@ def _commit_refinement(
         if override is not None
         else ()
     )
-    if revised is not None:
-        refinements = (*refinements, revised)
-    released = (
-        override.need_id
-        if override is not None
-        else (revised.need_id if revised is not None else None)
+    refinements = (*refinements, *revised)
+    released = {r.need_id for r in revised} | (
+        {override.need_id} if override is not None else set()
     )
     return apply_update(
         state,
@@ -1545,7 +1610,7 @@ def _commit_refinement(
                             PreservedBundleLine(line_id=line.line_id)
                             for line in room.bundle_items
                             if line.status is BundleItemStatus.LOCKED
-                            and (released is None or line.need_id != released)
+                            and line.need_id not in released
                         ),
                         added=tuple(
                             BundleLineSpec(

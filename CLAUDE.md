@@ -487,7 +487,11 @@ a list of search cards while it is built.
   said, `seats_each` only on multi-seat types, shares at most the whole budget,
   no figure in prose. The seats it gives are a fact, never a refusal.
 - **Found by fit and look first, then the money** (27): each piece is one search
-  across its types with no price bound. Its colours and styles (else the
+  across its types with no price bound - a room's pieces searched side by side,
+  one on the request's session and the rest each on a session of its own
+  (`agents.room_search_concurrency`), the room the same as one after another;
+  their ranking texts embedded in one request beforehand and the pinned pieces
+  of a change re-read in one query. Its colours and styles (else the
   palette) are search wording, ranked by meaning in Pinecone - never a stored
   name matched first, so a Sage rug can serve an olive room (12.4 / 16.1 stay
   for Sara's searches). Code orders only by facts - a type that counts as seats
@@ -512,9 +516,14 @@ a list of search cards while it is built.
   price) - whether it works and carries their colours is hers to judge. A piece
   that is not right is `revise_room_piece` - that piece found again, every other
   piece pinned. A piece she judges wrong is put right before the room is shown, in
-  one round of fixes sent together (a finishing piece may be removed instead), at
-  most two revisions, then the room is shown; a colour they asked for that the room
-  misses is brought in through a small piece. Options are never fetched while
+  one round: one `revise_room_piece` call with every piece to put right (at most
+  two), found again together and committed once - all or none - then the room is
+  shown; a colour they asked for that the room misses is brought in through a small
+  piece. Finishing pieces are decided in the first plan, enough to use the budget, and
+  never removed for their look - put right or kept as the nearest and said; a removal
+  is only for a real fit problem. No room is one colour: the customer's colours lead
+  a designer's pattern (base, secondary, accent, a grounding wood or dark tone), and
+  art and accents may contrast, tying back to a room colour. Options are never fetched while
   building.
   And the room as a whole: `budget_left` (summed in code) and, when budget is
   left, `could_still_add` - the stocked kinds whose cheapest piece fits what is
@@ -1629,7 +1638,11 @@ turn and what they are asked for - no routing call; without one, or back to the
 agent who just passed it on, the supervisor decides. The hop limit and the
 turn's budget bound both. A turn in which Nora designs a whole room has the
 room's limits instead (`agents.room_work_deadline_s`, `room_turn_deadline_s`;
-the gateway in front must wait longer). The agents work within
+the gateway in front must wait longer), and once its fixes are made the call
+that words it runs at `agents.<agent>.wording_reasoning_effort` (low; designing
+and checking keep their effort). `update_goal` and `remember_taste` only keep a
+record and may ride in the same step as the reply (`beside_reply`), costing no
+model call of their own. The agents work within
 `agents.work_deadline_s`; past
 it the work stops where it stands, every finished tool's change kept, and the
 agent whose hop was under way says what was done and what was not, before

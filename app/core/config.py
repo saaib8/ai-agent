@@ -680,8 +680,6 @@ class CustomerAgentSettings(BaseModel):
     """
 
 
-
-
 class AgentRoleSettings(BaseModel):
     """One agent's own model, and its own reasoning effort when one is set.
 
@@ -696,6 +694,10 @@ class AgentRoleSettings(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     """Sent only when set here: `llm.temperature` is never inherited, because
     a reasoning model refuses one."""
+    wording_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "low"
+    """For the call that only says what was done, once a room built this turn
+    has had its fixes: designing and checking it keep `reasoning_effort`.
+    None spends the same effort on the wording as on the design."""
 
 
 class AgentsSettings(BaseModel):
@@ -724,6 +726,14 @@ class AgentsSettings(BaseModel):
     """A room piece moves up to a dearer product of the same standing only when
     its look is this close to the best match's (similarity difference). 0 means
     only an equally close look; larger trades a little look for premium."""
+
+    room_search_concurrency: int = Field(default=3, ge=1, le=8)
+    """How many of a room's pieces are searched at once: one on the request's
+    own session, the rest each on a session of its own. 1 searches them one
+    after another. A room being built holds this many connections, so this
+    times the rooms built at once, with every other request's one, must stay
+    within the database pool (`db.pool_size` + `db.max_overflow`); past it a
+    search waits `db.pool_timeout_s`, then the room is "catalog unavailable"."""
 
     turn_deadline_s: float = Field(default=40.0, gt=0)
     """The whole agent turn, reply included; past it the turn ends on the fixed

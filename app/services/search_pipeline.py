@@ -258,7 +258,9 @@ class ProductSearchPipeline:
         started = time.perf_counter()
 
         searched, ranked = await self._search_and_rank(resolved, context)
+        ranked_at = time.perf_counter()
         hydrated = await self._hydration.hydrate_ids(ranked.product_ids, context)
+        hydrate_ms = round((time.perf_counter() - ranked_at) * 1000, 1)
 
         depth_by_id = {c.product_id: c.relaxation_depth for c in ranked.candidates}
         # Kept beside the order for one use only: a room piece is upgraded to
@@ -291,6 +293,8 @@ class ProductSearchPipeline:
             was_relaxed=pool.was_relaxed,
             stop_reason=str(pool.stop_reason),
             semantic_used=pool.semantic_used,
+            search_and_rank_ms=round((ranked_at - started) * 1000, 1),
+            hydrate_ms=hydrate_ms,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return pool
@@ -312,17 +316,31 @@ class ProductSearchPipeline:
         (CLAUDE.md 16.1, 31). Scope is the context's, never the caller's, so a
         product from another store cannot be forced in.
         """
-        hydrated = await self._hydration.hydrate_ids((product_id,), context)
-        candidates = tuple(
-            RankedProductCandidate(product=product, relaxation_depth=0) for product in hydrated
-        )
-        return CandidatePoolResult(
-            candidates=candidates,
-            eligible_count=len(candidates),
-            was_relaxed=False,
-            stop_reason=StopReason.EXACT_SUFFICIENT,
-            semantic_used=False,
-        )
+        return (await self.execute_forced_pools((product_id,), context))[product_id]
+
+    async def execute_forced_pools(
+        self, product_ids: Sequence[int], context: RetailerContext
+    ) -> dict[int, CandidatePoolResult]:
+        """:meth:`execute_forced_pool` for several products in one read: each
+        id's pool is that product, or empty when the store no longer carries
+        it - a room's pinned pieces re-read together, never one query each."""
+        wanted = tuple(dict.fromkeys(product_ids))
+        hydrated = await self._hydration.hydrate_ids(wanted, context) if wanted else ()
+        by_id = {product.product_id: product for product in hydrated}
+        return {
+            product_id: CandidatePoolResult(
+                candidates=(
+                    (RankedProductCandidate(product=by_id[product_id], relaxation_depth=0),)
+                    if product_id in by_id
+                    else ()
+                ),
+                eligible_count=1 if product_id in by_id else 0,
+                was_relaxed=False,
+                stop_reason=StopReason.EXACT_SUFFICIENT,
+                semantic_used=False,
+            )
+            for product_id in wanted
+        }
 
     def _namespace(self, context: RetailerContext) -> str:
         """Derived from the request's scope, never from anything a caller said."""

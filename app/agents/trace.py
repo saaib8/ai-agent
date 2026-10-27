@@ -24,6 +24,10 @@ class TraceEvent:
     code: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    model: str | None = None
+    reasoning: str | None = None
+    """The model that answered and the reasoning effort it was asked for, so a
+    slow provider call is told apart from our own work."""
 
 
 @dataclass(slots=True)

@@ -77,5 +77,6 @@ def update_goal_tool(schemas: ToolSchemas) -> ZoryTool[GoalArgs]:
         ),
         args=GoalArgs,
         owners=GOAL_KEEPERS,
+        beside_reply=True,
         handler=update,
     )

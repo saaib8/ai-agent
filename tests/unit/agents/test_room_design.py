@@ -372,3 +372,34 @@ async def test_a_layout_is_words_and_never_a_figure() -> None:
 
     assert rooms.inputs[0].layout_idea == "an L in the corner by the window"
     assert figured.code == "why_states_a_figure" and unbuilt.inputs == []
+
+
+def test_revise_room_piece_takes_every_fix_of_a_round_in_one_call() -> None:
+    from app.schemas.agent_persona import AgentPersona
+
+    from tests.unit.agents.fakes import real_loop
+
+    tool = next(
+        t for t in real_loop().tools_for(AgentPersona.NORA) if t.name == "revise_room_piece"
+    )
+    schema = tool.args.model_json_schema()["properties"]["revisions"]
+
+    assert schema["minItems"] == 1 and schema["maxItems"] == 2
+    two = tool.args.model_validate(
+        {"revisions": [{"piece": 1, "colours": ["Beige"]}, {"piece": 3, "longer_max_cm": 250}]}
+    )
+    assert [r.piece for r in two.revisions] == [1, 3]  # type: ignore[attr-defined]
+
+
+def test_a_single_revision_sent_flat_is_a_round_of_one() -> None:
+    from app.schemas.agent_persona import AgentPersona
+
+    from tests.unit.agents.fakes import real_loop
+
+    tool = next(
+        t for t in real_loop().tools_for(AgentPersona.NORA) if t.name == "revise_room_piece"
+    )
+
+    flat = tool.args.model_validate({"piece": 2, "colours": ["Beige"]})
+
+    assert [r.piece for r in flat.revisions] == [2]  # type: ignore[attr-defined]

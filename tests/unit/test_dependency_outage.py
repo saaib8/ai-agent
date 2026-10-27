@@ -111,3 +111,19 @@ async def test_startup_survives_a_catalog_that_is_briefly_away() -> None:
         await asyncio.wait_for(_check_catalog_schema(database), timeout=10)
     finally:
         await database.dispose()
+
+
+async def test_a_full_connection_pool_is_a_retryable_failure() -> None:
+    """Every connection in use (a room's pieces searched side by side under
+    load): the catalog is busy, answered as unavailable - never a 500."""
+    from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+
+    database = a_database()
+    try:
+        with pytest.raises(CatalogUnavailableError) as raised:
+            async with database.session():
+                raise PoolTimeoutError("QueuePool limit reached")
+    finally:
+        await database.dispose()
+
+    assert raised.value.http_status == 503

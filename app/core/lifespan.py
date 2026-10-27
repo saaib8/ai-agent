@@ -21,7 +21,7 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
 from app.db.catalog_schema import verify_commerce_schema, verify_support_schema
-from app.integrations.chat_models import build_chat_model
+from app.integrations.chat_models import build_chat_model, build_wording_model
 from app.integrations.embeddings import OpenAIQueryEmbedder
 from app.integrations.image_generation import (
     FallbackImageGenerator,
@@ -139,11 +139,22 @@ def _agent_team(
             room_pieces=rooms,
         )
     )
+    wording = {
+        persona: model
+        for persona in AgentPersona
+        if (
+            model := build_wording_model(
+                settings.llm, getattr(agents, persona.value), use_responses_api=use_responses
+            )
+        )
+        is not None
+    }
     return AgentTeam(
         supervisor,
         {persona: model for persona, model in models.items() if model is not None},
         agents,
         AgentLoop(registry, max_tool_calls=agents.max_tool_calls),
+        wording=wording,
     )
 
 

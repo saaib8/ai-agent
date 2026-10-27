@@ -19,6 +19,7 @@ Three rules carry the design.
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from decimal import Decimal
@@ -42,6 +43,7 @@ from app.schemas.semantic import (
     SemanticRankingResult,
     SemanticSkipReason,
 )
+from app.services.embedding_prefetch import embedding_failed, prefetched_vector
 from app.services.product_size import made_to_fit, sides_of, size_distance
 from app.services.query_document import build_query_document, has_semantic_intent
 from app.taxonomy.attributes import AttributeFamily
@@ -304,15 +306,26 @@ class SemanticRankingService:
             return self._deterministic(resolved, candidates, SemanticSkipReason.NO_SEMANTIC_INTENT)
 
         document = build_query_document(resolved)
+        ahead = prefetched_vector(document)
+        if ahead is None and embedding_failed():
+            # This room's batch already failed: the provider is down, so this
+            # search keeps deterministic order rather than waiting it out again.
+            logger.warning("semantic_ranking_skipped", reason="embedding_batch_failed")
+            return self._deterministic(
+                resolved, candidates, SemanticSkipReason.EMBEDDING_UNAVAILABLE
+            )
+        embed_started = time.perf_counter()
         try:
-            vector = await self._embedder.embed_query(document)
+            vector = ahead or await self._embedder.embed_query(document)
         except EmbeddingUnavailableError as exc:
             logger.warning("semantic_ranking_skipped", reason=exc.code)
             return self._deterministic(
                 resolved, candidates, SemanticSkipReason.EMBEDDING_UNAVAILABLE
             )
 
+        embed_ms = round((time.perf_counter() - embed_started) * 1000, 1)
         eligible = [c.product.product_id for c in candidates]
+        index_started = time.perf_counter()
         try:
             scores = await self._index.score(
                 vector=vector,
@@ -337,10 +350,14 @@ class SemanticRankingService:
             )
             return self._deterministic(resolved, candidates, SemanticSkipReason.INTEGRITY_FAILURE)
 
+        index_ms = round((time.perf_counter() - index_started) * 1000, 1)
         ordered = self._order(resolved, candidates, scores)
         logger.info(
             "semantic_ranking_completed",
             store_id=context.store_id,
+            vector_prefetched=ahead is not None,
+            embed_ms=embed_ms,
+            index_ms=index_ms,
             eligible_count=len(eligible),
             scored_count=len(scores),
             unvectorised_count=len(eligible) - len(scores),

@@ -155,8 +155,13 @@ class AgentTeam:
         agents: Mapping[AgentPersona, BaseChatModel],
         settings: AgentsSettings,
         loop: AgentLoop,
+        *,
+        wording: Mapping[AgentPersona, BaseChatModel] | None = None,
     ) -> None:
         self._loop = loop
+        self._wording = dict(wording or {})
+        """Each agent's model at its wording effort, for the reply after a
+        room's fixes (`agents.<agent>.wording_reasoning_effort`)."""
         self._supervisor = supervisor.bind_tools(
             SUPERVISOR_TOOLS, parallel_tool_calls=False, strict=False
         )
@@ -513,6 +518,7 @@ class AgentTeam:
                 state["budget"],
                 state["trace"],
                 only=frozenset({"respond"}) if reply_only else None,
+                wording_model=self._wording.get(agent),
             )
             views = [*state["views"], view] if view is not state["view"] else state["views"]
             if isinstance(end, Responded):

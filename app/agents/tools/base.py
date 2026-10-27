@@ -65,6 +65,10 @@ class ZoryTool[ToolArgsT: BaseModel]:
     kind: ToolKind = ToolKind.ACTION
     handler: Handler[ToolArgsT] | None = None
     """None only for `respond` and `hand_back`, which the loop handles."""
+    beside_reply: bool = False
+    """Only keeps a record (a goal, their taste) whose result the reply does not
+    wait on, so it may be sent in the same step as the reply - run first - and
+    costs no model call of its own."""
 
     def __post_init__(self) -> None:
         if (self.handler is None) != (self.kind is not ToolKind.ACTION):
