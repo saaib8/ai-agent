@@ -403,3 +403,30 @@ def test_a_single_revision_sent_flat_is_a_round_of_one() -> None:
     flat = tool.args.model_validate({"piece": 2, "colours": ["Beige"]})
 
     assert [r.piece for r in flat.revisions] == [2]  # type: ignore[attr-defined]
+
+
+def test_a_seat_count_no_piece_here_has_is_refused_with_what_they_seat() -> None:
+    problem = _check(PieceSpec(role="corner sofa", types=("sofa",), seats_each=5))
+
+    assert isinstance(problem, RoomDesignProblem) and problem.code == "no_piece_seats_that_many"
+    # Every type that seats several, so straight sofas are as open as a sectional.
+    assert problem.detail == {"seats_here": {"sofa": "2-4"}}
+    assert problem.piece == 1
+
+
+def test_a_seat_count_within_what_the_store_has_builds() -> None:
+    checked = _check(PieceSpec(role="sofa", types=("sofa",), seats_each=4))
+
+    assert not isinstance(checked, RoomDesignProblem)
+
+
+def test_seating_well_beyond_the_head_count_is_said_never_refused() -> None:
+    checked = _check(
+        PieceSpec(role="sofa", types=("sofa",), seats_each=4),
+        PieceSpec(role="second sofa", types=("sofa",), seats_each=4),
+        PieceSpec(role="chairs", types=("chair",), quantity=4),
+        head_count=8,
+    )
+
+    assert not isinstance(checked, RoomDesignProblem)
+    assert checked.facts["seats_planned"] == 12 and checked.facts["seats_over"] == 4

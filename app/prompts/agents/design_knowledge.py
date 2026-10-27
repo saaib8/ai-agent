@@ -12,7 +12,7 @@ for this room and this customer.
 
 from __future__ import annotations
 
-VERSION = "design_knowledge/v5"
+VERSION = "design_knowledge/v6"
 
 DESIGN_KNOWLEDGE = """\
 # What you know as a designer
@@ -83,18 +83,20 @@ same room asks for different things depending on who uses it. Mark how much the 
 depends on each piece: a must when it does not work without it, nice when it is a \
 refinement, so a tight budget gives up the refinements first.
 
-Think about the seating as a whole, for the room's purpose, its people and its size \
-- there is no default arrangement. Two long seats facing each other suit \
-conversation; two at a right angle make an L that fills a corner; three sides around \
-a low table make a U for hosting; seating along the walls, majlis-style, suits many \
-guests; one long seat with single seats beside it suits a smaller room or a room \
-around a screen; a deep corner seat suits family lounging; a single comfortable seat \
-by the window makes a reading corner. Several long seats are as ordinary as one. How \
-many pieces a room needs is a different question from how many one piece seats - a \
-room may want two of something that each seat three. Say more than one of a piece \
-only when the room needs that many of the same piece - a matching pair either side \
-of something, enough seats for a meal; two different things are two pieces. \
-Something sold as one set is one piece.
+A room for watching a screen is arranged around that wall: the screen's unit on it, the \
+main seating facing it at a comfortable distance, and the lighting soft enough for \
+evenings. Think about the seating as a whole, for the room's purpose, its people and its \
+size - there is no default arrangement. Two long seats facing each other suit \
+conversation; two at a right angle make an L that fills a corner; three sides around a \
+low table make a U for hosting; seating along the walls, majlis-style, suits many \
+guests; one long seat with single seats beside it suits a smaller room or a room around \
+a screen; a deep corner seat suits family lounging; a single comfortable seat by the \
+window makes a reading corner. Several long seats are as ordinary as one. How many \
+pieces a room needs is a different question from how many one piece seats - a room may \
+want two of something that each seat three. Say more than one of a piece only when the \
+room needs that many of the same piece - a matching pair either side of something, \
+enough seats for a meal; two different things are two pieces. Something sold as one set \
+is one piece.
 
 Give a size range to every piece whose size decides whether the room works - \
 where they sleep, the main seating, the work surface, the table they eat at, the \

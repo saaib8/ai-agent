@@ -485,7 +485,11 @@ a list of search cards while it is built.
   it offered for the next message. `app/services/room_design.py` checks it: approved types
   only (a refusal names the family), unstocked types and looks left out and
   said, `seats_each` only on multi-seat types, shares at most the whole budget,
-  no figure in prose. The seats it gives are a fact, never a refusal.
+  no figure in prose, and a seat count no piece of its types has in this store
+  refused with what each multi-seat type seats here (`no_piece_seats_that_many`,
+  `seats_here`), so she re-plans - several straight sofas as readily as one corner
+  sofa. An alternative is another type of the same piece, never a backup piece. The
+  seats it gives are a fact, never a refusal (`seats_short`, `seats_over`).
 - **Found by fit and look first, then the money** (27): each piece is one search
   across its types with no price bound - a room's pieces searched side by side,
   one on the request's session and the rest each on a session of its own
@@ -508,6 +512,12 @@ a list of search cards while it is built.
   the bed, the way in and windows clear, open floor left), swaps what does not
   sit naturally, and speaks of fit in rough terms ("about a metre"). No code
   check, no exclusion. `measure_fit` answers a customer's direct "will it fit?".
+- **Nothing internal reaches the customer** (every agent): no tool, step, search,
+  plan, filter, data field or handover - only what a salesperson or designer would say.
+- **Presented as the best choice for their plan**: every piece with why it suits how
+  many sit there, the room's purpose, their colours, size and budget - never the work
+  behind it ("planned", "wasn't available", "instead"); only what they asked for and
+  could not have is said, leading with what was chosen and why it works.
 - **Checked before shown**: a room `design_room` built is drawn only when Nora
   replies with `show: "room"`. Each piece comes back with its actual colour and
   styles, its listed size and `size_in_range`, its share planned and used, the
@@ -536,7 +546,8 @@ a list of search cards while it is built.
   offers finishing touches within `budget_left` first (10.3).
 - **The palette is the room's** (`room_project.palette`), apart from the
   customer's own preferences: a simple search never leans to a room's palette.
-- **Styling** - cushions, candles, small vases - is offered after the room, on
+- **Styling** - small decorative pieces, only kinds the store stocks (`room_could_add`),
+  never a fixed list - is offered after the room, on
   top of its budget (Salman, 10.3), unless they said everything must fit
   within it, when it is part of the design. Lighting, rugs, wall art and
   statement decor are pieces of the room. Pieces they own are designed around.

@@ -34,7 +34,7 @@ from app.schemas.discovery import SeatingCapacityConstraint
 from app.services.design_checks import figure_free, stocked_values
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
-from app.taxonomy.seating import SeatingSemantics
+from app.taxonomy.seating import SEATING_CATEGORY, SeatingSemantics
 from app.taxonomy.words import customer_words
 
 MAX_ROOM_PIECES = 14
@@ -143,6 +143,23 @@ class RoomDesignChecker:
                 continue
             kinds = stocked or piece.types[:1]
             shelves = [s for s in overview.shelves_in(family) if s.commerce_subcategory in kinds]
+            if (
+                piece.seats_each is not None
+                and piece.from_pick is None
+                and not any(
+                    s.seating is not None
+                    and s.seating.minimum <= piece.seats_each <= s.seating.maximum
+                    for s in shelves
+                )
+            ):
+                # A seat count no piece of these types has here would come back
+                # empty: she is told what the store's pieces do seat - every type
+                # that seats several, straight sofas included - and re-plans.
+                return RoomDesignProblem(
+                    code="no_piece_seats_that_many",
+                    piece=number,
+                    detail={"seats_here": _seats_here(overview, self._seating)},
+                )
             colours_here = self._canonical(
                 AttributeFamily.COLOR, [c for s in shelves for c in s.colours]
             )
@@ -284,8 +301,27 @@ class RoomDesignChecker:
         if head_count is not None:
             facts["head_count"] = head_count
             facts["seats_short"] = max(head_count - seats, 0)
+            if seats > head_count:
+                # A fact, never a refusal: a spare seat or two can be right, a
+                # second set of seating rarely is - hers to judge.
+                facts["seats_over"] = seats - head_count
         return facts
 
     def _canonical(self, family: AttributeFamily, stored: Sequence[str]) -> tuple[str, ...]:
         names = (self._attributes.canonical(family, value) for value in stored)
         return tuple(dict.fromkeys(n for n in names if n is not None))
+
+
+def _seats_here(overview: CatalogOverview, seating: SeatingSemantics | None) -> dict[str, str]:
+    """What one piece of each multi-seat type seats in this store, as its
+    confirmed range ("3-4") - the facts a seating plan is re-made from."""
+    ranges: dict[str, str] = {}
+    for shelf in overview.shelves_in(SEATING_CATEGORY):
+        kind = shelf.commerce_subcategory
+        if kind is None or shelf.seating is None:
+            continue
+        if seating is not None and not seating.seats_several(kind):
+            continue
+        low, high = shelf.seating.minimum, shelf.seating.maximum
+        ranges[customer_words(kind)] = str(low) if low == high else f"{low}-{high}"
+    return ranges
