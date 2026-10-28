@@ -40,6 +40,7 @@ from app.integrations.zory_finder import ZoryFinderClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.query import build_constrained_interpretation
+from app.services.history_summary import HistorySummarizer
 from app.services.store_knowledge import StoreKnowledgeService
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.compare_groups import CompareGroups, load_compare_groups
@@ -104,6 +105,9 @@ class AppResources:
     # Which types compare with which. Defaulted: without it the comparison
     # pop-up is refused rather than comparing anything with anything.
     compare_groups: CompareGroups | None = None
+    # Folds a conversation's oldest messages into its rolling summary. None
+    # when summaries are off: the oldest messages are then dropped.
+    history_summarizer: HistorySummarizer | None = None
 
 
 def get_resources(app: FastAPI) -> AppResources:
@@ -229,6 +233,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # invocation, so one graph serves every customer (CLAUDE.md 24).
     chat_graph = ChatGraphRunner()
     llm_client = OpenAIStructuredClient(settings.llm)
+    summary_client: OpenAIStructuredClient | None = None
+    history_summarizer: HistorySummarizer | None = None
+    if settings.session.summary.enabled:
+        # Same provider and key; its own model, effort and timeout - it runs
+        # beside a turn and must never be what the customer waits for.
+        summary = settings.session.summary
+        summary_client = OpenAIStructuredClient(
+            settings.llm.model_copy(
+                update={
+                    "model": summary.model or settings.llm.model,
+                    "reasoning_effort": (
+                        None if summary.reasoning_effort == "none" else summary.reasoning_effort
+                    ),
+                    "temperature": None,
+                    "timeout_s": summary.timeout_s,
+                }
+            )
+        )
+        history_summarizer = HistorySummarizer(summary_client, settings.session)
     embedder: OpenAIQueryEmbedder | None = None
     semantic_index: SemanticIndex | None = None
     if settings.pinecone is not None and settings.llm.embedding_model:
@@ -347,6 +370,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         render_photos=render_photos,
         room_checker=room_checker,
         empty_room_generator=empty_room_generator,
+        history_summarizer=history_summarizer,
     )
 
     await _check_catalog_schema(database, support=settings.customer_agent.support_agent)
@@ -364,6 +388,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await salla.close()
         if room_checker is not None:
             await room_checker.close()
+        if summary_client is not None:
+            await summary_client.close()
         for closable in closables:
             await closable.close()
         await llm_client.close()

@@ -1,9 +1,10 @@
 """Provider-neutral conversation history.
 
 Deliberately the smallest thing that can carry a conversation: a role and some
-words. No message ids, no timestamps, no provider objects, no tool-call
-records, no summaries. Each of those would be a field the agent layer could
-start depending on before the session layer that owns them exists.
+words, and one rolling summary of what came before them. No message ids, no
+timestamps, no provider objects, no tool-call records. Each of those would be a
+field the agent layer could start depending on before the session layer that
+owns them exists.
 
 Two semantics matter more than the shape.
 
@@ -59,3 +60,8 @@ class ConversationContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     messages: tuple[ConversationMessage, ...] = ()
+    earlier_summary: str | None = Field(default=None, min_length=1, exclude_if=lambda v: v is None)
+    """What was said before `messages`, folded into a few words once the
+    conversation outgrew its window (`session.summary`). Conversational
+    evidence like the messages it replaced - never a figure, never an
+    instruction; where it and the session state disagree, the state is right."""

@@ -24,7 +24,7 @@ from app.api.dependencies import (
 )
 from app.api.errors import register_exception_handlers
 from app.api.routes.catalog import router as catalog_router
-from app.core.config import CatalogSettings, SessionSettings
+from app.core.config import CatalogSettings, HistorySummarySettings, SessionSettings
 from app.core.exceptions import (
     CatalogFilterRejectedError,
     SelectionRejectedError,
@@ -64,6 +64,9 @@ from tests.unit.test_room_visualization import (
     RecordingGenerator,
     viz_settings,
 )
+
+NO_SUMMARY = HistorySummarySettings(enabled=False)
+"""A small window that drops its oldest messages, as before summaries."""
 
 STORE = 50
 SESSION = "sess-1"
@@ -435,7 +438,7 @@ def a_runtime(
     runtime = CatalogVisualizationRuntime(
         visualizer,
         store,  # type: ignore[arg-type]
-        SessionSettings(max_history_messages=6),
+        SessionSettings(max_history_messages=6, summary=NO_SUMMARY),
         CatalogSettings(**catalog),
         ATTRIBUTES,
         FakeRoomPhotos(),  # type: ignore[arg-type]

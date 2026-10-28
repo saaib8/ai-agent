@@ -16,9 +16,10 @@ discarded rather than handed back as though it took effect.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.agents.context import ToolContext
 from app.agents.deadline import within
@@ -50,9 +51,10 @@ from app.schemas.product import ProductCandidate
 from app.schemas.retailer import RetailerContext
 from app.services.agent_state import keep_screen
 from app.services.card_labels import card_labels
+from app.services.history_summary import Fold, HistorySummarizer, next_history
 from app.services.product_display import displayed
 from app.services.product_interaction import build_liked, build_picks
-from app.services.session_turns import LoadedSession, load_for_turn, trim_history
+from app.services.session_turns import LoadedSession, load_for_turn
 
 logger = get_logger(__name__)
 
@@ -70,6 +72,9 @@ class AgentTurn:
     picks: tuple[PickView, ...] | None
     liked: tuple[LikedView, ...] | None
     cart: CartView | None
+    fold: Fold | None = None
+    """The oldest messages' summary, made beside the agents, for the save to
+    apply - None when nothing was due or none could be made."""
 
 
 class ChatRuntime:
@@ -83,6 +88,7 @@ class ChatRuntime:
         deadline_s: float = 40.0,
         room_deadline_s: float | None = None,
         arabic_replies: bool = False,
+        summarizer: HistorySummarizer | None = None,
     ) -> None:
         self._deadline_s = deadline_s
         self._room_deadline_s = room_deadline_s if room_deadline_s is not None else deadline_s
@@ -94,6 +100,7 @@ class ChatRuntime:
         self._sessions = sessions
         self._settings = settings
         self._arabic = arabic_replies
+        self._summarizer = summarizer
 
     async def load_session(self, request: ChatRequest) -> LoadedSession:
         return await load_for_turn(
@@ -104,6 +111,38 @@ class ChatRuntime:
         )
 
     async def run_agents(
+        self, request: ChatRequest, context: RetailerContext, loaded: LoadedSession
+    ) -> AgentTurn:
+        """The team's turn - and, beside it, the summary of the oldest
+        messages when the conversation is about to outgrow its window."""
+        if self._summarizer is None:
+            return await self._team_turn(request, context, loaded)
+        folding = asyncio.create_task(self._summarizer.fold(loaded.envelope.conversation))
+        try:
+            turn = await self._team_turn(request, context, loaded)
+        except BaseException:
+            folding.cancel()
+            if folding.done() and not folding.cancelled():
+                folding.exception()  # retrieved, so a failed fold is not reported twice
+            raise
+        return replace(turn, fold=await self._collected(folding))
+
+    async def _collected(self, folding: asyncio.Task[Fold | None]) -> Fold | None:
+        """The summary, if it is ready soon after the team: the customer never
+        waits on it for more than `summary.wait_after_turn_s`. Not ready, it is
+        cancelled and the next turn folds instead - nothing is dropped meanwhile."""
+        try:
+            return await asyncio.wait_for(folding, self._settings.summary.wait_after_turn_s)
+        except TimeoutError:
+            logger.info("history_summary_skipped", reason="not ready after the turn")
+            return None
+        except Exception:
+            # A defect in a side step must not discard a reply the agents have
+            # finished: logged in full, and the turn is saved unfolded.
+            logger.exception("history_summary_defect")
+            return None
+
+    async def _team_turn(
         self, request: ChatRequest, context: RetailerContext, loaded: LoadedSession
     ) -> AgentTurn:
         pre_turn = loaded.envelope.state
@@ -318,8 +357,7 @@ class ChatRuntime:
         customer = (
             tap.recorded if tap is not None and not request.message.strip() else request.message
         )
-        messages = (
-            *loaded.envelope.conversation.messages,
+        exchange = (
             ConversationMessage(role=ConversationRole.USER, content=customer or "…"),
             ConversationMessage(
                 role=ConversationRole.ASSISTANT,
@@ -328,9 +366,7 @@ class ChatRuntime:
                 choices=offered(turn),
             ),
         )
-        return ConversationContext(
-            messages=trim_history(messages, self._settings.max_history_messages)
-        )
+        return next_history(loaded.envelope.conversation, exchange, self._settings, turn.fold)
 
     def public_response(self, request: ChatRequest, revision: int, turn: AgentTurn) -> ChatResponse:
         return ChatResponse(

@@ -721,13 +721,36 @@ class PieceArgs(ToolArgs):
 
 class PieceOptionsArgs(PieceArgs):
     cheaper: bool = False
+    longer_at_least_cm: int | None = Field(
+        default=None,
+        ge=10,
+        le=1200,
+        description=(
+            "Only alternatives at least this long. Unset keeps the size the piece was "
+            "designed to be at least - set it when they open up to a smaller size."
+        ),
+    )
+    shorter_at_least_cm: int | None = Field(
+        default=None,
+        ge=10,
+        le=1200,
+        description=(
+            "Only alternatives at least this wide on their shorter side - a bed's width. "
+            "Unset keeps the piece's designed minimum; a queen for two is about 150."
+        ),
+    )
 
 
 def piece_options_tool(schemas: ToolSchemas) -> ZoryTool[PieceOptionsArgs]:
     async def options(args: PieceOptionsArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
         services = context.services
         found = await services.rooms.piece_options(
-            work.staged, context.retailer, args.piece, cheaper=args.cheaper
+            work.staged,
+            context.retailer,
+            args.piece,
+            cheaper=args.cheaper,
+            longer_at_least_cm=args.longer_at_least_cm,
+            shorter_at_least_cm=args.shorter_at_least_cm,
         )
         ok = found.code == "ok"
         return ToolOutcome(

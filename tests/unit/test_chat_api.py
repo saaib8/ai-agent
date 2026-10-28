@@ -15,6 +15,7 @@ own compare-and-set is proved against a real server in
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -30,8 +31,9 @@ from app.api.dependencies import (
 )
 from app.api.errors import register_exception_handlers
 from app.api.routes.chat import router as chat_router
-from app.core.config import AgentsSettings, SessionSettings
+from app.core.config import AgentsSettings, HistorySummarySettings, SessionSettings
 from app.core.exceptions import (
+    LLMUnavailableError,
     SessionStateInvalidError,
     SessionStoreUnavailableError,
     StoreNotFoundError,
@@ -50,6 +52,7 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.session import SessionEnvelope, ShopperCart
 from app.services.chat_runtime import ChatRuntime
 from app.services.click_tracking import ClickTrackingService, tracking_url
+from app.services.history_summary import HistorySummarizer
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
@@ -57,6 +60,9 @@ from langchain_core.messages import AIMessage
 from tests.unit.agents.fake_chat_model import ScriptedChatModel, call, step
 from tests.unit.agents.fakes import FakeHydration, FakePipeline, agent_services, real_loop
 from tests.unit.click_ids import FakeClickIds, no_click_ids
+
+NO_SUMMARY = HistorySummarySettings(enabled=False)
+"""A small window that drops its oldest messages, as before summaries."""
 
 GRAPH = ChatGraphRunner()
 """One compiled graph for the whole module, as the process has one."""
@@ -179,6 +185,8 @@ class Harness:
         retailers: FakeRetailers | None = None,
         arabic_replies: bool = False,
         click_ids: FakeClickIds | None = None,
+        summarizer: HistorySummarizer | None = None,
+        session_settings: SessionSettings | None = None,
     ) -> None:
         self.supervisor = ScriptedChatModel(
             script=[step(call("transfer_to_sara", f"t{n}", need="shopping")) for n in turns]
@@ -195,6 +203,10 @@ class Harness:
         self.hydration = FakeHydration(available=product_ids)
         self.references = ScreenReferences()
         self.runtimes = 0
+        self.summarizer = summarizer
+        self.session_settings = session_settings or SessionSettings(
+            max_history_messages=6, summary=NO_SUMMARY
+        )
 
     def _runtime(self) -> ChatRuntime:
         """One runtime per request, exactly as the real dependency builds it."""
@@ -207,8 +219,9 @@ class Harness:
                 references=self.references,  # type: ignore[arg-type]
             ),
             self.sessions,  # type: ignore[arg-type]
-            SessionSettings(max_history_messages=6),
+            self.session_settings,
             arabic_replies=self.arabic_replies,
+            summarizer=self.summarizer,
         )
 
     def app(self) -> FastAPI:
@@ -451,6 +464,115 @@ async def test_history_is_bounded_and_keeps_whole_exchanges(
         REPLY,
     ]
     assert messages[0].role.value == "user", "never an orphaned reply"
+
+
+SUMMARISED = SessionSettings(
+    max_history_messages=6,
+    summary=HistorySummarySettings(fold_messages=2, hard_cap_messages=8),
+)
+"""Six messages kept word for word; the oldest exchange folded on reaching them."""
+
+
+class SummaryClient:
+    """The summarising model: each call answers the next summary, or fails."""
+
+    model = "summary-test"
+
+    def __init__(self, *answers: str | Exception, delay_s: float = 0) -> None:
+        self.answers = list(answers)
+        self.inputs: list[str] = []
+        self.delay_s = delay_s
+
+    async def parse(self, *, instructions: str, user_input: str, schema: type[Any]) -> Any:
+        self.inputs.append(user_input)
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return schema(summary=answer)
+
+
+async def test_reaching_the_window_folds_the_oldest_exchange_into_the_summary(
+    client_for: Any,
+) -> None:
+    client_model = SummaryClient("The customer said hello.", "The customer said hello twice.")
+    harness = Harness(
+        *[an_answer() for _ in range(4)],
+        summarizer=HistorySummarizer(client_model, SUMMARISED),  # type: ignore[arg-type]
+        session_settings=SUMMARISED,
+    )
+    client = await client_for(harness)
+
+    for message in ("one", "two", "three"):
+        await client.post("/v1/chat", json=body(message))
+
+    stored = harness.sessions.saved[(STORE, SESSION)].conversation
+    assert stored.earlier_summary == "The customer said hello."
+    assert [m.content for m in stored.messages] == ["two", REPLY, "three", REPLY]
+    assert len(client_model.inputs) == 1, "nothing is summarised before the window"
+    assert "[customer] one" in client_model.inputs[0]
+
+    await client.post("/v1/chat", json=body("four"))
+    told = harness.told(-1)
+    assert any("Earlier in this chat" in t and "said hello." in t for t in told)
+    stored = harness.sessions.saved[(STORE, SESSION)].conversation
+    assert stored.earlier_summary == "The customer said hello twice."
+    assert "Summary so far:\nThe customer said hello." in client_model.inputs[1]
+
+
+async def test_a_summary_that_fails_drops_nothing(client_for: Any) -> None:
+    unavailable = SummaryClient(*[LLMUnavailableError(provider="openai")] * 2)
+    harness = Harness(
+        *[an_answer() for _ in range(4)],
+        summarizer=HistorySummarizer(unavailable, SUMMARISED),  # type: ignore[arg-type]
+        session_settings=SUMMARISED,
+    )
+    client = await client_for(harness)
+
+    for message in ("one", "two", "three", "four"):
+        response = await client.post("/v1/chat", json=body(message))
+        assert response.status_code == 200
+
+    stored = harness.sessions.saved[(STORE, SESSION)].conversation
+    assert stored.earlier_summary is None
+    assert stored.messages[0].content == "one", "kept up to the hard cap"
+    assert len(stored.messages) == 8
+
+
+@pytest.mark.parametrize(
+    "client_model",
+    [
+        SummaryClient(KeyError("defect"), KeyError("defect")),
+        SummaryClient("Too late.", "Too late.", delay_s=5),
+    ],
+    ids=["a defect", "too slow"],
+)
+async def test_the_summary_never_holds_back_or_breaks_the_reply(
+    client_for: Any, client_model: SummaryClient
+) -> None:
+    """A finished reply is saved and answered whatever the summary does: a
+    defect is logged, a slow summary is left for the next turn."""
+    settings = SessionSettings(
+        max_history_messages=6,
+        summary=HistorySummarySettings(
+            fold_messages=2, hard_cap_messages=8, wait_after_turn_s=0.05
+        ),
+    )
+    harness = Harness(
+        *[an_answer() for _ in range(3)],
+        summarizer=HistorySummarizer(client_model, settings),  # type: ignore[arg-type]
+        session_settings=settings,
+    )
+    client = await client_for(harness)
+
+    for message in ("one", "two", "three"):
+        response = await client.post("/v1/chat", json=body(message))
+        assert response.status_code == 200
+
+    stored = harness.sessions.saved[(STORE, SESSION)].conversation
+    assert stored.earlier_summary is None
+    assert [m.content for m in stored.messages] == ["one", REPLY, "two", REPLY, "three", REPLY]
 
 
 async def test_each_reply_is_stored_under_the_agent_that_gave_it(client_for: Any) -> None:

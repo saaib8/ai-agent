@@ -61,7 +61,7 @@ Each phase ships and is tested on its own. Nothing is committed. Each phase runs
 - **Problem:** Nora's settings can't tell planning from wording.
 - **Design:**
   - the loop picks the reasoning per model call;
-  - a call made **after** this turn's room was built and its fixes applied (only the reply is left) uses `agents.nora.wording_reasoning_effort` (default low);
+  - a call made **after** this turn's room was built and its fixes applied (only the reply is left) uses `agents.nora.wording_reasoning_effort` (default unset, the design's own effort: low leaked the work behind the room);
   - every other Nora call stays at her effort (medium);
   - `build_chat_model` builds the second model variant at startup, so nothing is created per call;
   - the supervisor is already low.

@@ -16,12 +16,9 @@ from app.repositories.sessions import SessionStore
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_turn import CustomerResponse
-from app.schemas.conversation import (
-    ConversationContext,
-    ConversationMessage,
-    ConversationRole,
-)
+from app.schemas.conversation import ConversationMessage, ConversationRole
 from app.schemas.session import SessionEnvelope, new_session
+from app.services.history_summary import next_history
 from app.services.shopper_cart import with_shopper_cart
 
 logger = get_logger(__name__)
@@ -147,8 +144,7 @@ async def commit_exchange(
     said = response.message
     if response.follow_up_question:
         said = f"{said} {response.follow_up_question}"
-    messages = (
-        *loaded.envelope.conversation.messages,
+    exchange = (
         ConversationMessage(role=ConversationRole.USER, content=customer_said),
         ConversationMessage(
             role=ConversationRole.ASSISTANT,
@@ -159,9 +155,7 @@ async def commit_exchange(
     )
     envelope = loaded.envelope.advanced(
         state=state,
-        conversation=ConversationContext(
-            messages=trim_history(messages, settings.max_history_messages)
-        ),
+        conversation=next_history(loaded.envelope.conversation, exchange, settings, None),
     )
     committed = await sessions.save_if_revision(
         store_id, session_id, expected_revision=loaded.loaded_revision, envelope=envelope
@@ -169,25 +163,3 @@ async def commit_exchange(
     if not committed:
         raise SessionConflictError(expected_revision=loaded.loaded_revision, store_id=store_id)
     return envelope.session_revision
-
-
-def trim_history(
-    messages: tuple[ConversationMessage, ...], limit: int
-) -> tuple[ConversationMessage, ...]:
-    """The most recent messages, in order, without orphaning a reply.
-
-    Trimmed **after** the completed turn is appended, so the exchange that just
-    happened is always kept. Oldest first out, which is what keeps the window
-    chronological.
-
-    Whole exchanges where possible: a history beginning with an assistant
-    message would show an answer to a question nobody can see, so the orphan is
-    dropped too. That can leave the window one under the limit, which is the
-    right trade - the bound is a ceiling, not a quota to fill.
-    """
-    if len(messages) <= limit:
-        return messages
-    kept = messages[len(messages) - limit :]
-    if kept and kept[0].role is ConversationRole.ASSISTANT:
-        kept = kept[1:]
-    return kept

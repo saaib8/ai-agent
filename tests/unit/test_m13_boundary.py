@@ -130,6 +130,9 @@ def test_the_runtime_holds_only_what_it_sequences() -> None:
         # A room-design turn gets the room's limit (agents.room_turn_deadline_s).
         "room_deadline_s",
         "arabic_replies",
+        # Folds the oldest messages into the rolling summary beside the team's
+        # turn (session.summary) - a service, never a model client of its own.
+        "summarizer",
     ]
 
 
@@ -284,10 +287,9 @@ def test_no_archive_or_long_term_memory_is_implemented(forbidden: str) -> None:
     """V1 keeps a short technical session and nothing else (CLAUDE.md 19).
 
     Identifiers, not prose. And narrowly chosen: "summarise" was too broad to
-    mean anything here - `search_pipeline._summarise` builds a deterministic
-    relaxation summary and is not a conversation summariser. What actually
-    rules that out is `test_history_is_bounded_without_a_model` below, which
-    checks the runtime holds no provider at all.
+    mean anything here - the conversation's rolling summary
+    (`history_summary`) is short-term session state, kept and expired with the
+    session it summarises, not an archive.
     """
     for module in APP.rglob("*.py"):
         names = {name.lower() for name in _identifiers(module)}
@@ -307,8 +309,9 @@ def test_no_object_store_client_is_imported() -> None:
 
 
 def test_history_is_bounded_without_a_model() -> None:
-    """Trimming is a slice. A summariser would be a third reasoning step, and
-    its invented wording would enter the context of every later turn."""
+    """Trimming is a slice, and the runtime holds no model client: the rolling
+    summary is the summariser's (`app/services/history_summary.py`), which
+    writes words only and is given to the runtime as a service."""
     assert "llm" not in _identifiers(RUNTIME)
     assert "client" not in _identifiers(RUNTIME)
 

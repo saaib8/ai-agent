@@ -36,7 +36,13 @@ from app.agents.screen_actions import Tap
 from app.agents.tools.common import HandBackReason, RespondArgs
 from app.agents.tools.shelf import stocked_kinds
 from app.agents.trace import TraceEvent, TurnTrace, elapsed_ms
-from app.agents.views import agent_messages, assistant_said, done_so_far, turn_view
+from app.agents.views import (
+    agent_messages,
+    assistant_said,
+    done_so_far,
+    earlier_summary,
+    turn_view,
+)
 from app.agents.work import ToolRecord, ToolStatus, TurnWork
 from app.core.config import AgentsSettings
 from app.core.exceptions import AgentTurnIncompleteError, LLMResponseInvalidError, ZoryError
@@ -430,6 +436,7 @@ class AgentTeam:
             }
         messages: list[BaseMessage] = [
             SystemMessage(SUPERVISOR),
+            *earlier_summary(turn.conversation),
             *[
                 HumanMessage(
                     f"[{m.agent.value if m.agent else m.role.value}] "

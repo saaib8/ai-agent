@@ -27,7 +27,7 @@ from app.api.dependencies import (
 )
 from app.api.errors import register_exception_handlers
 from app.api.routes.visualization import router as visualization_router
-from app.core.config import SessionSettings, VisualizationSettings
+from app.core.config import HistorySummarySettings, SessionSettings, VisualizationSettings
 from app.core.exceptions import (
     NothingToVisualizeError,
     RenderUnavailableError,
@@ -69,6 +69,9 @@ from pydantic import ValidationError
 from tests.conftest import build_settings
 from tests.unit.click_ids import no_click_ids
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
+
+NO_SUMMARY = HistorySummarySettings(enabled=False)
+"""A small window that drops its oldest messages, as before summaries."""
 
 STORE = 50
 SESSION = "sess-1"
@@ -624,7 +627,7 @@ def a_turn_runtime(
         VisualizationTurnRuntime(
             visualizer,
             store,  # type: ignore[arg-type]
-            SessionSettings(max_history_messages=6),
+            SessionSettings(max_history_messages=6, summary=NO_SUMMARY),
             photos or FakeRoomPhotos(),  # type: ignore[arg-type]
             arabic_replies=arabic_replies,
         ),

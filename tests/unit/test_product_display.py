@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from app.core.config import CatalogSettings, SessionSettings
+from app.core.config import CatalogSettings, HistorySummarySettings, SessionSettings
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1, ProductInteractionState
@@ -63,6 +63,9 @@ from tests.unit.test_catalog import (
     a_query,
     a_row,
 )
+
+NO_SUMMARY = HistorySummarySettings(enabled=False)
+"""A small window that drops its oldest messages, as before summaries."""
 
 EN, AR = ReplyLanguage.EN, ReplyLanguage.AR
 WORDS = ProductDisplayWords(TAXONOMY, ATTRIBUTES)
@@ -419,7 +422,7 @@ async def test_a_photos_matches_read_like_a_chat_turns_cards() -> None:
     runtime = FinderTurnRuntime(
         service,
         finder.FakeSessionStore(),  # type: ignore[arg-type]
-        SessionSettings(max_history_messages=6),
+        SessionSettings(max_history_messages=6, summary=NO_SUMMARY),
         SimilarSearchBuilder(TAXONOMY, ATTRIBUTES),
         SearchRefinementComposer(ATTRIBUTES, finder.DIMENSIONS),
         display=WORDS,
@@ -445,8 +448,6 @@ def test_picks_read_in_the_conversations_language() -> None:
     assert arabic.display is not None and arabic.display.name == "أريكة 4 مقاعد"
     assert english.display is not None and english.display.price == "3,200 SAR"
     assert bare.display is None
-
-
 
 
 # ── Browse Catalogue ════════════════════════════════════════════════════════

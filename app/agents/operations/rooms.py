@@ -95,13 +95,20 @@ from app.schemas.design_discovery import (
 from app.schemas.design_override import DesignNeedSearchOverride
 from app.schemas.discovery import (
     MAX_EXCLUDED_PRODUCT_IDS,
+    DimensionConstraint,
+    DimensionConstraintKind,
     PriceConstraint,
     ProductSearchRequest,
 )
 from app.schemas.geometry import RoomGeometry
 from app.schemas.grounding import GroundedProduct
 from app.schemas.product import ProductCandidate
-from app.schemas.query import ConstraintStrength, ResolvedSearch, SemanticPreference
+from app.schemas.query import (
+    ConstraintStrength,
+    DimensionConstraintSemantics,
+    ResolvedSearch,
+    SemanticPreference,
+)
 from app.schemas.relaxation import StopReason
 from app.schemas.resolution import CandidatePoolResult, ProductSearchExecutionResult
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
@@ -113,6 +120,7 @@ from app.services.bundle_presentation import (
 )
 from app.services.room_cart import finished, room_words
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, FloorSide
 from app.taxonomy.rooms import RoomPieces
 from app.taxonomy.seating import SEATING_CATEGORY, SeatingSemantics
 from app.taxonomy.words import customer_words
@@ -270,8 +278,12 @@ class RoomEngine:
         hydration: _Hydration,
         rooms: RoomPieces | None,
         seating: SeatingSemantics | None,
+        dimensions: DimensionSemantics | None = None,
     ) -> None:
         self._design_discovery = design_discovery
+        self._dimensions = dimensions
+        """Which sizes this store's data can be searched on, so a piece's
+        alternatives keep its size floor only where the data can answer it."""
         self._optimizer = optimizer
         self._pipeline = pipeline
         self._capabilities = capabilities
@@ -457,8 +469,16 @@ class RoomEngine:
         *,
         cheaper: bool = False,
         limit: int = 5,
+        longer_at_least_cm: int | None = None,
+        shorter_at_least_cm: int | None = None,
     ) -> PieceOptions:
         """Products that could take the piece at card ordinal `piece`.
+
+        They keep the piece's size floor - the smallest it was designed to be
+        for the people using it, so a couple's bed is never offered as a
+        single - unless Nora gives another (`*_at_least_cm`), as when the
+        customer opens up to a smaller size. Only sizes the data can answer
+        for that kind are applied.
 
         They are committed as the search on screen, and the piece they are for
         is remembered (`room_swap`), so `swap(piece, option)` resolves option
@@ -503,6 +523,20 @@ class RoomEngine:
             # A piece's options are every type she said may fill it, and
             # only those (CLAUDE.md 10.1).
             alternatives = need.design.alternatives if need.design else ()
+            design = need.design
+            floor = (
+                self._size_floor(
+                    need.commerce_subcategory,
+                    longer_at_least_cm
+                    if longer_at_least_cm is not None
+                    else (design.longer_min_cm if design else None),
+                    shorter_at_least_cm
+                    if shorter_at_least_cm is not None
+                    else (design.shorter_min_cm if design else None),
+                )
+                if not alternatives
+                else ()
+            )
             request = resolved.request.model_copy(
                 update={
                     "single_type": not alternatives,
@@ -511,9 +545,15 @@ class RoomEngine:
                         dict.fromkeys((*need.rejected_product_ids, *in_room))
                     )[-MAX_EXCLUDED_PRODUCT_IDS:],
                     **({"price": price} if price is not None else {}),
+                    **({"dimensions": tuple(c for c, _ in floor)} if floor else {}),
                 }
             )
-            resolved = resolved.model_copy(update={"request": request})
+            semantics = (
+                resolved.semantics.model_copy(update={"dimensions": tuple(s for _, s in floor)})
+                if floor
+                else resolved.semantics
+            )
+            resolved = resolved.model_copy(update={"request": request, "semantics": semantics})
             executed = await self._pipeline.execute(resolved, context, presentation_limit=limit)
             view = await self._current_view(room, context)
         except _CATALOG_FAILURES:
@@ -556,7 +596,21 @@ class RoomEngine:
         return PieceOptions(
             state=staged,
             code="ok",
-            facts=_options_facts(piece, role, card, view, products, room.budget),
+            facts={
+                **_options_facts(piece, role, card, view, products, room.budget),
+                **(
+                    {
+                        "kept_at_least_cm": {
+                            ("longer_side" if c.side is FloorSide.LONGER else "shorter_side"): int(
+                                c.min_cm or 0
+                            )
+                            for c in request.dimensions
+                        }
+                    }
+                    if request.dimensions
+                    else {}
+                ),
+            },
             products=products,
         )
 
@@ -978,6 +1032,31 @@ class RoomEngine:
             over_budget=overage is not None,
         )
         return self._committed(committed, outcome, budget_raised_from=raised_from)
+
+    def _size_floor(
+        self, kind: str | None, longer_cm: int | None, shorter_cm: int | None
+    ) -> tuple[tuple[DimensionConstraint, DimensionConstraintSemantics], ...]:
+        """The piece's smallest sizes as search minimums, each only where this
+        kind's sizes can be searched (read by side)."""
+        dimensions = self._dimensions
+        if dimensions is None or kind is None:
+            return ()
+        floor: list[tuple[DimensionConstraint, DimensionConstraintSemantics]] = []
+        for role, side, cm in (
+            (DimensionRole.LENGTH, FloorSide.LONGER, longer_cm),
+            (DimensionRole.OVERALL_WIDTH, FloorSide.SHORTER, shorter_cm),
+        ):
+            if cm is None or dimensions.measured_by(kind, role, side) is None:
+                continue
+            floor.append(
+                (
+                    DimensionConstraint(
+                        role=role, side=side, kind=DimensionConstraintKind.MIN, min_cm=Decimal(cm)
+                    ),
+                    DimensionConstraintSemantics(role=role, strength=ConstraintStrength.LOCKED),
+                )
+            )
+        return tuple(floor)
 
     # ── the room as it stands ───────────────────────────────────────────────
 

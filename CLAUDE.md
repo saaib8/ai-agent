@@ -566,6 +566,11 @@ a list of search cards while it is built.
   is one `change_room`: what comes out and what goes in, costed once with every
   other piece pinned, and over budget held whole (`swap_budget_offer`
   `removed_pieces`, `added_product_ids`), so one yes applies all of it.
+- **A piece's options keep its size floor**: the smallest it was designed to be for
+  the people using it (`kept_at_least_cm`), applied where the data can answer it - a
+  couple's bed is never offered as a single; Nora lowers it only when the customer
+  opens up (`shorter_at_least_cm`, `longer_at_least_cm`), and shows only options she
+  would recommend.
 - **A piece's options are for the room** (`product_source: "room_options"`,
   `options_for_piece`): their card action is "Use this", a swap into the room.
   Neither `add_to_cart` (`option_is_for_the_room`, unless `instead_of_room`)
@@ -1650,8 +1655,8 @@ agent who just passed it on, the supervisor decides. The hop limit and the
 turn's budget bound both. A turn in which Nora designs a whole room has the
 room's limits instead (`agents.room_work_deadline_s`, `room_turn_deadline_s`;
 the gateway in front must wait longer), and once its fixes are made the call
-that words it runs at `agents.<agent>.wording_reasoning_effort` (low; designing
-and checking keep their effort). `update_goal` and `remember_taste` only keep a
+that words it runs at `agents.<agent>.wording_reasoning_effort` (unset: the
+design's own effort, since at low the wording leaked the work behind the room). `update_goal` and `remember_taste` only keep a
 record and may ride in the same step as the reply (`beside_reply`), costing no
 model call of their own. The agents work within
 `agents.work_deadline_s`; past
@@ -1771,6 +1776,24 @@ Use Redis for short-term V1 state.
 No S3 chat archive in V1.
 
 No cross-session long-term memory in V1.
+
+**The conversation's window and its rolling summary**
+(`app/services/history_summary.py`). The last `session.max_history_messages`
+(40) messages are kept word for word, and each agent reads up to
+`agents.history_messages` of them. The turn whose exchange would reach the
+window folds the oldest `session.summary.fold_messages` (10) into one rolling
+summary (`ConversationContext.earlier_summary`): made beside the agents' work by
+its own model call (`session.summary.*`), and saved in the same write that
+removes the messages it replaces. A finished reply waits for it at most
+`summary.wait_after_turn_s` (3 s); not ready, or failed for any reason - a
+defect included, logged - the turn is saved unfolded and the next folds instead. The summary is written in the customer's language, so nothing is lost in translation, and is words only - a digit is asked for again once, then
+the summary is given up - because budgets, sizes, seats and prices are kept
+exactly in the state. Every agent and the supervisor read it before the
+messages, as data, with the state right where they disagree. A summary that
+fails or is too slow drops nothing: the turn is saved unfolded and the next
+tries again, the messages kept up to `summary.hard_cap_messages` (50). With
+summaries off, the oldest messages are dropped at the window. The summary lives
+and expires with the session; it is not an archive.
 
 Suggested session state concepts:
 

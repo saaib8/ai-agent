@@ -446,6 +446,7 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
             hydration,
             app_resources.rooms,
             app_resources.seating,
+            app_resources.dimensions,
         ),
         compare_groups=app_resources.compare_groups,
         room_pieces=app_resources.rooms,
@@ -485,6 +486,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         deadline_s=settings.agents.turn_deadline_s,
         room_deadline_s=settings.agents.room_turn_deadline_s,
         arabic_replies=settings.customer_agent.arabic_replies,
+        summarizer=app_resources.history_summarizer,
     )
 
 

@@ -1117,3 +1117,76 @@ async def test_two_revisions_never_take_the_room_over_its_budget() -> None:
 
     assert revised.committed and 2 in _ids(revised.state)
     assert revised.facts["total"] <= Decimal(3300)
+
+
+# ── a piece's options keep its size floor ─────────────────────────────────
+
+
+class _RecordingPipeline(FakePipeline):
+    def __init__(self, catalog: FakeCatalog) -> None:
+        super().__init__(catalog)
+        self.executed: list[Any] = []
+
+    async def execute(
+        self, resolved: Any, context: Any, *, presentation_limit: int | None = None
+    ) -> ProductSearchExecutionResult:
+        self.executed.append(resolved)
+        return await super().execute(resolved, context, presentation_limit=presentation_limit)
+
+
+def _sized_engine() -> tuple[RoomEngine, _RecordingPipeline]:
+    from app.taxonomy.dimensions import load_dimension_semantics
+
+    catalog = FakeCatalog()
+    pipeline = _RecordingPipeline(catalog)
+    engine = RoomEngine(
+        DesignDiscoveryService(pipeline, TAXONOMY, SEATING),  # type: ignore[arg-type]
+        RecordingOptimizer(),
+        pipeline,
+        catalog,
+        catalog,
+        ROOMS,
+        SEATING,
+        load_dimension_semantics(taxonomy=TAXONOMY, by_side=True),
+    )
+    return engine, pipeline
+
+
+SIZED_ROOM = (
+    _need("seating", "sofa", "main sofa", longer_min_cm=220),
+    _need("tables", "center-table", "coffee table"),
+)
+
+
+async def test_a_pieces_options_keep_the_size_it_was_designed_to_be_at_least() -> None:
+    engine, pipeline = _sized_engine()
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000", SIZED_ROOM))
+
+    found = await engine.piece_options(planned.state, CONTEXT, _piece(planned.facts, "sofa"))
+
+    (floor,) = pipeline.executed[-1].request.dimensions
+    assert floor.kind == "min" and floor.min_cm == Decimal(220)
+    assert pipeline.executed[-1].semantics.dimensions[0].strength == "locked"
+    assert found.facts["kept_at_least_cm"] == {"longer_side": 220}
+
+
+async def test_nora_can_lower_the_floor_when_they_open_up() -> None:
+    engine, pipeline = _sized_engine()
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000", SIZED_ROOM))
+
+    await engine.piece_options(
+        planned.state, CONTEXT, _piece(planned.facts, "sofa"), longer_at_least_cm=180
+    )
+
+    (floor,) = pipeline.executed[-1].request.dimensions
+    assert floor.min_cm == Decimal(180)
+
+
+async def test_no_floor_where_the_piece_has_none_or_the_data_cannot_answer() -> None:
+    engine, pipeline = _sized_engine()
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000", SIZED_ROOM))
+
+    found = await engine.piece_options(planned.state, CONTEXT, 2)
+
+    assert pipeline.executed[-1].request.dimensions == ()
+    assert "kept_at_least_cm" not in found.facts

@@ -119,6 +119,44 @@ class RedisSettings(BaseModel):
         return value
 
 
+class HistorySummarySettings(BaseModel):
+    """The rolling summary that takes the place of the oldest messages.
+
+    When a conversation reaches `session.max_history_messages`, its oldest
+    `fold_messages` are folded into one short summary, made beside the turn by
+    a model of its own, and saved with that turn. The summary holds words only:
+    budgets, sizes, seats and prices are kept in the session state, exact, and
+    a second copy in prose could only disagree with them.
+    """
+
+    enabled: bool = True
+    model: str | None = Field(default=None, min_length=1)
+    """Absent: the platform's own model (`llm.model`)."""
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "low"
+    """Sent with the model; "none" (or unset) sends no effort, for a model
+    that takes none."""
+    timeout_s: float = Field(default=20.0, gt=0, le=60)
+    """Past it the summary is given up; the next turn tries again."""
+    wait_after_turn_s: float = Field(default=3.0, ge=0, le=30)
+    """How long a reply the agents have finished may wait for the summary.
+    Not ready by then, it is cancelled and the next turn folds instead."""
+    fold_messages: int = Field(default=10, ge=2, le=40)
+    """How many of the oldest messages one summary takes in. Even, so it
+    folds whole exchanges."""
+    max_chars: int = Field(default=1200, ge=200, le=4000)
+    """The summary's length, however many messages it has taken in."""
+    hard_cap_messages: int = Field(default=50, ge=2, le=200)
+    """While a summary keeps failing, messages are kept rather than dropped -
+    up to this many, then the oldest go unsummarised."""
+
+    @field_validator("fold_messages")
+    @classmethod
+    def _whole_exchanges(cls, value: int) -> int:
+        if value % 2:
+            raise ValueError("fold_messages must be even, so whole exchanges are folded")
+        return value
+
+
 class SessionSettings(BaseModel):
     """Short-term runtime session lifetime and size.
 
@@ -128,18 +166,20 @@ class SessionSettings(BaseModel):
     redefine a product concept (CLAUDE.md 19).
     """
 
-    ttl_s: int = Field(default=3600, ge=60, le=86_400)
+    ttl_s: int = Field(default=86_400, ge=60, le=86_400)
     """How long an idle session survives. Refreshed on every successful save,
     so an active conversation does not expire mid-way through."""
 
-    max_history_messages: int = Field(default=20, ge=2, le=200)
-    """How many prior messages travel into the next turn.
+    max_history_messages: int = Field(default=40, ge=2, le=200)
+    """How many prior messages are kept word for word.
 
     Counted in messages rather than turns, and even by default so a bound can
-    always be met by whole user/assistant pairs. No summarisation in V1: a
-    model asked to compress history is a third reasoning step nobody approved,
-    and it would put invented wording into the context of every later turn.
+    always be met by whole user/assistant pairs. Reaching it folds the oldest
+    into the rolling summary (`summary`); with summaries off, the oldest are
+    dropped.
     """
+
+    summary: HistorySummarySettings = HistorySummarySettings()
 
     operation_timeout_s: float = Field(default=2.0, gt=0, le=30)
     """Ceiling on one session read or write. Distinct from the connection
@@ -152,6 +192,15 @@ class SessionSettings(BaseModel):
     expired - starts with what they already added (CLAUDE.md 36). Kept for the
     shopper the platform names at the front of a conversation id; an id with
     no shopper keeps its cart to itself. 0 switches it off."""
+
+    @model_validator(mode="after")
+    def _summary_fits_the_window(self) -> SessionSettings:
+        if self.summary.enabled:
+            if self.summary.fold_messages >= self.max_history_messages:
+                raise ValueError("summary.fold_messages must be fewer than max_history_messages")
+            if self.summary.hard_cap_messages < self.max_history_messages:
+                raise ValueError("summary.hard_cap_messages must be at least max_history_messages")
+        return self
 
 
 class ApiSettings(BaseModel):
@@ -694,10 +743,11 @@ class AgentRoleSettings(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     """Sent only when set here: `llm.temperature` is never inherited, because
     a reasoning model refuses one."""
-    wording_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "low"
+    wording_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
     """For the call that only says what was done, once a room built this turn
     has had its fixes: designing and checking it keep `reasoning_effort`.
-    None spends the same effort on the wording as on the design."""
+    None (the default) spends the same effort on the wording as on the design:
+    at low, the wording repeated the work behind the room to the customer."""
 
 
 class AgentsSettings(BaseModel):
@@ -764,8 +814,9 @@ class AgentsSettings(BaseModel):
             raise ValueError("a room's working time is never shorter than any turn's")
         return self
 
-    history_messages: int = Field(default=12, ge=0, le=40)
-    """How many earlier messages each agent reads."""
+    history_messages: int = Field(default=40, ge=0, le=40)
+    """How many earlier messages each agent reads, after the summary of
+    those before them (`session.summary`)."""
 
     use_responses_api: bool = True
     """Whether the chat models call the Responses API rather than chat
