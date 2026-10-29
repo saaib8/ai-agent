@@ -42,7 +42,7 @@ from app.schemas.agent_state import (
 from app.schemas.agent_updates import AgentStateUpdate, ProductInteractionUpdate
 from app.schemas.comparison import MAX_COMPARED_PRODUCTS
 from app.schemas.design import DesignDirection, NextSize
-from app.schemas.discovery import ProductSearchRequest
+from app.schemas.discovery import DesignerQuestion, ProductSearchRequest
 from app.schemas.grounding import GroundedProduct
 from app.schemas.product import ProductCandidate
 from app.schemas.product_reference import PresentedOrdinal, ProductReferenceSelector
@@ -553,8 +553,11 @@ def _seat_facts(services: AgentServices, request: ProductSearchRequest) -> dict[
 
 
 def _designer_questions(services: AgentServices, search: Any) -> dict[str, Any]:
-    """The questions the store's designers ask for this kind, with their usual
-    answers - for the agent to choose from, if it asks anything at all."""
+    """The questions the store's designers ask about this kind - the subjects
+    only, with no answer options: the agent asks one in its own words and
+    decides the options itself, from the catalog and what the customer has said
+    (CLAUDE.md 10.2). A kind the sheet does not cover yields nothing, and the
+    agent asks from its own judgement."""
     sheet = services.subcategory_questions
     category = getattr(search, "commerce_category", None)
     if sheet is None or not category:
@@ -562,15 +565,59 @@ def _designer_questions(services: AgentServices, search: Any) -> dict[str, Any]:
     row = sheet.for_search(category, getattr(search, "commerce_subcategory", None))
     if row is None:
         return {}
-    return {
-        "a_designer_might_ask": [
-            {
-                "question": q.text,
-                **({"answers": [o.label for o in q.options][:8]} if q.options else {}),
-            }
-            for q in row.questions
-        ]
-    }
+    questions = tuple(DesignerQuestion(topic=q.ask.topic, question=q.text) for q in row.questions)
+    return {"a_designer_might_ask": [q.model_dump() for q in questions]}
+
+
+def ask_about_args(
+    interpretation: type[CommerceInterpretation], attributes: CatalogAttributes
+) -> type[ToolArgs]:
+    """The kind the customer named, in approved values - enough to look up what
+    the store's designers ask about it, with nothing searched."""
+    return cast(
+        type[ToolArgs],
+        create_model(
+            "AskAboutArgs",
+            __base__=ToolArgs,
+            search=(
+                agent_search(interpretation, attributes),
+                Field(description="The kind the customer named, in approved values."),
+            ),
+        ),
+    )
+
+
+def ask_about_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
+    """Learn what the store's designers ask about a kind before showing anything,
+    so a bare need ("I want a recliner") is met with one question in the agent's
+    own words, grounded in the sheet (CLAUDE.md 10.2). Nothing is searched, no
+    products shown; the facts are the topics, not a verbatim question to recite."""
+    args_model = ask_about_args(schemas.interpretation, schemas.attributes)
+
+    async def ask_about(args: Any, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        services = context.services
+        interpretation = as_interpretation(args.search, schemas.interpretation)
+        try:
+            outcome = services.query_understanding.resolve(interpretation)
+        except LLMResponseInvalidError:
+            return ToolOutcome(status=ToolStatus.INVALID, code="figure_unreadable")
+        resolved, extra = _executable(outcome)
+        facts = {**extra, **_designer_questions(services, interpretation)}
+        if resolved is not None:
+            facts = {**facts, **_seat_facts(services, resolved.request)}
+        return ToolOutcome(facts=facts)
+
+    return ZoryTool(
+        name="ask_about",
+        description=(
+            "Before showing anything for a kind they named but said little about, learn what "
+            "this store's designers ask about it: a_designer_might_ask gives the topics and "
+            "example answers, to ask one in your own words. Nothing is searched or shown."
+        ),
+        args=args_model,
+        owners=SARA,
+        handler=ask_about,
+    )
 
 
 def search_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
@@ -1025,6 +1072,7 @@ async def _names(
 
 def shopping_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
     return [
+        ask_about_tool(schemas),
         search_tool(schemas),
         more_results_tool(schemas),
         exclude_tool(schemas),

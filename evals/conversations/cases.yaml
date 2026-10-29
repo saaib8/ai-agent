@@ -322,6 +322,23 @@ cases:
     turns: ["I need a sofa for 8 people"]
     checks: {not_fallback: true, max_products: 0, card: false, mentions: ["from"]}
 
+  # ── a bare category need: one question in the agent's own words, from the
+  #    sheet's topics (knowledge base, not a script) - nothing shown yet ───────
+  - id: recliner_opening_in_words
+    issue: "agentic questions: a bare 'I want a recliner' gets one question first, in the agent's own words, grounded in the sheet's recliner topics - no fixed card"
+    turns: ["I want a recliner"]
+    checks: {not_fallback: true, card: true}
+
+  - id: sofa_opening_in_words
+    issue: "agentic questions: a bare 'I need a sofa' asks one grounded question in its own words, never budget as the opener"
+    turns: ["I need a sofa"]
+    checks: {not_fallback: true, card: true, not_mentions: ["budget", "spend"]}
+
+  - id: rug_opening_in_words
+    issue: "agentic questions: a bare 'I want a rug' (non-seating) asks one grounded question in its own words"
+    turns: ["I want a rug"]
+    checks: {not_fallback: true, card: true, not_mentions: ["budget", "spend"]}
+
   - id: seat_combo_separate_sofas
     issue: "issue 4: two sofas together, all in the wished colour, within budget"
     turns: ["I am looking for a beige sofa under 5000 sar that can fit 8 people", "separate sofas please"]
