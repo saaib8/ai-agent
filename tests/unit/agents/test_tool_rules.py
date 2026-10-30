@@ -419,6 +419,50 @@ async def test_what_goes_with_lists_kinds_until_one_is_chosen() -> None:
     assert refused.code == "kind_not_stocked"
 
 
+async def test_what_goes_with_offers_another_sofa_beside_the_pairings() -> None:
+    """A piece that seats several lists another of its kind with the pairings -
+    a second sofa for two facing or an L - shown with more_like_this."""
+    from app.taxonomy.complements import load_complements
+    from app.taxonomy.seating import load_seating_semantics
+
+    from tests.unit.agents.fakes import TAXONOMY, FakeCapabilities
+
+    services = agent_services(
+        hydration=FakeHydration(available=(OFF_SCREEN, 10, 11)),
+        capabilities=FakeCapabilities(pairs=(("seating", "sofa"), ("decor", "carpet"))),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
+        seating=load_seating_semantics(taxonomy=TAXONOMY),
+    )
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, _state(), services=services)
+
+    kinds = listed.facts["kinds"]
+    assert [k["kind"] for k in kinds] == ["sofa", "carpet"]
+    assert kinds[0]["another_of_its_kind"] and kinds[0]["show_with"] == "more_like_this"
+
+
+async def test_what_goes_with_offers_stocked_kinds_when_none_is_reviewed() -> None:
+    """A piece with no reviewed pairing still gets kinds to choose from - the
+    store's stocked kinds, never its own - so the offer never ends empty."""
+    from tests.unit.agents.fakes import FakeCapabilities
+
+    services = agent_services(
+        hydration=FakeHydration(available=(OFF_SCREEN, 10, 11)),
+        capabilities=FakeCapabilities(pairs=(("seating", "sofa"), ("decor", "carpet"))),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=None,
+    )
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, _state(), services=services)
+
+    assert listed.code is None
+    assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
+    assert "none_reviewed" in listed.facts
+
+
 class _Contacts:
     async def for_store(self, context: Any) -> SupportContacts:
         return SupportContacts(email="help@example.test")

@@ -19,6 +19,7 @@ from typing import Any
 
 from sqlalchemy import (
     ColumnElement,
+    Integer,
     Numeric,
     Select,
     Text,
@@ -315,6 +316,8 @@ class CatalogOverviewRow:
     styles: tuple[str, ...] = ()
     planar_measured: int = 0
     planar_elongated: int = 0
+    seat_counts: tuple[int, ...] = ()
+    """Every confirmed seat count among the type's pieces."""
 
 
 def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
@@ -338,6 +341,7 @@ def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
             sorted({token for raw in (row.styles or ()) for token in parse_style_tokens(raw)})
         ),
         planar_measured=row.planar_measured,
+        seat_counts=tuple(sorted(row.seat_counts)) if row.seat_counts else (),
         planar_elongated=row.planar_elongated,
     )
 
@@ -712,6 +716,12 @@ class ProductRepository:
                 func.count(core_product.c.seating_capacity).label("seat_known"),
                 func.min(core_product.c.seating_capacity).label("seat_minimum"),
                 func.max(core_product.c.seating_capacity).label("seat_maximum"),
+                type_coerce(
+                    func.array_agg(core_product.c.seating_capacity.distinct()).filter(
+                        core_product.c.seating_capacity.isnot(None)
+                    ),
+                    ARRAY(Integer),
+                ).label("seat_counts"),
                 func.min(core_product.c.price_amount).label("price_minimum"),
                 func.max(core_product.c.price_amount).label("price_maximum"),
                 type_coerce(colours, ARRAY(Text)).label("colours"),

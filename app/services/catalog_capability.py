@@ -166,12 +166,17 @@ class CatalogCapabilityService:
         seat counts and the size rule - a change to any one is a new summary."""
         size = self._size
         rule = f"{size.min_measured}-{size.long_and_shallow_share}"
-        return f"{self._taxonomy.version}.{self._seating.version}.{rule}"
+        return f"{self._taxonomy.version}.{self._seating.version}.{rule}.{_SHAPE}"
 
     def _is_approved(self, category: str, subcategory: str | None) -> bool:
         if subcategory is None:
             return self._taxonomy.is_category(category)
         return self._taxonomy.is_pair(category, subcategory)
+
+
+_SHAPE = "seat-counts"
+"""What the summary holds beyond its registries: a summary cached before seat
+counts were recorded is rebuilt rather than read without them."""
 
 
 def _shelf_from_row(
@@ -192,6 +197,7 @@ def _shelf_from_row(
             known_count=row.seat_known,
             minimum=row.seat_minimum,
             maximum=row.seat_maximum,
+            counts=row.seat_counts,
         )
     return SubcategoryShelf(
         commerce_category=row.commerce_category,

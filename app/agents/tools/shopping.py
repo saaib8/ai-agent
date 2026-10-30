@@ -29,6 +29,7 @@ from app.agents.payloads import (
 from app.agents.services import AgentServices
 from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool
 from app.agents.tools.schemas import ToolSchemas
+from app.agents.tools.shelf import kind_on_shelf
 from app.agents.work import ToolStatus, TurnWork
 from app.core.exceptions import (
     IntegrationUnavailableError,
@@ -603,16 +604,28 @@ def ask_about_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             return ToolOutcome(status=ToolStatus.INVALID, code="figure_unreadable")
         resolved, extra = _executable(outcome)
         facts = {**extra, **_designer_questions(services, interpretation)}
+        kind: Any = interpretation
         if resolved is not None:
             facts = {**facts, **_seat_facts(services, resolved.request)}
+            kind = resolved.request
+        if kind.commerce_category:
+            facts = {
+                **facts,
+                **await kind_on_shelf(
+                    services, context.retailer, kind.commerce_category, kind.commerce_subcategory
+                ),
+            }
         return ToolOutcome(facts=facts)
 
     return ZoryTool(
         name="ask_about",
         description=(
             "Before showing anything for a kind they named but said little about, learn what "
-            "this store's designers ask about it: a_designer_might_ask gives the topics and "
-            "example answers, to ask one in your own words. Nothing is searched or shown."
+            "this store's designers ask about it (a_designer_might_ask: the topics, no "
+            "answers) and what this store carries of it (this_store_has: its colours, styles and "
+            "seats; kinds_stocked when the kind is not chosen yet). Ask in your own words; "
+            "the answers you offer for colour, style, seats or kind come only from what the "
+            "store carries. Nothing is searched or shown."
         ),
         args=args_model,
         owners=SARA,

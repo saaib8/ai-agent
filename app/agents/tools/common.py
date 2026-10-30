@@ -19,8 +19,14 @@ class RespondArgs(ToolArgs):
     """The reply the customer reads, written by the agent that did the work."""
 
     message: str = Field(min_length=1, max_length=MAX_RESPONSE_CHARS)
-    follow_up_question: str | None = Field(default=None, max_length=300)
-    """At most one question, and only when one helps them decide."""
+    follow_up_question: str | None = Field(
+        default=None,
+        max_length=300,
+        description=(
+            "The reply's question, shown to the customer apart, under the message: write it "
+            "here and leave it out of the message - never both, and never reworded twice."
+        ),
+    )
     choices: tuple[TextReplyChoice, ...] = Field(default=(), max_length=6)
     """Short answers to the reply's question the customer can tap. Only with a
     question - the follow-up, or one the message asks."""

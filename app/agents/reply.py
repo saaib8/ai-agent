@@ -165,12 +165,21 @@ def fallback(language: str | None) -> RespondArgs:
 
 def customer_response(reply: RespondArgs) -> CustomerResponse:
     """The reply as the client receives it. Chips that answer no question are
-    dropped rather than shown as a dead end."""
+    dropped rather than shown as a dead end, and a reply with a follow-up asks
+    it once: the client shows the follow-up apart, so a question the message
+    also asks - the same one in other words - is left out of the message."""
+    message = reply.message
+    if reply.follow_up_question:
+        message = keep_sentences(message, lambda s: not s.rstrip().endswith(_ASKS)) or message
     try:
         return CustomerResponse(
-            message=reply.message,
+            message=message,
             follow_up_question=reply.follow_up_question,
             choices=reply.choices,
         )
     except ValidationError:
-        return CustomerResponse(message=reply.message, follow_up_question=reply.follow_up_question)
+        return CustomerResponse(message=message, follow_up_question=reply.follow_up_question)
+
+
+_ASKS = ("?", "؟")
+"""A sentence that asks: an English or an Arabic question mark."""

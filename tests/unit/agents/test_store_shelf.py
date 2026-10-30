@@ -283,3 +283,30 @@ async def test_nora_plans_from_the_kinds_the_store_stocks_names_only() -> None:
     stocks = (await stocked_kinds(_services(), CONTEXT))["store_stocks"]
 
     assert stocks == {"decor": ["carpet"], "seating": ["sofa", "chair", "chaise-lounge"]}
+
+
+async def test_ask_about_gives_what_the_store_carries_of_the_kind() -> None:
+    """The answers Sara offers come from stock: the kind's colours and seats,
+    or the family's stocked kinds before one is chosen (CLAUDE.md 10.2)."""
+    tool = LOOP._registry.get("ask_about")
+    assert tool is not None and tool.handler is not None
+
+    async def ask(search: dict[str, Any]) -> dict[str, Any]:
+        outcome = await tool.handler(
+            tool.args.model_validate({"search": search}),
+            tool_context(_services()),
+            TurnWork.starting(AgentStateV1()),
+        )
+        return outcome.facts
+
+    sofa = await ask({"commerce_category": "seating", "commerce_subcategory": "sofa"})
+    assert sofa["this_store_has"]["colours"] == ["Beige", "Grey"]
+    assert (sofa["this_store_has"]["seats_from"], sofa["this_store_has"]["seats_to"]) == (2, 4)
+
+    recliner = await ask({"commerce_category": "seating", "commerce_subcategory": "recliner"})
+    assert "this_store_has" not in recliner and recliner["not_stocked"] == "recliner"
+
+    seating = await ask({"commerce_category": "seating"})
+    assert [k["kind"] for k in seating["kinds_stocked"]] == ["sofa", "chair", "chaise-lounge"]
+    assert all("price_from" not in k for k in seating["kinds_stocked"])
+    assert "price_to" not in sofa["this_store_has"], "a shelf price is never an opening figure"
