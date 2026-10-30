@@ -6,10 +6,11 @@ figures in digits, as every reply does, so the numeric guard must know the
 document stated them - otherwise the shop's own policy is refused as invented
 and the shopper is told nothing (CLAUDE.md 21.1).
 
-Read from the shop's passages only, never from a reply: the guard still parses
-digits alone in what the model writes. Lexical and exact - English number words
-and a digit run followed by "k" - so nothing is derived: no sum, no range, no
-rounding. Arabic number words are not read yet.
+Read from the shop's passages only - the facts of the `store_policy` tool
+(`app/agents/reply.py`) - never from a product name or a reply: the guard still
+parses digits alone in what the model writes. Lexical and exact - English number
+words and a digit run followed by "k" - so nothing is derived: no sum, no range,
+no rounding. Arabic number words are not read yet.
 """
 
 from __future__ import annotations

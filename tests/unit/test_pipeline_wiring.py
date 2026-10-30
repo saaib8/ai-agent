@@ -18,8 +18,7 @@ from app.core.config import CustomerAgentSettings, Settings
 from app.core.exceptions import ConfigurationError
 from app.repositories.products import ProductRepository
 from app.schemas.agent_decision import CustomerAgentDecision, CustomerStateProposal
-from app.schemas.agent_turn import CustomerResponse, DecisionInput
-from app.schemas.agent_view import AgentStateView
+from app.schemas.agent_turn import CustomerResponse
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions, RawDimensions
 from app.schemas.grounding import GroundedProduct
 from app.schemas.product import CommerceClassification, ProductRow
@@ -216,8 +215,6 @@ def test_the_grounding_still_carries_no_product_id() -> None:
 # ── model authority ═════════════════════════════════════════════════════════
 
 MODEL_FACING = (
-    DecisionInput,
-    AgentStateView,
     CustomerAgentDecision,
     CustomerStateProposal,
     SearchRefinementDelta,
@@ -343,8 +340,9 @@ def test_orchestration_stays_out_of_the_search_pipeline() -> None:
     """M13 introduced LangGraph, so "no LangGraph anywhere" expired.
 
     What replaced it is narrower and outlives the milestone: the graph
-    sequences phases, and no deterministic service may import it. A pipeline
-    that knew about orchestration would be a pipeline that could branch on it.
+    sequences phases, the agent team is its own graph, and no deterministic
+    service may import it. A pipeline that knew about orchestration would be a
+    pipeline that could branch on it.
     """
     orchestrated = {
         module.relative_to(APP).as_posix()
@@ -352,16 +350,11 @@ def test_orchestration_stays_out_of_the_search_pipeline() -> None:
         if "langgraph" in module.read_text().lower()
     }
 
-    assert orchestrated == {"orchestration/graph.py", "orchestration/state.py"}
-
-
-def test_no_agent_module_exists() -> None:
-    """Reasoning lives in services, not in an `agents` package.
-
-    The public route this once also forbade arrived with M13; `test_m13_
-    boundary.py` pins what must stay true of it.
-    """
-    assert not (APP / "agents").exists()
+    assert orchestrated == {
+        "orchestration/graph.py",
+        "orchestration/state.py",
+        "agents/team.py",
+    }
 
 
 def test_the_pipeline_owns_no_policy() -> None:

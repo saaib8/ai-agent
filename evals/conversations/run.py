@@ -34,11 +34,8 @@ from typing import Any
 
 import httpx
 import yaml
-from app.schemas.grounding import TurnFailureCode
-from app.services.arabic_wording import ARABIC
-from app.services.chip_wording import CHIPS, Chip
+from app.agents.reply import FALLBACK_REPLY
 from app.services.reply_language import writes_arabic_script
-from app.services.response_wording import FAILURE_WORDING
 
 CASES_PATH = Path(__file__).parent / "cases.yaml"
 STORE_ID = 50
@@ -47,12 +44,12 @@ CONCURRENCY = 12
 """Conversations in flight per server; `--concurrency=N` overrides it. Turns
 within a conversation always run in order. 12 kept a full run near 12 minutes
 with no provider rate limiting; lower it if 429s appear."""
-_NOT_UNDERSTOOD = FAILURE_WORDING[TurnFailureCode.REQUEST_NOT_UNDERSTOOD]
-FALLBACKS = (_NOT_UNDERSTOOD, ARABIC[_NOT_UNDERSTOOD])
+FALLBACKS = tuple(FALLBACK_REPLY.values())
 """The "please say it another way" reply, in either language - read from the
 application's own tables, so the check cannot drift from what is sent."""
-NO_THANKS = {text.label for text in CHIPS[Chip.NO_THANKS].values()}
-"""Turning down what goes with a pick, in either language."""
+NO_THANKS = {"No thanks", "لا، شكرًا"}
+"""Turning down what goes with a pick, in either language - now the agent's
+words, so a loose check."""
 _NO_MATCH = re.compile(r"\b(no|none|not|don't|do not|couldn't|could not|isn't|aren't|nothing)\b")
 """A reply that admits the request had no exact match uses one of these."""
 
@@ -149,10 +146,40 @@ def _combination_key(combination: dict[str, Any]) -> tuple[tuple[str, int], ...]
     )
 
 
+RETIRED_CHECKS = frozenset(
+    {
+        "card_mode",
+        "narrow_down",
+        "brief_chips_include",
+        "brief_chips_exclude",
+        "opening_never",
+        "card_asks",
+        "card_skips",
+        "card_first",
+        "card_kinds_include",
+        "card_kind_first",
+        "first_chip",
+        "best_match",
+        "chosen_seating",
+        "taste_asked",
+        "taste_which",
+        "companion_chips_min",
+        "piece_picker",
+        "cards_named",
+        "offer",
+    }
+)
+"""Checks on screen elements the scripted flow drew and the agents do not - the
+question card, Narrow down, the brief's chips, code-chosen chips. Skipped; a
+turn left with no check of its own is still held to not falling back."""
+
+
 def _check(
     checks: dict[str, Any], turn: TurnResult, previous: TurnResult | None = None
 ) -> list[str]:
     """Every failed check on the final reply, as a short reason."""
+    live = {k: v for k, v in checks.items() if k not in RETIRED_CHECKS}
+    checks = live if live or not checks else {"not_fallback": True}
     if checks.get("popup_refused"):
         code = (turn.body.get("error") or {}).get("code")
         if turn.kind == "comparison" and turn.status == 422 and code == "comparison_refused":
@@ -300,14 +327,20 @@ def _check(
         failures.append(f"not an English reply ({turn.body.get('reply_language')})")
     if (words := checks.get("mentions")) and not any(w in turn.message.lower() for w in words):
         failures.append(f"reply mentions none of {words}")
-    if checks.get("piece_picker") and not turn.has_piece_picker:
-        failures.append("no piece chips shown")
     if (status := checks.get("room_status")) and turn.room.get("status") != status:
         failures.append(f"room status {turn.room.get('status')!r}, expected {status!r}")
     if kinds := checks.get("room_has"):
         present = {(i.get("commerce") or {}).get("subcategory") for i in turn.room.get("items", [])}
         if not set(kinds) <= present:
             failures.append(f"room holds {sorted(map(str, present))}, missing some of {kinds}")
+    if (share := checks.get("room_spend_min_percent")) is not None:
+        totals = turn.room.get("totals") or {}
+        spent, budget = totals.get("new_spend_total"), totals.get("budget_max_amount")
+        used = float(spent) * 100 / float(budget) if spent and budget else 0.0
+        if used < share or (budget and float(spent or 0) > float(budget)):
+            failures.append(f"room uses {used:.0f}% of its budget, expected {share}-100%")
+    if checks.get("room_shown") and not turn.has_room:
+        failures.append("no room package on screen")
     if (locked := checks.get("room_locked")) is not None:
         count = sum(1 for i in turn.room.get("items", []) if i.get("locked"))
         if count != locked:
@@ -366,6 +399,18 @@ def _screen_labels(turn: TurnResult) -> list[str]:
     return labels
 
 
+def _said_answers(spec: dict[str, Any]) -> str:
+    """A card's answers as a customer would type them, or "just show me"."""
+    words = [
+        str(v)
+        for value in spec.values()
+        if not isinstance(value, bool)
+        for v in (value if isinstance(value, list) else [value])
+        if not isinstance(v, int)
+    ]
+    return ", ".join(words) if words else "Just show me what you have."
+
+
 def _asks(text: str) -> bool:
     """A question, in either script: "?" or the Arabic "؟"."""
     return "?" in text or "\u061f" in text
@@ -384,67 +429,18 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
     """The question card, picks, cross-sell and comparison checks."""
     failures: list[str] = []
     products = turn.products
-    brief = turn.brief
-    kinds = [q.get("kind") for q in (brief or {}).get("questions", [])]
-    if (want := checks.get("card")) is not None:
-        asking = brief is not None and brief.get("mode") == "ask"
-        if want and not asking:
-            failures.append("no question card - it searched straight away")
-        if not want and asking:
-            failures.append("a question card was shown")
-    if (mode := checks.get("card_mode")) and (brief or {}).get("mode") != mode:
-        failures.append(f"card mode {(brief or {}).get('mode')!r}, expected {mode!r}")
+    # The question card is gone: an agent that asks first asks in words, with
+    # nothing searched yet; "card": false (or "opening": 0) means it showed
+    # products straight away.
+    asks_first = checks.get("card")
     if (count := checks.get("opening")) is not None:
-        asking = brief is not None and brief.get("mode") == "ask"
-        if not asking or len(kinds) != count:
-            failures.append(f"opening asks {kinds if asking else 'nothing'}, expected {count}")
-    if (want := checks.get("narrow_down")) is not None and bool(
-        turn.presentation.get("narrow_down")
-    ) != want:
-        failures.append("no Narrow down beside the results" if want else "a Narrow down")
-    facets = [chip["facet"] for chip in turn.presentation.get("brief_chips") or []]
-    if (wanted := checks.get("brief_chips_include")) and not set(wanted) <= set(facets):
-        failures.append(f"chips {facets} lack {sorted(set(wanted) - set(facets))}")
-    if (unwanted := checks.get("brief_chips_exclude")) and set(unwanted) & set(facets):
-        failures.append(f"chips {facets} still name {sorted(set(unwanted) & set(facets))}")
-    if (never := checks.get("opening_never")) and set(never) & set(kinds):
-        failures.append(f"opening asks {sorted(set(never) & set(kinds))}, never expected")
-    if (asks := checks.get("card_asks")) and not set(asks) <= set(kinds):
-        failures.append(f"card asks {kinds}, missing some of {asks}")
-    if (skips := checks.get("card_skips")) and set(skips) & set(kinds):
-        failures.append(f"card asks {sorted(set(skips) & set(kinds))} it was already told")
-    if (first := checks.get("card_first")) and (not kinds or kinds[0] != first):
-        failures.append(f"card's first question is {kinds[:1]}, expected {first}")
-    if labels := checks.get("card_kinds_include"):
-        kind_question: dict[str, Any] = next(
-            (q for q in (brief or {}).get("questions", []) if q.get("kind") == "type"), {}
-        )
-        offered = [c.get("label") for c in kind_question.get("choices", [])]
-        missing = [label for label in labels if label not in offered]
-        if missing:
-            failures.append(f"card offers kinds {offered}, missing {missing}")
-    if first_kind := checks.get("card_kind_first"):
-        kind_question = next(
-            (q for q in (brief or {}).get("questions", []) if q.get("kind") == "type"), {}
-        )
-        labels = [c.get("label") for c in kind_question.get("choices", [])]
-        if not labels or labels[0] != first_kind:
-            failures.append(f"card's kinds start {labels[:2]}, expected {first_kind!r} first")
-    if first_chip := checks.get("first_chip"):
-        chips = [c.get("label") for c in turn.presentation.get("choices") or []]
-        if not chips or chips[0] != first_chip:
-            failures.append(f"chips start {chips[:2]}, expected {first_chip!r} first")
-    if (want := checks.get("best_match")) is not None and bool(
-        turn.presentation.get("best_match")
-    ) != want:
-        failures.append(
-            f"best_match is {bool(turn.presentation.get('best_match'))}, expected {want}"
-        )
-    if (span := checks.get("cards_named")) is not None:
-        named = len((turn.body.get("response") or {}).get("referenced_grounding_refs") or [])
-        low, high = span
-        if not low <= named <= high:
-            failures.append(f"the reply names {named} cards, expected {low}-{high}")
+        asks_first = count > 0
+    if asks_first is not None:
+        asked = _asks(turn.message) and not products
+        if asks_first and not asked:
+            failures.append("it showed products without asking first")
+        if not asks_first and asked:
+            failures.append("it asked first though nothing was left to ask")
     if (want := checks.get("product_source")) is not None:
         got = turn.presentation.get("product_source")
         if got != want:
@@ -457,25 +453,22 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
         got = len(turn.picks or [])
         if got != count:
             failures.append(f"{got} picks in the tray, expected {count}")
-    if (want := checks.get("chosen_seating")) is not None:
-        got = bool(turn.presentation.get("chosen_seating"))
-        if got != want:
-            failures.append("no chosen seating drawn" if want else "an unexpected chosen seating")
-    if (want := checks.get("cross_sell")) is not None:
-        got = bool(turn.presentation.get("focus"))
-        if got != want:
-            failures.append("no cross-sell after the pick" if want else "an unexpected cross-sell")
-    if (want := checks.get("shows_with_pick")) is not None:
-        focus = turn.presentation.get("focus") or {}
-        kind = (focus.get("commerce") or {}).get("subcategory")
-        kinds = [(p.get("commerce") or {}).get("subcategory") for p in products]
-        got = bool(focus) and bool(products) and kind not in kinds
-        if got != want:
-            failures.append(
-                f"no products shown with the pick (pick {kind}, cards {kinds})"
-                if want
-                else "products were shown with the pick"
-            )
+    # What goes with a pick: cards of another kind than the newest pick.
+    for name in ("cross_sell", "shows_with_pick"):
+        if (want := checks.get(name)) is not None:
+            picked = ((turn.picks or [{}])[-1].get("kind") or "").replace("-", " ")
+            shown = [
+                ((p.get("commerce") or {}).get("subcategory") or "").replace("-", " ")
+                for p in products
+            ]
+            got = bool(picked) and bool(products) and picked not in shown
+            if got != want:
+                failures.append(
+                    f"no products shown with the pick (pick {picked}, cards {shown})"
+                    if want
+                    else "products were shown with the pick"
+                )
+            break
     if checks.get("silent_tick") and (turn.kind != "picks" or turn.body.get("goes_with")):
         failures.append("the tick was not silent - it started a turn")
     if (seats := checks.get("seats")) is not None:
@@ -495,42 +488,14 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
             failures.append(f"no pop-up comparison of {wanted} products with a take")
     if checks.get("next_step"):
         choices = turn.presentation.get("choices") or []
-        if not _asks(turn.message) or not (choices or brief):
+        if not _asks(turn.message) or not choices:
             failures.append("dead end: the reply does not close on a question with chips")
     if checks.get("no_follow_up") and turn.follow_up:
         failures.append(f"an extra question: {turn.follow_up!r}")
-    if (want := checks.get("offer")) is not None:
-        labels = [c.get("label") for c in turn.presentation.get("choices") or []]
-        declinable = bool(NO_THANKS & set(labels))
-        got = bool(turn.presentation.get("focus")) and not products and declinable
-        if got != want:
-            failures.append(
-                "no offer of what goes with the pick" if want else "an unexpected offer"
-            )
-    if (want := checks.get("taste_asked")) is not None:
-        taste = [
-            c
-            for c in turn.presentation.get("choices") or []
-            if (c.get("search_action") or {}).get("kind") == "taste"
-        ]
-        if bool(taste) != want:
-            failures.append("no taste question" if want else "an unexpected taste question")
-        if want and (kind := checks.get("taste_which")) is not None:
-            which = any(c["search_action"]["answer"].startswith("card:") for c in taste)
-            if which != kind:
-                failures.append(
-                    "the taste question is not which-of-two"
-                    if kind
-                    else "which-of-two was asked though likes told us"
-                )
     if wanted := checks.get("chips_include"):
         labels = [c.get("label") for c in turn.presentation.get("choices") or []]
         if missing := [w for w in wanted if w not in labels]:
             failures.append(f"chips {labels} lack {missing}")
-    if (least := checks.get("companion_chips_min")) is not None:
-        chips = [c for c in turn.presentation.get("choices") or [] if c.get("product_action")]
-        if len(chips) < least:
-            failures.append(f"{len(chips)} companion chips < {least}")
     if allowed := checks.get("subcategory_in"):
         found = [(p.get("commerce") or {}).get("subcategory") for p in products]
         if not products or any(k not in allowed for k in found):
@@ -638,6 +603,10 @@ class Conversation:
             result = await self.chat(turn["search"])
             if result.status == 200 and (result.brief or {}).get("mode") == "ask":
                 return await self._answer_card({})
+            if result.status == 200 and not result.products and _asks(result.message):
+                # The agent asked before showing: the customer who only wants
+                # to see says so, in words.
+                return await self.chat("Just show me what you have.")
             return result
         if "narrow" in turn:
             return await self._answer_card(turn["narrow"], "narrow_down")
@@ -645,7 +614,8 @@ class Conversation:
             chips = self.chats[-1].presentation.get("brief_chips") or [] if self.chats else []
             chip = next((c for c in chips if c["facet"] == turn["drop"]), None)
             if chip is None:
-                raise CaseError(f"no chip {turn['drop']!r} (offers {[c['facet'] for c in chips]})")
+                # No brief chips: the agents read it in words.
+                return await self.chat(f"Drop the {turn['drop']} requirement, please.")
             return await self.chat(
                 f"Without {chip['label']}", search_action={"kind": "drop", "facet": chip["facet"]}
             )
@@ -723,6 +693,9 @@ class Conversation:
         raise CaseError(f"unknown turn {turn!r}")
 
     async def _answer_card(self, spec: dict[str, Any], field: str = "brief") -> TurnResult:
+        if not self.chats or not (self.chats[-1].body.get("presentation") or {}).get(field):
+            # No card: the agents ask in words, so the answers are said.
+            return await self.chat(_said_answers(spec))
         brief = self.latest_brief(field)
         questions = {q["kind"]: q for q in brief.get("questions", [])}
         if spec.get("each_first"):
@@ -869,9 +842,7 @@ async def _run_case(
     return CaseResult(case["id"], turns, _check(case.get("checks", {}), last, previous))
 
 
-async def _run_server(
-    base: str, cases: list[dict[str, Any]], concurrency: int
-) -> list[CaseResult]:
+async def _run_server(base: str, cases: list[dict[str, Any]], concurrency: int) -> list[CaseResult]:
     """Every case, at most `concurrency` at a time, longest first.
 
     The run takes as long as its slowest conversation, so the many-turn cases

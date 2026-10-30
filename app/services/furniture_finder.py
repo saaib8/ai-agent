@@ -37,7 +37,9 @@ import json
 import time
 import uuid
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
+from app.agents.facts import product_facts
 from app.core.config import FurnitureFinderSettings, SessionSettings
 from app.core.exceptions import (
     DetectionUnavailableError,
@@ -60,6 +62,7 @@ from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.sessions import SessionStore
 from app.repositories.stores import StoreRepository
+from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_turn import CustomerResponse
 from app.schemas.agent_updates import (
@@ -90,7 +93,6 @@ from app.services.agent_state import (
     commit_search_results,
 )
 from app.services.card_labels import card_labels
-from app.services.chat_runtime import LoadedSession, commit_exchange, load_for_turn
 from app.services.finder_imaging import bounded_box, clamp_polygon, prepare_upload
 from app.services.grounding_builder import to_grounded_product
 from app.services.hydration import ProductHydrationService
@@ -98,8 +100,12 @@ from app.services.media_wording import photo_reply
 from app.services.product_display import ProductDisplayWords, displayed
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.reply_language import session_language
+from app.services.session_turns import LoadedSession, commit_exchange, load_for_turn
 from app.services.similar_search import SimilarSearchBuilder
 from app.taxonomy.compare_groups import CompareGroups
+
+if TYPE_CHECKING:
+    from app.agents.writer import ReplyWriter
 
 logger = get_logger(__name__)
 
@@ -320,9 +326,12 @@ class FinderTurnRuntime:
         arabic_replies: bool = False,
         compare_groups: CompareGroups | None = None,
         display: ProductDisplayWords | None = None,
+        writer: ReplyWriter | None = None,
     ) -> None:
         self._arabic_replies = arabic_replies
         self._display = display
+        self._writer = writer
+        """Words the reply in an agent's voice; None keeps the fixed words."""
         """Words each match's card text in the reply's language; None leaves
         the cards in English, as before."""
         self._compare_groups = compare_groups
@@ -379,12 +388,33 @@ class FinderTurnRuntime:
             raise _worded(exc, language) from exc
         state = self._committed_state(loaded.envelope.state, products)
         on_screen = state is not None
+        comparable = self._first_two_compare(products)
         response = photo_reply(
-            detected.display_label,
-            len(products),
-            language,
-            comparable=self._first_two_compare(products),
+            detected.display_label, len(products), language, comparable=comparable
         )
+        if self._writer is not None:
+            response = await self._writer.write(
+                happened=(
+                    f"[The customer picked the {detected.display_label} in their photo; the "
+                    "matches the photo search found are now on screen as cards]"
+                ),
+                facts={
+                    "photo_item": detected.display_label,
+                    # Numbered only when they are the cards on screen.
+                    "matches": [
+                        product_facts(p, n if on_screen else None)
+                        for n, p in enumerate(products, start=1)
+                    ],
+                    "first_two_compare": comparable,
+                },
+                # When the matches could not become the cards on screen, the
+                # earlier list is not shown to the agent as if it still were.
+                state=state or _without_cards(loaded.envelope.state),
+                conversation=loaded.envelope.conversation,
+                retailer=context,
+                language=language,
+                fixed=response,
+            )
         presentation = ChatPresentation(
             choices=tuple(ReplyChoice(label=c.label, value=c.value) for c in response.choices),
             products=tuple(
@@ -511,10 +541,19 @@ class FinderTurnRuntime:
             state=state,
             customer_said=_pick_utterance(detected),
             response=response,
+            # Furniture Finder is Sara's (CLAUDE.md 25).
+            agent=AgentPersona.SARA,
         )
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def _without_cards(state: AgentStateV1) -> AgentStateV1:
+    interaction = state.product_interaction.model_copy(
+        update={"presented_product_ids": (), "presented_search_revision": None}
+    )
+    return state.model_copy(update={"product_interaction": interaction})
 
 
 def _pickable(

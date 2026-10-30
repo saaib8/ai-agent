@@ -11,7 +11,6 @@ from decimal import Decimal
 
 import pytest
 from app.schemas.agent_decision import (
-    BlockingClarificationReason,
     CustomerStateProposal,
     RoomGeometryProposal,
     RoomMeasurementProposal,
@@ -25,7 +24,6 @@ from app.schemas.geometry import (
     RoomMeasurementRole,
 )
 from app.services.agent_state import apply_update
-from app.services.proposal_mapping import map_proposals
 from pydantic import ValidationError
 
 
@@ -105,92 +103,6 @@ def test_the_contract_holds_no_geometry_engine() -> None:
 
 
 # ── capture ─────────────────────────────────────────────────────────────────
-
-
-def test_five_by_four_metres_is_recorded_in_centimetres() -> None:
-    mapped = map_proposals(
-        _proposal(
-            RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5", unit="m"),
-            RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_WIDTH, value="4", unit="m"),
-        ),
-        None,
-    )
-
-    assert mapped.update.room_project is not None
-    geometry = mapped.update.room_project.geometry
-    assert geometry is not None
-    length = geometry.one(RoomMeasurementRole.ROOM_LENGTH)
-    width = geometry.one(RoomMeasurementRole.ROOM_WIDTH)
-    assert length is not None and length.centimetres == Decimal("500")
-    assert width is not None and width.centimetres == Decimal("400")
-    assert mapped.clarification is None
-
-
-@pytest.mark.parametrize(
-    ("unit", "value", "centimetres"),
-    [("m", "5", "500"), ("cm", "320", "320"), ("mm", "3200", "320")],
-)
-def test_every_recognised_unit_converts_through_the_shared_vocabulary(
-    unit: str, value: str, centimetres: str
-) -> None:
-    """The same units the catalog understands, so a room and a product are
-    comparable without converting twice."""
-    mapped = map_proposals(
-        _proposal(
-            RoomMeasurementProposal(role=RoomMeasurementRole.USABLE_WALL, value=value, unit=unit)
-        ),
-        None,
-    )
-
-    assert mapped.update.room_project is not None
-    geometry = mapped.update.room_project.geometry
-    assert geometry is not None
-    assert geometry.measurements[0].centimetres == Decimal(centimetres)
-
-
-def test_a_measurement_with_no_unit_is_asked_about_not_assumed() -> None:
-    """Five could be metres or feet, and recording the wrong room is worse than
-    recording none."""
-    mapped = map_proposals(
-        _proposal(RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5")),
-        None,
-    )
-
-    assert mapped.update.room_project is None, "nothing recorded"
-    assert mapped.clarification is not None
-    assert mapped.clarification.reason is (BlockingClarificationReason.MISSING_DIMENSION_UNIT)
-
-
-def test_an_unrecognised_unit_is_also_refused() -> None:
-    mapped = map_proposals(
-        _proposal(
-            RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5", unit="parsecs")
-        ),
-        None,
-    )
-
-    assert mapped.update.room_project is None
-    assert mapped.clarification is not None
-
-
-def test_other_room_facts_survive_a_missing_unit() -> None:
-    """One unanswerable measurement does not discard what they also said."""
-    mapped = map_proposals(
-        CustomerStateProposal(
-            room_type="living room",
-            room_geometry=RoomGeometryProposal(
-                measurements=(
-                    RoomMeasurementProposal(role=RoomMeasurementRole.ROOM_LENGTH, value="5"),
-                )
-            ),
-        ),
-        None,
-    )
-
-    assert mapped.update.room_project is not None
-    assert mapped.update.room_project.room_type == "living room"
-    assert mapped.update.room_project.geometry is None
-    assert mapped.clarification is not None
 
 
 def test_a_proposal_cannot_set_and_clear_geometry_at_once() -> None:

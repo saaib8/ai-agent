@@ -40,7 +40,6 @@ tracks a focused card."""
 
 M11_CONTRACT_MODULES = (
     "schemas/conversation.py",
-    "schemas/agent_view.py",
     "schemas/agent_decision.py",
     "schemas/refinement.py",
     "schemas/grounding.py",
@@ -94,16 +93,29 @@ def test_the_contract_modules_define_no_behaviour(name: str) -> None:
         }, f"{name}: {roots}"
 
 
-def test_both_customer_agent_prompts_are_versioned() -> None:
-    """M11B-4 added the decision prompt and M11B-6 the response prompt. Each
-    is a versioned asset rather than a string in business logic."""
-    prompts = {p.name for p in (APP / "prompts/customer_commerce").glob("*.py")}
+def test_the_agents_prompts_are_versioned() -> None:
+    """The supervisor's and the agents' instructions are a versioned asset
+    rather than strings in business logic."""
+    prompts = {p.name for p in (APP / "prompts/agents").glob("*.py")}
 
-    assert {"v1.py", "response_v1.py"} <= prompts
+    assert "v2.py" in prompts
 
 
-def test_no_agent_module_exists_yet() -> None:
-    assert not (APP / "agents").exists()
+def test_agents_never_import_the_provider_sdk() -> None:
+    """The agents reach a model only through `app/integrations`, which owns the
+    credentials and turns every provider failure into ours (CLAUDE.md 20.3)."""
+    for module in (APP / "agents").rglob("*.py"):
+        tree = ast.parse(module.read_text())
+        for node in ast.walk(tree):
+            names = (
+                [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else []
+            )
+            for name in names:
+                assert name.split(".")[0] not in {"openai", "langchain_openai"}, module
 
 
 def test_no_new_openai_call_site_was_added() -> None:

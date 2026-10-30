@@ -24,9 +24,7 @@ from collections.abc import Sequence
 from app.core.exceptions import InvalidRequestError
 
 
-def select_for_presentation(
-    ranked_product_ids: Sequence[int], *, limit: int
-) -> tuple[int, ...]:
+def select_for_presentation(ranked_product_ids: Sequence[int], *, limit: int) -> tuple[int, ...]:
     """The first `limit` products of an already-ranked list, in ranked order.
 
     Takes ids rather than a ranking result: there is nothing to decide beyond
@@ -37,7 +35,5 @@ def select_for_presentation(
     limit is an ordinary outcome, not a shortfall.
     """
     if limit < 1:
-        raise InvalidRequestError(
-            reason="a presentation limit must allow at least one product"
-        )
+        raise InvalidRequestError(reason="a presentation limit must allow at least one product")
     return tuple(ranked_product_ids[:limit])

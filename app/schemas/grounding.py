@@ -422,9 +422,7 @@ class SearchExecutionGrounding(BaseModel):
         # One chain, narrowing at each stage: the limit chooses some of what
         # was ranked, and hydration keeps some of those.
         if not (self.presented_count <= self.selected_count <= self.ranked_count):
-            raise ValueError(
-                "counts must narrow: presented <= selected <= ranked"
-            )
+            raise ValueError("counts must narrow: presented <= selected <= ranked")
         # Ranking decides order, never eligibility, so every eligible product
         # is ranked. A smaller ranked count would mean candidates were lost
         # between the catalog and the ordering (CLAUDE.md 16.1).
@@ -441,9 +439,7 @@ class SearchExecutionGrounding(BaseModel):
         legitimate elsewhere - a comparison, a detail - but not here.
         """
         if any(p.relaxation_depth is None for p in self.products):
-            raise ValueError(
-                "a searched product carries the depth at which it became eligible"
-            )
+            raise ValueError("a searched product carries the depth at which it became eligible")
         return self
 
     @model_validator(mode="after")
@@ -451,9 +447,7 @@ class SearchExecutionGrounding(BaseModel):
         refs = [p.grounding_ref for p in self.products]
         if refs != list(range(1, len(refs) + 1)):
             raise ValueError("grounding refs must be 1..n in order")
-        ordinals = [
-            p.presented_ordinal for p in self.products if p.presented_ordinal is not None
-        ]
+        ordinals = [p.presented_ordinal for p in self.products if p.presented_ordinal is not None]
         if ordinals != list(range(1, len(ordinals) + 1)):
             raise ValueError("presented ordinals must be 1..n in order")
         return self

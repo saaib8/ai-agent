@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -79,6 +80,12 @@ class Database:
                 # than the retryable 503 the Redis path already gives
                 # (CLAUDE.md 21).
                 logger.warning("postgres_unreachable", error_type=type(exc).__name__)
+                raise CatalogUnavailableError(dependency="postgres") from exc
+            except PoolTimeoutError as exc:
+                # Every connection in the pool is in use and none came free in
+                # time (`db.pool_timeout_s`): busy, not broken, and answered as
+                # the catalog being unavailable rather than as a defect.
+                logger.warning("postgres_pool_exhausted")
                 raise CatalogUnavailableError(dependency="postgres") from exc
             finally:
                 await session.rollback()

@@ -100,9 +100,7 @@ class PriceConstraint(BaseModel):
         ):
             # An exclusive bound on a single point admits nothing at all: a
             # contradiction, not a very narrow search.
-            raise ValueError(
-                "an exclusive bound on equal min and max can never be satisfied"
-            )
+            raise ValueError("an exclusive bound on equal min and max can never be satisfied")
         return self
 
     @classmethod
@@ -340,9 +338,7 @@ class ProductSearchRequest(BaseModel):
     @classmethod
     def _bounded_exclusions(cls, value: tuple[int, ...]) -> tuple[int, ...]:
         if len(value) > MAX_EXCLUDED_PRODUCT_IDS:
-            raise ValueError(
-                f"a request may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products"
-            )
+            raise ValueError(f"a request may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products")
         if len(value) != len(set(value)):
             raise ValueError("exclude_product_ids must not repeat a product id")
         return value
@@ -409,6 +405,26 @@ class ProductSearchRequest(BaseModel):
         if self.exclude_product_ids:
             filters.append("exclude_product_ids")
         return tuple(filters)
+
+
+class DesignerQuestion(BaseModel):
+    """One question the store's designers ask about a kind, for the single-
+    product search journey (CLAUDE.md 10.2).
+
+    The subject to ask about - the agent asks it in its own words, a baseline it
+    rephrases rather than a script it recites. It carries **no answer options**:
+    the agent decides those from the catalog and the conversation, so the typed
+    contract is deliberately the question alone, never a fixed list of answers.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    topic: str = Field(min_length=1, max_length=80)
+    """The subject as a short tag - "the kind or style", "colour", "budget" - so
+    the agent can reason about it (budget is never the opener)."""
+
+    question: str = Field(min_length=1, max_length=200)
+    """The designer's question for this kind, which the agent rephrases."""
 
 
 class ProductSearchResult(BaseModel):

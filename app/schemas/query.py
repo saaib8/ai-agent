@@ -155,9 +155,7 @@ def validate_dimension_correspondence(
     wanted = sorted(constraint.role for constraint in request.dimensions)
     recorded = sorted(entry.role for entry in semantics.dimensions)
     if wanted != recorded:
-        raise ValueError(
-            "every request dimension needs exactly one recorded strength"
-        )
+        raise ValueError("every request dimension needs exactly one recorded strength")
     if (request.planar_dimensions is None) != (semantics.planar_dimension is None):
         raise ValueError("a planar pair and its strength must be present together")
 
@@ -631,6 +629,12 @@ class ResolvedSearch(BaseModel):
 
     lean: RankingLean | None = Field(default=None, exclude_if=lambda v: v is None)
     """A designer's direction for a suggested piece - see `RankingLean`."""
+
+    customer_words: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The customer's own message for this search, figures taken out - ranked
+    on beside whatever the agent wrote, so their words order the cards even
+    when the agent's search left them out. Orders, never filters, and only on
+    a search they asked for; never a tap's stand-in words."""
 
     semantic_text: str | None = None
     """Descriptive wording left after the structured constraints were taken out.

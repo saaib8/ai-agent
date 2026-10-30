@@ -13,3 +13,5 @@ build/
 .DS_Store
 evals/conversations/last_run.json
 evals/conversations/last_report.txt
+.archify/
+scripts/

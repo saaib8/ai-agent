@@ -20,14 +20,12 @@ import pytest
 from app.schemas.agent_state import (
     ActiveSearchState,
     AgentStateV1,
-    PurchaseStage,
 )
 from app.schemas.agent_updates import (
     ActiveSearchUpdate,
     AddItems,
     AgentStateUpdate,
     CustomerPreferenceUpdate,
-    DerivedCommerceUpdate,
     ProductInteractionUpdate,
     RemoveItems,
     ReplaceItems,
@@ -247,7 +245,6 @@ def _independent_updates() -> AgentStateUpdate:
             selected_product_ids=AddItems(items=(12,))
         ),
         room_project=RoomProjectUpdate(room_type="living room"),
-        derived_commerce=DerivedCommerceUpdate(purchase_stage=PurchaseStage.CONSIDERING),
     )
 
 
@@ -281,7 +278,6 @@ def test_a_handled_search_failure_keeps_the_independent_updates(
     assert final.product_interaction.selected_product_ids == (11, 12)
     assert final.room_project is not None
     assert final.room_project.room_type == "living room"
-    assert final.derived_commerce.purchase_stage is PurchaseStage.CONSIDERING
 
 
 def test_an_m7_failure_behaves_exactly_like_a_pipeline_failure(
@@ -293,7 +289,7 @@ def test_an_m7_failure_behaves_exactly_like_a_pipeline_failure(
 
     assert final.active_search is not None
     assert final.active_search.request.commerce_subcategory == "sofa"
-    assert final.derived_commerce.purchase_stage is PurchaseStage.CONSIDERING
+    assert final.room_project is not None
 
 
 # ── interaction failure: value-first ────────────────────────────────────────
@@ -361,14 +357,14 @@ def test_proposals_apply_on_a_clarify_turn(searched: AgentStateV1) -> None:
             customer_preferences=CustomerPreferenceUpdate(
                 semantic_preferences=ReplaceItems(items=(_preference("Japandi"),))
             ),
-            derived_commerce=DerivedCommerceUpdate(purchase_stage=PurchaseStage.EXPLORING),
+            room_project=RoomProjectUpdate(room_type="study"),
         ),
     )
 
     assert final.customer_preferences.semantic_preferences[0].canonical_value == (
         "Japandi"
     )
-    assert final.derived_commerce.purchase_stage is PurchaseStage.EXPLORING
+    assert final.room_project is not None and final.room_project.room_type == "study"
     assert final.active_search is not None
     assert final.product_interaction.presented_product_ids == (10, 11, 12)
 

@@ -22,7 +22,7 @@ import os
 from decimal import Decimal
 from enum import StrEnum
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -119,6 +119,44 @@ class RedisSettings(BaseModel):
         return value
 
 
+class HistorySummarySettings(BaseModel):
+    """The rolling summary that takes the place of the oldest messages.
+
+    When a conversation reaches `session.max_history_messages`, its oldest
+    `fold_messages` are folded into one short summary, made beside the turn by
+    a model of its own, and saved with that turn. The summary holds words only:
+    budgets, sizes, seats and prices are kept in the session state, exact, and
+    a second copy in prose could only disagree with them.
+    """
+
+    enabled: bool = True
+    model: str | None = Field(default=None, min_length=1)
+    """Absent: the platform's own model (`llm.model`)."""
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "low"
+    """Sent with the model; "none" (or unset) sends no effort, for a model
+    that takes none."""
+    timeout_s: float = Field(default=20.0, gt=0, le=60)
+    """Past it the summary is given up; the next turn tries again."""
+    wait_after_turn_s: float = Field(default=3.0, ge=0, le=30)
+    """How long a reply the agents have finished may wait for the summary.
+    Not ready by then, it is cancelled and the next turn folds instead."""
+    fold_messages: int = Field(default=10, ge=2, le=40)
+    """How many of the oldest messages one summary takes in. Even, so it
+    folds whole exchanges."""
+    max_chars: int = Field(default=1200, ge=200, le=4000)
+    """The summary's length, however many messages it has taken in."""
+    hard_cap_messages: int = Field(default=50, ge=2, le=200)
+    """While a summary keeps failing, messages are kept rather than dropped -
+    up to this many, then the oldest go unsummarised."""
+
+    @field_validator("fold_messages")
+    @classmethod
+    def _whole_exchanges(cls, value: int) -> int:
+        if value % 2:
+            raise ValueError("fold_messages must be even, so whole exchanges are folded")
+        return value
+
+
 class SessionSettings(BaseModel):
     """Short-term runtime session lifetime and size.
 
@@ -128,18 +166,20 @@ class SessionSettings(BaseModel):
     redefine a product concept (CLAUDE.md 19).
     """
 
-    ttl_s: int = Field(default=3600, ge=60, le=86_400)
+    ttl_s: int = Field(default=86_400, ge=60, le=86_400)
     """How long an idle session survives. Refreshed on every successful save,
     so an active conversation does not expire mid-way through."""
 
-    max_history_messages: int = Field(default=20, ge=2, le=200)
-    """How many prior messages travel into the next turn.
+    max_history_messages: int = Field(default=40, ge=2, le=200)
+    """How many prior messages are kept word for word.
 
     Counted in messages rather than turns, and even by default so a bound can
-    always be met by whole user/assistant pairs. No summarisation in V1: a
-    model asked to compress history is a third reasoning step nobody approved,
-    and it would put invented wording into the context of every later turn.
+    always be met by whole user/assistant pairs. Reaching it folds the oldest
+    into the rolling summary (`summary`); with summaries off, the oldest are
+    dropped.
     """
+
+    summary: HistorySummarySettings = HistorySummarySettings()
 
     operation_timeout_s: float = Field(default=2.0, gt=0, le=30)
     """Ceiling on one session read or write. Distinct from the connection
@@ -159,6 +199,15 @@ class SessionSettings(BaseModel):
     account's (`POST /v1/sessions/adopt`) - the chat, its room photo and its
     finder photos - and the guest's cart joins the account's (CLAUDE.md 36).
     Off, the route refuses and a signed-in shopper starts their chat afresh."""
+
+    @model_validator(mode="after")
+    def _summary_fits_the_window(self) -> SessionSettings:
+        if self.summary.enabled:
+            if self.summary.fold_messages >= self.max_history_messages:
+                raise ValueError("summary.fold_messages must be fewer than max_history_messages")
+            if self.summary.hard_cap_messages < self.max_history_messages:
+                raise ValueError("summary.hard_cap_messages must be at least max_history_messages")
+        return self
 
 
 class ApiSettings(BaseModel):
@@ -534,12 +583,26 @@ class CatalogSettings(BaseModel):
     """Share of the floor furniture may cover before the room reads as
     crowded. Advisory only: the customer is warned, never stopped."""
 
+    overview_ttl_s: int = Field(default=300, ge=0, le=3600)
+    """How long the store's shelf summary (what it stocks, price ranges,
+    colours, styles, seats) is reused before it is read again. The catalog is
+    Django's and changes are not signalled, so this is how stale the summary
+    may be. 0 switches the cache off."""
+
+    shelf_few_max: int = Field(default=3, ge=1)
+    shelf_some_max: int = Field(default=15, ge=2)
+    """A kind with at most `shelf_few_max` products offers "few" to choose
+    from, at most `shelf_some_max` "some", more "many" - how wide a choice
+    the store shelf shows a designer, never said as a count."""
+
     @model_validator(mode="after")
     def _bounds_are_ordered(self) -> CatalogSettings:
         if self.page_size > self.max_page_size:
             raise ValueError("catalog page_size cannot exceed max_page_size")
         if self.min_room_side_m >= self.max_room_side_m:
             raise ValueError("catalog min_room_side_m must be below max_room_side_m")
+        if self.shelf_few_max >= self.shelf_some_max:
+            raise ValueError("catalog shelf_few_max must be below shelf_some_max")
         return self
 
 
@@ -594,117 +657,33 @@ class RelaxationSettings(BaseModel):
 class CustomerAgentSettings(BaseModel):
     """Runtime behaviour of the customer-facing commerce capabilities.
 
-    Deliberately small for now: a field arrives when the capability that reads
-    it does. The presentation limit and the decision/response model
-    configuration belong to the phases that introduce their consumers.
+    Limits and switches the agents' tools keep - the cart, comparisons, likes,
+    mixed sofa searches, Arabic replies, store support. What the agents ask or
+    show is theirs to decide (CLAUDE.md 10); no flag scripts it.
     """
 
     comparison_max_products: int = Field(default=10, ge=2, le=20)
     """How many products one comparison may cover.
 
     The schema's own ceiling is twenty (`MAX_COMPARED_PRODUCTS`); this may
-    choose less. Customers compare as many as they like by product decision;
-    the default matches the picks tray, so "compare my picks" always fits.
-    Beyond it the customer is asked to narrow the set rather than having the
-    extras silently dropped, and typed and tapped comparisons share the limit.
+    choose less. The default matches the cart, so "compare my picks" always
+    fits. Beyond it the comparison is refused rather than the extras silently
+    dropped, and typed and tapped comparisons share the limit.
     """
 
     arabic_replies: bool = False
-    """Answer a customer who writes Arabic in Arabic - the writer's reply, the
-    decision's own question and the fixed sentences - while everything the
-    application reasons with stays English (docs/arabic-replies-plan.md).
+    """Answer a customer who writes Arabic in Arabic - the agents' replies, the
+    card words and the fixed sentences - while everything the application
+    reasons with stays English (docs/arabic-replies-plan.md).
     Off means English replies, exactly as before. Defaulted on in local and
     stage by `Settings`; an explicit value always wins."""
 
-    cross_sell_shows_products: bool = True
-    """After a pick, show products that go with it at once - one kind, chosen
-    by the design specialist from what the store stocks and ranked by the
-    colours and styles the customer has expressed. Off, a pick is offered the
-    kinds that go with it as chips and nothing is searched until they tap
-    one, exactly as before (CLAUDE.md 10.4)."""
-
-    designer_led_opening: bool = True
-    """Open a new product search with two soft questions the reply writer
-    chooses from those still open, instead of the card of every question
-    (docs/designer-led-shopping-plan.md, phase 1). Off brings the card back,
-    exactly as it was - a way back, not a second experience."""
-
-    subcategory_questions: bool = True
-    """Ask a new search for a sub-category the reviewed sheet covers its own
-    questions, all on one card, before any product
-    (`app/taxonomy/subcategory_questions_v1.yaml`): the sheet decides what is
-    asked, the catalog the chips wherever it has the data. Narrow down beside
-    its results asks the same questions. Off, every type is asked as before -
-    the two-question opening, or its family's card."""
-
-    subcategory_chips_from_names: bool = True
-    """On those cards, offer a chip the catalog has no field for - a material,
-    a feature, a shape, a size - only where the store's products of that type
-    are named with its words ("gas-lift" for lift-up storage), the most-named
-    first (CLAUDE.md 10.13). Every sheet question is still asked: one whose
-    names back fewer than two chips is asked in the sheet's own chips, the
-    backed ones first. Names decide only what is offered: nothing is filtered
-    on them and no product is said to have what a chip names. Off, every chip
-    is offered in the sheet's order, as before."""
-
-    subcategory_chip_min_products: int = Field(default=1, ge=1, le=100)
-    """How many of the store's products must be named with a chip's words
-    for it to be offered."""
-
-    designer_led_brief: bool = True
-    """Beside every list of results, what the search is using as removable
-    chips, and Narrow down opened pre-filled with every option
-    (docs/designer-led-shopping-plan.md, phase 2). Off brings back the folded
-    card offered once per family, exactly as it was."""
-
-    designer_direction: bool = True
-    """After a pick, the designer names one direction for the suggested kind -
-    colours and styles the store stocks for it, what to avoid, a size
-    proportion - in the room they named; the cards are ordered by it and the
-    reply explains its best one or two (docs/designer-led-shopping-plan.md,
-    phase 4). Off, a suggestion leans only on the customer's taste and the
-    pick's style, exactly as before."""
-
-    designer_taste: bool = True
-    """Taste after products: what they liked, picked or asked more like of
-    leans later searches quietly, and a soft taste question - which of two
-    feels more like them, which of the store's styles, anything to avoid - is
-    asked only about what nothing has told us yet, in place of the old
-    colour-or-style follow-up (docs/designer-led-shopping-plan.md, phase 5).
-    Off is the behaviour before it, exactly."""
-
-    designer_room_handoff: bool = True
-    """A room starts from what shopping learned: the head count given for
-    seating, the colours and styles they said, the wall they gave - so only
-    what is new, such as the budget, is asked (docs/designer-led-shopping-
-    plan.md, phase 6). Off, a room asks everything as before."""
-    designer_fit: bool = True
-    """Will it fit: the pieces in view are checked in code against every wall
-    and doorway the customer gave - a wall against the piece's longer side, a
-    doorway against the smaller of its depth and height - and the reply answers
-    "will it fit?" from that, never from a guess (docs/designer-led-shopping-
-    plan.md, phase 7). Off, no check is made."""
-    designer_space_fit: bool = True
-    """When they say how wide the wall or spot is, the designer decides what
-    width suits it - a sofa at about two-thirds of its wall - and the cards are
-    ordered by closeness to that width; everything that fits stays in view.
-    Off, the space only limits the width, as before."""
-
-    designer_space_question: bool = False
-    """Whether customers are asked how wide the space is: "How wide is the spot
-    where it will go?" after products (CLAUDE.md 10.9), and "How wide a space?"
-    on the cards - the opening and Narrow down (10.5, 10.6). Off by default:
-    neither is asked, and the next taste question is asked instead. A space
-    they give in words ("my wall is 300 cm") is still used exactly as before."""
-
     support_agent: bool = False
-    """Faysal, the store's support: a reply about the store itself - answered
-    from its documents, or a problem only it can solve - is shown as Faysal,
-    with the store's own support channels beneath it, and a tapped "Contact
-    support" opens them with no model involved. Needs `store_knowledge` for
-    the documents, and the platform's support columns on `core_store`
-    (checked at startup). Off by default: replies about the store are shown
-    as before and carry no support channels."""
+    """The store's support channels for Faysal's `contact_store`: shown beneath
+    his reply. Needs the platform's support columns on `core_store` (checked
+    at startup); his documents need `store_knowledge`. Off by default:
+    `contact_store` is refused (`support_unavailable`) and no channels are
+    drawn."""
 
     support_handover: bool = False
     """Whether the store's support buttons can take the shopper's request: a
@@ -720,31 +699,27 @@ class CustomerAgentSettings(BaseModel):
     without its country code is left out. Off: only the store's own."""
 
     designer_led_buttons: bool = True
-    """Three buttons on every card: Select as before, ♡ Like - a silent liked
-    list, kept apart from the picks - and More like this, a similarity search
-    from any card (docs/designer-led-shopping-plan.md, phase 3). Off, a like
-    or More like this is refused and no liked list is reported."""
+    """The ♡ Like button on every card - a silent liked list, kept apart from the
+    cart (CLAUDE.md 10.2). Off, a tapped like is refused by the picks endpoint;
+    the agents' `like_product` and `more_like_this` tools are not affected."""
 
     fit_after_pick: bool = True
-    """A pick checked against the room (reviewed: a bed) asks the room's size
-    once and has the designer judge the space around it; a piece that goes in
-    the pick - a mattress for a bed - is shown in the size the designer reads
-    off the pick, first; and a fit between two pieces never asks for the room.
-    Off, a pick asks nothing and "will it fit?" asks the room as before."""
+    """The scripted decision schema's fit-after-pick fields
+    (`with_fit_after_pick`). Off, they are left out."""
 
     mixed_types: bool = True
     """A customer's search for a type also shows the types reviewed to stand
     beside it (`seating_v1.yaml`, `shown_with`) - sofa sets and sectional
-    sofas mixed into a page of sofas - and the reply says plainly when the
-    type they asked for has fewer matches than the page; "just sofas" keeps
-    to the one type, and so does a size, which those types' listings cannot
-    answer. Off, a sofa search shows sofas only, exactly as before."""
+    sofas mixed into a page of sofas; "just sofas" keeps to the one type, and
+    so does a size, which those types' listings cannot answer. Each card's
+    kind is in the facts, so the reply names each by its own type. Off, a sofa
+    search shows sofas only."""
 
     max_picks: int = Field(default=10, ge=2, le=50)
     """How many products the cart keeps - the picks tray became the cart
     (CLAUDE.md 36); how many of each is `cart_max_quantity`. Past this, a tap
-    asks them to remove one first. A whole room or a seating combination is
-    added whole, even past it."""
+    asks them to remove one first, and an agent's add is refused (`cart_full`).
+    A whole room or a seating combination is added whole, even past it."""
 
     cart_max_quantity: int = Field(default=10, ge=1, le=100)
     """How many of one product the cart takes - at most the schema's ceiling,
@@ -753,27 +728,6 @@ class CustomerAgentSettings(BaseModel):
     max_likes: int = Field(default=20, ge=2, le=50)
     """How many products the liked list keeps. Past this the oldest like is
     let go: a like is a taste signal, not a commitment to keep."""
-
-    decision_model: str | None = Field(default=None, min_length=1)
-    """The model that decides what a customer turn should do.
-
-    Absent means the Customer Agent's decision step is not configured, the
-    same way an absent `embedding_model` means semantic ranking is not.
-
-    Deliberately **not** defaulted to `llm.model`. Interpreting one message
-    into a search and deciding a whole conversational turn are different jobs
-    with different prompts, and silently sharing one identifier would make
-    changing either of them change both.
-    """
-
-    response_model: str | None = Field(default=None, min_length=1)
-    """The model that words the customer's reply.
-
-    Absent means the response capability is not configured. Deliberately not
-    defaulted to `decision_model` or `llm.model`: deciding a turn, interpreting
-    a message and writing a reply are three jobs with three prompts, and
-    sharing one identifier would make changing any of them change the others.
-    """
 
     presentation_limit: int | None = Field(default=None, ge=1)
     """How many products one turn shows, applied only after ranking.
@@ -788,21 +742,100 @@ class CustomerAgentSettings(BaseModel):
     """
 
 
-class InteriorDesignSettings(BaseModel):
-    """The interior-design specialist's own model.
+class AgentRoleSettings(BaseModel):
+    """One agent's own model, and its own reasoning effort when one is set.
 
-    Its own settings block rather than another field on `CustomerAgentSettings`,
-    because it is a different agent. Absent means the specialist is not
-    configured, and nothing falls back to the query-understanding, decision or
-    response model: four jobs, four prompts, four identifiers.
+    Absent means that agent is not configured; nothing falls back to another
+    agent's model (CLAUDE.md 31).
     """
 
     model: str | None = Field(default=None, min_length=1)
-    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
-    """The specialist's own effort, for a model that accepts one. Unset, it
-    spends what `llm.reasoning_effort` does. Kept apart because a design
-    direction is a short structured answer, and every customer waits on it
-    after a selection."""
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
+    """Unset, it spends what `llm.reasoning_effort` does; "none" sends no
+    effort at all, for a model that takes none."""
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    """Sent only when set here: `llm.temperature` is never inherited, because
+    a reasoning model refuses one."""
+    wording_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
+    """For the call that only says what was done, once a room built this turn
+    has had its fixes: designing and checking it keep `reasoning_effort`.
+    None (the default) spends the same effort on the wording as on the design:
+    at low, the wording repeated the work behind the room to the customer."""
+
+
+class AgentsSettings(BaseModel):
+    """The supervisor and the four agents it delegates a turn to.
+
+    Each is its own model with its own tools; the bounds keep one turn's cost
+    known in advance whatever the agents decide.
+    """
+
+    supervisor: AgentRoleSettings = AgentRoleSettings()
+    sara: AgentRoleSettings = AgentRoleSettings()
+    nora: AgentRoleSettings = AgentRoleSettings()
+    salman: AgentRoleSettings = AgentRoleSettings()
+    faysal: AgentRoleSettings = AgentRoleSettings()
+
+    max_hops: int = Field(default=3, ge=1, le=6)
+    """How many agents the supervisor may hand one turn to."""
+
+    max_model_calls: int = Field(default=12, ge=2, le=20)
+    """Every model call in one turn - the supervisor's and every agent's."""
+
+    max_tool_calls: int = Field(default=10, ge=1, le=20)
+    """Tools one agent may run in one hop, `respond` and `hand_back` excepted."""
+
+    share_upgrade_similarity_margin: float = Field(default=0.02, ge=0, le=1)
+    """A room piece moves up to a dearer product of the same standing only when
+    its look is this close to the best match's (similarity difference). 0 means
+    only an equally close look; larger trades a little look for premium."""
+
+    room_search_concurrency: int = Field(default=3, ge=1, le=8)
+    """How many of a room's pieces are searched at once: one on the request's
+    own session, the rest each on a session of its own. 1 searches them one
+    after another. A room being built holds this many connections, so this
+    times the rooms built at once, with every other request's one, must stay
+    within the database pool (`db.pool_size` + `db.max_overflow`); past it a
+    search waits `db.pool_timeout_s`, then the room is "catalog unavailable"."""
+
+    turn_deadline_s: float = Field(default=40.0, gt=0)
+    """The whole agent turn, reply included; past it the turn ends on the fixed
+    fallback with nothing changed (CLAUDE.md 21.1)."""
+
+    work_deadline_s: float = Field(default=28.0, gt=0)
+    """The agents' working time within the turn. Past it the work stops where
+    it stands - every finished tool's change kept - and the agent who was
+    working says what was done and what was not, in the time left before
+    `turn_deadline_s`."""
+
+    room_work_deadline_s: float = Field(default=110.0, gt=0)
+    room_turn_deadline_s: float = Field(default=140.0, gt=0)
+    """The same two limits for a turn in which Nora designs a whole room - one
+    long careful step, shown complete in one reply. Every other turn keeps the
+    short ones. Clients and the gateway in front must wait longer than
+    `room_turn_deadline_s`."""
+
+    @model_validator(mode="after")
+    def _work_leaves_time_to_reply(self) -> Self:
+        if self.work_deadline_s >= self.turn_deadline_s:
+            raise ValueError("work_deadline_s must leave time to reply before turn_deadline_s")
+        if self.room_work_deadline_s >= self.room_turn_deadline_s:
+            raise ValueError(
+                "room_work_deadline_s must leave time to reply before room_turn_deadline_s"
+            )
+        if self.room_work_deadline_s < self.work_deadline_s:
+            raise ValueError("a room's working time is never shorter than any turn's")
+        return self
+
+    history_messages: int = Field(default=40, ge=0, le=40)
+    """How many earlier messages each agent reads, after the summary of
+    those before them (`session.summary`)."""
+
+    use_responses_api: bool = True
+    """Whether the chat models call the Responses API rather than chat
+    completions. On by default: a reasoning model (gpt-5 and later) takes
+    function tools with a reasoning effort only there. Off suits a
+    non-reasoning model on chat completions."""
 
 
 class ObservabilitySettings(BaseModel):
@@ -869,7 +902,7 @@ class Settings(BaseSettings):
     session: SessionSettings = SessionSettings()
     llm: LLMSettings
     customer_agent: CustomerAgentSettings = CustomerAgentSettings()
-    interior_design: InteriorDesignSettings = InteriorDesignSettings()
+    agents: AgentsSettings = AgentsSettings()
     discovery: DiscoverySettings = DiscoverySettings()
     size: SizeSettings = SizeSettings()
     relaxation: RelaxationSettings = RelaxationSettings()
@@ -1030,9 +1063,10 @@ class Settings(BaseSettings):
             "presentation_configured": self.customer_agent.presentation_limit is not None,
             # Booleans, never the identifiers: an operator needs to know
             # whether a capability is configured, not which model serves it.
-            "decision_configured": self.customer_agent.decision_model is not None,
-            "response_configured": self.customer_agent.response_model is not None,
-            "interior_design_configured": self.interior_design.model is not None,
+            "agents_configured": all(
+                getattr(self.agents, name).model is not None
+                for name in ("supervisor", "sara", "nora", "salman", "faysal")
+            ),
             "furniture_finder_configured": self.furniture_finder is not None,
             "furniture_finder_upstream": (
                 self.furniture_finder.zory_base_url if self.furniture_finder else None

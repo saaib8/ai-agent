@@ -73,9 +73,7 @@ def group_bundle_cards(
             product_id=key[0],
             line_ids=tuple(line.line_id for line in members),
             need_ids=tuple(
-                dict.fromkeys(
-                    line.need_id for line in members if line.need_id is not None
-                )
+                dict.fromkeys(line.need_id for line in members if line.need_id is not None)
             ),
             quantity=sum(line.quantity for line in members),
             acquisition=key[1],

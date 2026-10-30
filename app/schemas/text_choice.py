@@ -33,15 +33,3 @@ def require_a_question(choices: tuple[TextReplyChoice, ...], *texts: str | None)
     attempt - rather than failing later, when the reply is assembled."""
     if choices and not asks_a_question(*texts):
         raise ValueError("reply choices require a question")
-
-
-_CLOSING_MARKS = "\"'\u201d\u00bb) "
-"""What may follow a final question mark: a closing quote or bracket."""
-
-
-def closes_on_a_question(message: str, follow_up_question: str | None = None) -> bool:
-    """Whether a reply ends by asking - its follow-up, or its last sentence.
-    "Looking for something cosy? Here they are." asks nothing of the customer."""
-    if follow_up_question and asks_a_question(follow_up_question):
-        return True
-    return message.rstrip(_CLOSING_MARKS).endswith(QUESTION_MARKS)

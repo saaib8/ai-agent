@@ -365,9 +365,13 @@ class SeatingSolutionPlanner:
             if types is not None:
                 if subcategory not in types or not (large or self._seating.seats_one(subcategory)):
                     continue
-            elif (large and not (
-                self._seating.is_combination_main(subcategory) or subcategory == wanted.asked_type
-            )) or (not large and not self._seating.is_combination_extra(subcategory)):
+            elif (
+                large
+                and not (
+                    self._seating.is_combination_main(subcategory)
+                    or subcategory == wanted.asked_type
+                )
+            ) or (not large and not self._seating.is_combination_extra(subcategory)):
                 continue
             pool = await self._discovery.eligible_pool(
                 _request(subcategory, budget, currency, wanted, lift), context

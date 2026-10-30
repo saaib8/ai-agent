@@ -240,16 +240,12 @@ class RoomBundle(BaseModel):
 
     @model_validator(mode="after")
     def _completeness_is_earned(self) -> Self:
-        required_short = any(
-            entry.priority is DesignPriority.REQUIRED for entry in self.unmet
-        )
+        required_short = any(entry.priority is DesignPriority.REQUIRED for entry in self.unmet)
         if self.status is BundleStatus.COMPLETE and required_short:
             raise ValueError("a bundle missing a required need is not complete")
         if self.status is BundleStatus.PARTIAL and not required_short:
             raise ValueError("a partial bundle is short of a required need")
-        if self.status is BundleStatus.INFEASIBLE and any(
-            not line.locked for line in self.lines
-        ):
+        if self.status is BundleStatus.INFEASIBLE and any(not line.locked for line in self.lines):
             raise ValueError("an infeasible bundle selected nothing new")
         return self
 

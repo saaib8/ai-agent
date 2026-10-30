@@ -59,6 +59,93 @@ export async function postChat(
   return postJson<ChatResponse>(base, '/v1/chat', body, isChatResponse, signal)
 }
 
+/** What the agents are doing while a turn runs: who, and in a word what. */
+export interface AgentProgress {
+  agent: string
+  phase: string
+}
+
+/**
+ * The same turn as postChat, with live progress. Progress events arrive while
+ * the agents work; the reply arrives once, only after the session committed.
+ * A stream that ends with no reply is a failure: the session must be re-read,
+ * never the request replayed.
+ */
+export async function streamChat(
+  base: string,
+  body: ChatRequest,
+  onProgress: (progress: AgentProgress) => void,
+  signal?: AbortSignal,
+): Promise<ChatResult> {
+  const root = normaliseBase(base)
+  let res: Response
+  try {
+    res = await fetch(`${root}/v1/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return { ok: false, status: 'aborted', error: ABORTED_ERROR }
+    }
+    return { ok: false, status: 'network', error: NETWORK_ERROR(root) }
+  }
+  if (!res.ok || !res.body) {
+    // Refused before the turn began (an unknown store, an unconfigured
+    // service): an ordinary JSON error, read as postChat would. A stale screen
+    // arrives in the stream, as an `error` event with its status (409).
+    return send<ChatResponse>(root, async () => res, isChatResponse)
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+  let buffer = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += value
+      let cut = buffer.indexOf('\n\n')
+      while (cut >= 0) {
+        const block = buffer.slice(0, cut)
+        buffer = buffer.slice(cut + 2)
+        const event = parseEvent(block)
+        if (event?.kind === 'progress') onProgress(event.data as AgentProgress)
+        else if (event?.kind === 'reply') return { ok: true, data: event.data as ChatResponse }
+        else if (event?.kind === 'error') {
+          const { status, ...error } = event.data as {
+            code: string
+            message: string
+            status?: number
+          }
+          return { ok: false, status: status ?? 500, error: { ...error, trace_id: null } }
+        }
+        cut = buffer.indexOf('\n\n')
+      }
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      return { ok: false, status: 'aborted', error: ABORTED_ERROR }
+    }
+  }
+  return { ok: false, status: 'network', error: NETWORK_ERROR(root) }
+}
+
+function parseEvent(block: string): { kind: string; data: unknown } | null {
+  let kind = 'message'
+  const data: string[] = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) kind = line.slice(6).trim()
+    else if (line.startsWith('data:')) data.push(line.slice(5).trim())
+  }
+  if (!data.length) return null
+  try {
+    return { kind, data: JSON.parse(data.join('\n')) }
+  } catch {
+    return null
+  }
+}
+
 // ── Furniture Finder ─────────────────────────────────────────────────────────
 
 export type PhotoResult =

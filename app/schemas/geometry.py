@@ -89,9 +89,7 @@ class RoomMeasurement(BaseModel):
     a coordinate and never a filter.
     """
 
-    authority: Literal[MeasurementAuthority.USER_PROVIDED] = (
-        MeasurementAuthority.USER_PROVIDED
-    )
+    authority: Literal[MeasurementAuthority.USER_PROVIDED] = MeasurementAuthority.USER_PROVIDED
     """Fixed by the type. A room measurement is always the customer's own."""
 
 
@@ -132,3 +130,30 @@ class RoomGeometry(BaseModel):
     @property
     def is_empty(self) -> bool:
         return not self.measurements
+
+
+class WallFeature(StrEnum):
+    """What is on a wall - what a designer places around."""
+
+    DOOR = "door"
+    WINDOW = "window"
+    TV_POINT = "tv_point"
+    RADIATOR = "radiator"
+    BUILT_IN = "built_in"
+    KEEP_FREE = "keep_free"
+
+
+MAX_WALL_NOTES = 8
+
+
+class WallNote(BaseModel):
+    """One wall as the customer described it: its name in their words, how
+    long it is when they said, and what is on it. Their facts, never a
+    drawing and never a guess."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    wall: str = Field(min_length=1, max_length=40)
+    length_cm: Decimal | None = Field(default=None, gt=0)
+    features: tuple[WallFeature, ...] = ()
+    note: str | None = Field(default=None, max_length=120)

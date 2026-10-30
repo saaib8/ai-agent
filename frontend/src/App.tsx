@@ -178,6 +178,16 @@ export default function App() {
     [chat, config.config, swap, say],
   )
 
+  const handleUseRoomOption = useCallback(
+    (piece: number, ordinal: number) => {
+      if (chat.sending) return
+      void chat.send(say.useOption(ordinal, 'room piece'), config.config, {
+        bundle: { kind: 'swap', bundle_ordinal: piece, alternative_ordinal: ordinal },
+      })
+    },
+    [chat, config.config, say],
+  )
+
   const handleAddToRoom = useCallback(
     (ordinal: number, piece: string) => {
       if (chat.sending) return
@@ -237,14 +247,13 @@ export default function App() {
         { kind: 'select', ordinal, list_revision: listRevision },
         config.config,
       )
-      // Every new pick - "Add to cart" - comes into the conversation as a turn
-      // of its own: its card, and what goes with it when anything does.
+      // Every new pick - "Add to cart" - comes into the conversation as the
+      // customer's own words. What happens next is the agents' call: the next
+      // sofa of a group's seating, the next piece of a room, or what goes with it.
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
-        void chat.send(say.addedToCart(chosen.name_english), config.config, {
-          product: { kind: 'goes_with', pick: chosen.pick },
-        })
+        void chat.send(say.addedToCart(chosen.name_english), config.config)
       }
     },
     [chat, config.config, say],
@@ -286,9 +295,7 @@ export default function App() {
       const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
       if (chosen) {
         setSwap(null)
-        void chat.send(say.addedToCart(chosen.name_english), config.config, {
-          product: { kind: 'goes_with', pick: chosen.pick },
-        })
+        void chat.send(say.addedToCart(chosen.name_english), config.config)
       }
     },
     [chat, config.config, say],
@@ -674,6 +681,7 @@ export default function App() {
           revealedLen={chat.revealedLen}
           revealTurnId={chat.revealTurnId}
           activity={chat.activity}
+          working={chat.working}
           storeId={config.config.storeId}
           draft={draft}
           onDraftChange={setDraft}
@@ -686,6 +694,7 @@ export default function App() {
           onRemovePiece={handleRemovePiece}
           onPickAlternative={handlePickAlternative}
           onAddToRoom={handleAddToRoom}
+          onUseRoomOption={handleUseRoomOption}
           onShowMoreOptions={handleShowMoreOptions}
           onExcludeProduct={handleExcludeProduct}
           onVisualize={handleVisualize}

@@ -90,7 +90,6 @@ class SemanticIntentRefinement(BaseModel):
         return self
 
 
-
 MAX_PRICE_PERCENT = Decimal("1000")
 """A sanity ceiling on a stated percentage, not a product rule."""
 
@@ -427,9 +426,7 @@ class AttributeRefinement(BaseModel):
         # One phrase may name several approved values - "dark grey" is Grey
         # and Charcoal - so a value repeats only when the phrase *and* its
         # approved reading both do.
-        seen = [
-            (v.raw_value.casefold(), (v.canonical_value or "").casefold()) for v in self.values
-        ]
+        seen = [(v.raw_value.casefold(), (v.canonical_value or "").casefold()) for v in self.values]
         if len(set(seen)) != len(seen):
             raise ValueError("an attribute operation must not repeat a value")
         return self

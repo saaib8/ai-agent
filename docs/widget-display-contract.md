@@ -73,7 +73,19 @@ Before the first reply: `GET /v1/labels?language=ar` (or `en`) returns the same 
 the first reply), `salman` (sales) or `nora` (interior design). `sara` was `sarah`
 until 2026-10-16 - map `sara` to "Sara" / "سارة" and its photo, and treat `sarah` the
 same while an old reply may still be on screen. The reply's own words introduce it
-by that name.
+by that name. `faysal` (store support) is a fourth.
+
+**Who worked on the turn (2026-10-21):** `workflow` is `{owner, handoffs}` -
+every agent that worked on the turn, in order, ending with the one who replied
+(`agent`). Two or more handoffs can be shown as "Sara → Salman".
+
+**Live progress:** `POST /v1/chat/stream` takes the same body as `/v1/chat` and
+answers with server-sent events: `event: progress` (`{"agent", "phase"}`, phase
+one of `routing`, `working`, `searching`, `designing`, `updating_cart`,
+`checking_store`, `writing`) while the agents work, then exactly one
+`event: reply` whose data is the committed chat response, or one `event: error`
+(`{"code", "message"}`). If the stream ends without a reply, re-read the session
+(`GET /v1/cart`, or the next turn with its revision) - never resend the message.
 
 ## 3. Browse Catalogue takes `language`
 
@@ -120,6 +132,21 @@ customer's message. `submit_label` and `choose_for_me` are already worded.
 Arabic lines that start with a number ("950 ريال للقطعة") need right-to-left
 direction to read in order - render text with `dir="auto"` (or `rtl` in an Arabic
 layout).
+
+### 4.1 A room piece's options: "Use this", never "Add to cart"
+
+When the cards are the alternatives for one piece of the room, the
+presentation says so: `product_source: "room_options"` and `options_for_piece`
+(the piece, by its card's place in the room package). Draw each card with one
+action, the `swap` label ("Use this"): it sends `bundle_action`
+`{"kind": "swap", "bundle_ordinal": options_for_piece, "alternative_ordinal": <the
+card's place>}` with `say_use_option` as the message. Do not offer Select / Add to
+cart or Like on these cards: the option replaces the piece in the room, and
+`POST /v1/picks` refuses a tick on them (`pick_unavailable`, reason
+`room_option`).
+
+A room just designed is drawn only once the agent has checked it - a reply
+may describe a room before its package appears on a later reply.
 
 ## 5. Furniture Finder runs as the shopper
 

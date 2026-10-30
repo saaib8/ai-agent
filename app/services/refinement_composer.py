@@ -333,12 +333,8 @@ class SearchRefinementComposer:
             # stay refinable - it finds nothing, and the reply offers what
             # setting the seat count aside would find.
             raise _defect(CompositionDefect.ONE_SEAT_ON_MULTI_SEAT_TYPE)
-        dimensions, dimension_semantics = self._dimensions(
-            request, semantics, delta.dimensions
-        )
-        planar, planar_semantics = self._planar(
-            request, semantics, delta.planar_dimensions
-        )
+        dimensions, dimension_semantics = self._dimensions(request, semantics, delta.dimensions)
+        planar, planar_semantics = self._planar(request, semantics, delta.planar_dimensions)
         colors, styles, preferences, unmatched = self._attributes(
             request, state.semantic_preferences, delta.attributes
         )
@@ -485,7 +481,7 @@ class SearchRefinementComposer:
     def _one_seat_of_several(
         self, subcategory: str | None, capacity: SeatingCapacityConstraint | None
     ) -> bool:
-        """"A sofa for one" - a seat count no product of this type can meet.
+        """ "A sofa for one" - a seat count no product of this type can meet.
 
         Refused rather than executed, because it is a misreading and not a
         search: a piece for one person is its own product type, and the
@@ -525,9 +521,8 @@ class SearchRefinementComposer:
             if self._dimension_semantics.refusal(subcategory, c.role) is None
         )
         roles = {c.role for c in dimensions}
-        planar_ok = (
-            saved.planar_dimensions is not None
-            and self._dimension_semantics.reads_pair(subcategory)
+        planar_ok = saved.planar_dimensions is not None and self._dimension_semantics.reads_pair(
+            subcategory
         )
         if not dimensions and not planar_ok:
             return request, semantics
@@ -540,9 +535,7 @@ class SearchRefinementComposer:
             ),
             semantics.model_copy(
                 update={
-                    "dimensions": tuple(
-                        s for s in saved.dimension_semantics if s.role in roles
-                    ),
+                    "dimensions": tuple(s for s in saved.dimension_semantics if s.role in roles),
                     "planar_dimension": saved.planar_semantics if planar_ok else None,
                 }
             ),
@@ -605,9 +598,7 @@ class SearchRefinementComposer:
             return None, None, None
         minimum, maximum = refinement.min_capacity, refinement.max_capacity
         try:
-            constraint = SeatingCapacityConstraint(
-                min_capacity=minimum, max_capacity=maximum
-            )
+            constraint = SeatingCapacityConstraint(min_capacity=minimum, max_capacity=maximum)
         except ValueError as exc:
             raise _defect(CompositionDefect.MALFORMED_AMOUNT) from exc
         return (
@@ -694,9 +685,7 @@ class SearchRefinementComposer:
             name: to_centimetres(_decimal(raw), unit) if raw is not None else None
             for name, raw in values.items()
         }
-        stated = (
-            refinement.max_value or refinement.min_value or refinement.target_value
-        )
+        stated = refinement.max_value or refinement.min_value or refinement.target_value
         try:
             return DimensionConstraint(
                 role=refinement.role,
@@ -732,9 +721,7 @@ class SearchRefinementComposer:
 
         existing = request.planar_dimensions
         source_unit = (
-            refinement.unit
-            or (existing.source_unit if existing else None)
-            or PAIR_UNIT_WHEN_UNSAID
+            refinement.unit or (existing.source_unit if existing else None) or PAIR_UNIT_WHEN_UNSAID
         )
         unit = parse_unit(source_unit)
         if unit is None:
@@ -912,18 +899,14 @@ def _inherited_currency(request: ProductSearchRequest) -> str | None:
     return request.price.currency if request.price is not None else None
 
 
-def _strength(
-    stated: ConstraintStrength | None, *, present: bool
-) -> ConstraintStrength | None:
+def _strength(stated: ConstraintStrength | None, *, present: bool) -> ConstraintStrength | None:
     """Absent bound -> no strength. Present and unqualified -> locked."""
     if not present:
         return None
     return stated or _DEFAULT_STRENGTH
 
 
-def _apply_intent(
-    current: str | None, refinement: SemanticIntentRefinement | None
-) -> str | None:
+def _apply_intent(current: str | None, refinement: SemanticIntentRefinement | None) -> str | None:
     if refinement is None:
         return current
     if refinement.op is SemanticIntentOp.CLEAR:
@@ -940,9 +923,7 @@ def _apply_sort(current: ProductSort, refinement: SortRefinement | None) -> Prod
     return refinement.value
 
 
-def _still_applied(
-    restored: ProductSearchRequest | None, composed: ProductSearchRequest
-) -> bool:
+def _still_applied(restored: ProductSearchRequest | None, composed: ProductSearchRequest) -> bool:
     """Whether any size brought back from memory is still in the search.
 
     A size stated in the same message replaces the saved one for its role, and
@@ -976,7 +957,6 @@ def _not_restated(
             or (d.role is None and composed.planar_dimensions is not None)
         )
     )
-
 
 
 def _space_cm(delta: SearchRefinementDelta) -> Decimal | None:

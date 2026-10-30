@@ -19,12 +19,9 @@ from pathlib import Path
 import pytest
 from app.schemas.agent_decision import (
     AgentAction,
-    BlockingClarification,
     BlockingClarificationReason,
     CustomerAgentDecision,
 )
-from app.schemas.agent_state import AgentStateV1
-from app.schemas.agent_turn import CustomerTurnResult, TurnGrounding
 from app.schemas.composition import CompositionDefect
 from app.schemas.grounding import TurnFailure, TurnFailureCode
 from app.schemas.resolution import (
@@ -44,200 +41,25 @@ def _decision() -> CustomerAgentDecision:
 # ── CustomerTurnResult ──────────────────────────────────────────────────────
 
 
-def test_a_turn_result_always_carries_the_next_state() -> None:
-    """The reason it exists: an unreturned immutable state is a lost one."""
-    result = CustomerTurnResult(
-        state=AgentStateV1(), decision=_decision(), grounding=TurnGrounding()
-    )
-
-    assert isinstance(result.state, AgentStateV1)
 
 
-@pytest.mark.parametrize("missing", ["state", "decision", "grounding"])
-def test_every_turn_result_field_is_required(missing: str) -> None:
-    fields = {
-        "state": AgentStateV1(),
-        "decision": _decision(),
-        "grounding": TurnGrounding(),
-    }
-    del fields[missing]
-
-    with pytest.raises(ValidationError):
-        CustomerTurnResult(**fields)
 
 
-def test_a_turn_result_is_frozen_and_closed() -> None:
-    result = CustomerTurnResult(
-        state=AgentStateV1(), decision=_decision(), grounding=TurnGrounding()
-    )
-
-    assert CustomerTurnResult.model_config["frozen"] is True
-    with pytest.raises(ValidationError):
-        setattr(result, "state", AgentStateV1())  # noqa: B010 - that is the point
-    with pytest.raises(ValidationError):
-        CustomerTurnResult.model_validate(
-            {
-                "state": AgentStateV1(),
-                "decision": _decision(),
-                "grounding": TurnGrounding(),
-                "session_id": "abc",
-            }
-        )
 
 
-@pytest.mark.parametrize(
-    "forbidden",
-    ["message", "response", "text", "prose", "session_id", "redis", "history"],
-)
-def test_a_turn_result_carries_no_prose_or_session(forbidden: str) -> None:
-    """Wording is the response layer's; session lifecycle is later."""
-    assert forbidden not in CustomerTurnResult.model_fields
 
 
-def test_a_turn_result_holds_exactly_these_things() -> None:
-    """`bundle_outcome` lives here rather than on the grounding because it
-    carries `ProductCandidate`, and a grounded product deliberately holds no
-    product id. This object already holds the whole state and never goes near a
-    model."""
-    assert set(CustomerTurnResult.model_fields) == {
-        "state",
-        "decision",
-        "grounding",
-        "bundle_outcome",
-        "bundle_change",
-        # M17: whether this turn recorded a product they settled on. A bool
-        # about what happened, computed from the state before and after, so a
-        # reply cannot claim a choice that was never kept.
-        "selection_added",
-        # M19: what kinds of thing those choices are, read fresh. Without it
-        # the reply had a count and no nouns, and called a sofa and a centre
-        # table "2 sofas".
-        "selected_kinds",
-        # A seat count no single piece met, recovered by combining pieces. Here
-        # rather than on the grounding for the same reason as `bundle_outcome`:
-        # it carries product ids the application renders, and the grounding is
-        # kept id-free.
-        "seating_solution",
-        "chosen_seating",
-        "direction",
-        "taste_answered",
-        "space_fit",
-        "room_in_cart",
-        "room_addition",
-        "picks_for_room",
-        "room_finished",
-        # The message answered the opening in words: not a decline.
-        "opening_answered",
-        "room_carried",
-        "still_on_screen",
-        "narrowed",
-        # The room question asked this turn, and the pieces it offers as chips.
-        "room_question",
-        # How many the room's seating really seats, counted from its pieces.
-        "room_seats",
-        # The seating type they asked for, when another type seats that many.
-        "offered_instead_of",
-        # The one next step the reply offers when the turn asks nothing of its
-        # own - so no conversation ends on a dead end.
-        "next_step",
-        # The type they asked for, when the store carries none of it and the
-        # cards are the closest type it does stock.
-        "unstocked_type",
-        # A dearer swap that broke the budget, held for the customer's yes/no.
-        "swap_offer",
-        # The room piece a shown list of alternatives is for, so selecting one
-        # swaps that role rather than picking a fresh product.
-        "swap_context",
-        # Set on the turn a stretch is confirmed: the room is committed over the
-        # customer's original budget, so the reply owns the stretch.
-        "budget_stretched",
-        # Product Q&A: the picks after the turn, for the client's tray; the
-        # pick they asked about, shown not described; and the companion types
-        # offered beside it as chips. None of them reaches the reply model.
-        "picks",
-        "liked",
-        # The picks with how many of each, priced, and what the turn changed
-        # (CLAUDE.md 36).
-        "cart",
-        # A piece they liked, offered for the cart with what it would come to.
-        "cart_offer",
-        # What the store's own cart would not take this turn, and why.
-        "cart_refusals",
-        # What they asked to add that the cart already held, so the reply
-        # names exactly those.
-        "already_in_cart",
-        "focus",
-        "companions",
-        # A finished room's missing pieces, asked about when they want a
-        # finishing touch and named none.
-        "finishing_pieces",
-        # The types a tapped finishing touch added, for the reply to name.
-        "pieces_added",
-        # A room's pieces as chips, answering "which piece?".
-        "room_cards",
-        # The card of questions for a product search, drawn by the client. The
-        # reply sees only what it asks about.
-        "product_brief",
-        # Beside results: Narrow down opened showing what the search uses, and
-        # the removable chips naming it. A tool beside the cards, not a question.
-        "narrow_down",
-        "brief_chips",
-        # The language this turn is answered in. None where Arabic replies are off.
-        "reply_language",
-        # The customer's own budget and seat figures, as query understanding
-        # read them this turn - sayable in digits even when they said words.
-        "stated_figures",
-    }
 
 
 # ── TurnGrounding additions ─────────────────────────────────────────────────
 
 
-def test_design_handoff_is_off_by_default() -> None:
-    assert TurnGrounding().design_handoff_requested is False
 
 
-def test_a_design_handoff_turn_is_representable() -> None:
-    """Without constructing an InteriorDesignRequest, which needs catalog
-    capabilities that do not exist yet."""
-    grounding = TurnGrounding(design_handoff_requested=True)
-
-    assert grounding.design_handoff_requested is True
-    assert grounding.search is None
-    assert grounding.product_detail is None
 
 
-def test_the_two_clarifications_are_separate_fields() -> None:
-    """A model's question and a service's discovery are different facts, so
-    they have different fields - but a turn carries at most one of them.
-
-    The separation is about *provenance*: one arrives with wording, the other
-    with reason codes only. Which is asked is decided by priority before the
-    grounding is built (see `test_turn_question_priority.py`).
-    """
-    model_question = TurnGrounding(
-        clarification=BlockingClarification(
-            reason=BlockingClarificationReason.INSUFFICIENT_PRODUCT_TYPE,
-            question="Which kind of table?",
-        )
-    )
-    service_question = TurnGrounding(
-        deterministic_clarification=DeterministicClarification(
-            reason=BlockingClarificationReason.AMBIGUOUS_PRODUCT_REFERENCE,
-            reference_reason=ReferenceFailureReason.SEVERAL_ATTRIBUTE_MATCHES,
-        )
-    )
-
-    assert model_question.clarification is not None
-    assert model_question.deterministic_clarification is None
-    assert service_question.deterministic_clarification is not None
-    assert service_question.clarification is None
 
 
-def test_grounding_stays_structured() -> None:
-    """No field a coordinator could fill with a sentence."""
-    for name in TurnGrounding.model_fields:
-        assert name not in ("message", "text", "prose", "answer", "reply")
 
 
 # ── DeterministicClarification ──────────────────────────────────────────────

@@ -215,8 +215,15 @@ class ChatPresentation(BaseModel):
     one" is resolved against this sequence next turn.
     """
 
-    product_source: Literal["search", "selection", "liked", "detail"] | None = None
+    product_source: Literal["search", "selection", "liked", "detail", "room_options"] | None = None
+    options_for_piece: int | None = Field(default=None, ge=1)
+    """For room options: the room piece they are for, by its card's place."""
     """Which of those `products` is.
+
+    "room_options" are the alternatives for one piece of the room
+    (`options_for_piece`): each card's action is "Use this" - a swap into the
+    room in that piece's place (`bundle_action` swap) - never Select, which
+    would put it in the cart.
 
     "liked" is their liked list (♡): each card can be selected, unliked or
     asked more like of, named by its place in the liked list.
@@ -329,6 +336,15 @@ class ChatPresentation(BaseModel):
         )
 
 
+class WorkflowView(BaseModel):
+    """Who handled the turn: every agent that worked on it, in order."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    owner: AgentPersona
+    handoffs: tuple[AgentPersona, ...] = ()
+
+
 class ChatResponse(BaseModel):
     """One turn as the caller receives it."""
 
@@ -366,11 +382,12 @@ class ChatResponse(BaseModel):
     None where Arabic replies are off: English, as always."""
 
     agent: AgentPersona = AgentPersona.SARA
-    """Which assistant the reply is shown as: Sara (shopping), Salman (sales),
-    Nora (interior design) or Faysal (the store's support, where
-    `customer_agent.support_agent` is on). A label only - one assistant answers
-    every turn; decided in code from what the turn did
-    (`app/services/agent_persona.py`)."""
+    """The agent who wrote this reply: Sara (shopping), Salman (sales), Nora
+    (interior design) or Faysal (the store's support)."""
+
+    workflow: WorkflowView | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Which agents worked on this turn, in order, ending with the one who
+    replied - so a client can show a handoff ("Sara → Salman")."""
 
     labels: CardLabels | None = Field(default=None, exclude_if=lambda v: v is None)
     """The words a client draws around the products - card buttons, the picks

@@ -36,7 +36,7 @@ from app.api.dependencies import (
 from app.api.errors import register_exception_handlers
 from app.api.routes.chat import router as chat_router
 from app.api.routes.furniture_finder import router as finder_router
-from app.core.config import FurnitureFinderSettings, SessionSettings
+from app.core.config import FurnitureFinderSettings, HistorySummarySettings, SessionSettings
 from app.core.exceptions import (
     DetectionUnavailableError,
     FinderAccessRefusedError,
@@ -87,6 +87,9 @@ from pydantic import SecretStr, ValidationError
 from tests.conftest import build_settings
 from tests.unit.click_ids import no_click_ids
 from tests.unit.test_chat_api import GRAPH, FakeRetailers, FakeSessionStore, Harness, a_selection
+
+NO_SUMMARY = HistorySummarySettings(enabled=False)
+"""A small window that drops its oldest messages, as before summaries."""
 
 STORE, OTHER_STORE = 50, 51
 SESSION = "sess-1"
@@ -1146,7 +1149,7 @@ def a_runtime(
     runtime = FinderTurnRuntime(
         service,
         store,  # type: ignore[arg-type]
-        SessionSettings(max_history_messages=6),
+        SessionSettings(max_history_messages=6, summary=NO_SUMMARY),
         SimilarSearchBuilder(TAXONOMY, ATTRIBUTES),
         SearchRefinementComposer(ATTRIBUTES, DIMENSIONS),
         arabic_replies=arabic_replies,
@@ -1545,11 +1548,10 @@ async def test_the_next_chat_message_sees_the_photos_matches() -> None:
 
     assert chat.status_code == 200
     assert chat.json()["session_revision"] == 2
-    selector, state = harness.parts[0]["references"].calls[0]
+    selector, state = harness.references.calls[0]
     assert selector == PresentedOrdinal(position=2)
     assert state.product_interaction.presented_product_ids == (31, 32, 33)
-    turn = harness.responses.calls[0][0]
-    assert "picked the sofa" in turn.conversation.messages[0].content
+    assert "picked the sofa" in harness.told(0)[1]
 
 
 # ── settings ════════════════════════════════════════════════════════════════

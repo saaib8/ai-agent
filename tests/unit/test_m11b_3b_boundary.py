@@ -15,22 +15,19 @@ from typing import Any, get_args, get_origin
 import pytest
 from app.core.config import CustomerAgentSettings, Settings
 from app.schemas.agent_decision import CustomerAgentDecision, CustomerStateProposal
-from app.schemas.agent_turn import CustomerResponse, DecisionInput, TurnGrounding
-from app.schemas.agent_view import AgentStateView
+from app.schemas.agent_turn import CustomerResponse
 from app.schemas.refinement import SearchRefinementDelta
 from app.schemas.resolution import (
     ResolvedProductReference,
     ResolvedRelativePrice,
     SimilarSearchSeed,
 )
-from app.schemas.response import ResponseGroundingView, ResponseInput
 from pydantic import BaseModel
 
 APP = Path(__file__).parents[2] / "app"
 
 BUILT_IN_3B = {
     "app/services/reference_resolver.py": "ProductReferenceResolver",
-    "app/services/relative_price.py": "RelativePriceResolver",
     "app/services/comparison.py": "ProductComparisonService",
     "app/services/similar_search.py": "SimilarSearchBuilder",
     "app/services/grounding_builder.py": "to_grounded_product",
@@ -55,9 +52,6 @@ report it as a catalog gap. `FocusedBundleItem` stays out because nothing
 tracks a focused card."""
 
 MODEL_FACING = (
-    DecisionInput,
-    TurnGrounding,
-    AgentStateView,
     CustomerAgentDecision,
     CustomerStateProposal,
     SearchRefinementDelta,
@@ -65,8 +59,6 @@ MODEL_FACING = (
     # The response layer answers to the same policy as every other model-facing
     # contract. A weaker guard for it would be a second authority rule, and the
     # looser one always wins in practice.
-    ResponseInput,
-    ResponseGroundingView,
 )
 
 APPLICATION_ONLY = (
@@ -120,15 +112,6 @@ def test_the_comparison_maximum_is_configuration() -> None:
 def test_bundle_refinement_does_not_exist_yet(symbol: str) -> None:
     for module in APP.rglob("*.py"):
         assert symbol not in module.read_text(), f"{module.name} defines {symbol}"
-
-
-def test_no_agent_module_exists() -> None:
-    """Reasoning lives in services, not in an `agents` package.
-
-    The public chat route this once also forbade arrived with M13; what must
-    stay true of it is pinned in `test_m13_boundary.py`.
-    """
-    assert not (APP / "agents").exists()
 
 
 def test_query_understanding_is_still_the_only_provider_call_site() -> None:
@@ -188,8 +171,7 @@ def test_the_resolution_module_is_never_imported_by_a_model_contract() -> None:
     """
     for name in (
         "schemas/agent_decision.py",
-        "schemas/agent_view.py",
-        "schemas/refinement.py",
+            "schemas/refinement.py",
         "schemas/conversation.py",
     ):
         tree = ast.parse((APP / name).read_text())

@@ -80,7 +80,9 @@ def _candidate(product_id: int, price: str = "1000", depth: int = 0) -> RelaxedC
 
 
 def _resolved(
-    *, sort: ProductSort = ProductSort.DEFAULT, semantic_text: str | None = "warm sofa",
+    *,
+    sort: ProductSort = ProductSort.DEFAULT,
+    semantic_text: str | None = "warm sofa",
     preferences: tuple[SemanticPreference, ...] = (),
 ) -> ResolvedSearch:
     return ResolvedSearch(
@@ -101,9 +103,7 @@ def _service(scores: dict[int, float], **kw: Any) -> tuple[SemanticRankingServic
 async def _rank(
     service: SemanticRankingService, candidates: Any, resolved: Any = None
 ) -> SemanticRankingResult:
-    return await service.rank(
-        resolved or _resolved(), candidates, CONTEXT, namespace=NAMESPACE
-    )
+    return await service.rank(resolved or _resolved(), candidates, CONTEXT, namespace=NAMESPACE)
 
 
 # ── the invariant ───────────────────────────────────────────────────────────
@@ -186,10 +186,15 @@ async def test_similarity_orders_within_a_depth() -> None:
 async def test_depth_buckets_are_ordered_independently() -> None:
     service, _, _ = _service({1: 0.1, 2: 0.9, 3: 0.2, 4: 0.8})
 
-    result = await _rank(service, [
-        _candidate(1, depth=0), _candidate(2, depth=0),
-        _candidate(3, depth=1), _candidate(4, depth=1),
-    ])
+    result = await _rank(
+        service,
+        [
+            _candidate(1, depth=0),
+            _candidate(2, depth=0),
+            _candidate(3, depth=1),
+            _candidate(4, depth=1),
+        ],
+    )
 
     assert result.product_ids == (2, 1, 4, 3)
 
@@ -206,7 +211,7 @@ async def test_the_product_id_settles_an_exact_tie() -> None:
 
 
 async def test_price_ascending_beats_similarity() -> None:
-    """"cheapest modern sofa": the cheapest one, not the most modern-looking."""
+    """ "cheapest modern sofa": the cheapest one, not the most modern-looking."""
     service, _, _ = _service({1: 0.1, 2: 0.99})
     cheap, dear = _candidate(1, price="990"), _candidate(2, price="5000")
 
@@ -320,12 +325,10 @@ async def test_an_unconfigured_service_still_returns_every_candidate() -> None:
 
 
 async def test_a_purely_structural_request_calls_no_provider() -> None:
-    """"sofas under 3000" has nothing fuzzy; an embedding would invent an order."""
+    """ "sofas under 3000" has nothing fuzzy; an embedding would invent an order."""
     service, embedder, index = _service({1: 0.9})
 
-    result = await _rank(
-        service, [_candidate(1)], _resolved(semantic_text=None, preferences=())
-    )
+    result = await _rank(service, [_candidate(1)], _resolved(semantic_text=None, preferences=()))
 
     assert result.skip_reason is SemanticSkipReason.NO_SEMANTIC_INTENT
     assert embedder.calls == [] and index.calls == []
@@ -336,8 +339,10 @@ async def test_a_purely_structural_request_calls_no_provider() -> None:
 
 def _preference(value: str, canonical: str | None = None) -> SemanticPreference:
     return SemanticPreference(
-        family=AttributeFamily.COLOR, raw_value=value,
-        canonical_value=canonical, strength=ConstraintStrength.PREFERRED,
+        family=AttributeFamily.COLOR,
+        raw_value=value,
+        canonical_value=canonical,
+        strength=ConstraintStrength.PREFERRED,
     )
 
 
@@ -392,9 +397,10 @@ def test_semantic_intent_detection(
 
 def test_the_query_representation_is_versioned() -> None:
     assert QUERY_REPRESENTATION_VERSION == "query_semantic_text_v1"
-    assert SemanticRankingResult(
-        candidates=(), semantic_used=False
-    ).query_representation_version == QUERY_REPRESENTATION_VERSION
+    assert (
+        SemanticRankingResult(candidates=(), semantic_used=False).query_representation_version
+        == QUERY_REPRESENTATION_VERSION
+    )
 
 
 # ── contracts ───────────────────────────────────────────────────────────────
@@ -433,3 +439,47 @@ def test_vector_ids_round_trip() -> None:
     assert vector_id(165637) == "product:165637"
     assert product_id_of("product:165637") == 165637
     assert product_id_of("3-seater-sofa#abc") is None, "an image-index id is not parsed"
+
+
+# ── vectors fetched ahead (a room's pieces embedded together) ───────────────
+
+
+async def test_a_vector_fetched_ahead_for_this_text_is_used_without_a_call() -> None:
+    from app.services.embedding_prefetch import prefetched
+    from app.services.query_document import build_query_document
+
+    service, embedder, index = _service({1: 0.9, 2: 0.1})
+    resolved = _resolved()
+    ahead = tuple(0.2 for _ in range(EXPECTED_DIMENSION))
+
+    with prefetched({build_query_document(resolved): ahead}):
+        result = await _rank(service, [_candidate(1), _candidate(2)], resolved)
+
+    assert embedder.calls == []
+    assert index.calls[0]["vector"] == ahead
+    assert result.semantic_used
+
+
+async def test_any_other_text_is_still_embedded_as_before() -> None:
+    from app.services.embedding_prefetch import prefetched
+
+    service, embedder, _ = _service({1: 0.9})
+
+    with prefetched({"some other piece's text": VECTOR}):
+        await _rank(service, [_candidate(1)], _resolved())
+
+    assert len(embedder.calls) == 1
+
+
+async def test_after_a_failed_batch_no_search_calls_the_provider_again() -> None:
+    from app.schemas.semantic import SemanticSkipReason
+    from app.services.embedding_prefetch import prefetched
+
+    service, embedder, index = _service({1: 0.9})
+
+    with prefetched({}, failed=True):
+        result = await _rank(service, [_candidate(1)], _resolved())
+
+    assert embedder.calls == [] and index.calls == []
+    assert not result.semantic_used
+    assert result.skip_reason is SemanticSkipReason.EMBEDDING_UNAVAILABLE

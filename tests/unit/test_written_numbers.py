@@ -6,7 +6,6 @@ from decimal import Decimal
 
 import pytest
 from app.schemas.store_knowledge import KnowledgePassage
-from app.services.numeric_guard import build_allowance, check_numeric_policy, policy_figures
 from app.services.written_numbers import written_figures
 
 QUESTION = "is delivery free in Riyadh for a 1000 SAR order?"
@@ -44,28 +43,7 @@ def test_nothing_is_read_where_no_figure_is_written_in_words(text: str) -> None:
     assert written_figures(text) == ()
 
 
-def test_a_figure_the_shop_wrote_in_words_is_sayable_in_digits() -> None:
-    allowance = build_allowance(QUESTION, figures=policy_figures((MESSY,)))
-
-    reply = (
-        "No - delivery in Riyadh is free above 1,200 SAR, so it costs 89 SAR. "
-        "Refunds take about 10 working days, returns 14 days."
-    )
-
-    assert check_numeric_policy(message=reply, follow_up_question=None, allowance=allowance) is None
 
 
-def test_a_k_amount_is_sayable_in_full() -> None:
-    allowance = build_allowance(QUESTION, figures=policy_figures((MESSY,)))
-
-    reply = "Bank transfer is only for orders over 10,000 SAR."
-
-    assert check_numeric_policy(message=reply, follow_up_question=None, allowance=allowance) is None
 
 
-def test_a_figure_the_shop_never_wrote_is_still_refused() -> None:
-    allowance = build_allowance(QUESTION, figures=policy_figures((MESSY,)))
-
-    reply = "Delivery in Riyadh costs 99 SAR below 1,500 SAR."
-
-    assert check_numeric_policy(message=reply, follow_up_question=None, allowance=allowance)

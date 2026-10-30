@@ -111,9 +111,7 @@ class ProductComparisonResult(BaseModel):
     @model_validator(mode="after")
     def _rows_line_up_with_the_products(self) -> Self:
         if len(self.products) < MIN_COMPARED_PRODUCTS:
-            raise ValueError(
-                f"a comparison needs at least {MIN_COMPARED_PRODUCTS} products"
-            )
+            raise ValueError(f"a comparison needs at least {MIN_COMPARED_PRODUCTS} products")
         for row in self.rows:
             if len(row.cells) != len(self.products):
                 raise ValueError("every row needs one cell per compared product")

@@ -24,42 +24,11 @@ from app.schemas.bundle_presentation import (
     GroundedBundlePresentation,
     GroundedBundleTotals,
 )
-from app.schemas.language import ReplyLanguage
 from app.schemas.product import CommerceClassification
-from app.schemas.reply_choice import ReplyChoice
 from app.schemas.seating_solution import (
     SeatingBundle,
-    SeatingShape,
     SeatingSolution,
-    SeatingSolutionOutcome,
 )
-from app.services.chip_wording import Chip, chip, currency_word
-
-_SHAPE_CHIP: dict[SeatingShape, Chip] = {
-    SeatingShape.SEPARATE_SOFAS: Chip.SEPARATE_SOFAS,
-    SeatingShape.SOFA_WITH_EXTRA_SEATS: Chip.SOFA_WITH_ARMCHAIRS,
-}
-
-
-def seating_choices(
-    solution: SeatingSolution, language: ReplyLanguage = ReplyLanguage.EN
-) -> tuple[ReplyChoice, ...]:
-    """The shape question's answers as chips: each real shape with its lowest
-    total, and "either". After "no more", the shapes that still have unseen
-    combinations. Nothing otherwise."""
-    if solution.outcome not in (
-        SeatingSolutionOutcome.CHOOSE_SHAPE,
-        SeatingSolutionOutcome.NO_MORE,
-    ):
-        return ()
-    currency = currency_word(solution.currency, language)
-    choices = [
-        chip(_SHAPE_CHIP[o.shape], language, price=f"{o.from_price:,.0f}", currency=currency)
-        for o in solution.options
-    ]
-    if len(choices) > 1:
-        choices.append(chip(Chip.EITHER_SHAPE, language))
-    return tuple(choices)
 
 
 def present_seating_solution(solution: SeatingSolution) -> tuple[GroundedBundlePresentation, ...]:

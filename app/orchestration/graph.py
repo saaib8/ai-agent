@@ -7,9 +7,9 @@ taxonomy, no search, no ranking and no optimisation - all of that is
 deterministic domain code that was built and proved without a graph, and moving
 any of it into a node would hide it inside orchestration (CLAUDE.md 18).
 
-So the graph is linear, which is the honest shape: a turn loads, runs, is
-worded, is persisted and is answered. What varies inside a turn already varies
-inside the coordinator, where it is tested.
+So the graph is linear, which is the honest shape: a turn loads, the agents
+work, it is persisted and it is answered. What varies inside a turn - which
+agents work on it and with which tools - is the agents' own graph.
 
 Failure needs no edges either. Every deliberate failure in this service is a
 typed exception carrying its own status and public message, so a node that
@@ -31,25 +31,23 @@ from app.schemas.retailer import RetailerContext
 from app.services.chat_runtime import ChatRuntime
 
 LOAD_SESSION = "load_session"
-RUN_CUSTOMER_TURN = "run_customer_turn"
-RENDER_CUSTOMER_RESPONSE = "render_customer_response"
+RUN_AGENTS = "run_agents"
 PERSIST_SESSION = "persist_session"
 BUILD_PUBLIC_RESPONSE = "build_public_response"
 
 NODE_ORDER = (
     LOAD_SESSION,
-    RUN_CUSTOMER_TURN,
-    RENDER_CUSTOMER_RESPONSE,
+    RUN_AGENTS,
     PERSIST_SESSION,
     BUILD_PUBLIC_RESPONSE,
 )
 """The only order these phases may run in.
 
 Loading precedes everything because a stale client revision must be refused
-before any provider is paid. Persisting follows wording because what is stored
-is the reply the customer was actually given. Answering follows persisting
-because a reply that could not be committed describes a session that no longer
-exists (M13 26, 32, 33).
+before any provider is paid. The agents work on a staged copy, and persisting
+follows their checked reply because what is stored is what the customer was
+actually given. Answering follows persisting because a reply that could not be
+committed describes a session that no longer exists.
 """
 
 
@@ -77,12 +75,11 @@ and the nodes would then typecheck against a context they cannot receive.
 
 
 def build_chat_graph() -> ChatStateGraph:
-    """The exchange as five nodes, uncompiled. Shape only, no dependencies."""
+    """The exchange as four nodes, uncompiled. Shape only, no dependencies."""
     graph: ChatStateGraph = StateGraph(ChatGraphState, context_schema=ChatGraphContext)
 
     graph.add_node(LOAD_SESSION, _load_session)
-    graph.add_node(RUN_CUSTOMER_TURN, _run_customer_turn)
-    graph.add_node(RENDER_CUSTOMER_RESPONSE, _render_customer_response)
+    graph.add_node(RUN_AGENTS, _run_agents)
     graph.add_node(PERSIST_SESSION, _persist_session)
     graph.add_node(BUILD_PUBLIC_RESPONSE, _build_public_response)
 
@@ -97,7 +94,7 @@ class ChatGraphRunner:
     """A compiled graph, and the runtime each invocation drives it with.
 
     Compiled once at startup and reused: building a graph per request would
-    rebuild the same five nodes for every customer message (M13 3).
+    rebuild the same nodes for every customer message (M13 3).
     """
 
     def __init__(self) -> None:
@@ -122,8 +119,8 @@ class ChatGraphRunner:
 
 # ── the nodes ───────────────────────────────────────────────────────────────
 #
-# Each calls exactly one phase. If a node ever needs a second call to say what
-# it did, that is a phase the runtime is missing rather than logic to put here.
+# Each calls exactly one runtime phase. The agents' own graph - the supervisor
+# and the four agents - runs inside `run_agents` (`app/agents/team.py`).
 
 
 async def _load_session(
@@ -132,23 +129,13 @@ async def _load_session(
     return {"session": await runtime.context.chat.load_session(state["request"])}
 
 
-async def _run_customer_turn(
+async def _run_agents(
     state: ChatGraphState, runtime: Runtime[ChatGraphContext]
 ) -> dict[str, object]:
-    engine = runtime.context.chat
-    turn = engine.turn_input(state["request"], state["context"], state["session"])
-    return {"turn": turn, "result": await engine.run_turn(turn)}
-
-
-async def _render_customer_response(
-    state: ChatGraphState, runtime: Runtime[ChatGraphContext]
-) -> dict[str, object]:
-    engine = runtime.context.chat
-    result = state["result"]
-    response = await engine.render(state["turn"], result)
     return {
-        "response": response,
-        "presentation": engine.presentation(result, response),
+        "turn": await runtime.context.chat.run_agents(
+            state["request"], state["context"], state["session"]
+        )
     }
 
 
@@ -157,7 +144,7 @@ async def _persist_session(
 ) -> dict[str, object]:
     return {
         "revision": await runtime.context.chat.persist(
-            state["request"], state["session"], state["result"], state["response"]
+            state["request"], state["session"], state["turn"]
         )
     }
 
@@ -167,14 +154,6 @@ async def _build_public_response(
 ) -> dict[str, object]:
     return {
         "reply": runtime.context.chat.public_response(
-            state["request"],
-            state["revision"],
-            state["response"],
-            state["presentation"],
-            state["result"].picks,
-            state["result"].reply_language,
-            state["result"].liked,
-            runtime.context.chat.agent(state["turn"], state["result"]),
-            state["result"].cart,
+            state["request"], state["revision"], state["turn"]
         )
     }

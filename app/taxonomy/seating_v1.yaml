@@ -7,7 +7,9 @@
 # seats two or more.
 #
 # `recliner` and `chaise-lounge` are deliberately in neither list: some seat
-# two or three, and the review has not settled them. Absence means unknown,
+# two or three, and the review has not settled them. They are in
+# `never_counts_as_seats` instead: a room may hold one, but it never fills a
+# seat of the room's head count. Absence from the seat lists means unknown,
 # never one. Adding a type: only after a reviewer confirms every product of it.
 version: v1
 
@@ -22,6 +24,12 @@ implied_capacity:
   outdoor-chair: 1
   stool: 1
   single-seater-sofa: 1
+
+# Types that may be a room's piece but never count toward how many it seats -
+# said as "not counted", never as "seats 0". Confirmed by the user 2026-10-24.
+never_counts_as_seats:
+  - chaise-lounge
+  - recliner
 
 # Each seats two or more, so "one seat" of these is a different product type.
 multi_seat:

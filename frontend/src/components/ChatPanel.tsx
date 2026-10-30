@@ -27,6 +27,8 @@ import type { CartLineRef } from './PicksTray'
 import type { CheckedCard } from '../lib/compare'
 import { cardWords, latestLabels } from '../lib/cardWords'
 import { TypingIndicator } from './TypingIndicator'
+import type { AgentProgress } from '../api/client'
+import { agentLook } from '../lib/agents'
 
 interface ChatPanelProps {
   turns: Turn[]
@@ -36,6 +38,8 @@ interface ChatPanelProps {
   revealedLen: number
   revealTurnId: string | null
   activity: Activity
+  /** The agent working on the turn in flight, and what it is doing. */
+  working?: AgentProgress | null
   storeId: number
   draft: string
   onDraftChange: (value: string) => void
@@ -51,6 +55,8 @@ interface ChatPanelProps {
   onPickAlternative: (alternativeOrdinal: number) => void
   /** A finishing touch's card chosen for the room still being designed. */
   onAddToRoom: (ordinal: number, piece: string) => void
+  /** "Use this" on a room piece's options: the swap into the room, never the cart. */
+  onUseRoomOption: (piece: number, ordinal: number) => void
   onShowMoreOptions: () => void
   onExcludeProduct: (product: GroundedProduct) => void
   onVisualize: (view: RenderView, viewLabel: string) => void
@@ -124,6 +130,7 @@ export function ChatPanel({
   revealedLen,
   revealTurnId,
   activity,
+  working,
   storeId,
   draft,
   onDraftChange,
@@ -136,6 +143,7 @@ export function ChatPanel({
   onRemovePiece,
   onPickAlternative,
   onAddToRoom,
+  onUseRoomOption,
   onShowMoreOptions,
   onExcludeProduct,
   onVisualize,
@@ -421,7 +429,18 @@ export function ChatPanel({
                           : undefined
                         : turn.id === lastAssistantId && turn.data.presentation?.room_addition
                           ? addToRoomPick(turn.data.presentation.room_addition)
-                          : undefined
+                          : turn.id === lastAssistantId &&
+                              turn.data.presentation?.product_source === 'room_options' &&
+                              turn.data.presentation.options_for_piece
+                            ? {
+                                role: 'room piece',
+                                onPick: (ordinal: number) =>
+                                  onUseRoomOption(
+                                    turn.data.presentation!.options_for_piece!,
+                                    ordinal,
+                                  ),
+                              }
+                            : undefined
                     }
                     refine={
                       turn.id === lastAssistantId
@@ -470,6 +489,9 @@ export function ChatPanel({
                 <ZoryAvatar />
                 <div className="flex items-center gap-2.5 rounded-2xl rounded-tl-md border border-line bg-surface px-3.5 py-2.5 shadow-card">
                   <TypingIndicator />
+                  {working && !activity && (
+                    <span className="text-sm text-muted">{workingLine(working)}</span>
+                  )}
                   {activity === 'rendering' && (
                     <span className="text-sm text-muted">
                       Rendering your room — this takes about 30 seconds…
@@ -550,4 +572,20 @@ function productPage(url: string): string {
 
 function signature(units: Map<string, number>): string {
   return [...units].map(([url, n]) => `${url}×${n}`).sort().join('|')
+}
+
+const PHASE_WORDS: Record<string, string> = {
+  routing: 'is reading your message',
+  working: 'is on it',
+  searching: 'is looking through the catalog',
+  designing: 'is designing',
+  updating_cart: 'is updating your cart',
+  checking_store: "is checking the store's information",
+  writing: 'is writing',
+}
+
+/** "Sara is looking through the catalog…" - the team's lead before an agent is chosen. */
+function workingLine(working: AgentProgress): string {
+  const who = working.agent === 'supervisor' ? 'ZORY' : agentLook(working.agent).name
+  return `${who} ${PHASE_WORDS[working.phase] ?? 'is on it'}…`
 }

@@ -1,0 +1,347 @@
+# Decision field map: every field of CustomerAgentDecision
+# (app/schemas/agent_decision.py), and the nested proposal fields the
+# coordinator reads, mapped to the tool and argument that replaces it in the
+# supervisor + four agents design (plan: no-i-want-it-quizzical-firefly.md).
+#
+#   replaced_by   <tool>(<argument>)    the agent sets it as a tool argument
+#                 supervisor            the routing decision (transfer_to_* + task enum)
+#                 code                  derived deterministically, no model writes it
+#                 dropped               nothing replaces it (reason given)
+#                 GAP                   no planned tool carries it yet
+#   read_by       where the coordinator reads it today (tc = app/services/turn_coordinator.py)
+#
+# No tool argument carries a store, product, session or line id: products are
+# ProductReference (screen/picks/liked/compared + position), room pieces a
+# bundle ordinal or a registry piece key.
+
+version: 1
+generated: 2026-10-21
+
+decision:
+
+  action:
+    replaced_by: supervisor
+    note: "The AgentAction enum (answer, clarify, search, refine_search, product_detail, compare, bundle_refine, show_selection, design_handoff) becomes which agent the supervisor transfers to and which tool that agent calls. A plain ANSWER/CLARIFY is the agent's respond() with no tool."
+    per_value:
+      answer: "respond (any agent); with policy_question -> faysal lookup_store_policy"
+      clarify: "respond with one question; a room question -> nora plan_room (code asks it)"
+      search: "sara search_products | more_options | exclude_product | more_like_this | more_combinations"
+      refine_search: "sara refine_search"
+      product_detail: "sara show_product"
+      compare: "sara compare_products"
+      bundle_refine: "nora swap_piece | piece_alternatives | remove_piece | GAP:set_piece_status"
+      show_selection: "sara/salman show_picks (or choose_combination when combination_choice)"
+      design_handoff: "nora plan_room | revise_room | design_advice | check_fit; complement scope -> salman show_what_goes_with / nora finishing_touches"
+    read_by: [tc:_execute match]
+
+  commercial_reason:
+    replaced_by: "supervisor (route to salman) / salman upsell"
+    note: "Only UPSELL has an effect today (speaker label, response_view). CUSTOMER_REQUEST/ALTERNATIVE/ADDRESS_OBJECTION/PURCHASE_PROGRESSION change nothing executable."
+    read_by: [agent_persona._sells, response_view]
+
+  new_search:
+    semantic_intent:
+      replaced_by: search_products(semantic_text)
+      note: "Fuzzy wording M7 does not hold; in the new design it is part of the constrained interpretation arguments."
+      read_by: [tc:_seed_and_execute]
+
+  refinement:
+    replaced_by: refine_search
+    fields:
+      price: refine_search(price)  # incl. SET_RELATIVE -> relative to a ProductReference ("20% cheaper than the second")
+      seating_capacity: refine_search(seating_capacity)
+      dimensions: refine_search(dimensions)          # DimensionRole + side, never a column
+      planar_dimensions: refine_search(planar)
+      space_width: refine_search(space_width)        # orders only (10.10)
+      attributes: refine_search(colours, styles, strict)
+      semantic_intent: refine_search(semantic_text)
+      sort: refine_search(sort)
+    read_by: [tc:_refine, refinement_composer.refine, tc:_resolve_relative_price]
+    note: "The plan also lists salman cheaper_than; today relative price is a Sara refinement. Pick one owner."
+
+  taxonomy_change_requested:
+    replaced_by: refine_search(change_type=true, new type in the constrained interpretation)
+    read_by: [tc:_refine -> tc:_refine_taxonomy]
+
+  reference:
+    replaced_by: "show_product(product) | more_like_this(product) | check_fit(product) | show_what_goes_with(product)"
+    note: "One field meant different things by action; each tool now has its own ProductReference argument."
+    read_by: [tc:_product_detail, tc:_similar_search_turn, tc:_design_advice (fit), anchor_reference]
+
+  show_more:
+    replaced_by: "more_options() | more_combinations(op=more) when combinations are on screen"
+    read_by: [tc:_continue_search, _pages_combinations]
+
+  exclude_reference:
+    replaced_by: exclude_product(product)
+    note: "\"I don't like the second, show me others\" = exclude_product + more_options; allow both in one tool (exclude_product(product, and_more=true)) since a turn has one screen owner."
+    read_by: [tc:_continue_search]
+
+  seating_answer:
+    replaced_by: "GAP: more_combinations(shape=separate_sofas|sofa_with_extra_seats|any) or a new answer_seating_shape tool"
+    note: "No planned Sara tool names the shape answer."
+    read_by: [_with_seating_answer in tc:_execute]
+
+  combination_choice:
+    replaced_by: choose_combination(position)
+    read_by: [tc:_execute -> tc:_choose_combination]
+
+  combination_dismiss:
+    replaced_by: more_combinations(op=dismiss, position)
+    read_by: [tc:_more_combinations]
+
+  taste_answer:
+    replaced_by: answer_taste(answer_key)
+    note: "Keys of the pending taste question only; code refuses unknown keys. Never with a pick/compare/detail."
+    read_by: [tc:_execute -> tc:_answer_taste, _NOT_A_TASTE_ANSWER]
+
+  show_liked:
+    replaced_by: show_picks(liked=true)
+    read_by: [tc:_show_selection]
+
+  narrow_by:
+    replaced_by: narrow_down(questions)
+    read_by: [tc:_open_narrow_down]
+
+  drop_saved_sizes:
+    replaced_by: "search_products(drop_saved_sizes) / refine_search(drop_saved_sizes)"
+    read_by: [tc:_ask_or_search, tc:_seed_and_execute, _saved_sizes]
+
+  skip_questions:
+    replaced_by: search_products(skip_questions)
+    read_by: [tc:_ask_or_search]
+
+  comparison_references:
+    replaced_by: compare_products(products)
+    note: "Always similar-only in the new tool (fixes the typed path that skipped the compare-group check)."
+    read_by: [tc:_compare]
+
+  clarification:
+    replaced_by: "respond(question) - the agent's own question, checked by reply checks"
+    fields:
+      reason: "code for deterministic reasons (tool_result codes); dropped as a model field"
+      question: respond text
+      choices: "respond chips (must answer the question shown)"
+    note: "MISSING_ROOM_REQUIREMENTS from the model is replaced by plan_room's app_question (10.1)."
+    read_by: [tc:_ground, proposal clarification, tc:_with_room_cards]
+
+  interaction:
+    replaced_by: "by op"
+    per_op:
+      select: add_to_cart(product, quantity, expected_kind)
+      deselect: remove_from_cart(product)
+      focus: show_product(product)
+      consider: "GAP: add_to_cart(confirm=false) / offer_to_add(product) - the price+total offer (36)"
+    fields:
+      reference: "<tool>(product: ProductReference)"
+      expected_subcategory: "<tool>(expected_kind) - checked in code against the resolved card"
+      quantity: "add_to_cart(quantity) / set_quantity(product, quantity)"
+    read_by: [tc:_apply_interaction, tc:_with_cart_offer, tc:_offer_after_pick]
+
+  more_to_add:
+    replaced_by: "add_to_cart(items=[...]) - one call adding several"
+    fields: {reference: "items[].product", expected_subcategory: "items[].expected_kind", quantity: "items[].quantity"}
+    read_by: [tc:_apply_interaction]
+
+  bundle_interaction:
+    replaced_by: "by op"
+    per_op:
+      lock: "GAP: set_piece_status(piece, locked=true) or revise_room(lock=[piece])"
+      unlock: "GAP: set_piece_status(piece, locked=false)"
+      set_acquisition: "GAP: set_piece_status(piece, owned=true|false)"
+      replace_product: "swap_piece(piece, mode) / piece_alternatives(piece, mode)"
+      remove_need: "remove_piece(piece | piece_kind)"
+    fields:
+      selector: "piece: bundle ordinal"
+      need_selector: "piece_kind (remove by kind)"
+      acquisition: set_piece_status(owned)
+      replacement.mode: "swap_piece(mode=alternative|cheaper|more_expensive|semantic)"
+      replacement.semantic_intent: swap_piece(semantic_text)
+    read_by: [tc:_bundle_refine, tc:_set_status, tc:_set_acquisition, tc:_replace_product, tc:_remove_need]
+
+  add_room_to_cart:
+    replaced_by: add_room_to_cart()
+    read_by: [tc:_run_decided_turn -> tc:_room_into_cart, tc:_room_goes_with]
+
+  room_done:
+    replaced_by: finish_room()
+    read_by: [tc:_finish_room]
+
+  anchor_picks:
+    replaced_by: plan_room(around_picks=true)
+    read_by: [tc:_save_room_anchors, tc:_room_kind_from_picks]
+
+  switch_reply_language:
+    replaced_by: "GAP: no planned tool. Options: supervisor output field, or a common set_reply_language(language) tool."
+    read_by: [tc:_with_language, tc:_turn_language]
+
+  writes_arabizi:
+    replaced_by: "GAP: same as switch_reply_language (or a code detector in prepare_turn)"
+    read_by: [tc:_with_language, tc:_turn_language]
+
+  fit_with_piece:
+    replaced_by: check_fit(with_piece=ProductReference)
+    read_by: [tc:_design_advice]
+
+  policy_question:
+    replaced_by: lookup_store_policy(question)
+    read_by: [tc:_execute -> tc:_store_info]
+
+  then_search:
+    replaced_by: "lookup_store_policy(then_search) kept as a one-tap chip, or hand_back(next=sara) to run it in the same turn"
+    read_by: [next_step._after_store_answer]
+
+  only_asked_type:
+    replaced_by: "search_products(only_asked_type) / refine_search(only_asked_type) / more_options(only_asked_type)"
+    read_by: [tc:_new_search, tc:_refine, tc:_continue_search]
+
+  design_anchor:
+    replaced_by: plan_room(anchor)
+    fields: {reference: anchor.product, acquisition: anchor.owned, quantity: anchor.quantity}
+    read_by: [tc:_resolve_anchor, anchor_reference]
+
+  search_request:
+    replaced_by: dropped
+    reason: "Sara's search_products arguments are the structured interpretation built from the whole thread, so no restatement string is needed. Kept only if search_products falls back to QueryUnderstandingService.interpret(text) (plan risk)."
+    read_by: [tc:_new_search]
+
+  cart_question:
+    replaced_by: get_cart()
+    note: "Also tells code the turn is about the cart (no narrow-or-more step)."
+    read_by: [next_step]
+
+  fit_question:
+    replaced_by: check_fit(product | on_screen)
+    read_by: [tc:_design_advice]
+
+  design_question:
+    replaced_by: design_advice(question)
+    read_by: [tc:_design_advice]
+
+  design_scope:
+    replaced_by: supervisor
+    per_value:
+      whole_room: "nora plan_room / revise_room (code decides which from state)"
+      complement: "salman show_what_goes_with (no room) / nora finishing_touches (room on record)"
+      advice: "nora design_advice / check_fit"
+    read_by: [tc:_design_handoff]
+
+  design_revision:
+    replaced_by: revise_room
+    fields:
+      removed_needs: revise_room(remove_kinds)
+      preserved_items: revise_room(keep=[pieces])
+    read_by: [tc:_revision_constraints]
+
+  follow_up_policy:
+    replaced_by: dropped
+    reason: "The agent writes its own reply; whether it may ask is the tool result's reply_brief (follow_up allowed/forbidden) plus the one-question reply check."
+    read_by: [tc:_ground, tc:_with_taste_question, tc:_with_room_check]
+
+  follow_up_goal:
+    replaced_by: dropped
+    reason: "Same as follow_up_policy; seats/taste follow-ups are decided in code (taste_question.py) and sent as app_question."
+    read_by: [tc:_with_taste_question]
+
+state_proposal:   # CustomerStateProposal, mapped by proposal_mapping.map_proposals
+  customer_preferences:
+    replaced_by: "GAP: no planned tool for a durable stated preference (\"I usually prefer Modern\"). Option: search_products(remember_taste) or a common remember_preference tool."
+    read_by: [proposal_mapping._customer_state]
+  shopping_room:
+    replaced_by: "answer_opening(room) / search_products(shopping_room)"
+    read_by: [tc:_with_room_said, proposal_mapping]
+  head_count:
+    replaced_by: answer_opening(people)
+    read_by: [tc:_ask_or_search -> ProductBriefs.typed_head_count]
+  room_type:
+    replaced_by: plan_room(room_type)   # free words, e.g. "home office"
+    read_by: [proposal_mapping]
+  clear_room_type:
+    replaced_by: revise_room(clear=[room_type])
+  room_geometry:
+    replaced_by: "plan_room(room_size) / check_fit(room_size)"
+    note: "Also the bed room-check answer (tc:_answers_room_check)."
+    read_by: [proposal_mapping, _gives_room_size]
+  clear_room_geometry:
+    replaced_by: revise_room(clear=[room_size])
+  room_budget:
+    replaced_by: plan_room(budget)
+    fields: {min_amount: budget.min, max_amount: budget.max, currency: "budget.currency (code fills the store's single currency)"}
+    read_by: [proposal_mapping._budget, tc:_room_budget_in_store_currency]
+  clear_room_budget:
+    replaced_by: revise_room(clear=[budget])
+  design_preferences:
+    replaced_by: plan_room(colours, styles)
+  regular_seating_count:
+    replaced_by: plan_room(people)
+  clear_regular_seating_count:
+    replaced_by: revise_room(clear=[people])
+  room_kind:
+    replaced_by: plan_room(room_kind)   # registry key, validated in code
+    read_by: [tc:_with_room_pieces]
+  room_pieces:
+    replaced_by: plan_room(pieces)      # registry keys, validated in code
+    read_by: [tc:_with_room_pieces]
+  room_pieces_default:
+    replaced_by: plan_room(pieces_default=true)
+  room_skip_questions:
+    replaced_by: plan_room(skip_questions=true)
+  palette_left_to_us:
+    replaced_by: plan_room(palette_left_to_us=true)
+
+commerce_proposal:   # DerivedCommerceProposal
+  purchase_stage:
+    replaced_by: dropped
+    reason: "Stored and shown back to the decision model only (agent_view); no behaviour reads it."
+  clear_purchase_stage:
+    replaced_by: dropped
+    reason: "As purchase_stage."
+
+# ════════════════════════════════════════════════════════════════════════════
+# Screen actions (taps): run in code by screen_action, then the owner agent
+# gets one respond() call. Owner follows agent_persona today where it decides.
+# ════════════════════════════════════════════════════════════════════════════
+screen_actions:
+
+  bundle_action:   # app/schemas/bundle_action.py, tc:_run_bundle_action
+    list_alternatives: {owner: nora, tool: piece_alternatives, today: tc:_list_alternatives}
+    swap:              {owner: nora, tool: swap_piece, today: tc:_apply_swap}
+    remove:            {owner: nora, tool: remove_piece, today: tc:_bundle_refine (REMOVE_NEED)}
+    finishing_touches: {owner: nora, tool: finishing_touches, today: tc:_show_finishing}
+    add_piece:         {owner: nora, tool: show_finishing_piece, today: "tc:_show_finishing(piece_key)"}
+    add_to_room:       {owner: nora, tool: add_to_room, today: tc:_add_to_room}
+    swap_confirm:      {owner: salman, tool: answer_budget_offer(answer=yes), today: tc:_confirm_swap (+ _confirm_addition)}
+    swap_decline:      {owner: salman, tool: answer_budget_offer(answer=no), today: tc:_decline_swap}
+    swap_keep_original: {owner: salman, tool: answer_budget_offer(answer=keep_original), today: tc:_keep_original_room}
+    swap_alternatives: {owner: salman, tool: answer_budget_offer(answer=cheaper), today: tc:_swap_alternatives (+ _cheaper_addition)}
+    swap_dismiss:      {owner: salman, tool: answer_budget_offer(answer=dismiss), today: tc:_dismiss_swap}
+    add_to_cart:       {owner: salman, tool: add_room_to_cart, today: tc:_add_room_to_cart}
+    room_done:         {owner: salman, tool: finish_room, today: tc:_finish_room}
+    note: "Package edits (list_alternatives, swap, remove, add_piece, finishing_touches, add_to_room) are refused once the room is in the cart (questions_expired) - stays in code."
+
+  search_action:   # app/schemas/search_action.py, tc:_run_search_action / _apply_search_action
+    more_options:  {owner: sara, tool: more_options, today: tc:_rerun_excluding}
+    exclude:       {owner: sara, tool: exclude_product, today: tc:_rerun_excluding}
+    brief:         {owner: sara, tool: answer_opening, today: tc:_answer_brief, note: "Also Narrow down's answers and a room-less opening; questions_expired on a stale card."}
+    drop:          {owner: sara, tool: drop_facet, today: tc:_drop_facet}
+    combination:
+      choose:      {owner: sara, tool: choose_combination, today: tc:_choose_combination, note: "then what goes with it - salman show_what_goes_with in the same tap turn"}
+      dismiss:     {owner: sara, tool: "more_combinations(op=dismiss)", today: tc:_more_combinations}
+      more:        {owner: sara, tool: "more_combinations(op=more)", today: tc:_more_combinations}
+    taste:         {owner: sara, tool: answer_taste, today: tc:_answer_taste}
+
+  product_action:  # app/schemas/product_action.py, tc:_run_product_action
+    goes_with:      {owner: salman, tool: show_what_goes_with, today: tc:_goes_with}
+    compare:        {owner: sara, tool: "compare_products(picks)", today: tc:_compare}
+    compare_cards:  {owner: sara, tool: "compare_products(cards, similar_only)", today: tc:_compare_cards}
+    companion:      {owner: salman, tool: show_companion, today: tc:_show_companion}
+    more_like_this: {owner: sara, tool: more_like_this, today: tc:_more_like_this}
+    add_to_cart:    {owner: salman, tool: "add_to_cart then show_what_goes_with", today: "tc:_added_from_offer -> tc:_goes_with", note: "The Yes of the consider offer; persona today is Salman (focus + companions)."}
+
+  support_action:  # app/schemas/support.py
+    contact_support: {owner: faysal, tool: offer_support, today: tc:_run_support_action}
+
+  outside_chat:    # not turns; stay as routes
+    picks_endpoint: {owner: code, tool: "none (POST /v1/picks select/deselect/like/quantity)", today: routes/picks.py}
+    comparisons_endpoint: {owner: code, tool: "none (POST /v1/comparisons)", today: routes/comparisons.py}
+    support_handover: {owner: code, tool: "none (handover transcript route); hand_over_to_human only flags it", today: routes/support.py, support_handover.py}

@@ -84,9 +84,16 @@ class CommerceTaxonomy:
         only answer to it: nothing here permits a category and subcategory that
         do not belong together (CLAUDE.md 14.4).
         """
-        return any(
-            subcategory in self.subcategories(category) for category in self.categories
-        )
+        return any(subcategory in self.subcategories(category) for category in self.categories)
+
+    def category_of(self, subcategory: str) -> str | None:
+        """The one category an approved subcategory sits under, or None.
+
+        Every subcategory belongs to exactly one category in the registry, so
+        this is a lookup, never an inference: an agent naming the product type
+        is told its family by the registry instead of guessing it - a
+        nightstand stands beside a bed, but it is filed under tables."""
+        return next((c for c in self.categories if subcategory in self.subcategories(c)), None)
 
     def is_pair(self, category: str, subcategory: str) -> bool:
         """True only when the subcategory is approved UNDER that category."""
@@ -99,9 +106,7 @@ class CommerceTaxonomy:
         if allowed is None:
             raise UnknownCommerceCategoryError(category=category)
         if subcategory not in allowed:
-            raise UnknownCommerceSubcategoryError(
-                category=category, subcategory=subcategory
-            )
+            raise UnknownCommerceSubcategoryError(category=category, subcategory=subcategory)
 
     def __repr__(self) -> str:
         return (
@@ -142,9 +147,7 @@ def _parse(document: Any, *, source: str) -> CommerceTaxonomy:
             )
         seen: set[str] = set()
         for raw_subcategory in raw_subcategories:
-            subcategory = _require_slug(
-                raw_subcategory, field=f"{source}: {category} subcategory"
-            )
+            subcategory = _require_slug(raw_subcategory, field=f"{source}: {category} subcategory")
             if subcategory in seen:
                 raise TaxonomyConfigurationError(
                     detail=f"{source}: {category!r} lists {subcategory!r} more than once"

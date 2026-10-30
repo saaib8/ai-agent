@@ -23,13 +23,17 @@ from collections.abc import Sequence
 from app.core.exceptions import InvalidRequestError
 from app.schemas.agent_state import (
     MAX_EARLIER_LISTS,
+    MAX_GOAL_MEMBERS,
+    MAX_GOALS,
     ActiveSearchState,
     AgentStateV1,
     BundleItemState,
     BundleItemStatus,
     CartQuantity,
     CustomerPreferenceState,
-    DerivedCommerceState,
+    GoalKind,
+    GoalState,
+    GoalStatus,
     PresentedList,
     ProductInteractionState,
     RoomDesignNeedState,
@@ -44,7 +48,6 @@ from app.schemas.agent_updates import (
     BundleOperation,
     ClearSemanticIntent,
     CustomerPreferenceUpdate,
-    DerivedCommerceUpdate,
     DesignNeedRefinement,
     ProductInteractionUpdate,
     RefineBundle,
@@ -59,9 +62,10 @@ from app.schemas.agent_updates import (
     SetSemanticIntent,
     apply_items,
 )
-from app.schemas.geometry import REPEATABLE_ROLES, RoomGeometry
-from app.schemas.product_brief import PendingBrief, ProductBriefState
-from app.schemas.query import ConstraintSemantics
+from app.schemas.design import MAX_NEXT_SIZES, MAX_PLACEMENTS, NextSize, Placement
+from app.schemas.geometry import MAX_WALL_NOTES, REPEATABLE_ROLES, RoomGeometry, WallNote
+from app.schemas.query import ConstraintSemantics, ConstraintStrength, SemanticPreference
+from app.taxonomy.attributes import AttributeFamily
 
 NO_RESULTS_REVISION = 0
 """A search exists but nothing has been presented for it yet."""
@@ -73,23 +77,18 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
     search = _search(state.active_search, update.active_search)
     interaction = _interaction(state.product_interaction, update.product_interaction)
     room = _room(state.room_project, update.room_project)
-    commerce = _commerce(state.derived_commerce, update.derived_commerce)
 
     return AgentStateV1(
         customer_preferences=customer,
         active_search=search,
         product_interaction=interaction,
         room_project=room,
-        derived_commerce=commerce,
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
         finished_rooms=state.finished_rooms,
+        goals=state.goals,
         room_swap=state.room_swap,
-        product_brief=state.product_brief,
         reply_language=state.reply_language,
-        taste=state.taste,
-        room_check=state.room_check,
-        inside_sizes=state.inside_sizes,
     )
 
 
@@ -159,53 +158,12 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
             compared_search_revision=interaction.compared_search_revision,
         ),
         room_project=state.room_project,
-        derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
         finished_rooms=state.finished_rooms,
+        goals=state.goals,
         room_swap=state.room_swap,
-        product_brief=state.product_brief,
         reply_language=state.reply_language,
-        taste=state.taste,
-        room_check=state.room_check,
-        inside_sizes=state.inside_sizes,
-    )
-
-
-def record_brief(
-    state: AgentStateV1, pending: PendingBrief | None, *, shown: str | None = None
-) -> AgentStateV1:
-    """The state with a card of questions on screen - or with none, once answered.
-
-    **Application-owned**, like the committed results beside it: which card
-    was shown, and what its keys mean, is a fact about what the application
-    drew, so no update contract can set it and no model output can mark a card
-    shown or answered (CLAUDE.md 10.4).
-    """
-    current = state.product_brief
-    names = current.shown
-    if shown is not None and shown not in names:
-        names = (*names, shown)
-    return AgentStateV1(
-        customer_preferences=state.customer_preferences,
-        active_search=state.active_search,
-        product_interaction=state.product_interaction,
-        room_project=state.room_project,
-        derived_commerce=state.derived_commerce,
-        seating_offer=state.seating_offer,
-        swap_budget_offer=state.swap_budget_offer,
-        finished_rooms=state.finished_rooms,
-        room_swap=state.room_swap,
-        product_brief=ProductBriefState(
-            shown=names,
-            cards=max(current.cards, pending.card) if pending is not None else current.cards,
-            pending=pending,
-            asked=current.asked,
-        ),
-        reply_language=state.reply_language,
-        taste=state.taste,
-        room_check=state.room_check,
-        inside_sizes=state.inside_sizes,
     )
 
 
@@ -265,17 +223,147 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         active_search=state.active_search,
         product_interaction=state.product_interaction,
         room_project=state.room_project,
-        derived_commerce=state.derived_commerce,
         seating_offer=state.seating_offer,
         swap_budget_offer=state.swap_budget_offer,
         finished_rooms=state.finished_rooms,
+        goals=state.goals,
         room_swap=state.room_swap,
-        product_brief=state.product_brief,
         reply_language=state.reply_language,
-        taste=state.taste,
-        room_check=state.room_check,
-        inside_sizes=state.inside_sizes,
     )
+
+
+def remember_taste(
+    state: AgentStateV1,
+    *,
+    colours: Sequence[str] = (),
+    styles: Sequence[str] = (),
+    avoid_colours: Sequence[str] = (),
+    avoid_styles: Sequence[str] = (),
+    forget: Sequence[str] = (),
+    room: str | None = None,
+) -> AgentStateV1:
+    """Record the taste a customer said, in approved values.
+
+    What they like and what they would rather avoid exclude each other: a
+    colour liked now leaves the avoid list, and one avoided now leaves what
+    they like. `forget` takes a value off both. All of it orders results and
+    none of it filters (CLAUDE.md 12.4).
+    """
+    current = state.customer_preferences
+    liked = {AttributeFamily.COLOR: tuple(colours), AttributeFamily.STYLE: tuple(styles)}
+    dropped = set(forget) | set(avoid_colours) | set(avoid_styles)
+    kept = tuple(
+        p
+        for p in current.semantic_preferences
+        if (p.canonical_value or p.raw_value) not in dropped | set(liked[p.family])
+    )
+    added = tuple(
+        SemanticPreference(
+            family=family,
+            raw_value=value,
+            canonical_value=value,
+            strength=ConstraintStrength.PREFERRED,
+        )
+        for family, values in liked.items()
+        for value in dict.fromkeys(values)
+    )
+    unliked = set(forget) | set(colours) | set(styles)
+
+    def avoided(before: tuple[str, ...], now: Sequence[str]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(v for v in (*before, *now) if v not in unliked))
+
+    search = state.active_search
+    if search is not None:
+        # A value no longer liked stops leaning the search on screen as well.
+        search = search.model_copy(
+            update={
+                "semantic_preferences": tuple(
+                    p
+                    for p in search.semantic_preferences
+                    if (p.canonical_value or p.raw_value) not in dropped
+                )
+            }
+        )
+    return state.model_copy(
+        update={
+            "active_search": search,
+            "customer_preferences": CustomerPreferenceState(
+                semantic_preferences=kept + added,
+                measurements_by_type=current.measurements_by_type,
+                room=room or current.room,
+                avoid_colours=avoided(current.avoid_colours, avoid_colours),
+                avoid_styles=avoided(current.avoid_styles, avoid_styles),
+            ),
+        }
+    )
+
+
+def set_goal(
+    state: AgentStateV1,
+    *,
+    goal: int | None,
+    kind: GoalKind | None = None,
+    summary: str | None = None,
+    seats: int | None = None,
+    for_kind: str | None = None,
+    room: str | None = None,
+    status: GoalStatus | None = None,
+) -> tuple[AgentStateV1, GoalState]:
+    """Open a goal (no number), or revise or close the one numbered.
+
+    The agent's to call; what it changes is only what it says. A new goal
+    takes the next number; the oldest closed goals make room when the list is
+    full - an open goal is never dropped to make room.
+    """
+    goals = list(state.goals)
+    if goal is None:
+        if kind is None or not summary:
+            raise InvalidRequestError(reason="a new goal needs its kind and summary")
+        number = max((g.goal for g in goals), default=0) + 1
+        made = GoalState(
+            goal=number,
+            kind=kind,
+            summary=summary,
+            seats=seats,
+            for_kind=for_kind,
+            room=room,
+        )
+        goals.append(made)
+        while len(goals) > MAX_GOALS:
+            closed = next((g for g in goals if g.status is not GoalStatus.OPEN), None)
+            if closed is None:
+                raise InvalidRequestError(reason="too many open goals")
+            goals.remove(closed)
+    else:
+        current = next((g for g in goals if g.goal == goal), None)
+        if current is None:
+            raise InvalidRequestError(reason="no such goal")
+        changes: dict[str, object] = {}
+        for name, value in (
+            ("kind", kind),
+            ("summary", summary),
+            ("seats", seats),
+            ("for_kind", for_kind),
+            ("room", room),
+            ("status", status),
+        ):
+            if value is not None:
+                changes[name] = value
+        made = GoalState.model_validate({**current.model_dump(), **changes})
+        goals[goals.index(current)] = made
+    return state.model_copy(update={"goals": tuple(goals)}), made
+
+
+def add_to_goal(state: AgentStateV1, goal: int, product_ids: Sequence[int]) -> AgentStateV1:
+    """Products chosen for a goal join it; an unknown or closed goal is refused."""
+    current = next((g for g in state.goals if g.goal == goal), None)
+    if current is None or current.status is not GoalStatus.OPEN:
+        raise InvalidRequestError(reason="no open goal with that number")
+    members = tuple(dict.fromkeys((*current.members, *product_ids)))[-MAX_GOAL_MEMBERS:]
+    goals = tuple(
+        g.model_copy(update={"members": members}) if g.goal == goal else g for g in state.goals
+    )
+    return state.model_copy(update={"goals": goals})
 
 
 # ── per-domain transitions ──────────────────────────────────────────────────
@@ -351,9 +439,7 @@ def _interaction(
         selected_product_ids=selected,
         cart_quantities=cart_quantities(current.cart_quantities, update.cart_quantities, selected),
         liked_product_ids=apply_items(current.liked_product_ids, update.liked_product_ids),
-        explored_product_ids=apply_items(
-            current.explored_product_ids, update.explored_product_ids
-        ),
+        explored_product_ids=apply_items(current.explored_product_ids, update.explored_product_ids),
         # Replaced wholesale, never merged: a comparison is one table, and two
         # sets of columns at once would restore the ambiguity it exists to
         # remove. `None` keeps the table already on screen.
@@ -414,6 +500,44 @@ def _room(
             else (update.regular_seating_count or base.regular_seating_count)
         ),
         design_preferences=apply_items(base.design_preferences, update.design_preferences),
+        layout=_merged_layout(base, update),
+        next_sizes=() if _another_room(base, update) else base.next_sizes,
+        placements=() if _another_room(base, update) else base.placements,
+        palette=(
+            update.palette
+            if update.palette is not None
+            else ()
+            if _another_room(base, update)
+            else base.palette
+        ),
+        palette_styles=(
+            update.palette_styles
+            if update.palette_styles is not None
+            else ()
+            if _another_room(base, update)
+            else base.palette_styles
+        ),
+        purpose=(
+            update.purpose
+            if update.purpose is not None
+            else None
+            if _another_room(base, update)
+            else base.purpose
+        ),
+        layout_idea=(
+            update.layout_idea
+            if update.layout_idea is not None
+            else None
+            if _another_room(base, update)
+            else base.layout_idea
+        ),
+        size_declined=(
+            update.size_declined
+            if update.size_declined is not None
+            else False
+            if _another_room(base, update)
+            else base.size_declined
+        ),
         seats_carried=(
             update.seats_carried
             if update.seats_carried is not None
@@ -423,6 +547,28 @@ def _room(
         ),
         **_room_pieces(base, update),
         **_bundle(base, update.bundle_operations),
+    )
+
+
+def _merged_layout(base: RoomProjectState, update: RoomProjectUpdate) -> tuple[WallNote, ...]:
+    """The walls they described, a wall said again replacing itself by name;
+    another room starts with none."""
+    kept = () if _another_room(base, update) else base.layout
+    named = {w.wall.casefold(): w for w in update.walls}
+    merged = [_wall(w, named.pop(w.wall.casefold(), None)) for w in kept]
+    merged.extend(named.values())
+    return tuple(merged[-MAX_WALL_NOTES:])
+
+
+def _wall(kept: WallNote, said: WallNote | None) -> WallNote:
+    """A wall said again keeps what it does not restate."""
+    if said is None:
+        return kept
+    return WallNote(
+        wall=said.wall,
+        length_cm=said.length_cm if said.length_cm is not None else kept.length_cm,
+        features=tuple(dict.fromkeys((*kept.features, *said.features))),
+        note=said.note or kept.note,
     )
 
 
@@ -444,6 +590,10 @@ MAX_KEPT_PER_ROLE = 4
 from turn to turn cannot grow the list without end."""
 
 
+def _named(label: str | None) -> str | None:
+    return label.casefold().strip() if label is not None else None
+
+
 def _merged_geometry(
     current: RoomGeometry | None, update: RoomGeometry | None
 ) -> RoomGeometry | None:
@@ -452,12 +602,13 @@ def _merged_geometry(
     other one is kept, so a door said after a wall does not lose the wall."""
     if update is None or current is None:
         return update or current
-    replaced = {(m.role, m.label) for m in update.measurements}
+    # A wall is the same wall however its name is cased, as in the layout.
+    replaced = {(m.role, _named(m.label)) for m in update.measurements}
     singular = {m.role for m in update.measurements if m.role not in REPEATABLE_ROLES}
     kept = tuple(
         m
         for m in current.measurements
-        if (m.role, m.label) not in replaced and m.role not in singular
+        if (m.role, _named(m.label)) not in replaced and m.role not in singular
     )
     merged = (*kept, *update.measurements)
     newest = tuple(
@@ -470,22 +621,16 @@ def _merged_geometry(
 
 
 def _room_pieces(base: RoomProjectState, update: RoomProjectUpdate) -> dict[str, object]:
-    """The room's kind, its chosen pieces and the questions already asked.
+    """The room's kind and its chosen pieces.
 
     A different kind starts over: the pieces chosen for a bedroom say nothing
-    about a living room, and neither does having asked about one.
+    about a living room.
     """
     kind = update.room_kind or base.room_kind
     fresh = kind != base.room_kind
-    asked = () if fresh else base.questions_asked
-    if update.question_asked is not None and update.question_asked not in asked:
-        asked = (*asked, update.question_asked)
     return {
         "room_kind": kind,
         "pieces": (update.pieces if update.pieces is not None or fresh else base.pieces),
-        "questions_asked": asked,
-        "questions_done": update.questions_done or (not fresh and base.questions_done),
-        "palette_left_to_us": update.palette_left_to_us or (not fresh and base.palette_left_to_us),
         "anchor_product_ids": (
             update.anchor_product_ids
             if update.anchor_product_ids is not None
@@ -493,7 +638,6 @@ def _room_pieces(base: RoomProjectState, update: RoomProjectUpdate) -> dict[str,
         ),
         # The room in their cart stays so until it is finished (CLAUDE.md 36).
         "in_cart": not fresh and base.in_cart,
-        "finishing_order": () if fresh else base.finishing_order,
         "picks_before_cart": () if fresh else base.picks_before_cart,
     }
 
@@ -615,6 +759,8 @@ def _refined_need(
         update["semantic_intent"] = None
     elif change.semantic_intent is not None:
         update["semantic_intent"] = change.semantic_intent
+    if change.design is not None:
+        update["design"] = change.design.model_dump()
     return RoomDesignNeedState.model_validate({**need.model_dump(), **update})
 
 
@@ -649,6 +795,7 @@ def _replanned(
             quantity=spec.quantity,
             seating_capacity=spec.seating_capacity,
             semantic_intent=spec.semantic_intent,
+            design=spec.design,
         )
         for offset, spec in enumerate(operation.needs)
     ]
@@ -662,7 +809,16 @@ def _replanned(
             raise InvalidRequestError(reason="a preserved bundle line must already exist")
         if existing.status is not BundleItemStatus.LOCKED:
             raise InvalidRequestError(reason="only a locked bundle line may be preserved")
-        kept.append(existing.model_copy(update={"need_id": None}))
+        position = dict(operation.locked_needs).get(entry.line_id)
+        if position is not None and position >= len(needs):
+            raise InvalidRequestError(
+                reason="a locked line names a design need the plan does not have"
+            )
+        kept.append(
+            existing.model_copy(
+                update={"need_id": needs[position].need_id if position is not None else None}
+            )
+        )
 
     created: list[BundleItemState] = []
     for offset, spec in enumerate(operation.added):
@@ -747,15 +903,72 @@ def _edited(item: BundleItemState, operation: BundleOperation) -> BundleItemStat
             return item
 
 
-def _commerce(
-    current: DerivedCommerceState, update: DerivedCommerceUpdate | None
-) -> DerivedCommerceState:
-    if update is None:
-        return current
-    if update.clear_purchase_stage:
-        return DerivedCommerceState(purchase_stage=None)
-    return DerivedCommerceState(
-        purchase_stage=update.purchase_stage
-        if update.purchase_stage is not None
-        else current.purchase_stage
+def remember_next_sizes(state: AgentStateV1, sizes: Sequence[NextSize]) -> AgentStateV1:
+    """The designer's sizes for the room's next pieces, replacing her last
+    ones kind by kind - so a later search at her size reads them, never a
+    figure an agent made up."""
+    if not sizes:
+        return state
+    room = state.room_project or RoomProjectState()
+    named = {(n.commerce_category, n.commerce_subcategory): n for n in sizes}
+    kept = [
+        n for n in room.next_sizes if (n.commerce_category, n.commerce_subcategory) not in named
+    ]
+    merged = (*kept, *named.values())[-MAX_NEXT_SIZES:]
+    return state.model_copy(update={"room_project": room.model_copy(update={"next_sizes": merged})})
+
+
+def designer_size(
+    room: RoomProjectState | None, category: str, subcategory: str | None
+) -> NextSize | None:
+    """The designer's saved size for this kind: its own type first, else one
+    she gave for the whole family."""
+    if room is None:
+        return None
+    exact = [
+        n
+        for n in room.next_sizes
+        if n.commerce_subcategory == subcategory and n.commerce_category == category
+    ]
+    family = [
+        n
+        for n in room.next_sizes
+        if n.commerce_subcategory is None and n.commerce_category == category
+    ]
+    found = exact or family
+    return found[-1] if found else None
+
+
+def keep_screen(staged: AgentStateV1, before: AgentStateV1) -> AgentStateV1:
+    """The turn's work with the screen as it was before it: the list on
+    screen, its earlier lists and the search behind it go back, so "the second
+    one" still means the card the customer can see. Everything else the turn
+    did - the cart, likes, goals, the room - stays."""
+    shown = before.product_interaction
+    interaction = staged.product_interaction.model_copy(
+        update={
+            "presented_product_ids": shown.presented_product_ids,
+            "presented_search_revision": shown.presented_search_revision,
+            "earlier_lists": shown.earlier_lists,
+            "focused_product_id": shown.focused_product_id,
+        }
     )
+    return staged.model_copy(
+        update={
+            "product_interaction": interaction,
+            "active_search": before.active_search,
+            "room_swap": before.room_swap,
+        }
+    )
+
+
+def remember_placements(state: AgentStateV1, placements: Sequence[Placement]) -> AgentStateV1:
+    """Nora's placements for the room on record, replacing her last ones piece
+    by piece. Never creates a room: a placement belongs to the room it is for."""
+    room = state.room_project
+    if room is None or not placements:
+        return state
+    named = {p.piece.casefold(): p for p in placements}
+    kept = [p for p in room.placements if p.piece.casefold() not in named]
+    merged = (*kept, *named.values())[-MAX_PLACEMENTS:]
+    return state.model_copy(update={"room_project": room.model_copy(update={"placements": merged})})

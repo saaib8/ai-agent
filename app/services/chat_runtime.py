@@ -1,132 +1,108 @@
-"""One chat exchange, as five ordered phases.
+"""One chat exchange: load, let the team work, check, persist, answer.
 
-These are the phases the runtime graph sequences. They live here rather than
-inside graph nodes so that orchestration stays a thin wrapper: a node calls one
-of these and stores its result, and every rule about *what* a phase does is
-ordinary application code that can be tested without a graph (CLAUDE.md 18).
-
-The order is the safety property, not a style preference.
+The order is the safety property:
 
 **The client's revision is checked before anything is spent.** A request whose
-screen is already stale is refused before the decision model, the design
-specialist, PostgreSQL, the index and the response model - all of which cost
-money and none of which would be answering the question the customer thought
-they were asking.
+screen is already stale is refused before any model or catalog call.
 
-**Nothing persists until the customer-visible reply exists.** A turn that
-failed before producing one leaves the stored session exactly as it was, so a
-retry starts from the same place rather than from a half-applied state.
+**The agents work on a staged copy.** Nothing they do is stored until their
+reply has passed its checks; a turn that fails leaves the stored session
+exactly as it was, and the customer gets the fixed reply.
 
 **Nothing is returned that could not be persisted.** If another request
-committed first, the reply computed here describes a session that no longer
-exists; it is discarded rather than handed back as though it had taken effect.
+committed first, this reply describes a session that no longer exists and is
+discarded rather than handed back as though it took effect.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 
+from app.agents.context import ToolContext
+from app.agents.deadline import within
+from app.agents.reply import customer_response, fallback, repaired, unsupported_figure
+from app.agents.screen import presentation as build_presentation
+from app.agents.screen_actions import tap_of
+from app.agents.services import AgentServices
+from app.agents.team import AgentTeam, TeamResult, TeamTurn
+from app.agents.tools.common import RespondArgs
+from app.agents.trace import TraceEvent, TurnTrace
 from app.core.config import SessionSettings
-from app.core.exceptions import SessionConflictError
+from app.core.exceptions import (
+    AgentTurnIncompleteError,
+    IntegrationUnavailableError,
+    LLMResponseInvalidError,
+    SessionConflictError,
+)
 from app.core.logging import get_logger
 from app.repositories.sessions import SessionStore
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1
-from app.schemas.agent_turn import (
-    CustomerResponse,
-    CustomerTurnInput,
-    CustomerTurnResult,
-)
-from app.schemas.bundle_presentation import GroundedBundlePresentation
+from app.schemas.agent_turn import CustomerResponse
 from app.schemas.cart import CartView
-from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse
-from app.schemas.conversation import (
-    ConversationContext,
-    ConversationMessage,
-    ConversationRole,
-)
-from app.schemas.grounding import GroundedProduct
+from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse, WorkflowView
+from app.schemas.conversation import ConversationContext, ConversationMessage, ConversationRole
 from app.schemas.language import ReplyLanguage
-from app.schemas.next_step import NextStepKind
 from app.schemas.picks import LikedView, PickView
-from app.schemas.product_brief import ProductBrief
-from app.schemas.reply_choice import ReplyChoice
+from app.schemas.product import ProductCandidate
 from app.schemas.retailer import RetailerContext
-from app.schemas.session import SessionEnvelope, new_session
-from app.services.agent_persona import speaker
-from app.services.bundle_presentation import build_bundle_presentation
+from app.services.agent_state import keep_screen
 from app.services.card_labels import card_labels
-from app.services.cart import cart_offer_choices
-from app.services.cross_sell import companion_choices
-from app.services.next_step import asks_its_own_question
-from app.services.product_brief import opening_asked, record_asked
-from app.services.product_display import ProductDisplayWords, displayed
-from app.services.response_generator import CustomerResponseGenerator
-from app.services.response_view import best_match_first, offers_what_goes_with
-from app.services.room_cart import room_in_cart
-from app.services.room_presentation import (
-    finishing_choices,
-    piece_picker,
-    room_answer_choices,
-    room_card_choices,
-    swap_offer_choices,
-)
-from app.services.seating_presentation import (
-    present_chosen_seating,
-    present_seating_solution,
-    seating_choices,
-)
-from app.services.shopper_cart import with_shopper_cart
-from app.services.support_channels import channels_for
-from app.services.turn_coordinator import CustomerTurnCoordinator
-from app.taxonomy.briefs import BriefQuestionKind
+from app.services.history_summary import Fold, HistorySummarizer, next_history
+from app.services.product_display import displayed
+from app.services.product_interaction import build_liked, build_picks
+from app.services.session_turns import LoadedSession, load_for_turn
 
 logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class LoadedSession:
-    """The session this turn runs against, and the revision it started from.
+class AgentTurn:
+    """What the team's turn left: the state to store and the reply to show."""
 
-    `loaded_revision` is kept beside the envelope because it is what the write
-    must compare against later. Reading it back off the envelope at save time
-    would compare against whatever the envelope had become.
-    """
-
-    envelope: SessionEnvelope
-    loaded_revision: int
-    existed: bool
+    state: AgentStateV1
+    response: CustomerResponse
+    presentation: ChatPresentation | None
+    owner: AgentPersona
+    handoffs: tuple[AgentPersona, ...]
+    language: ReplyLanguage
+    picks: tuple[PickView, ...] | None
+    liked: tuple[LikedView, ...] | None
+    cart: CartView | None
+    fold: Fold | None = None
+    """The oldest messages' summary, made beside the agents, for the save to
+    apply - None when nothing was due or none could be made."""
 
 
 class ChatRuntime:
-    """The phases of one exchange. Sequencing belongs to the caller."""
-
     def __init__(
         self,
-        coordinator: CustomerTurnCoordinator,
-        responses: CustomerResponseGenerator,
+        team: AgentTeam,
+        services: AgentServices,
         sessions: SessionStore,
         settings: SessionSettings,
-        display: ProductDisplayWords | None = None,
         *,
-        support_agent: bool = False,
+        deadline_s: float = 40.0,
+        room_deadline_s: float | None = None,
+        arabic_replies: bool = False,
+        summarizer: HistorySummarizer | None = None,
     ) -> None:
-        self._support_agent = support_agent
-        """Whether a turn about the store is shown as Faysal."""
-        self._coordinator = coordinator
-        self._responses = responses
+        self._deadline_s = deadline_s
+        self._room_deadline_s = room_deadline_s if room_deadline_s is not None else deadline_s
+        self._team = team
+        self._services = services
+        self.on_event: Callable[[TraceEvent], None] | None = None
+        """Told of each step as the agents take it - set by a streaming
+        caller, None for an ordinary request."""
         self._sessions = sessions
         self._settings = settings
-        self._display = display
-        """The cards' text, ready to show in the reply's language; None sends
-        none."""
-
-    # ── 1. load ─────────────────────────────────────────────────────────────
+        self._arabic = arabic_replies
+        self._summarizer = summarizer
 
     async def load_session(self, request: ChatRequest) -> LoadedSession:
-        """The stored conversation, or a fresh one, with staleness settled."""
         return await load_for_turn(
             self._sessions,
             store_id=request.store_id,
@@ -134,226 +110,230 @@ class ChatRuntime:
             expected_revision=request.expected_session_revision,
         )
 
-    # ── 2. run the turn ─────────────────────────────────────────────────────
-
-    def turn_input(
+    async def run_agents(
         self, request: ChatRequest, context: RetailerContext, loaded: LoadedSession
-    ) -> CustomerTurnInput:
-        """What the domain engine is given.
+    ) -> AgentTurn:
+        """The team's turn - and, beside it, the summary of the oldest
+        messages when the conversation is about to outgrow its window."""
+        if self._summarizer is None:
+            return await self._team_turn(request, context, loaded)
+        folding = asyncio.create_task(self._summarizer.fold(loaded.envelope.conversation))
+        try:
+            turn = await self._team_turn(request, context, loaded)
+        except BaseException:
+            folding.cancel()
+            if folding.done() and not folding.cancelled():
+                folding.exception()  # retrieved, so a failed fold is not reported twice
+            raise
+        return replace(turn, fold=await self._collected(folding))
 
-        The current message travels beside the history and never inside it, so
-        nothing downstream has to work out which entry is "now". The stored
-        conversation is prior turns only, which is exactly what was persisted.
-        """
-        return CustomerTurnInput(
+    async def _collected(self, folding: asyncio.Task[Fold | None]) -> Fold | None:
+        """The summary, if it is ready soon after the team: the customer never
+        waits on it for more than `summary.wait_after_turn_s`. Not ready, it is
+        cancelled and the next turn folds instead - nothing is dropped meanwhile."""
+        try:
+            return await asyncio.wait_for(folding, self._settings.summary.wait_after_turn_s)
+        except TimeoutError:
+            logger.info("history_summary_skipped", reason="not ready after the turn")
+            return None
+        except Exception:
+            # A defect in a side step must not discard a reply the agents have
+            # finished: logged in full, and the turn is saved unfolded.
+            logger.exception("history_summary_defect")
+            return None
+
+    async def _team_turn(
+        self, request: ChatRequest, context: RetailerContext, loaded: LoadedSession
+    ) -> AgentTurn:
+        pre_turn = loaded.envelope.state
+        language = self._language(request, pre_turn)
+        tap = tap_of(request)
+        turn = TeamTurn(
             message=request.message,
             conversation=loaded.envelope.conversation,
-            state=loaded.envelope.state,
-            context=context,
-            bundle_action=request.bundle_action,
-            search_action=request.search_action,
-            product_action=request.product_action,
-            support_action=request.support_action,
-            # Read by the coordinator only where Arabic replies are on.
-            locale=request.locale,
-        )
-
-    async def run_turn(self, turn: CustomerTurnInput) -> CustomerTurnResult:
-        """One call to the coordinator, which remains the domain engine.
-
-        No branching on the decision, no action routing, no direct call to any
-        specialist. Everything a turn does was settled in M11 and M12; this is
-        the runtime handing it a request (M13 22).
-        """
-        return await self._coordinator.run(turn)
-
-    # ── 3. render ───────────────────────────────────────────────────────────
-
-    async def render(self, turn: CustomerTurnInput, result: CustomerTurnResult) -> CustomerResponse:
-        """The customer-visible reply, by the existing response architecture.
-
-        Always produces one: the generator routes the turn itself and words
-        deterministic branches without a model, falling back to fixed wording
-        when a provider call fails. What comes back is therefore what actually
-        happened, which is what gets persisted (M13 12).
-        """
-        return await self._responses.generate(turn, result)
-
-    @staticmethod
-    def presentation(
-        result: CustomerTurnResult, response: CustomerResponse | None = None
-    ) -> ChatPresentation | None:
-        """What the client draws, built from verified facts only.
-
-        Assembled from the turn's own grounding and the room the optimiser
-        chose. The response model may contribute validated text answers to its
-        own question; it never creates product facts or executable actions.
-        """
-        grounding = result.grounding
-        products: tuple[GroundedProduct, ...] = ()
-        source: Literal["search", "selection", "liked", "detail"] | None = None
-        if grounding.search is not None:
-            products, source = grounding.search.products, "search"
-        elif grounding.selection is not None:
-            products = grounding.selection.products
-            source = "liked" if grounding.selection.liked else "selection"
-        elif grounding.product_detail is not None:
-            products, source = (grounding.product_detail,), "detail"
-
-        seating_bundles = (
-            present_seating_solution(result.seating_solution)
-            if result.seating_solution is not None
-            else ()
-        )
-        # A room question's chips are its real answers, keyed off the kind the
-        # application asked - never derived from the reply's wording, so the chip
-        # and the question can never drift apart.
-        # Chips are worded in the turn's language; which chips, and what they
-        # do, never depend on it.
-        language = result.reply_language or ReplyLanguage.EN
-        if result.cart_offer is not None:
-            choices = cart_offer_choices(result.cart_offer, language)
-        elif result.swap_offer is not None:
-            choices = swap_offer_choices(result.swap_offer, language)
-        elif result.room_question is not None:
-            choices = room_answer_choices(result.room_question, language)
-        elif result.seating_solution is not None:
-            choices = seating_choices(result.seating_solution, language)
-        elif result.finishing_pieces:
-            choices = finishing_choices(
-                result.finishing_pieces, language, you_choose=result.room_addition is None
-            )
-        elif result.room_cards:
-            choices = room_card_choices(result.room_cards, language)
-        else:
-            choices = companion_choices(
-                result.companions, offering=offers_what_goes_with(result), language=language
-            )
-        authored = response.choices if response is not None else ()
-        model_choices = tuple(ReplyChoice(label=c.label, value=c.value) for c in authored)
-        if not choices and result.next_step is not None:
-            # The chips answer the question the reply closes on (CLAUDE.md
-            # 10.2): the reply's own, when it asked one and supplied its
-            # answers. A question of its own without answers is almost always
-            # the step's question reworded ("Which do you prefer?"), so the
-            # step's chips answer it - never a dead end.
-            own = response is not None and asks_its_own_question(
-                response, result.next_step, language
-            )
-            choices = (
-                model_choices
-                if own
-                and model_choices
-                and result.next_step.kind not in _TASTE_STEPS
-                and result.next_step.kind not in _ACTION_STEPS
-                else result.next_step.chips
-            )
-        elif not choices and not (
-            result.room_question
-            or result.product_brief
-            or result.swap_offer
-            or result.seating_solution
-            or result.companions
-        ):
-            # No application control is on screen: the reply's question - its
-            # own, or the clarification it carries - with the answers supplied.
-            choices = model_choices
-        results = source == "search" and bool(products)
-        built = ChatPresentation(
-            products=products,
-            product_source=source if products else None,
-            # Search results are committed as the list on screen, so the state
-            # after the turn names their revision.
-            list_revision=(
-                result.state.product_interaction.presented_search_revision if results else None
+            state=pre_turn,
+            context=ToolContext(
+                retailer=context,
+                services=self._services,
+                language=language,
+                tap_cards=tap.cards if tap is not None else (),
+                tapped=tap.event.button if tap is not None else None,
+                customer_said=request.message if tap is None else None,
             ),
-            best_match=results and best_match_first(result),
-            brief=_as_asked(result, response),
-            narrow_down=result.narrow_down,
-            brief_chips=result.brief_chips,
-            # A chosen combination is drawn whole; its main piece alone above
-            # it would read as the only thing they chose.
-            focus=result.focus if result.chosen_seating is None else None,
-            comparison=grounding.comparison,
-            room=_as_in_cart(build_bundle_presentation(result), result),
-            room_in_cart=room_in_cart(result.state) is not None,
-            seating_bundles=seating_bundles,
-            chosen_seating=(
-                present_chosen_seating(result.chosen_seating)
-                if result.chosen_seating is not None
-                else None
-            ),
-            choices=choices,
-            piece_picker=(
-                piece_picker(result.room_question, language)
-                if result.room_question is not None
-                else None
-            ),
-            swap_context=result.swap_context,
-            room_addition=result.room_addition,
-            # The store's own support, drawn from its contacts - never from
-            # the reply, which only points to it.
-            support=(
-                channels_for(
-                    grounding.support.contacts, language, handover=grounding.support.handover
-                )
-                if grounding.support is not None
-                else None
-            ),
+            tap=tap,
         )
-        return None if built.is_empty() else built
-
-    # ── 4. persist ──────────────────────────────────────────────────────────
-
-    def next_conversation(
-        self, loaded: LoadedSession, request: ChatRequest, response: CustomerResponse
-    ) -> ConversationContext:
-        """Prior history plus this completed exchange, bounded.
-
-        Language only. Products, prices, rooms and preferences are already
-        recorded as structured facts in the agent state or read fresh from the
-        catalog; repeating them here would create a second, ageing copy that a
-        later turn could read instead of the truth (M13 11).
-
-        The assistant's turn is stored **as the customer received it**, prose
-        and follow-up together. They are separate fields so a client can render
-        the question its own way; they are one utterance to the person reading
-        them, and storing only the prose left the next turn unable to see the
-        question it was being answered.
-
-        That is what made "yes please" meaningless: the agent had offered to
-        look for rugs, the offer was not in the history, and it asked what kind
-        of furniture they wanted (M16 5).
-        """
-        said = response.message
-        if response.follow_up_question:
-            said = f"{said} {response.follow_up_question}"
-        messages = (
-            *loaded.envelope.conversation.messages,
-            ConversationMessage(role=ConversationRole.USER, content=request.message),
-            ConversationMessage(role=ConversationRole.ASSISTANT, content=said),
+        trace = TurnTrace(
+            store_id=context.store_id, path="tap" if tap else "typed", listener=self.on_event
         )
-        return ConversationContext(
-            messages=trim_history(messages, self._settings.max_history_messages)
+        try:
+            # One deadline for all of it: the agents, and the reply's rewrite.
+            result, reply = await within(
+                self._worked(turn, trace),
+                short_s=self._deadline_s,
+                long_s=self._room_deadline_s,
+                extended=lambda: trace.room_design,
+            )
+        except TimeoutError:
+            trace.finish(owner=None, fallback="turn deadline")
+            return await self._finished(
+                pre_turn,
+                pre_turn,
+                fallback(language.value),
+                None,
+                AgentPersona.SARA,
+                (),
+                language,
+                context,
+            )
+        except LLMResponseInvalidError as exc:
+            # Our failure to understand, never the customer's: the fixed
+            # reply, with nothing the turn did kept.
+            trace.finish(owner=None, fallback=str(exc.context.get("reason", exc.code)))
+            return await self._finished(
+                pre_turn,
+                pre_turn,
+                fallback(language.value),
+                None,
+                AgentPersona.SARA,
+                (),
+                language,
+                context,
+            )
+        state = result.work.staged
+        if reply.show == "unchanged":
+            # Nothing this turn found was right to show: the screen, and what
+            # "the second one" means, stay as they were.
+            state = keep_screen(state, pre_turn)
+        # The language is the replying agent's call - the language it answered
+        # in - and the cards and buttons follow it; a store's locale still wins.
+        if self._arabic and request.locale is None and reply.language is not None:
+            language = ReplyLanguage(reply.language)
+        if self._arabic and language is not pre_turn.reply_language:
+            state = state.model_copy(update={"reply_language": language})
+        trace.finish(owner=result.owner.value)
+        screen = build_presentation(
+            result.work, state, customer_response(reply).choices, language, reply.show
+        )
+        return await self._finished(
+            pre_turn, state, reply, screen, result.owner, result.handoffs, language, context
         )
 
-    async def persist(
+    async def _worked(self, turn: TeamTurn, trace: TurnTrace) -> tuple[TeamResult, RespondArgs]:
+        result = await self._team.run(turn, trace)
+        return result, await self._checked(turn, result, trace)
+
+    async def _checked(self, turn: TeamTurn, result: TeamResult, trace: TurnTrace) -> RespondArgs:
+        """The reply, once its figures are all ones a tool or the customer gave."""
+        said = (turn.tap.said,) if turn.tap is not None else ()
+        broke = unsupported_figure(
+            result.reply,
+            result.work,
+            turn.message,
+            turn.conversation,
+            result.views,
+            also_said=said,
+        )
+        if broke is None:
+            return result.reply
+        logger.warning("agent_reply_figure_unsupported", field=broke.field)
+        try:
+            corrected = await self._team.rewrite(
+                turn,
+                result,
+                f"the figure {broke.value} came from no tool and no customer message - write "
+                "figures as {key} from figures, and work out any sum with calculate",
+                trace,
+            )
+        except (AgentTurnIncompleteError, LLMResponseInvalidError):
+            # The rewrite itself failed: what the agents did still stands, and
+            # the first reply loses only its unsupported sentences.
+            corrected = result.reply
+        again = unsupported_figure(
+            corrected,
+            result.work,
+            turn.message,
+            turn.conversation,
+            result.views,
+            also_said=said,
+        )
+        if again is None:
+            return corrected
+        # Twice a figure nobody gave: the sentences that carry one go, and
+        # the rest of the reply stands. Only a reply with nothing left ends on
+        # the fixed words.
+        kept = repaired(
+            corrected,
+            result.work,
+            turn.message,
+            turn.conversation,
+            result.views,
+            also_said=said,
+        )
+        if kept is None:
+            raise LLMResponseInvalidError(reason="reply figures unsupported twice")
+        logger.warning("agent_reply_figure_sentences_dropped", field=again.field)
+        return kept
+
+    async def _finished(
         self,
-        request: ChatRequest,
-        loaded: LoadedSession,
-        result: CustomerTurnResult,
-        response: CustomerResponse,
-    ) -> int:
-        """Commit the turn, or refuse because someone else already did.
+        pre_turn: AgentStateV1,
+        state: AgentStateV1,
+        reply: RespondArgs,
+        screen: ChatPresentation | None,
+        owner: AgentPersona,
+        handoffs: tuple[AgentPersona, ...],
+        language: ReplyLanguage,
+        context: RetailerContext,
+    ) -> AgentTurn:
+        picks, liked, cart = await self._tray(pre_turn, state, language, context)
+        return AgentTurn(
+            state=state,
+            response=customer_response(reply),
+            presentation=screen,
+            owner=owner,
+            handoffs=handoffs,
+            language=language,
+            picks=picks,
+            liked=liked,
+            cart=cart,
+        )
 
-        The comparison is against the revision this request *loaded*, so two
-        requests that both read revision 4 cannot both write revision 5. The
-        loser raises rather than returning: its answer resolved the customer's
-        words against a room that has since changed (M13 18, 33).
-        """
+    async def _tray(
+        self,
+        pre_turn: AgentStateV1,
+        state: AgentStateV1,
+        language: ReplyLanguage,
+        context: RetailerContext,
+    ) -> tuple[tuple[PickView, ...] | None, tuple[LikedView, ...] | None, CartView | None]:
+        """The picks, likes and cart after the turn, from one fresh read."""
+        interaction = state.product_interaction
+        wanted = tuple(
+            dict.fromkeys((*interaction.selected_product_ids, *interaction.liked_product_ids))
+        )
+        products: tuple[ProductCandidate, ...] = ()
+        if wanted:
+            try:
+                products = tuple(await self._services.hydration.hydrate_ids(wanted, context))
+            except IntegrationUnavailableError:
+                return None, None, None
+        display = self._services.display
+        picks = build_picks(state, products, display, language)
+        liked = build_liked(state, products, display, language)
+        cart = None
+        if self._services.cart is not None:
+            try:
+                cart = await self._services.cart.view(
+                    state, picks, context, language, before=pre_turn
+                )
+            except IntegrationUnavailableError:
+                cart = None
+        return picks, liked, cart
+
+    async def persist(self, request: ChatRequest, loaded: LoadedSession, turn: AgentTurn) -> int:
+        """Commit the turn, or refuse because another request already did."""
         envelope = loaded.envelope.advanced(
-            state=record_asked(result.state, _opening(result, response)),
-            conversation=self.next_conversation(loaded, request, response),
+            state=turn.state,
+            conversation=self.next_conversation(loaded, request, turn),
         )
         committed = await self._sessions.save_if_revision(
             request.store_id,
@@ -363,300 +343,73 @@ class ChatRuntime:
         )
         if not committed:
             raise SessionConflictError(
-                expected_revision=loaded.loaded_revision,
-                store_id=request.store_id,
+                expected_revision=loaded.loaded_revision, store_id=request.store_id
             )
         return envelope.session_revision
 
-    # ── 5. answer ───────────────────────────────────────────────────────────
+    def next_conversation(
+        self, loaded: LoadedSession, request: ChatRequest, turn: AgentTurn
+    ) -> ConversationContext:
+        said = turn.response.message
+        if turn.response.follow_up_question:
+            said = f"{said} {turn.response.follow_up_question}"
+        tap = tap_of(request)
+        customer = (
+            tap.recorded if tap is not None and not request.message.strip() else request.message
+        )
+        exchange = (
+            ConversationMessage(role=ConversationRole.USER, content=customer or "…"),
+            ConversationMessage(
+                role=ConversationRole.ASSISTANT,
+                content=said,
+                agent=turn.owner,
+                choices=offered(turn),
+            ),
+        )
+        return next_history(loaded.envelope.conversation, exchange, self._settings, turn.fold)
 
-    def public_response(
-        self,
-        request: ChatRequest,
-        revision: int,
-        response: CustomerResponse,
-        presentation: ChatPresentation | None,
-        picks: tuple[PickView, ...] | None = None,
-        reply_language: ReplyLanguage | None = None,
-        liked: tuple[LikedView, ...] | None = None,
-        agent: AgentPersona = AgentPersona.SARA,
-        cart: CartView | None = None,
-    ) -> ChatResponse:
+    def public_response(self, request: ChatRequest, revision: int, turn: AgentTurn) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
             session_revision=revision,
-            response=response,
-            presentation=self._displayed(presentation, reply_language or ReplyLanguage.EN),
-            picks=picks,
-            liked=liked,
-            cart=cart,
-            reply_language=reply_language,
-            agent=agent,
-            labels=card_labels(reply_language),
+            response=turn.response,
+            presentation=displayed(turn.presentation, self._services.display, turn.language),
+            picks=turn.picks,
+            liked=turn.liked,
+            cart=turn.cart,
+            reply_language=turn.language if self._arabic else None,
+            agent=turn.owner,
+            workflow=WorkflowView(owner=turn.owner, handoffs=turn.handoffs),
+            labels=card_labels(turn.language if self._arabic else None),
         )
-
-    def _displayed(
-        self, presentation: ChatPresentation | None, language: ReplyLanguage
-    ) -> ChatPresentation | None:
-        """Every product and room piece with its text in the reply's language."""
-        return displayed(presentation, self._display, language)
-
-    def agent(self, turn: CustomerTurnInput, result: CustomerTurnResult) -> AgentPersona:
-        """Which assistant the reply is shown as - a label decided in code."""
-        return speaker(turn, result, support_agent=self._support_agent)
-
-    # ── the whole exchange ──────────────────────────────────────────────────
 
     async def run(self, request: ChatRequest, context: RetailerContext) -> ChatResponse:
-        """All five phases in order.
-
-        The sequence a graph node-walk performs, kept here so the same ordering
-        is exercised whether or not a graph is driving it.
-        """
+        """Every phase, in order - the sequence the graph walks."""
         started = time.perf_counter()
         loaded = await self.load_session(request)
-
-        turn = self.turn_input(request, context, loaded)
-        result = await self.run_turn(turn)
-        response = await self.render(turn, result)
-        presentation = self.presentation(result, response)
-
-        revision = await self.persist(request, loaded, result, response)
-        self._log(request, loaded, revision, presentation, started)
-        return self.public_response(
-            request,
-            revision,
-            response,
-            presentation,
-            result.picks,
-            result.reply_language,
-            result.liked,
-            self.agent(turn, result),
-            result.cart,
-        )
-
-    @staticmethod
-    def _log(
-        request: ChatRequest,
-        loaded: LoadedSession,
-        revision: int,
-        presentation: ChatPresentation | None,
-        started: float,
-    ) -> None:
-        """Shape of the exchange only.
-
-        No message, no history, no reply prose, no product names or prices, no
-        session payload. `session_id` is the customer's conversation handle and
-        is not logged; `store_id` and the revisions describe the turn without
-        naming anyone (CLAUDE.md 22).
-        """
+        turn = await self.run_agents(request, context, loaded)
+        revision = await self.persist(request, loaded, turn)
         logger.info(
             "chat_turn_completed",
             store_id=request.store_id,
             revision_before=loaded.loaded_revision,
             revision_after=revision,
-            new_session=not loaded.existed,
-            had_expected_revision=request.expected_session_revision is not None,
-            product_count=len(presentation.products) if presentation else 0,
-            has_comparison=bool(presentation and presentation.comparison is not None),
-            has_room=bool(presentation and presentation.room is not None),
+            owner=turn.owner.value,
+            handoffs=[a.value for a in turn.handoffs],
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
+        return self.public_response(request, revision, turn)
+
+    def _language(self, request: ChatRequest, state: AgentStateV1) -> ReplyLanguage:
+        if not self._arabic:
+            return ReplyLanguage.EN
+        return request.locale or state.reply_language or ReplyLanguage.EN
 
 
-async def with_the_shoppers_cart(
-    sessions: SessionStore, store_id: int, session_id: str, envelope: SessionEnvelope
-) -> SessionEnvelope:
-    """`envelope` holding its shopper's cart: the cart is the shopper's, not
-    this chat's, so a new chat starts with it and a resumed one sees what
-    another chat changed (CLAUDE.md 36). Unchanged where the id names no
-    shopper or none is kept."""
-    cart = await sessions.shopper_cart(store_id, session_id)
-    state = with_shopper_cart(
-        envelope.state, cart, new_conversation=envelope.session_revision == 0
-    )
-    return envelope if state is envelope.state else envelope.model_copy(update={"state": state})
-
-
-async def load_for_turn(
-    sessions: SessionStore,
-    *,
-    store_id: int,
-    session_id: str,
-    expected_revision: int | None,
-) -> LoadedSession:
-    """The stored conversation, or a fresh one, with staleness settled.
-
-    Shared by every kind of turn - a message, or a pick in a photo - so a stale
-    screen is refused by one rule wherever the customer acted on it.
-
-    An absent key is a new conversation **only when the client is not
-    claiming to have seen one**. A request carrying `expected_session_
-    revision=5` against a key that has expired is not starting fresh: its
-    screen shows products from a session that no longer exists, and
-    creating an empty one would then resolve "the second one" against
-    nothing (M13 34).
-    """
-    stored = await sessions.load(store_id, session_id)
-    envelope = await with_the_shoppers_cart(
-        sessions, store_id, session_id, stored if stored is not None else new_session()
-    )
-
-    if expected_revision is not None and expected_revision != envelope.session_revision:
-        logger.info(
-            "session_revision_stale",
-            store_id=store_id,
-            expected_revision=expected_revision,
-            actual_revision=envelope.session_revision,
-            existed=stored is not None,
-        )
-        raise SessionConflictError(
-            expected_revision=expected_revision,
-            actual_revision=envelope.session_revision,
-        )
-
-    return LoadedSession(
-        envelope=envelope,
-        loaded_revision=envelope.session_revision,
-        existed=stored is not None,
-    )
-
-
-async def commit_state(
-    sessions: SessionStore,
-    *,
-    store_id: int,
-    session_id: str,
-    loaded: LoadedSession,
-    state: AgentStateV1,
-) -> int:
-    """Persist a change of state that was not an exchange of words.
-
-    For a tick: the customer picked a product on screen, which the agent must
-    know about, but nothing was said and nothing is answered, so the
-    conversation is left exactly as it was. Compare-and-set against the loaded
-    revision, like every write (M13 18, 33).
-    """
-    envelope = loaded.envelope.advanced(state=state, conversation=loaded.envelope.conversation)
-    committed = await sessions.save_if_revision(
-        store_id, session_id, expected_revision=loaded.loaded_revision, envelope=envelope
-    )
-    if not committed:
-        raise SessionConflictError(expected_revision=loaded.loaded_revision, store_id=store_id)
-    return envelope.session_revision
-
-
-async def commit_exchange(
-    sessions: SessionStore,
-    settings: SessionSettings,
-    *,
-    store_id: int,
-    session_id: str,
-    loaded: LoadedSession,
-    state: AgentStateV1,
-    customer_said: str,
-    response: CustomerResponse,
-) -> int:
-    """Persist one exchange that did not come from a typed message.
-
-    For turns driven by a tap rather than words - a pick in a photo, a request
-    to see the room. The history is language only, so the customer's side is
-    recorded as the words `customer_said`, and the assistant's exactly as it
-    was shown, prose and follow-up together.
-
-    Compare-and-set against the revision this turn loaded: a turn that lost
-    the race raises rather than returning a reply about a session that has
-    moved on (M13 18, 33).
-    """
-    said = response.message
-    if response.follow_up_question:
-        said = f"{said} {response.follow_up_question}"
-    messages = (
-        *loaded.envelope.conversation.messages,
-        ConversationMessage(role=ConversationRole.USER, content=customer_said),
-        ConversationMessage(role=ConversationRole.ASSISTANT, content=said),
-    )
-    envelope = loaded.envelope.advanced(
-        state=state,
-        conversation=ConversationContext(
-            messages=trim_history(messages, settings.max_history_messages)
-        ),
-    )
-    committed = await sessions.save_if_revision(
-        store_id, session_id, expected_revision=loaded.loaded_revision, envelope=envelope
-    )
-    if not committed:
-        raise SessionConflictError(expected_revision=loaded.loaded_revision, store_id=store_id)
-    return envelope.session_revision
-
-
-def trim_history(
-    messages: tuple[ConversationMessage, ...], limit: int
-) -> tuple[ConversationMessage, ...]:
-    """The most recent messages, in order, without orphaning a reply.
-
-    Trimmed **after** the completed turn is appended, so the exchange that just
-    happened is always kept. Oldest first out, which is what keeps the window
-    chronological.
-
-    Whole exchanges where possible: a history beginning with an assistant
-    message would show an answer to a question nobody can see, so the orphan is
-    dropped too. That can leave the window one under the limit, which is the
-    right trade - the bound is a ceiling, not a quota to fill.
-    """
-    if len(messages) <= limit:
-        return messages
-    kept = messages[len(messages) - limit :]
-    if kept and kept[0].role is ConversationRole.ASSISTANT:
-        kept = kept[1:]
-    return kept
-
-
-def _opening(
-    result: CustomerTurnResult, response: CustomerResponse | None
-) -> tuple[BriefQuestionKind, ...]:
-    """The questions the opening on screen asks, if one is."""
-    if result.product_brief is None:
-        return ()
-    return opening_asked(
-        result.product_brief,
-        result.state.product_brief.pending,
-        response.asked if response is not None else (),
-    )
-
-
-def _as_asked(result: CustomerTurnResult, response: CustomerResponse | None) -> ProductBrief | None:
-    """The card to draw: an opening shows only the questions its reply asks."""
-    card = result.product_brief
-    asked = _opening(result, response)
-    if card is None or not asked:
-        return card
-    return card.model_copy(
-        update={"questions": tuple(q for q in card.questions if q.kind in asked)}
-    )
-
-
-_TASTE_STEPS = frozenset(
-    {
-        NextStepKind.TASTE_WHICH,
-        NextStepKind.TASTE_STYLE,
-        NextStepKind.TASTE_AVOID,
-        NextStepKind.TASTE_SPACE,
-    }
-)
-"""A taste question's chips carry the answer's key: never replaced by chips
-the reply wrote, which a tap would send back as words."""
-
-_ACTION_STEPS = frozenset({NextStepKind.AFTER_ROOM})
-"""A next step whose chips carry an action - a room's "Add a finishing touch"
-opens its finishing touches directly - so chips the reply wrote, which a tap
-would send back as words for a model to route, never replace them."""
-
-
-def _as_in_cart(
-    room: GroundedBundlePresentation | None, result: CustomerTurnResult
-) -> GroundedBundlePresentation | None:
-    """The room package, marked as a record once the room is in their cart."""
-    if room is None or room_in_cart(result.state) is None:
-        return room
-    return room.model_copy(update={"in_cart": True})
+def offered(turn: AgentTurn) -> tuple[str, ...]:
+    """Every answer the customer could tap beside the reply, by its label: the
+    reply's chips, and the store's support buttons code drew."""
+    support = turn.presentation.support if turn.presentation is not None else None
+    channels = support.channels if support is not None else ()
+    labels = (*(c.label for c in turn.response.choices), *(c.label for c in channels))
+    return tuple(dict.fromkeys(labels))[:12]

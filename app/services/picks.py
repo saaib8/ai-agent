@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from app.agents.operations.rooms import open_room_options
 from app.core.config import CustomerAgentSettings
 from app.core.exceptions import (
     CartQuantityError,
@@ -61,11 +62,11 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.session import new_session
 from app.services.agent_state import apply_update
 from app.services.cart import CartService
-from app.services.chat_runtime import commit_state, load_for_turn, with_the_shoppers_cart
 from app.services.hydration import ProductHydrationService
 from app.services.product_display import ProductDisplayWords
 from app.services.product_interaction import build_liked, build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
+from app.services.session_turns import commit_state, load_for_turn, with_the_shoppers_cart
 from app.services.store_cart_check import StoreCartCheck
 
 logger = get_logger(__name__)
@@ -178,9 +179,7 @@ class PicksRuntime:
             session_revision=revision,
             picks=picks,
             liked=(
-                build_liked(final, products, self._display, language)
-                if self._buttons
-                else None
+                build_liked(final, products, self._display, language) if self._buttons else None
             ),
             goes_with=goes_with,
             cart=(
@@ -254,6 +253,15 @@ class PicksRuntime:
             return await self._liked_changed(request.action, state, context)
         match request.action:
             case SelectPickAction(ordinal=ordinal, list_revision=list_revision):
+                if open_room_options(state) is not None:
+                    # A room piece's options go into the room, not the cart.
+                    raise PickUnavailableError(
+                        public_message=(
+                            "These are options for a piece of your room - choose "
+                            "'Use this' to put one in the room."
+                        ),
+                        reason="room_option",
+                    )
                 outcome = await self._references.resolve_on_list(
                     ordinal, list_revision, state, context
                 )
@@ -310,9 +318,7 @@ class PicksRuntime:
             case CartRefusalReason.OUT_OF_STOCK:
                 message = "That product is out of stock."
             case CartRefusalReason.OVER_LIMIT:
-                message = (
-                    f"The store takes up to {refused.max_quantity} of this product per order."
-                )
+                message = f"The store takes up to {refused.max_quantity} of this product per order."
             case CartRefusalReason.NOT_IN_STORE:
                 message = "That product can't be added to this store's cart."
             case CartRefusalReason.UNCONFIRMED:

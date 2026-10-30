@@ -1,0 +1,1476 @@
+# Behaviour inventory: the guard against losing behaviour when
+# app/services/turn_coordinator.py (CustomerTurnCoordinator) and the decision
+# model (customer_decision.py, CustomerAgentDecision) are replaced by the
+# LangGraph supervisor and four agents (plan: no-i-want-it-quizzical-firefly.md).
+#
+# One entry per behaviour. Fields:
+#   id         stable key, <owner>.<area>.<name>
+#   behaviour  one plain sentence with a customer example
+#   source     claude: CLAUDE.md sections; cases: evals/conversations/cases.yaml ids
+#   owner      sara | nora | salman | faysal | code
+#   tool       the planned tool (plan table) that carries it; "post-step" for the
+#              settle chain; "screen_action" for a tap run in code; GAP:<name>
+#              where no planned tool fits (listed again at the end)
+#   lives_in   code | tool_result | prompt | reply_check (a list where it is split)
+#   today      where it is implemented now (file:method); tc = app/services/turn_coordinator.py
+#
+# Every case id in cases.yaml appears in at least one entry's source.cases;
+# `not_fallback` (checked by almost every case) is covered by code.fail.not_understood.
+
+version: 1
+generated: 2026-10-21
+coordinator_lines: 10121
+
+# ════════════════════════════════════════════════════════════════════════════
+# SARA - shopping
+# ════════════════════════════════════════════════════════════════════════════
+sara:
+
+  # ── new search: interpretation and validation ─────────────────────────────
+  - id: sara.search.interpret
+    behaviour: "Customer language becomes a validated category/subcategory with seats, price, colour, style - \"I need a couch for four\" -> seating/sofa, capacity 4."
+    source:
+      claude: ["3.3", "12.1", "14.2", "14.3", "14.4", "26"]
+      cases: [control_sofas_under_5000, control_coffee_table, language_movie_nights, language_beside_the_bed, language_beside_the_sofa, language_majlis_seating, A6_majlis_40_people]
+    owner: sara
+    tool: search_products
+    lives_in: [prompt, code]
+    today: [tc:_new_search, tc:_interpret, query_understanding.py:QueryUnderstandingService.interpret, taxonomy validation in query_understanding._resolve]
+
+  - id: sara.search.restated_across_turns
+    behaviour: "A request finished across turns is searched whole - \"how big a rug under a sofa?\" then \"do you have anything like that?\" searches rugs."
+    source: {claude: ["14.2"], cases: []}
+    owner: sara
+    tool: search_products
+    lives_in: [prompt]
+    today: [decision.search_request, tc:_new_search]
+
+  - id: sara.search.ambiguous_type
+    behaviour: "A request naming only a family is never guessed into a subcategory - \"show me a table\" gets the kind asked (card) or one clarification."
+    source: {claude: ["14.5", "10.4"], cases: [card_table_asks_kind_first, show_me_tables_whole_category, show_me_tables_whole_category_skipped, opening_vague_table_asks_kind]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_interpretation_clarification, product_brief.ProductBriefs (kind question)]
+
+  - id: sara.search.unsupported_requirement
+    behaviour: "A requirement the catalog cannot enforce is said plainly, never silently dropped - \"only leather sofas, nothing else\"."
+    source: {claude: ["12.3", "5"], cases: [material_insisted_is_said]}
+    owner: sara
+    tool: search_products
+    lives_in: [tool_result, prompt]
+    today: [tc:_new_search -> _interpretation_clarification, query_understanding UnsupportedRequirement]
+
+  - id: sara.search.material_wish_ranks
+    behaviour: "A material they simply want ranks by meaning and is never claimed - \"velvet sofas\" orders by similarity, reply never says \"made of velvet\"."
+    source: {claude: ["12.3", "10.4"], cases: [material_wanted_ranks, answer_card_side_table_wood, answer_card_rug_wool_grey, answer_card_typed_wool]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, prompt, reply_check]
+    today: [semantic_text in query_understanding, semantic_ranking.py, response prompt rule]
+
+  - id: sara.search.colour_style_preference
+    behaviour: "Ordinary colour/style words rank, never filter - \"beige sofas\" puts beige first and still shows others; \"dark grey\" is Grey and Charcoal."
+    source: {claude: ["12.4", "16.1"], cases: [dark_grey_followup, darker_new_search, warm_tones_new_search, cozy_lighter_followup, cheapest_beige]}
+    owner: sara
+    tool: search_products
+    lives_in: [prompt, code]
+    today: [query_understanding constrained schema, search_pipeline ordering, semantic_ranking.py]
+
+  - id: sara.search.colour_style_strict
+    behaviour: "Strict language filters exactly; colours are alternatives, styles all required - \"only red or beige\" shows beige, \"only dark grey, nothing else\" shows only those."
+    source: {claude: ["12.4"], cases: [B1_only_beige_followup, only_dark_grey_new_search, carry_mixed_red_or_beige]}
+    owner: sara
+    tool: search_products
+    lives_in: [code]
+    today: [search_pipeline / repositories attribute filter]
+
+  - id: sara.search.strict_lifted_last_resort
+    behaviour: "A strict colour/style nothing matches is lifted only as a last resort and said plainly - \"only purple sofas\" shows the closest and admits none match."
+    source: {claude: ["12.4", "13.5"], cases: [only_reddish_followup, only_red_new_search, only_purple_followup, carry_style_unmatched, type_change_red_tables]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result, reply_check]
+    today: [tc:_search_despite, relaxation.py color/style last resort]
+
+  - id: sara.search.match_count_disclosed
+    behaviour: "The reply is told how many cards carry the asked colour/style and never describes zero as that colour."
+    source: {claude: ["12.4"], cases: []}
+    owner: sara
+    tool: search_products
+    lives_in: [tool_result, reply_check]
+    today: [grounding_builder / response_view match counts, response_validation]
+
+  - id: sara.search.money_parsing
+    behaviour: "\"5,000\", \"5k\" and \"20%\" are read without guessing; \"2,5\" or \"5.000\" is refused."
+    source: {claude: ["21.1"], cases: [B3_price_with_comma, B4_price_shorthand]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [app/core/numbers.py, proposal_mapping._budget]
+
+  - id: sara.search.explicit_sort
+    behaviour: "An explicit sort is obeyed exactly and never interleaved - \"the cheapest sofas\" really starts at the cheapest."
+    source: {claude: ["16.1", "10.12"], cases: [cheapest_beige, mix_cheapest_is_cheapest, carry_budget_through_type_change]}
+    owner: sara
+    tool: search_products
+    lives_in: [code]
+    today: [search_pipeline, semantic_ranking ordering]
+
+  - id: sara.search.relaxation
+    behaviour: "The exact request runs first; only then price widens 10%/20%, seats by one, allowlisted widths 5%/10%, approximate before preferred, locked never."
+    source: {claude: ["13", "13.1", "13.4", "13.5", "15.2"], cases: []}
+    owner: code
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [relaxation.py (via tc:_run_search -> search_pipeline)]
+
+  - id: sara.search.set_aside_offer
+    behaviour: "Nothing found offers the most useful requirement to set aside as a yes-question - \"sofas start at 990 SAR - shall I show the most affordable?\"."
+    source: {claude: ["13.5"], cases: [zero_results_offers_next_step, zero_results_budget_next_step, size_pair_bed_nothing_exact_offers_the_rest, ar_zero_result_seats_in_words]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result, prompt]
+    today: [relaxation.py set_aside, grounding_builder]
+
+  - id: sara.search.set_aside_yes
+    behaviour: "A yes to that offer re-runs the search without that requirement - \"yes, show me\" after the 990 offer."
+    source: {claude: ["13.5"], cases: []}
+    owner: sara
+    tool: refine_search
+    lives_in: [prompt]
+    today: [decision model reads history -> REFINE_SEARCH, tc:_refine]
+
+  - id: sara.search.page_size
+    behaviour: "A search shows the configured page (five by default), closest first."
+    source: {claude: ["10.4"], cases: [show_me_five_a_page]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [settings discovery limit, tc:_run_search]
+
+  - id: sara.search.semantic_only_when_useful
+    behaviour: "Pinecone ranks only eligible ids and only when wording or preferences call for it; failures fall back to deterministic order."
+    source: {claude: ["11", "16", "16.1"], cases: []}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [semantic_ranking.py, search_pipeline]
+
+  - id: sara.search.closest_type_instead
+    behaviour: "A type the store carries none of offers the closest stocked type instead of a dead end."
+    source: {claude: ["27.1"], cases: []}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_offer_closest_type_instead, closest_type.py]
+
+  # ── sizes ─────────────────────────────────────────────────────────────────
+  - id: sara.size.by_floor_side
+    behaviour: "A floor measurement is read as the longer or shorter side, never a column - a sofa's width is its long side, a bed's width its short side."
+    source: {claude: ["15.1"], cases: [size_bed_width_is_its_short_side, size_sofa_width_is_its_long_side, size_dining_table_length_is_its_long_side, size_wardrobe_depth_is_its_short_side]}
+    owner: sara
+    tool: search_products
+    lives_in: [prompt, code]
+    today: [query_understanding DimensionRole/side, dimensions.py, dimension_semantics_v1]
+
+  - id: sara.size.pair
+    behaviour: "A pair of sides matches within 5% either way round; with no unit it is centimetres - \"a sofa 220 x 90\"."
+    source: {claude: ["15.1"], cases: [size_pair_sofa, size_pair_office_table, size_pair_without_a_unit_is_centimetres, size_pair_bed_without_a_unit_is_not_asked]}
+    owner: sara
+    tool: search_products
+    lives_in: [code]
+    today: [dimensions.py PlanarRefinement, PAIR_UNIT_WHEN_UNSAID]
+
+  - id: sara.size.clarify_or_refuse
+    behaviour: "\"a sofa under 200 cm\" asks which measurement (one question); \"a bed less than 200 cm long\" is refused as unsupported data."
+    source: {claude: ["15.1"], cases: []}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [query_understanding MISSING_DIMENSION_ROLE/UNIT, tc:_interpretation_clarification]
+
+  - id: sara.size.belongs_to_type
+    behaviour: "Sizes are saved per type and come back with it, never follow to another type; \"any size is fine\" drops them - sofas <=200 cm, armchairs, back to sofas brings 200 back."
+    source: {claude: ["13.5", "10.4"], cases: [side_table_size_not_carried, sofa_size_comes_back, sofa_any_size_clears, sofa_size_kept_on_price_change, dropped_width_disclosed, ar_chips_match_the_question]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_saved_sizes, tc:_seed_and_execute, measurements_by_type, decision.drop_saved_sizes, earlier_sizes_applied/dropped_roles]
+
+  - id: sara.size.width_keeps_to_sofas
+    behaviour: "A size given for sofas keeps the search to sofas (sets/sectionals cannot answer a size) and the reply says why."
+    source: {claude: ["10.12", "15.1"], cases: [mix_a_width_keeps_to_sofas]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_with_family, tc:_measurable_by]
+
+  # ── continuing a search ────────────────────────────────────────────────────
+  - id: sara.follow.show_more
+    behaviour: "\"Show me more\" (typed or the button) re-runs the same request excluding what was shown; never a card."
+    source: {claude: ["13.5", "17.1", "10.4"], cases: [A1_show_more_typed, follow_show_more_typed, follow_different_options_button, card_not_on_show_more, carry_colour_after_show_more, ar_tap_stays_arabic]}
+    owner: sara
+    tool: more_options
+    lives_in: [code]
+    today: [tc:_continue_search, tc:_apply_search_action(MoreOptionsAction), tc:_rerun_excluding]
+
+  - id: sara.follow.not_this_one
+    behaviour: "\"Not the second one\" (typed or button) leaves that card out and re-runs."
+    source: {claude: ["17.1"], cases: [not_this_one_typed, follow_not_this_one_button]}
+    owner: sara
+    tool: exclude_product
+    lives_in: [code]
+    today: [tc:_continue_search(exclude_reference), tc:_apply_search_action(ExcludeProductAction)]
+
+  - id: sara.follow.no_search_to_continue
+    behaviour: "\"Show me more\" with nothing on screen asks what they want instead of inventing a query."
+    source: {claude: ["13.5"], cases: []}
+    owner: sara
+    tool: more_options
+    lives_in: [tool_result]
+    today: [tc:_continue_search NO_SEARCH_TO_REFINE, tc:_apply_search_action SEARCH_UNAVAILABLE]
+
+  - id: sara.follow.refine
+    behaviour: "A refinement changes only what they said and keeps the rest - \"only beige ones under 5000\" keeps sofas and the earlier size; no card."
+    source: {claude: ["10.4", "13.5"], cases: [card_not_on_a_refinement, follow_cheaper, carry_colour_through_price_change, B3_price_with_comma, B4_price_shorthand, B1_only_beige_followup]}
+    owner: sara
+    tool: refine_search
+    lives_in: [code]
+    today: [tc:_refine, refinement_composer.RefinementComposer.refine, tc:_compose_and_run]
+
+  - id: sara.follow.relative_price
+    behaviour: "\"20% cheaper than the second one\" becomes a bound read from that card's real price."
+    source: {claude: ["17.1"], cases: [A2_percent_cheaper]}
+    owner: sara
+    tool: refine_search
+    lives_in: [code]
+    today: [tc:_resolve_relative_price, relative_price.py]
+
+  - id: sara.follow.type_change
+    behaviour: "A change of type within the task keeps every other constraint and gets no card - \"sectional ones instead\" keeps under 5000."
+    source: {claude: ["10.4", "13.5"], cases: [carry_budget_through_type_change, single_seater_type_change, dropped_width_disclosed, type_change_red_tables]}
+    owner: sara
+    tool: refine_search
+    lives_in: [code]
+    today: [tc:_refine_taxonomy, decision.taxonomy_change_requested]
+
+  - id: sara.follow.one_seat_types
+    behaviour: "One-seat types carry no seat filter; seats never carry to them - \"sofas for 4\" then \"single seaters\" shows single seaters."
+    source: {claude: ["7"], cases: [sofa_for_one_new_search, sofa_seats_not_carried_to_single_seaters, single_seater_type_change]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [seating_v1.yaml, refinement_composer]
+
+  - id: sara.follow.one_seat_on_multiseat_corrected
+    behaviour: "A seat count of one set on a multi-seat type is refused and corrected once to the one-seat type - \"make them single seaters\"."
+    source: {claude: ["7", "21.1"], cases: []}
+    owner: code
+    tool: refine_search
+    lives_in: [code]
+    today: [refinement_composer ONE_SEAT_ON_MULTI_SEAT_TYPE -> tc:_compose_and_run raises -> tc:_run_turn redecide]
+
+  # ── opening, card, sub-category questions ──────────────────────────────────
+  - id: sara.brief.opening
+    behaviour: "A new product search first gets two soft designer questions, never budget, chosen from what code offers - \"I need a sofa\" asks the room and how many sit."
+    source: {claude: ["10.5"], cases: [opening_sofa_two_questions, opening_room_said_is_not_asked, opening_head_count_said_is_not_asked, opening_type_with_no_card, opening_vague_table_asks_kind, opening_room_in_the_need_is_not_asked, opening_room_asked_once_per_visit, opening_room_carries_to_the_next_piece, opening_ar_sofa, opening_asks_the_space]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result, reply_check]
+    today: [tc:_ask_or_search, tc:_product_brief(BriefMode.ASK), product_brief.py, CustomerResponse.asked (opening_not_offered check)]
+
+  - id: sara.brief.card_every_new_search
+    behaviour: "Every new search for a kind, however worded and however late in the chat, gets its questions before any product - \"find me a sofa\", \"any rugs?\", \"now coffee tables\"."
+    source: {claude: ["10.2", "10.4"], cases: [card_find_me_a_sofa, card_would_like_to_see_sofas, card_show_me_sofas, card_any_rugs, card_what_lamps, card_get_me_an_armchair, card_browsing_beds, card_dining_tables_known_kind, card_arabic_sofa, card_moving_on_to_tables, card_asked_again_later, need_asks_seats_first, follow_up_style_when_seats_known, ar_msa_card, ar_locale_first_turn, ar_card_in_arabic]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_ask_or_search, tc:_product_brief]
+
+  - id: sara.brief.card_contents
+    behaviour: "The card asks only what is unknown, with chips counted from the live store (kinds, budget bands at quartiles, colours, styles, feel) - \"a grey 3-seater\" is not asked colour or kind."
+    source: {claude: ["10.4"], cases: [card_sofa_asks_everything, card_bed, card_rug_asks_material_feel, card_coffee_table_knows_its_kind, card_armchair_knows_its_kind, card_skips_what_was_said, card_skips_budget_and_feel, card_everything_said_searches, card_for_four_skips_the_kind, card_type_without_a_card]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [product_brief.py, briefs_v1.yaml]
+
+  - id: sara.brief.kind_first
+    behaviour: "A need naming only a category asks the kind first and tapping it searches that kind - \"I need a table\" -> Coffee/Side/Dining..."
+    source: {claude: ["10.4", "10.13"], cases: [card_table_asks_kind_first, card_light_asks_kind_first, ar_table_card_kind_first, ar_light_card_kind_first, answer_card_table_dining, answer_card_floor_lamp]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [product_brief.py]
+
+  - id: sara.brief.subcategory_questions
+    behaviour: "A sub-category the reviewed sheet covers is asked its own up-to-three questions on one card, chips backed by store names - an office chair asks its sheet questions."
+    source: {claude: ["10.13"], cases: []}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [product_brief.py, subcategory_questions_v1.yaml, taxonomy/name_match.py]
+
+  - id: sara.brief.answer_tapped
+    behaviour: "Tapped answers are keys read back through the pending card and searched - kind and budget ceiling locked, colours/styles preferred, feel ranks only."
+    source: {claude: ["10.4", "10.5"], cases: [answer_card_everything, answer_card_l_shape, answer_card_four_plus, answer_card_sofa_set_top_band, answer_card_sofa_bed_lowest_band, answer_card_side_table_wood, answer_card_rug_wool_grey, answer_card_bed_storage, answer_card_armchair_boucle, opening_tapped_answers_search, opening_ar_tapped, ar_card_tapped, show_me_card_then_answer, answer_card_table_dining, answer_card_floor_lamp]}
+    owner: sara
+    tool: answer_opening
+    lives_in: [code]
+    today: [tc:_apply_search_action(BriefAnswerAction) -> tc:_answer_brief]
+
+  - id: sara.brief.answer_stale
+    behaviour: "A tapped answer for a card no longer on screen searches nothing and says so (questions_expired)."
+    source: {claude: ["10.4"], cases: [answer_card_stale]}
+    owner: code
+    tool: answer_opening
+    lives_in: [code, tool_result]
+    today: [tc:_answer_brief, tc:_expired]
+
+  - id: sara.brief.answer_typed
+    behaviour: "A typed answer to the card on screen is searched and never asked again - \"a grey 3 seater around 2500\", \"there are 4 of us\"."
+    source: {claude: ["10.4", "10.5", "17.1"], cases: [answer_card_typed_answer, answer_card_typed_wool, opening_typed_answer_not_asked_again, need_then_answer_searches, ar_card_typed_answer, mix_five_typed, mix_three_people, ar_mix_five]}
+    owner: sara
+    tool: answer_opening
+    lives_in: [code, prompt]
+    today: [tc:_ask_or_search (ProductBriefs.answers_card, typed_head_count), decision.state_proposal.head_count, grounding follow_up NONE in tc:_run_decided_turn]
+
+  - id: sara.brief.ignored_new_need
+    behaviour: "A different need typed beside the card gets its own questions - \"I need a sofa\" then \"actually show me rugs\"."
+    source: {claude: ["10.4", "10.6"], cases: [answer_card_ignored, answer_card_ignored_then_skipped]}
+    owner: sara
+    tool: search_products
+    lives_in: [code]
+    today: [tc:_ask_or_search, record_brief(None)]
+
+  - id: sara.brief.skip
+    behaviour: "\"Just show me sofas\" shows products at once with no other question; Narrow down folded once per family (flag off)."
+    source: {claude: ["10.2", "10.4"], cases: [card_just_show_me_declines_it, answer_card_skip, answer_card_just_show_me, opening_skipped, follow_up_seats_for_sofas, show_me_narrow_once_per_family, sofas_again_keeps_the_type, sofa_for_one_new_search, ar_sofas_again_keeps_the_type, taste_not_after_declining_questions]}
+    owner: sara
+    tool: search_products
+    lives_in: [prompt, code]
+    today: [decision.skip_questions, tc:_ask_or_search, tc:_offer_narrowing]
+
+  - id: sara.brief.skipped_for_combination
+    behaviour: "A head count no single piece seats skips the card: the seating shape is asked first - \"a beige sofa for 8\"."
+    source: {claude: ["10.4", "27.1"], cases: [card_not_for_a_combination, opening_no_single_piece_seats_them]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [tc:_needs_combining, tc:_ask_or_search]
+
+  - id: sara.brief.not_by_look
+    behaviour: "A kind not chosen by its look is shown at once and never asked colour/style - \"I'm looking for a mattress\"."
+    source: {claude: ["10.5", "10.9"], cases: [mattress_shown_at_once, ar_mattress_shown_at_once]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [briefs_v1.yaml not_by_look, product_brief.py]
+
+  - id: sara.brief.shopping_room
+    behaviour: "The room a piece is for is remembered and filters nothing - \"for my living room\" is not asked again for the rug."
+    source: {claude: ["10.5"], cases: [opening_room_carries_to_the_next_piece, opening_room_said_is_not_asked]}
+    owner: sara
+    tool: answer_opening
+    lives_in: [code]
+    today: [tc:_with_room_said, decision.state_proposal.shopping_room -> CustomerPreferenceUpdate.room]
+
+  - id: sara.brief.head_count_orders
+    behaviour: "How many usually sit orders pieces seating that many first (never filters); a count no piece seats is a seat requirement."
+    source: {claude: ["10.5"], cases: [need_then_answer_searches, mix_three_people, mix_five_typed]}
+    owner: code
+    tool: answer_opening
+    lives_in: [code]
+    today: [product_brief seat_preference, ProductBriefs.typed_head_count]
+
+  # ── the brief beside results, Narrow down ──────────────────────────────────
+  - id: sara.narrow.brief_chips
+    behaviour: "Beside results they searched for, chips name what the search uses (seats, budget, size, colours, styles); not beside suggestions or rooms."
+    source: {claude: ["10.6"], cases: [brief_chips_beside_results, brief_not_beside_suggestions, brief_ar_chips]}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_narrow_down]
+
+  - id: sara.narrow.drop_facet
+    behaviour: "✕ on a chip re-runs the search without that one thing - drop \"Under 2,000 SAR\"."
+    source: {claude: ["10.6"], cases: [brief_drop_a_chip]}
+    owner: sara
+    tool: drop_facet
+    lives_in: [code]
+    today: [tc:_apply_search_action(DropFacetAction) -> tc:_drop_facet]
+
+  - id: sara.narrow.answer
+    behaviour: "Narrow down's answers replace what it showed ticked; an unticked colour leaves their preferences too."
+    source: {claude: ["10.6"], cases: [brief_narrow_down_answered]}
+    owner: sara
+    tool: answer_opening
+    lives_in: [code]
+    today: [tc:_answer_brief (PendingBrief.replaces), tc:_without_unticked]
+
+  - id: sara.narrow.typed_open
+    behaviour: "\"Help me narrow these down\", \"narrow by size\" opens Narrow down as the turn's question, kept to the questions named."
+    source: {claude: ["10.10", "10.6"], cases: [narrow_by_wall_length_is_the_space_question]}
+    owner: sara
+    tool: narrow_down
+    lives_in: [code, tool_result]
+    today: [decision.narrow_by, tc:_open_narrow_down]
+
+  # ── mixed types (sofa search shows sets/sectionals) ───────────────────────
+  - id: sara.mix.alongside
+    behaviour: "A sofa search also shows sofa sets and sectionals under the same constraints, interleaved only among equal matches, and the reply says how many of the asked type meet it."
+    source: {claude: ["10.12"], cases: [mix_show_me_sofas, mix_five_typed, mix_five_with_the_request, mix_three_people, mix_six_people_best_fit, ar_mix_five]}
+    owner: code
+    tool: search_products
+    lives_in: [code, tool_result, prompt]
+    today: [tc:_with_family, alongside_subcategories, type_mix in grounding]
+
+  - id: sara.mix.only_asked_type
+    behaviour: "\"Just regular sofas, no sets\" keeps the search to one type through paging and refinements; sofas asked again beside only sets shows sofas alone."
+    source: {claude: ["10.12"], cases: [mix_just_sofas, ar_mix_just_sofas, sofas_again_keeps_the_type, ar_sofas_again_keeps_the_type, seat_combo_after_turning_down_the_set]}
+    owner: sara
+    tool: search_products
+    lives_in: [prompt, code]
+    today: [decision.only_asked_type, tc:_one_type, tc:_kept_to_one_type, tc:_asks_for_what_is_not_on_screen, tc:_asks_the_same_type]
+
+  - id: sara.mix.another_type_seats
+    behaviour: "A head count the asked type never reaches but another main type does in one piece is shown as the best fit - \"a sofa for six\" shows sofa sets, never \"none of our sofas\"."
+    source: {claude: ["27.1"], cases: [sofa_for_six_offers_sofa_set, mix_six_people_best_fit]}
+    owner: code
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_another_type_seats_them]
+
+  # ── taste and space ────────────────────────────────────────────────────────
+  - id: sara.taste.question_after_results
+    behaviour: "After results, one soft taste question once a session (space, which of two, which style, anything to avoid) - never beside another question or after \"just show me\"."
+    source: {claude: ["10.9", "10.2"], cases: [taste_which_after_results, ar_taste_question, taste_not_after_declining_questions, taste_likes_spare_the_which_question]}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_taste_question, tc:_taste_chips, taste_question.py]
+
+  - id: sara.taste.answer
+    behaviour: "A taste answer (tapped or typed) re-leans the list and is never a pick - \"the first one feels more like me\" does not add it."
+    source: {claude: ["10.9"], cases: [taste_answer_is_never_a_pick, taste_typed_answer_is_never_a_pick, taste_typed_pick_is_a_pick]}
+    owner: sara
+    tool: answer_taste
+    lives_in: [code, prompt]
+    today: [tc:_apply_search_action(TasteAnswerAction) -> tc:_answer_taste, decision.taste_answer, _NOT_A_TASTE_ANSWER in tc:_execute]
+
+  - id: sara.taste.learned
+    behaviour: "Likes, picks and More-like-this quietly lean later searches, shown as a removable \"· suggested\" chip; said taste outranks learned."
+    source: {claude: ["10.9"], cases: [taste_likes_spare_the_which_question]}
+    owner: code
+    tool: search_products
+    lives_in: [code]
+    today: [tc:_with_learned_taste, tc:_explored, taste.py]
+
+  - id: sara.taste.avoid
+    behaviour: "Colours/styles they would rather avoid are pushed down in this and every later search, never hidden."
+    source: {claude: ["10.9"], cases: []}
+    owner: code
+    tool: answer_taste
+    lives_in: [code]
+    today: [customer_preferences.avoid_colours/avoid_styles, search ordering]
+
+  - id: sara.space.fit_orders
+    behaviour: "\"My wall is 400 cm\" orders pieces that fit first and the designer's aimed width by closeness; never filters; said once."
+    source: {claude: ["10.10"], cases: [space_wall_orders_and_aims]}
+    owner: sara
+    tool: refine_search
+    lives_in: [code, tool_result]
+    today: [tc:_with_space_fit, refinement.space_width, interior_design space_fit task]
+
+  - id: sara.reply.best_match
+    behaviour: "The first card is called the best match only when their own words ordered the list and it met the request exactly - never beside a price sort or suggestions."
+    source: {claude: ["10.4"], cases: [answer_card_everything, answer_card_skip, show_me_card_then_answer, ar_suggestions_show_more]}
+    owner: sara
+    tool: respond
+    lives_in: [tool_result, reply_check]
+    today: [grounding exact flags, response_validation]
+
+  - id: sara.reply.names_one_or_two
+    behaviour: "Every list's reply picks out the best one or two by position with a reason from the card, never all five, never an unshown material."
+    source: {claude: ["10.8"], cases: [plain_search_names_one_or_two, dining_table_search_names_one_or_two]}
+    owner: sara
+    tool: respond
+    lives_in: [prompt]
+    today: [prompts/customer_commerce/response_v1.py]
+
+  - id: sara.reply.recommend_from_screen
+    behaviour: "Words about the cards on screen are answered from them - \"which do you recommend?\" never says it cannot see the cards."
+    source: {claude: ["10.2", "17.1"], cases: [recommend_from_the_cards_on_screen]}
+    owner: sara
+    tool: respond
+    lives_in: [code, prompt]
+    today: [tc:_talks_about_the_screen, CustomerTurnResult.still_on_screen, tc:_visible_cards]
+
+  - id: sara.reply.positions_on_screen
+    behaviour: "Positions in this message mean the screen they were looking at, even when the turn shows new cards - \"cheaper than the second one\"."
+    source: {claude: ["17.1"], cases: [A2_percent_cheaper]}
+    owner: sara
+    tool: refine_search
+    lives_in: [code, prompt]
+    today: [reference_resolver against pre_turn state, tc:_visible_cards]
+
+  # ── seating combinations ───────────────────────────────────────────────────
+  - id: sara.seat.shape_first
+    behaviour: "A seat count no single piece meets first asks which shape (only real shapes, each from its real lowest total), plus colour if unknown, once per seat count - \"a sofa for 8\"."
+    source: {claude: ["27.1", "10.2"], cases: [seat_combo_asks_shape_first, card_not_for_a_combination, ar_seat_combo, language_majlis_seating, A6_majlis_40_people]}
+    owner: sara
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_maybe_compose_seating, _should_ask_shape, seating_solution.py]
+
+  - id: sara.seat.shape_answer
+    behaviour: "The answer to the shape question shows those combinations - \"separate sofas please\", \"either is fine\", \"a sofa with armchairs\"."
+    source: {claude: ["27.1"], cases: [seat_combo_separate_sofas, seat_combo_either, ar_seat_shape_chip, seat_combo_after_turning_down_the_set_shows, seat_combo_no_sofa_bed_unasked]}
+    owner: sara
+    tool: "GAP:answer_seating_shape (or more_combinations(shape=...))"
+    lives_in: [code]
+    today: [decision.seating_answer, _with_seating_answer, tc:_maybe_compose_seating]
+
+  - id: sara.seat.held_to_request
+    behaviour: "Every piece of a combination keeps the rest of the request; strict colour lifted only if no combination meets it, and said - \"only purple for 8\"."
+    source: {claude: ["27.1", "12.4"], cases: [seat_combo_strict_colour_honest]}
+    owner: code
+    tool: more_combinations
+    lives_in: [code, tool_result]
+    today: [seating_solution.py, _seating_requirements]
+
+  - id: sara.seat.choose
+    behaviour: "Choosing a combination (typed or tapped) adds its products with quantities to the cart, is drawn as \"Your seating\", and what goes with it is shown - \"I'll take the second option\"."
+    source: {claude: ["27.1", "36"], cases: [seat_combo_pick_second, seat_combo_chosen_counts_its_quantities, seat_combo_tapped_choose_shows_what_goes_with]}
+    owner: sara
+    tool: choose_combination
+    lives_in: [code, tool_result]
+    today: [decision.combination_choice, tc:_combination_action, tc:_choose_combination, _with_chosen_combination, tc:_chosen_bundle]
+
+  - id: sara.seat.more_or_dismiss
+    behaviour: "\"Show more\" / \"not the second option\" with combinations on screen pages combinations, never repeats them, and says when a shape has none left."
+    source: {claude: ["27.1"], cases: [seat_combo_show_more_is_new, seat_combo_not_this_one, seat_combo_tapped_more_is_new, seat_combo_tapped_not_this_one]}
+    owner: sara
+    tool: more_combinations
+    lives_in: [code, tool_result]
+    today: [_pages_combinations, tc:_more_combinations, tc:_combination_action, decision.combination_dismiss]
+
+  - id: sara.seat.over_budget_closest
+    behaviour: "When nothing fits the budget, the closest real total is offered as the one question; a yes shows the combinations - \"sofas for 9 under 1500\" -> \"closest is about 3,700, shall I show it?\"."
+    source: {claude: ["27.1"], cases: [seat_combo_over_budget_says_closest, seat_combo_over_budget_yes_shows]}
+    owner: sara
+    tool: more_combinations
+    lives_in: [code, tool_result, prompt]
+    today: [tc:_maybe_compose_seating NONE_WITHIN_BUDGET closest_total, yes read by the decision model]
+
+  - id: sara.seat.avoid_turned_down_type
+    behaviour: "A type turned down for this seat count is left out of the combinations - \"I don't want an L-shape, a simple sofa\" for 7."
+    source: {claude: ["27.1", "10.12"], cases: [seat_combo_after_turning_down_the_set, seat_combo_after_turning_down_the_set_shows]}
+    owner: code
+    tool: refine_search
+    lives_in: [code]
+    today: [_avoided_type, tc:_turned_down, tc:_asks_the_same_type]
+
+  # ── product detail and comparison ─────────────────────────────────────────
+  - id: sara.detail.show_product
+    behaviour: "\"Tell me more about the second one\" shows that product read fresh, focused, and closes on Add / What goes with it / Similar."
+    source: {claude: ["17.1", "10.2"], cases: [next_step_after_detail]}
+    owner: sara
+    tool: show_product
+    lives_in: [code]
+    today: [tc:_product_detail, decision.reference, interaction FOCUS]
+
+  - id: sara.compare.typed
+    behaviour: "A typed comparison resolves every reference against the pre-turn screen; one product or too many is a question - \"compare the first three\", \"compare the two I picked\"."
+    source: {claude: ["10.4"], cases: [compare_typed_three, compare_two_picks_typed, compare_positions_typed, ar_compare_typed_in_chat, A4_compare_one]}
+    owner: sara
+    tool: compare_products
+    lives_in: [code, tool_result]
+    today: [tc:_compare, tc:_compare_products, comparison.py, _comparison_outcome]
+
+  - id: sara.compare.cards_tapped
+    behaviour: "Checked cards across lists still on screen are compared as a conversation turn (compare_cards), up to the limit, similar kinds only."
+    source: {claude: ["10.4"], cases: [compare_popup_two_sofas, compare_popup_three_sofas, compare_popup_all_five_across_lists, compare_popup_earlier_list, ar_compare_popup]}
+    owner: sara
+    tool: compare_products
+    lives_in: [code]
+    today: [tc:_run_product_action(CompareCardsAction), tc:_compare_cards, tc:_compare_products(similar_only), card_comparison.py, routes/comparisons.py]
+
+  - id: sara.compare.dissimilar_refused
+    behaviour: "A comparison of different kinds is refused - a sofa and a coffee table; today only the tapped path checks (typed path does not)."
+    source: {claude: ["10.4"], cases: [compare_popup_refuses_dissimilar]}
+    owner: sara
+    tool: compare_products
+    lives_in: [code]
+    today: [tc:_compare_products ComparisonRefusedError, compare_groups_v1.yaml]
+
+  - id: sara.compare.picks_tapped
+    behaviour: "The tray's Compare on picks compares them by pick position, as typed \"compare my picks\" does."
+    source: {claude: ["17.1"], cases: []}
+    owner: sara
+    tool: compare_products
+    lives_in: [code]
+    today: [tc:_run_product_action(ComparePicksAction), _compare_picks_decision, tc:_compare]
+
+  # ── picks, likes and cart (Sara; Salman shares the cart tools) ─────────────
+  - id: sara.cart.select_typed
+    behaviour: "\"I'll take the second one\" adds that card to the cart (the picks); typed \"I like the second one\" is a pick, not a like."
+    source: {claude: ["36", "10.7", "17.1"], cases: [typed_pick_lands_in_tray, A9_take_that_one, taste_typed_pick_is_a_pick, typed_i_like_is_a_pick_not_a_like, ar_pick_by_ordinal]}
+    owner: sara
+    tool: add_to_cart
+    lives_in: [code, prompt]
+    today: [decision.interaction SELECT, tc:_apply_interaction, tc:_resolved_interaction, tc:_interacted]
+
+  - id: sara.cart.kind_checked
+    behaviour: "A position named with a kind is checked against what it resolved to - \"sofa five\" never selects a table."
+    source: {claude: ["3.3", "36"], cases: []}
+    owner: code
+    tool: add_to_cart
+    lives_in: [code]
+    today: [interaction.expected_subcategory, tc:_is_the_kind_they_named, tc:_same_kind]
+
+  - id: sara.cart.kind_on_screen
+    behaviour: "\"The first sofa\" or \"the floor lamp\" finds its card on the newest list that has that kind; several of that kind asks which."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: add_to_cart
+    lives_in: [code]
+    today: [tc:_named_kind_on_screen, tc:_the_only_one_on_screen]
+
+  - id: sara.cart.several_at_once
+    behaviour: "\"Add the first and second sofa\" adds each; what fits stays in if one is refused or the cart fills."
+    source: {claude: ["36"], cases: [room_around_picks_asks_picked_seats]}
+    owner: sara
+    tool: add_to_cart
+    lives_in: [code]
+    today: [decision.more_to_add, tc:_apply_interaction loop]
+
+  - id: sara.cart.quantity
+    behaviour: "\"Add two of the third one\" / \"make the second one 3\" sets quantity, capped at cart_max_quantity; an add of a product already in only changes quantity."
+    source: {claude: ["36"], cases: []}
+    owner: sara
+    tool: set_quantity
+    lives_in: [code]
+    today: [ProductInteractionIntent.quantity, _already_holds, tc:_interacted]
+
+  - id: sara.cart.remove
+    behaviour: "\"Actually remove it from my picks\" takes it out with its quantity, and the reply closes on a next step."
+    source: {claude: ["36", "10.2"], cases: [next_step_after_removing_the_pick, untick_empties_tray]}
+    owner: sara
+    tool: remove_from_cart
+    lives_in: [code]
+    today: [interaction DESELECT, tc:_apply_interaction; tap: routes/picks.py]
+
+  - id: sara.cart.consider_offer
+    behaviour: "\"I like the fifth one\" (consider) focuses it and offers to add it with its price and the cart's new total, Yes / Not now."
+    source: {claude: ["36"], cases: []}
+    owner: sara
+    tool: "GAP:offer_to_add (or add_to_cart(confirm=false))"
+    lives_in: [code, tool_result]
+    today: [interaction CONSIDER, tc:_with_cart_offer, CartOffer]
+
+  - id: sara.cart.offer_yes_tap
+    behaviour: "The offer's Yes adds the named card (or the focused piece) and then shows what goes with it, as a tap does."
+    source: {claude: ["36"], cases: []}
+    owner: sara
+    tool: add_to_cart
+    lives_in: [code]
+    today: [tc:_run_product_action(AddToCartAction), tc:_added_from_offer, tc:_goes_with]
+
+  - id: sara.cart.full
+    behaviour: "Past max_picks a new product is refused with the fixed CART_FULL reply; an existing one only changes quantity."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: add_to_cart
+    lives_in: [code, tool_result]
+    today: [tc:_cart_is_full, tc:_added_from_offer]
+
+  - id: sara.cart.store_check
+    behaviour: "Every product entering or growing in the cart is put to Salla first; refused or unconfirmed stays out and the reply says so."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: add_to_cart
+    lives_in: [code, tool_result]
+    today: [tc:_as_the_store_would (typed, before), tc:_as_the_store_takes (after), tc:_store_refuses, store_cart_check.py, integrations/salla_storefront.py]
+
+  - id: sara.cart.question
+    behaviour: "\"What's my total?\" reads the cart, never closes on narrowing a list."
+    source: {claude: ["36", "10.2"], cases: []}
+    owner: sara
+    tool: get_cart
+    lives_in: [code, tool_result]
+    today: [decision.cart_question, tc:_cart_items, next_step._about_the_list]
+
+  - id: sara.likes.like_tap_silent
+    behaviour: "♡ is silent: kept in the liked list apart from picks, no turn, no reply; past max_likes the oldest goes."
+    source: {claude: ["10.7"], cases: [like_is_silent_and_apart_from_picks]}
+    owner: code
+    tool: like_product
+    lives_in: [code]
+    today: [routes/picks.py, picks.py (not the coordinator)]
+
+  - id: sara.likes.the_one_i_liked
+    behaviour: "\"The one I liked\" is its own reference, so \"I want to buy the one I liked\" picks it; several liked asks which."
+    source: {claude: ["10.7"], cases: [buy_the_one_i_liked, the_one_i_liked_is_a_pick]}
+    owner: sara
+    tool: add_to_cart
+    lives_in: [code]
+    today: [reference_resolver liked_product]
+
+  - id: sara.picks.show
+    behaviour: "\"What have I chosen?\" shows the picks read fresh (not a new presented list); \"what have I liked?\" shows the liked list framed as what caught their eye; none says so."
+    source: {claude: ["10.7"], cases: [next_step_what_have_i_chosen, what_have_i_liked_shows_the_hearts, show_liked_draws_liked_cards, nothing_liked_yet, ar_nothing_liked_yet]}
+    owner: sara
+    tool: show_picks
+    lives_in: [code, tool_result]
+    today: [tc:_show_selection(liked), decision.show_liked]
+
+  - id: sara.similar.more_like_this
+    behaviour: "More like this (button or typed \"more like the second one\") searches its kind leaning to its colour and style, from any list still on screen."
+    source: {claude: ["10.7", "10.12"], cases: [more_like_this_from_a_card, more_like_this_on_an_earlier_list]}
+    owner: sara
+    tool: more_like_this
+    lives_in: [code]
+    today: [tc:_run_product_action(MoreLikeThisAction), tc:_more_like_this, tc:_similar_search_turn, tc:_similar_to, similar_search.py, _explored]
+
+  - id: sara.mattress.inside_size
+    behaviour: "After a bed pick, their own mattress search comes in the width the designer read for that bed, and the reply says so only when the first card is that size."
+    source: {claude: ["10.11"], cases: [mattress_after_a_bed_in_its_size]}
+    owner: code
+    tool: search_products
+    lives_in: [code, tool_result]
+    today: [tc:_inside_their_pick, tc:_sized_for, tc:_said_sized, tc:_remembering_inside]
+
+# ════════════════════════════════════════════════════════════════════════════
+# NORA - interior design
+# ════════════════════════════════════════════════════════════════════════════
+nora:
+
+  - id: nora.advice.answer
+    behaviour: "A design question is answered as design knowledge with no products - \"what colours work with walnut?\"; a question spanning turns is restated whole."
+    source: {claude: ["17.2"], cases: []}
+    owner: nora
+    tool: design_advice
+    lives_in: [code, prompt]
+    today: [tc:_design_advice, tc:_advice_pieces, decision.design_question, interior_design.py]
+
+  - id: nora.advice.offer_search
+    behaviour: "A design answer may offer to search what was discussed as its one question (\"shall I show you rugs that size?\") - an offer, never a delivery."
+    source: {claude: ["10.2"], cases: []}
+    owner: nora
+    tool: design_advice
+    lives_in: [prompt]
+    today: [FollowUpGoal.PRODUCT_SEARCH]
+
+  - id: nora.fit.room_size_first
+    behaviour: "\"Will it fit?\" with no room length and width on record asks for them in one question, never guessing from a wall alone."
+    source: {claude: ["10.11"], cases: [fit_asks_the_room_size_first]}
+    owner: nora
+    tool: check_fit
+    lives_in: [code, tool_result]
+    today: [decision.fit_question, tc:_design_advice, MISSING_ROOM_SIZE, _gives_room_size]
+
+  - id: nora.fit.judged
+    behaviour: "Code measures each piece against every wall/door they gave; the designer judges fit and whether it works - \"which of these get through my 80 cm door?\"."
+    source: {claude: ["10.11", "15.1"], cases: [fit_designer_judges_with_the_room_size, fit_which_go_through_my_door, ar_fit_will_it_fit]}
+    owner: nora
+    tool: check_fit
+    lives_in: [code, prompt]
+    today: [fit.py fit_checks, tc:_design_advice]
+
+  - id: nora.fit.piece_in_piece
+    behaviour: "\"Will this mattress fit my bed?\" is judged from the two pieces, never asking the room."
+    source: {claude: ["10.11"], cases: [mattress_in_a_bed_never_asks_the_room]}
+    owner: nora
+    tool: check_fit
+    lives_in: [code]
+    today: [decision.fit_with_piece, tc:_design_advice]
+
+  - id: nora.fit.room_check_answer
+    behaviour: "Their room's length and width typed after a bed's room check is its answer: the designer judges that bed in that room."
+    source: {claude: ["10.11"], cases: [bed_room_size_answer_checks_the_bed]}
+    owner: nora
+    tool: check_fit
+    lives_in: [code]
+    today: [tc:_answers_room_check, awaiting_room_check]
+
+  - id: nora.fit.room_check_yields
+    behaviour: "A room request or a move to another list while the room check is open is theirs to have; the size is recorded beside it."
+    source: {claude: ["10.11"], cases: [bed_room_check_never_takes_a_room_request, bed_room_check_lapses_after_moving_on]}
+    owner: code
+    tool: plan_room
+    lives_in: [code]
+    today: [tc:_answers_room_check (list_revision, still picked)]
+
+  - id: nora.room.questions
+    behaviour: "A known room (living room, bedroom) asks budget, size, pieces, head count (living only), colour - one per turn, each once, skipping what is known - with real chips."
+    source: {claude: ["10.1"], cases: [room_asks_budget_first, room_offers_piece_chips, room_asks_how_many_after_pieces, room_budget_chips_tappable, room_seats_chips_are_counts, room_colour_chips_are_store_colours, ar_room_budget_first, ar_room_budget_chips_in_arabic, ar_room_piece_picker_in_arabic, C1_room_budget_shorthand, C2_room_length_corrected]}
+    owner: nora
+    tool: plan_room
+    lives_in: [code, tool_result]
+    today: [tc:_whole_room, tc:_room_question, room_composition.py, room_presentation.py]
+
+  - id: nora.room.model_question_replaced
+    behaviour: "A room question the model writes anyway (missing_room_requirements) is replaced by the application's own."
+    source: {claude: ["10.1"], cases: []}
+    owner: code
+    tool: plan_room
+    lives_in: [code]
+    today: [tc:_execute CLARIFY + _asks_about_the_room -> tc:_room_question]
+
+  - id: nora.room.currency
+    behaviour: "A budget said without a currency is in the store's single currency; asking which currency is corrected once."
+    source: {claude: ["10.1"], cases: [C1_room_budget_shorthand]}
+    owner: code
+    tool: plan_room
+    lives_in: [code]
+    today: [tc:_room_budget_in_store_currency, _asks_for_a_currency, tc:_store_currency]
+
+  - id: nora.room.skip_questions
+    behaviour: "\"Just design it\" builds from what is known - usual pieces, one sofa if no head count."
+    source: {claude: ["10.1"], cases: [room_just_design_it]}
+    owner: nora
+    tool: plan_room
+    lives_in: [code]
+    today: [state_proposal.room_skip_questions, questions_asked]
+
+  - id: nora.room.build
+    behaviour: "The room is exactly the chosen pieces at their tier's priority; living-room seating sized to the head count, possibly as a combination, tried with the rest of the room."
+    source: {claude: ["10.3", "27", "27.1"], cases: [room_built_for_four, room_nine_people_seated, room_chips_round_trip_living, room_bedroom_skips_seats_chip_path, ar_room_chips_round_trip]}
+    owner: nora
+    tool: plan_room
+    lives_in: [code]
+    today: [tc:_composed_room, tc:_composed_template, _with_seating, _room_shortfall, bundle_optimizer.py, tc:_room_seats]
+
+  - id: nora.room.pieces_validated
+    behaviour: "Room kind and piece keys are checked against the registry; unknown ones dropped, never mapped to near ones."
+    source: {claude: ["10.3", "14.3"], cases: []}
+    owner: code
+    tool: plan_room
+    lives_in: [code]
+    today: [tc:_with_room_pieces]
+
+  - id: nora.room.missing_piece_named
+    behaviour: "A piece that could not be included is named with why and the lowest real price, never \"1 piece couldn't be included\"."
+    source: {claude: ["10.3"], cases: [room_tight_budget_names_missing]}
+    owner: nora
+    tool: plan_room
+    lives_in: [tool_result, reply_check]
+    today: [bundle outcome shortfall, response_view]
+
+  - id: nora.room.from_shopping
+    behaviour: "A room starts from what shopping learned - a head count (\"for the nine of you\"), colours/styles, a wall - asking only what is new."
+    source: {claude: ["10.1"], cases: [room_built_for_nine_confirms_earlier, room_handoff_asks_only_the_budget, room_handoff_builds_after_budget_and_pieces, ar_room_handoff_asks_only_the_budget]}
+    owner: code
+    tool: plan_room
+    lives_in: [code, tool_result]
+    today: [tc:_room_from_shopping, _earlier_seat_count, _shopping_wall, room_carried]
+
+  - id: nora.room.other_kind
+    behaviour: "A room the registry does not know (dining room, home office) is asked about by the agent - budget first, at most two questions, once."
+    source: {claude: ["10.1"], cases: [ar_dining_room_asks_budget]}
+    owner: nora
+    tool: plan_room
+    lives_in: [prompt]
+    today: [decision model CLARIFY missing_room_requirements]
+
+  - id: nora.room.which_room
+    behaviour: "\"Design me a room\" naming none asks which room with the registry's rooms as chips (or the room they were shopping for)."
+    source: {claude: ["10.1", "10.2"], cases: [ar_design_a_room_asks_which]}
+    owner: code
+    tool: plan_room
+    lives_in: [code]
+    today: [next_step CHOOSE_ROOM, _room_type_chips]
+
+  - id: nora.room.around_picks
+    behaviour: "\"Build my living room around my picks\" saves the picks that belong before the questions, confirms their seats, locks them, and plans only the rest."
+    source: {claude: ["10.3"], cases: [room_around_picks_seats_five, room_around_picks_seven_people, room_around_picks_asks_picked_seats, room_around_picks_phrase_use_chosen, room_around_picks_phrase_with_my_picks, room_around_picks_phrase_selected, room_around_picks_phrase_sofa_and_table, room_around_picks_over_budget, room_around_picks_sofa_unticked, room_around_picks_bedroom]}
+    owner: nora
+    tool: plan_room
+    lives_in: [code, prompt]
+    today: [decision.anchor_picks, tc:_save_room_anchors, tc:_room_kind_from_picks, tc:_anchor_facts, _lock_saved_anchors, tc:_locked_seating_seats]
+
+  - id: nora.room.anchor
+    behaviour: "\"Design around this sofa - I already own two\" records the anchor with acquisition and quantity, verified against the screen."
+    source: {claude: ["10.3"], cases: []}
+    owner: nora
+    tool: plan_room
+    lives_in: [code]
+    today: [decision.design_anchor, tc:_resolve_anchor]
+
+  - id: nora.room.revision_constraints
+    behaviour: "Recomposing a room keeps what they ruled in and drops what they ruled out; contradictory instructions ask one question."
+    source: {claude: ["10.3", "27"], cases: []}
+    owner: nora
+    tool: revise_room
+    lives_in: [code]
+    today: [decision.design_revision, tc:_revision_constraints, _contradicted, tc:_verify_locks, tc:_commit]
+
+  - id: nora.room.unavailable
+    behaviour: "Design or catalog outage leaves the room exactly as it was and says design is unavailable."
+    source: {claude: ["21"], cases: []}
+    owner: code
+    tool: plan_room
+    lives_in: [code, tool_result]
+    today: [tc:_whole_room DESIGN_UNAVAILABLE / SEARCH_UNAVAILABLE / LOCKED_PRODUCT_UNAVAILABLE]
+
+  - id: nora.piece.alternatives
+    behaviour: "A piece's Swap button (or \"show me other rugs for the room\") lists options for that role, never what the room already holds; the swap stays live through paging and narrowing."
+    source: {claude: ["10.3", "27"], cases: []}
+    owner: nora
+    tool: piece_alternatives
+    lives_in: [code]
+    today: [tc:_run_bundle_action(BundleAlternativesAction), tc:_list_alternatives, _with_room_swap, _with_live_swap, _swap_is_live, _without_room_pieces]
+
+  - id: nora.piece.swap
+    behaviour: "Choosing an option (tap, typed, or \"take the first\" after comparing) swaps it into that role with every other piece kept; dearer than budget is held as an offer."
+    source: {claude: ["10.3", "27"], cases: []}
+    owner: nora
+    tool: swap_piece
+    lives_in: [code]
+    today: [tc:_apply_swap, tc:_swap_into_role, tc:_swap_outcome, tc:_chosen_for_swap]
+
+  - id: nora.piece.replace_by_mode
+    behaviour: "\"A cheaper rug\", \"something softer\" replaces a role's product by mode (alternative/cheaper/dearer/semantic) with bounds from the real price."
+    source: {claude: ["27"], cases: []}
+    owner: nora
+    tool: swap_piece
+    lives_in: [code]
+    today: [BundleInteractionOp.REPLACE_PRODUCT, tc:_bundle_refine, tc:_replace_product, _replacement_price, tc:_reoptimise]
+
+  - id: nora.piece.remove
+    behaviour: "Remove (button or \"remove the second one\") takes that role out; every other piece stays pinned and totals are re-worked."
+    source: {claude: ["10.3"], cases: []}
+    owner: nora
+    tool: remove_piece
+    lives_in: [code]
+    today: [tc:_run_bundle_action(BundleRemoveAction), tc:_bundle_refine, tc:_remove_need, tc:_removal_target, _kept_as_chosen]
+
+  - id: nora.piece.lock_and_ownership
+    behaviour: "\"Keep the sofa\" locks it, \"it can change\" unlocks it, \"I already own the rug\" marks it owned and re-costs the room."
+    source: {claude: ["10.3"], cases: []}
+    owner: nora
+    tool: "GAP:set_piece_status (or revise_room args)"
+    lives_in: [code]
+    today: [BundleInteractionOp LOCK/UNLOCK/SET_ACQUISITION, tc:_set_status, tc:_set_acquisition]
+
+  - id: nora.piece.stale_reference
+    behaviour: "A piece reference resolved before the room changed is refused rather than applied to a different piece."
+    source: {claude: ["27"], cases: []}
+    owner: code
+    tool: swap_piece
+    lives_in: [code]
+    today: [_stale_reference, tc:_verify_bundle_products]
+
+  - id: nora.piece.which_piece_chips
+    behaviour: "\"I'd like to swap one of the pieces\" beside a finished room is answered with the swappable pieces as chips, each its Swap button."
+    source: {claude: ["10.3"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_room_cards]
+
+  - id: nora.finish.touches
+    behaviour: "\"Add a finishing touch\" (chip or typed, no piece named) shows the first piece Nora ranks that is stocked, leaning to the room, the rest as chips in her order."
+    source: {claude: ["10.3"], cases: []}
+    owner: nora
+    tool: finishing_touches
+    lives_in: [code, tool_result]
+    today: [tc:_run_bundle_action(FinishingTouchesAction), tc:_show_finishing, tc:_ranked_finishing, _with_finishing_order, _in_ranked_order]
+
+  - id: nora.finish.piece_chip
+    behaviour: "A finishing-piece chip shows its own page with the rest still in Nora's order; nothing in stock keeps the chips with \"You choose\"."
+    source: {claude: ["10.3"], cases: []}
+    owner: nora
+    tool: show_finishing_piece
+    lives_in: [code]
+    today: [tc:_run_bundle_action(AddPieceAction), tc:_show_finishing(piece_key), _finishing_need, _shown_piece]
+
+  - id: nora.finish.add_to_room
+    behaviour: "\"Add to room\" puts a finishing touch in the package, never the cart; within budget it is added, over budget the budget offer is asked."
+    source: {claude: ["10.3"], cases: []}
+    owner: nora
+    tool: add_to_room
+    lives_in: [code, tool_result]
+    today: [tc:_run_bundle_action(AddToRoomAction), tc:_add_to_room, tc:_addition_outcome, _forced_into]
+
+  - id: nora.room.in_cart_edits_refused
+    behaviour: "Once the room is in the cart its package is a record: swap, remove, add-piece taps from a stale card are refused (questions_expired)."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: swap_piece
+    lives_in: [code]
+    today: [tc:_run_bundle_action (_PACKAGE_EDITS + room_in_cart)]
+
+# ════════════════════════════════════════════════════════════════════════════
+# SALMAN - sales
+# ════════════════════════════════════════════════════════════════════════════
+salman:
+
+  - id: salman.goes_with.after_tick
+    behaviour: "Every pick (ticked) is shown with a page of one kind the designer chooses to go with it, leaning to their taste; other reviewed kinds as chips."
+    source: {claude: ["10.4", "10.8"], cases: [pick_first_cross_sells, pick_second_same_kind_cross_sells, pick_sectional_after_sofa_cross_sells, pick_companion_chain, pick_bed_shows_what_goes_with_it, pick_leans_to_their_colour, ar_pick_shows_what_goes_with_it, ar_pick_leans_to_their_taste, ar_pick_chain]}
+    owner: salman
+    tool: show_what_goes_with
+    lives_in: [code, tool_result]
+    today: [tc:_run_product_action(GoesWithPickAction), tc:_goes_with, tc:_offer_companions, tc:_show_what_goes_with, tc:_designed_complement, tc:_stocked_companions, tc:_taste, cross_sell.py]
+
+  - id: salman.goes_with.after_typed_pick
+    behaviour: "A typed pick that did nothing else gets the same answer as a tick - \"I like the first one\" shows what goes with it."
+    source: {claude: ["10.4", "17.1"], cases: [pick_typed_shows_what_goes_with_it, pick_second_typed_cross_sells, ar_pick_by_ordinal]}
+    owner: salman
+    tool: show_what_goes_with
+    lives_in: [code]
+    today: [tc:_offer_after_pick]
+
+  - id: salman.goes_with.pick_and_named_kind
+    behaviour: "\"I'll take the first one, show me a rug to go with it\" picks it and starts a rug search (its card first) - two tools in one turn."
+    source: {claude: ["10.4"], cases: [pick_typed_with_a_kind_shows_it]}
+    owner: salman
+    tool: "add_to_cart + hand_back -> sara search_products"
+    lives_in: [prompt, code]
+    today: [tc:_run_decided_turn (interaction then _new_search)]
+
+  - id: salman.goes_with.button
+    behaviour: "A pick's \"Goes with\" button shows products that go with it."
+    source: {claude: ["10.4"], cases: [goes_with_shows_products]}
+    owner: salman
+    tool: show_what_goes_with
+    lives_in: [code]
+    today: [tc:_run_product_action(GoesWithPickAction)]
+
+  - id: salman.goes_with.companion_chip
+    behaviour: "Tapping a companion chip (\"Rugs\") shows a normal page of that kind leaning to the pick's style."
+    source: {claude: ["10.4"], cases: [companion_chip, pick_offer_chip_shows_that_kind, ar_pick_companion_chip, compare_popup_earlier_list]}
+    owner: salman
+    tool: show_companion
+    lives_in: [code]
+    today: [tc:_run_product_action(CompanionAction), tc:_show_companion, tc:_companion_search, tc:_chips]
+
+  - id: salman.goes_with.nothing_to_show
+    behaviour: "A pick nothing is paired with or in stock stands alone and is offered a room around picks or more browsing - \"a vase\"."
+    source: {claude: ["10.4", "10.2"], cases: [next_step_unpaired_pick, ar_unpaired_pick, ar_vase_pick_in_chat]}
+    owner: salman
+    tool: show_what_goes_with
+    lives_in: [tool_result, code]
+    today: [tc:_offer_companions (cross_sell_nothing_to_offer), next_step ROOM_AROUND_PICKS]
+
+  - id: salman.goes_with.declined
+    behaviour: "\"No thanks, I'm fine\" after a suggestion keeps the pick and closes on a next step."
+    source: {claude: ["10.2"], cases: [pick_suggestion_declined, ar_suggestion_declined]}
+    owner: salman
+    tool: respond
+    lives_in: [prompt, code]
+    today: [decision ANSWER, next_step]
+
+  - id: salman.goes_with.page_more
+    behaviour: "\"Show me more of them\" beside suggestions pages the suggestions (ordered by the pick, no best match)."
+    source: {claude: ["10.4"], cases: [ar_suggestions_show_more]}
+    owner: salman
+    tool: more_options
+    lives_in: [code]
+    today: [tc:_continue_search (active_search.ordered_by_pick)]
+
+  - id: salman.goes_with.direction
+    behaviour: "After a pick the designer gives one direction (colours/styles the store stocks, avoid, proportion) that orders, never filters, and holds on the next page."
+    source: {claude: ["10.8"], cases: [direction_after_a_sofa_pick, direction_office_desk_then_chair, direction_keeps_on_the_next_page, direction_rug_beside_a_beige_sofa, ar_direction_after_a_pick]}
+    owner: code
+    tool: show_what_goes_with
+    lives_in: [code]
+    today: [_directed, tc:_direction_context, tc:_stocked_looks, interior_design complementary_recommendation]
+
+  - id: salman.goes_with.wording
+    behaviour: "Suggestions are introduced as a design suggestion beside their pick, never as their search and never \"usually bought together\"."
+    source: {claude: ["10.4"], cases: [pick_first_cross_sells, direction_after_a_sofa_pick]}
+    owner: salman
+    tool: respond
+    lives_in: [prompt, reply_check]
+    today: [response prompt, not_mentions checks]
+
+  - id: salman.goes_with.not_in_room
+    behaviour: "A pick already a piece of the room being designed is focused only, never cross-sold."
+    source: {claude: ["27"], cases: []}
+    owner: code
+    tool: show_what_goes_with
+    lives_in: [code]
+    today: [_in_room in tc:_offer_companions]
+
+  - id: salman.goes_with.typed_complement
+    behaviour: "\"What would go with my sofa?\" with no room names the specialist's one next piece and shows real products for it, no plan or total."
+    source: {claude: ["10.4", "17.2"], cases: []}
+    owner: salman
+    tool: show_what_goes_with
+    lives_in: [code]
+    today: [decision.design_scope COMPLEMENT, tc:_complement, tc:_first_viable_complement, tc:_settled_product, tc:_complement_request]
+
+  - id: salman.room.add_to_cart
+    behaviour: "\"Add these all to my cart\" (button or typed) adds every piece being bought with its quantity; owned stay out; adding twice never doubles."
+    source: {claude: ["36"], cases: []}
+    owner: salman
+    tool: add_room_to_cart
+    lives_in: [code]
+    today: [tc:_run_bundle_action(AddRoomToCartAction), tc:_add_room_to_cart, decision.add_room_to_cart, tc:_room_into_cart, tc:_with_room_in_cart, room_cart.py]
+
+  - id: salman.room.in_cart_goes_with
+    behaviour: "A whole room in the cart is answered as a pick: the first stocked piece Nora ranks shown as a page, the rest as chips, less what room/cart hold."
+    source: {claude: ["36", "10.3"], cases: []}
+    owner: salman
+    tool: add_room_to_cart
+    lives_in: [code]
+    today: [tc:_room_goes_with, tc:_room_ranked_page, tc:_room_chips, tc:_room_piece, _as_companion, _room_piece_offers]
+
+  - id: salman.room.picks_for_room
+    behaviour: "What they pick after the room went in is for that room: the reply says so and the cart line names the room."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [room_cart.picked_for_room in tc:run]
+
+  - id: salman.room.finish
+    behaviour: "\"I'm done with this room\" closes the room in the cart, keeps its products named by it, and asks which room next, less finished ones."
+    source: {claude: ["36"], cases: []}
+    owner: salman
+    tool: finish_room
+    lives_in: [code]
+    today: [tc:_run_bundle_action(RoomDoneAction), decision.room_done, tc:_finish_room, next_step NEXT_ROOM]
+
+  - id: salman.budget.offer_answer
+    behaviour: "A dearer swap or finishing touch is held: yes keeps it and raises the budget to the new total; no offers keeping the room or cheaper options within what is left."
+    source: {claude: ["10.3", "27"], cases: []}
+    owner: salman
+    tool: answer_budget_offer
+    lives_in: [code, tool_result]
+    today: [tc:_confirm_swap, tc:_decline_swap, tc:_keep_original_room, tc:_swap_alternatives, tc:_dismiss_swap, tc:_confirm_addition, tc:_cheaper_addition, tc:_held_addition, tc:_swap_offer_payload, tc:_slot_ceiling, tc:_raise_budget, _budget_stretched]
+
+  - id: salman.budget.offer_expired
+    behaviour: "A yes/no to an offer the room has moved on from clears it and carries on."
+    source: {claude: ["27"], cases: []}
+    owner: code
+    tool: answer_budget_offer
+    lives_in: [code]
+    today: [_swap_offer_expired]
+
+  - id: salman.upsell
+    behaviour: "An upsell today is only a commercial-reason label on an ordinary search (it changes the speaker and reply view, not execution)."
+    source: {claude: ["17.1", "25"], cases: []}
+    owner: salman
+    tool: upsell
+    lives_in: [prompt]
+    today: [CommercialReason.UPSELL, agent_persona._sells, response_view]
+
+# ════════════════════════════════════════════════════════════════════════════
+# FAYSAL - store and support
+# ════════════════════════════════════════════════════════════════════════════
+faysal:
+
+  - id: faysal.policy.lookup
+    behaviour: "\"How long does delivery take?\" is answered only from the store's own documents, store-scoped; none found is \"the store has not said\"."
+    source: {claude: ["3.3", "8"], cases: []}
+    owner: faysal
+    tool: lookup_store_policy
+    lives_in: [code, tool_result]
+    today: [decision.policy_question, tc:_store_info, store_knowledge.py]
+
+  - id: faysal.policy.support_beside
+    behaviour: "Every store answer carries the store's support channels; with none set, contact passages from its documents."
+    source: {claude: ["3.3"], cases: []}
+    owner: faysal
+    tool: offer_support
+    lives_in: [code]
+    today: [tc:_store_info, tc:_contact_passages, _with_contact, support.py SupportService.offer]
+
+  - id: faysal.policy.unavailable
+    behaviour: "Lookup not possible: fixed STORE_INFO_UNAVAILABLE(_WITH_SUPPORT) reply, support offered instead."
+    source: {claude: ["21"], cases: []}
+    owner: code
+    tool: lookup_store_policy
+    lives_in: [code]
+    today: [tc:_store_info failure codes]
+
+  - id: faysal.policy.then_search
+    behaviour: "\"Show me beds, and is assembly free?\" answers the store question and offers the search one tap away in their words."
+    source: {claude: ["10.2"], cases: []}
+    owner: faysal
+    tool: "lookup_store_policy(then_search) / hand_back -> sara"
+    lives_in: [code]
+    today: [decision.then_search, next_step._after_store_answer]
+
+  - id: faysal.support.contact_tap
+    behaviour: "A \"Contact support\" button shows the store's channels without a model; nothing in the session changes."
+    source: {claude: ["3.6"], cases: []}
+    owner: faysal
+    tool: offer_support
+    lives_in: [code]
+    today: [tc:_run_support_action]
+
+  - id: faysal.support.handover
+    behaviour: "Where hand-over is on, a channel carries the handover flag and the platform reads the recent transcript to hand the shopper to a person."
+    source: {claude: [], cases: []}
+    owner: faysal
+    tool: hand_over_to_human
+    lives_in: [code]
+    today: [SupportService.offer(handover), support_handover.py SupportHandoverService.handover, routes/support.py]
+
+# ════════════════════════════════════════════════════════════════════════════
+# CODE - runtime, settle chain, language, failures (no agent owns these)
+# ════════════════════════════════════════════════════════════════════════════
+code:
+
+  # ── turn shape ─────────────────────────────────────────────────────────────
+  - id: code.turn.screen_action_no_model
+    behaviour: "A tap (bundle, search, product, support action) is run in code with no decision model, on the same path the typed words take."
+    source: {claude: ["3.6", "17.1"], cases: [follow_different_options_button, follow_not_this_one_button, seat_combo_tapped_more_is_new]}
+    owner: code
+    tool: screen_action
+    lives_in: [code]
+    today: [tc:_dispatch, tc:_run_bundle_action, tc:_run_search_action, tc:_run_product_action, tc:_run_support_action, _bundle_action_decision, _search_action_decision, _goes_with_decision, _compare_picks_decision]
+
+  - id: code.turn.interaction_before_primary
+    behaviour: "A pick in the same message is applied before the primary action, so it survives a search that replaces the screen."
+    source: {claude: ["36"], cases: [pick_typed_with_a_kind_shows_it]}
+    owner: code
+    tool: add_to_cart
+    lives_in: [code]
+    today: [tc:_run_decided_turn -> tc:_apply_interaction]
+
+  - id: code.turn.proposals_applied_once
+    behaviour: "Stated facts (preferences, room budget, geometry, pieces) land in one transition after the primary action, never twice."
+    source: {claude: ["19"], cases: []}
+    owner: code
+    tool: settle
+    lives_in: [code]
+    today: [proposal_mapping.map_proposals, tc:_run_decided_turn apply_update, _Primary.proposals_applied]
+
+  - id: code.turn.ground_one_question
+    behaviour: "When a turn produces several possible questions, one is chosen by priority, not by branch order."
+    source: {claude: ["10.2"], cases: []}
+    owner: code
+    tool: settle
+    lives_in: [code]
+    today: [tc:_ground, grounding_builder.py]
+
+  - id: code.turn.store_scope
+    behaviour: "Store scope comes only from RetailerContext; no model output carries a store or product id."
+    source: {claude: ["8", "20.2"], cases: []}
+    owner: code
+    tool: all
+    lives_in: [code]
+    today: [CustomerTurnInput.context, reference_resolver]
+
+  - id: code.turn.selection_facts
+    behaviour: "Every reply reports the picks tray, picked kinds and liked list from one fresh catalog read."
+    source: {claude: ["10.7", "36"], cases: [typed_pick_lands_in_tray]}
+    owner: code
+    tool: settle
+    lives_in: [code]
+    today: [tc:_selection_facts]
+
+  - id: code.turn.picks_endpoint
+    behaviour: "Ticks, unticks, likes and quantities from POST /v1/picks change the cart silently with no turn."
+    source: {claude: ["36", "10.7"], cases: [untick_empties_tray, like_is_silent_and_apart_from_picks]}
+    owner: code
+    tool: none (route)
+    lives_in: [code]
+    today: [routes/picks.py, picks.py]
+
+  # ── post-steps in run() (the settle chain) ─────────────────────────────────
+  - id: code.settle.live_swap
+    behaviour: "While a room swap is live every reply says which piece its options are for; a swap no longer live is forgotten."
+    source: {claude: ["10.3"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [_with_live_swap]
+
+  - id: code.settle.narrow_down
+    behaviour: "Brief chips and the opened Narrow down attached beside results they searched for."
+    source: {claude: ["10.6"], cases: [brief_chips_beside_results, brief_not_beside_suggestions]}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_narrow_down]
+
+  - id: code.settle.taste_question
+    behaviour: "The one soft taste question attached after results, replacing the colour/style follow-up."
+    source: {claude: ["10.9"], cases: [taste_which_after_results]}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_taste_question]
+
+  - id: code.settle.room_check
+    behaviour: "A bed picked with the room size unknown closes on its length and width, once a session, in place of the step after a pick."
+    source: {claude: ["10.11"], cases: [bed_pick_asks_the_rooms_size, ar_bed_pick_asks_the_rooms_size]}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_room_check]
+
+  - id: code.settle.room_cards
+    behaviour: "\"Which piece?\" beside a room gets the room's swappable pieces as chips."
+    source: {claude: ["10.3"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_room_cards]
+
+  - id: code.settle.cart
+    behaviour: "Every reply carries the cart priced fresh, one total per currency, with what changed, after the store check."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_cart, tc:_as_the_store_takes, cart.py CartService.view]
+
+  - id: code.settle.cart_offer
+    behaviour: "A considered piece not in the cart gets the add-it offer with price and summed total."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:_with_cart_offer]
+
+  - id: code.settle.picks_for_room
+    behaviour: "Picks after the room went in are marked for that room."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [room_cart.picked_for_room]
+
+  - id: code.settle.next_step
+    behaviour: "Every reply closes on one next step chosen in code from what the turn did (after pick, detail, comparison, room, refusal, list); a greeting closes on an open question with no chips."
+    source: {claude: ["10.2"], cases: [next_step_ok_after_picks, next_step_thank_you, next_step_greeting, next_step_after_detail, next_step_what_have_i_chosen, next_step_unpaired_pick, next_step_after_removing_the_pick, ar_next_step_chips_in_arabic, pick_first_cross_sells, pick_second_typed_cross_sells, ar_compare_typed_in_chat, ar_design_a_room_asks_which]}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [tc:run next_step(), next_step.py, asks_for_product_type, _piece_chips]
+
+  - id: code.settle.narrow_or_more_beside_list_only
+    behaviour: "\"Narrow these down, or see more?\" only beside a list this reply shows or talks about; never after a cart turn or store answer."
+    source: {claude: ["10.2"], cases: [recommend_from_the_cards_on_screen]}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [next_step._about_the_list, _talks_about_the_screen]
+
+  - id: code.settle.after_refusal
+    behaviour: "A turn whose only news is a refused piece closes on \"Show similar ones\" / \"Keep browsing\"."
+    source: {claude: ["36"], cases: []}
+    owner: code
+    tool: post-step
+    lives_in: [code]
+    today: [next_step._refused_alone]
+
+  - id: code.settle.persona
+    behaviour: "Today the speaker label is derived after the turn; in the new design the writing agent is the speaker."
+    source: {claude: ["25"], cases: []}
+    owner: code
+    tool: none (replaced by owner)
+    lives_in: [code]
+    today: [agent_persona.speaker, chat_runtime.agent]
+
+  # ── language ───────────────────────────────────────────────────────────────
+  - id: code.lang.before_turn
+    behaviour: "The reply language is settled before anything runs from the message script, locale and stored language - an Arabic message is answered in Arabic; an English follow-up stays Arabic."
+    source: {claude: ["25"], cases: [ar_locale_first_turn, ar_english_session_stays_english, ar_gulf_search, ar_msa_card, ar_english_follow_up_stays_arabic, ar_tap_stays_arabic]}
+    owner: code
+    tool: prepare_turn
+    lives_in: [code]
+    today: [tc:_language_before, reply_language.before_the_turn, tc:run]
+
+  - id: code.lang.switch
+    behaviour: "\"English please\" switches the reply language; Arabizi (\"abi kanaba\") is answered in Arabic."
+    source: {claude: ["25"], cases: [ar_english_please, ar_arabizi_search]}
+    owner: code
+    tool: "GAP:set_reply_language (decision.switch_reply_language / writes_arabizi have no planned tool)"
+    lives_in: [code, prompt]
+    today: [tc:_with_language, reply_language.after_the_decision]
+
+  - id: code.lang.mid_turn
+    behaviour: "Cards and chips built mid-turn are in the language of the reply beside them."
+    source: {claude: ["25"], cases: [ar_card_in_arabic, ar_next_step_chips_in_arabic, ar_chips_match_the_question, opening_ar_sofa]}
+    owner: code
+    tool: all
+    lives_in: [code]
+    today: [tc:_turn_language]
+
+  - id: code.lang.display_labels
+    behaviour: "The server words every card, chip and label in the reply's language (Arabic names as stored, Western digits); decisions keep English values."
+    source: {claude: ["25"], cases: [ar_card_in_arabic, ar_room_budget_chips_in_arabic, ar_room_piece_picker_in_arabic, ar_pick_companion_chip, ar_compare_popup, brief_ar_chips]}
+    owner: code
+    tool: build_public_response
+    lives_in: [code]
+    today: [product_display.py, card_labels.py, chat_runtime.presentation]
+
+  # ── failures and fallbacks ─────────────────────────────────────────────────
+  - id: code.fail.not_understood
+    behaviour: "Model output we cannot use ends as a fixed \"say it another way\" reply with the pre-turn state untouched - never an error (the not_fallback check on every case)."
+    source: {claude: ["21.1"], cases: []}
+    owner: code
+    tool: fixed_wording
+    lives_in: [code]
+    today: [tc:_not_understood, tc:_run_turn]
+
+  - id: code.fail.redecide_once
+    behaviour: "A valid decision that cannot be applied gets one corrective attempt told only our rule text, from the untouched state; never for a tap; at most three decisions a turn."
+    source: {claude: ["21.1"], cases: []}
+    owner: code
+    tool: loop (one correction)
+    lives_in: [code]
+    today: [tc:_run_turn, tc:_may_redecide, describe_unusable, customer_decision.CustomerAgentDecisionService._attempt]
+
+  - id: code.fail.stale_tap
+    behaviour: "A tapped chip whose room or list has moved on changes nothing and says those choices are no longer current."
+    source: {claude: ["10.4", "36"], cases: [answer_card_stale]}
+    owner: code
+    tool: fixed_wording
+    lives_in: [code]
+    today: [_expired, questions_expired]
+
+  - id: code.fail.reference_unresolved
+    behaviour: "A product reference that cannot be resolved is one question (ambiguous) or a fact (gone), never a guess."
+    source: {claude: ["14.5", "17.1"], cases: []}
+    owner: code
+    tool: all product tools
+    lives_in: [code, tool_result]
+    today: [_reference_outcome, _unresolved_bundle, reference_resolver.py]
+
+  - id: code.fail.outages
+    behaviour: "Catalog/index/design outages degrade or report safely; only outages and defects surface as errors."
+    source: {claude: ["21", "16.1"], cases: []}
+    owner: code
+    tool: all
+    lives_in: [code]
+    today: [_HANDLED_SEARCH_FAILURES, _HANDLED_CATALOG_FAILURES, _HANDLED_DESIGN_FAILURES]
+
+  # ── reply checks ───────────────────────────────────────────────────────────
+  - id: code.check.output_guard
+    behaviour: "Product facts, figures and store scope in the reply are checked against tool data; the cart and tray figures are admitted."
+    source: {claude: ["20.6", "36"], cases: []}
+    owner: code
+    tool: reply checks
+    lives_in: [reply_check]
+    today: [response_validation.validate_response, numeric_guard.py]
+
+  - id: code.check.one_question
+    behaviour: "At most one question per reply, never budget as an opener; the app's question used word for word; chips answer the question shown."
+    source: {claude: ["10.2"], cases: [ar_chips_match_the_question, follow_up_seats_for_sofas, card_show_me_sofas, answer_card_everything]}
+    owner: code
+    tool: reply checks
+    lives_in: [reply_check, prompt]
+    today: [response_generator + response_validation, next_step.asks_its_own_question/already_asks]
+
+  - id: code.check.follow_up_seats_or_taste
+    behaviour: "Results without a card carry at most one optional follow-up: head count for multi-seat seating while unknown, else colour/style (superseded by 10.9 when on); none when key facts given."
+    source: {claude: ["10.2"], cases: [follow_up_seats_for_sofas, follow_up_style_when_seats_known]}
+    owner: code
+    tool: reply checks
+    lives_in: [code, prompt]
+    today: [decision.follow_up_policy/follow_up_goal, tc:_with_taste_question]
+
+unmapped_cases: []
+# All 291 case ids in evals/conversations/cases.yaml are referenced above
+# (checked mechanically when this file was written).

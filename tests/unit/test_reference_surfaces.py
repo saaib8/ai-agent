@@ -18,7 +18,6 @@ defect:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 from app.schemas.agent_decision import (
@@ -249,26 +248,8 @@ def test_a_focus_on_an_unseen_product_is_still_refused() -> None:
 # ── 4. a price is not a household ───────────────────────────────────────────
 
 
-def test_the_agent_is_told_a_figure_is_not_a_seat_count() -> None:
-    """"I am looking for under 2000 SAR" was recorded as two people, and every
-    recommendation afterwards was sized for a household nobody mentioned.
-
-    Asserted against the **prompt**, because that is what the model actually
-    reads: attribute docstrings on the proposal do not reach the provider's
-    JSON schema, so a rule written only there would guide nothing.
-    """
-    from app.prompts.customer_commerce.v1 import INSTRUCTIONS
-
-    flat = " ".join(INSTRUCTIONS.split())
-
-    assert "WHAT THEY SAID, NOT WHAT IT RESEMBLES" in flat
-    assert "A price is a price" in flat
-    assert "If you are unsure which fact a number is, record none of them" in flat
-
-
 def test_that_rule_is_documented_where_the_field_is_defined_too() -> None:
-    """For whoever reads the contract next. It is documentation, not the
-    guidance - the test above covers the part the model sees."""
+    """For whoever reads the contract next."""
     source = (
         Path(__file__).parents[2] / "app/schemas/agent_decision.py"
     ).read_text()
@@ -302,97 +283,3 @@ def test_no_selector_carries_a_product_id() -> None:
     for selector in (ComparedOrdinal(position=1), PresentedOrdinal(position=1)):
         assert "product_id" not in selector.model_dump_json()
         assert "id" not in set(type(selector).model_fields) - {"kind", "position"}
-
-
-# ── the guard, through the coordinator ──────────────────────────────────────
-
-
-async def _interaction_turn(
-    intent: ProductInteractionIntent, *, presented: tuple[int, ...], resolved: int
-) -> tuple[Any, dict[str, Any]]:
-    """One turn whose only work is the interaction."""
-    from app.schemas.resolution import ResolvedProductReference
-
-    from tests.unit.test_turn_coordinator import (
-        FakeHydration,
-        FakeReferences,
-        _coordinator,
-        _state,
-        _turn,
-    )
-
-    coordinator, parts = _coordinator(
-        CustomerAgentDecision(action=AgentAction.ANSWER, interaction=intent),
-        references=FakeReferences(default=ResolvedProductReference(product_id=resolved)),
-        hydration=FakeHydration(available=presented),
-    )
-    result = await coordinator.run(_turn(_state(presented=presented)))
-    return result, parts
-
-
-async def test_a_position_that_resolved_to_another_kind_is_refused() -> None:
-    """The defect, end to end.
-
-    "Sofa 5" while the list holds centre tables: position five exists, so
-    nothing is out of range, and the product at it is not a sofa. Refused and
-    asked about, rather than selected (M15 2).
-    """
-    result, _ = await _interaction_turn(
-        ProductInteractionIntent(
-            op=ProductInteractionOp.SELECT,
-            reference=PresentedOrdinal(position=5),
-            expected_subcategory="carpet",
-        ),
-        presented=(10, 11),
-        resolved=10,
-    )
-
-    assert 10 not in result.state.product_interaction.selected_product_ids
-    assert result.grounding.deterministic_clarification is not None
-
-
-async def test_the_matching_kind_goes_through() -> None:
-    """The fixture's products are sofas, so naming one changes nothing."""
-    result, _ = await _interaction_turn(
-        ProductInteractionIntent(
-            op=ProductInteractionOp.SELECT,
-            reference=PresentedOrdinal(position=1),
-            expected_subcategory="sofa",
-        ),
-        presented=(10, 11),
-        resolved=10,
-    )
-
-    assert 10 in result.state.product_interaction.selected_product_ids
-
-
-async def test_naming_nothing_still_selects() -> None:
-    """"The second one" carries no expectation, and must not be refused for
-    lacking one."""
-    result, _ = await _interaction_turn(
-        ProductInteractionIntent(
-            op=ProductInteractionOp.SELECT, reference=PresentedOrdinal(position=1)
-        ),
-        presented=(10, 11),
-        resolved=10,
-    )
-
-    assert 10 in result.state.product_interaction.selected_product_ids
-
-
-async def test_a_kind_the_registry_does_not_know_is_not_a_refusal() -> None:
-    """The model must never introduce a taxonomy value, and the customer must
-    not lose their turn because it did. An unapproved word is treated as no
-    expectation - it can never *pass* the check, only skip it (CLAUDE.md 14.3).
-    """
-    result, _ = await _interaction_turn(
-        ProductInteractionIntent(
-            op=ProductInteractionOp.SELECT,
-            reference=PresentedOrdinal(position=1),
-            expected_subcategory="luxury-couch",
-        ),
-        presented=(10, 11),
-        resolved=10,
-    )
-
-    assert 10 in result.state.product_interaction.selected_product_ids

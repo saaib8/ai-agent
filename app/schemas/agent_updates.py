@@ -32,13 +32,11 @@ from app.schemas.agent_state import (
     MAX_CART_QUANTITY,
     MAX_ROOM_WORDS,
     BundleItemStatus,
-    PurchaseStage,
 )
-from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority
+from app.schemas.design import MAX_REGULAR_SEATING_COUNT, DesignPriority, PieceDesign
 from app.schemas.discovery import PriceConstraint, ProductSearchRequest, SeatingCapacityConstraint
-from app.schemas.geometry import RoomGeometry
+from app.schemas.geometry import RoomGeometry, WallNote
 from app.schemas.query import ConstraintSemantics, SemanticPreference
-from app.schemas.room_opener import RoomQuestionKind
 
 # ── tuple operations ────────────────────────────────────────────────────────
 
@@ -239,6 +237,7 @@ class DesignNeedSpec(BaseModel):
     quantity: int = Field(default=1, ge=1)
     seating_capacity: SeatingCapacityConstraint | None = None
     semantic_intent: str | None = None
+    design: PieceDesign | None = None
 
 
 class DesignNeedRefinement(BaseModel):
@@ -259,6 +258,9 @@ class DesignNeedRefinement(BaseModel):
 
     semantic_intent: str | None = None
     clear_semantic_intent: bool = False
+    design: PieceDesign | None = None
+    """Nora's revised directions for the role - its look, size, share or wall.
+    Never its type: another type is a new design."""
 
     @model_validator(mode="after")
     def _setting_and_clearing_are_exclusive(self) -> Self:
@@ -320,8 +322,13 @@ class ReplaceDesignPlan(BaseModel):
     needs: tuple[DesignNeedSpec, ...] = ()
     preserved: tuple[PreservedBundleLine, ...] = ()
     """Locked lines carried across. They keep their identity and lose their
-    need: the roles they belonged to no longer exist, and matching them onto
-    new ones would be a guess."""
+    need unless `locked_needs` binds them: the roles they belonged to no longer
+    exist, and matching them onto new ones by guess is never done."""
+
+    locked_needs: tuple[tuple[int, int], ...] = ()
+    """(preserved line id, need position in this plan): the role the optimiser
+    filled with that lock - its own allocation, not a guess - so a locked
+    piece stays that piece of the new plan (swappable, revisable)."""
 
     added: tuple[PlannedBundleLineSpec, ...] = ()
 
@@ -433,15 +440,24 @@ class RoomProjectUpdate(BaseModel):
 
     room_type: str | None = None
     clear_room_type: bool = False
+    walls: tuple[WallNote, ...] = ()
+    """Walls described this turn: each replaces the one of the same name."""
     geometry: RoomGeometry | None = None
     clear_geometry: bool = False
     budget: PriceConstraint | None = None
     clear_budget: bool = False
     design_preferences: PreferenceListUpdate | None = None
-    regular_seating_count: int | None = Field(
-        default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT
-    )
+    regular_seating_count: int | None = Field(default=None, ge=1, le=MAX_REGULAR_SEATING_COUNT)
     clear_regular_seating_count: bool = False
+    palette: tuple[str, ...] | None = None
+    """Application-only: the room's colours as Nora designed it, replacing any
+    before - apart from `design_preferences`, so a simple search never leans to
+    a room's palette."""
+    palette_styles: tuple[str, ...] | None = None
+    size_declined: bool | None = None
+    """They said they would rather not give the room's size."""
+    purpose: str | None = None
+    layout_idea: str | None = None
     room_kind: str | None = None
     """A different kind resets the chosen pieces and the opening question: the
     bedroom's pieces say nothing about a living room."""
@@ -449,15 +465,6 @@ class RoomProjectUpdate(BaseModel):
     pieces: tuple[str, ...] | None = None
     """Replaces the chosen pieces. Registry keys already checked by the
     application; a model's raw keys never land here unchecked."""
-
-    question_asked: RoomQuestionKind | None = None
-    """Application-only: the room question asked this turn."""
-
-    questions_done: bool = False
-    """They asked to skip the remaining room questions."""
-
-    palette_left_to_us: bool = False
-    """They answered the colour question by leaving it to us ("any colour")."""
 
     seats_carried: bool | None = None
     """Application-only: the head count set this turn was carried from
@@ -479,12 +486,6 @@ class RoomProjectUpdate(BaseModel):
     """
 
 
-class DerivedCommerceUpdate(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    purchase_stage: PurchaseStage | None = None
-    clear_purchase_stage: bool = False
-
-
 class AgentStateUpdate(BaseModel):
     """One turn's proposed changes. A `None` domain is untouched."""
 
@@ -494,4 +495,3 @@ class AgentStateUpdate(BaseModel):
     active_search: ActiveSearchUpdate | None = None
     product_interaction: ProductInteractionUpdate | None = None
     room_project: RoomProjectUpdate | None = None
-    derived_commerce: DerivedCommerceUpdate | None = None

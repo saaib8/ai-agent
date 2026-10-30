@@ -122,9 +122,7 @@ class ProductDiscoveryService:
             truncated=truncated,
             elapsed_ms=elapsed_ms,
         )
-        return ProductSearchResult(
-            candidates=candidates, limit=limit, truncated=truncated
-        )
+        return ProductSearchResult(candidates=candidates, limit=limit, truncated=truncated)
 
     async def eligible_pool(
         self, request: ProductSearchRequest, context: RetailerContext
@@ -185,9 +183,7 @@ class ProductDiscoveryService:
                 if not self._attributes.is_value(family, value):
                     raise UnknownCatalogAttributeError(family=str(family), value=value)
 
-    def _resolve_dimensions(
-        self, request: ProductSearchRequest
-    ) -> tuple[AxisConstraint, ...]:
+    def _resolve_dimensions(self, request: ProductSearchRequest) -> tuple[AxisConstraint, ...]:
         """Turn customer-facing roles into stored axes, through the registry.
 
         This is the only place a role becomes a column. A role the registry does

@@ -191,7 +191,9 @@ async def test_it_consults_no_model() -> None:
     }
 
     assert not any("llm" in name or "prompt" in name for name in imported)
-    assert "redis" not in source.lower(), "no caching in M12A"
+    # The overview is cached through an injected `OverviewCache` (known issue
+    # #18, approved 2026-10-25); the service itself holds no Redis client.
+    assert "from redis" not in source and "import redis" not in source
 
 
 async def test_each_type_carries_its_own_depth() -> None:

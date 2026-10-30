@@ -199,9 +199,7 @@ def render_attributes(values: frozenset[str]) -> str:
     return ", ".join(sorted(values))
 
 
-def build_instructions(
-    taxonomy: CommerceTaxonomy, attributes: CatalogAttributes
-) -> str:
+def build_instructions(taxonomy: CommerceTaxonomy, attributes: CatalogAttributes) -> str:
     return _INSTRUCTIONS.format(
         taxonomy=render_taxonomy(taxonomy),
         colors=render_attributes(attributes.colors),

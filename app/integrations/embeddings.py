@@ -11,6 +11,7 @@ ranking service can absorb (CLAUDE.md 21).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from openai import (
@@ -39,6 +40,12 @@ class QueryEmbedder(Protocol):
     def model(self) -> str: ...
 
     async def embed_query(self, text: str) -> tuple[float, ...]: ...
+
+
+class BatchQueryEmbedder(Protocol):
+    """Embeds several texts in one request (a room's pieces together)."""
+
+    async def embed_queries(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]: ...
 
 
 class OpenAIQueryEmbedder:
@@ -82,10 +89,18 @@ class OpenAIQueryEmbedder:
         return self._model
 
     async def embed_query(self, text: str) -> tuple[float, ...]:
+        (vector,) = await self.embed_queries((text,))
+        return vector
+
+    async def embed_queries(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        """One vector per text, in order, from one request: a room's pieces
+        are embedded together rather than one call each."""
+        if not texts:
+            return ()
         try:
             response = await self._client.embeddings.create(
                 model=self._model,
-                input=[text],
+                input=list(texts),
                 dimensions=omit if self._dimensions is None else self._dimensions,
             )
         except (APITimeoutError, APIConnectionError) as exc:
@@ -104,18 +119,23 @@ class OpenAIQueryEmbedder:
             logger.warning("embedding_call_failed", error_type=type(exc).__name__)
             raise EmbeddingUnavailableError(reason=type(exc).__name__) from exc
 
-        vector = tuple(response.data[0].embedding)
-        if len(vector) != self._expected:
-            logger.error(
-                "embedding_dimension_mismatch",
-                model=self._model,
-                returned=len(vector),
-                expected=self._expected,
-            )
-            raise EmbeddingUnavailableError(
-                reason=f"expected {self._expected} dimensions, got {len(vector)}"
-            )
-        return vector
+        ordered = sorted(response.data, key=lambda item: item.index)
+        if len(ordered) != len(texts):
+            logger.error("embedding_count_mismatch", asked=len(texts), returned=len(ordered))
+            raise EmbeddingUnavailableError(reason="one vector per text was not returned")
+        vectors = tuple(tuple(item.embedding) for item in ordered)
+        for vector in vectors:
+            if len(vector) != self._expected:
+                logger.error(
+                    "embedding_dimension_mismatch",
+                    model=self._model,
+                    returned=len(vector),
+                    expected=self._expected,
+                )
+                raise EmbeddingUnavailableError(
+                    reason=f"expected {self._expected} dimensions, got {len(vector)}"
+                )
+        return vectors
 
     async def close(self) -> None:
         await self._client.close()

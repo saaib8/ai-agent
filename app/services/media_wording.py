@@ -150,7 +150,7 @@ def _left_out(dropped: int, language: ReplyLanguage) -> str:
 
 
 def _closest_products(count: int) -> str:
-    """"the closest product(s)", with Arabic's number agreement: one, two
+    """ "the closest product(s)", with Arabic's number agreement: one, two
     (the dual), three to ten (plural), eleven and more (singular)."""
     if count == 1:
         return "أقرب منتج"
@@ -162,7 +162,7 @@ def _closest_products(count: int) -> str:
 
 
 def _pieces(count: int) -> str:
-    """"n pieces", with the same agreement; never called for one."""
+    """ "n pieces", with the same agreement; never called for one."""
     if count == 2:
         return "قطعتين"
     if count <= 10:

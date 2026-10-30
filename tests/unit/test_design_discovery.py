@@ -2,7 +2,7 @@
 
 Most of these tests are about what the bridge does *not* do. It copies three
 fields and calls one facade; every other piece of the design request — the
-brief, the budget, the room's measurements, the customer's colours — is
+budget, the room's measurements, the customer's colours — is
 something a careless implementation would helpfully turn into a filter, and
 each of those would silently answer a different question from the one asked.
 
@@ -20,7 +20,7 @@ from typing import Any, cast
 
 import pytest
 from app.core.exceptions import (
-    InvalidRequestError,
+    CatalogUnavailableError,
     UnknownCommerceSubcategoryError,
 )
 from app.schemas.design import (
@@ -174,11 +174,7 @@ def _need(
 
 def _request(**kwargs: Any) -> InteriorDesignRequest:
     kwargs.setdefault("catalog_capabilities", STOCKED)
-    return InteriorDesignRequest(
-        task=DesignTask.ROOM_PLAN,
-        design_brief="a calm living room for a family of six, no TV unit",
-        **kwargs,
-    )
+    return InteriorDesignRequest(task=DesignTask.ROOM_PLAN, **kwargs)
 
 
 async def _run(
@@ -191,22 +187,6 @@ async def _run(
         request or _request(), InteriorDesignResult(needs=needs), CONTEXT
     )
     return result, pipeline
-
-
-# ── the task boundary ───────────────────────────────────────────────────────
-
-
-async def test_general_advice_never_triggers_a_product_search() -> None:
-    """Guidance coming back is not a shopping request."""
-    pipeline = FakePipeline()
-    advice = InteriorDesignRequest(
-        task=DesignTask.GENERAL_ADVICE, question="what goes with walnut?"
-    )
-
-    with pytest.raises(InvalidRequestError):
-        await _service(pipeline).discover(advice, InteriorDesignResult(), CONTEXT)
-
-    assert pipeline.calls == []
 
 
 # ── one need, one search ────────────────────────────────────────────────────
@@ -230,15 +210,11 @@ async def test_a_need_without_a_subcategory_stays_without_one() -> None:
     """Never narrowed to a plausible child: the plan said what it said."""
     broad = RetailerCatalogCapabilities(
         capabilities=(
-            RetailerCatalogCapability(
-                commerce_category="seating", active_product_count=12
-            ),
+            RetailerCatalogCapability(commerce_category="seating", active_product_count=12),
         )
     )
 
-    _, pipeline = await _run(
-        _need("seating", None), request=_request(catalog_capabilities=broad)
-    )
+    _, pipeline = await _run(_need("seating", None), request=_request(catalog_capabilities=broad))
 
     assert pipeline.calls[0].request.commerce_subcategory is None
 
@@ -255,9 +231,7 @@ async def test_capability_granularity_is_read_exactly_as_the_specialist_reads_it
 
 
 async def test_need_order_is_preserved() -> None:
-    result, pipeline = await _run(
-        _need("tables", "center-table"), _need("seating", "sofa")
-    )
+    result, pipeline = await _run(_need("tables", "center-table"), _need("seating", "sofa"))
 
     assert [entry.need.commerce_subcategory for entry in result.needs] == [
         "center-table",
@@ -285,9 +259,7 @@ async def test_duplicate_needs_are_two_needs() -> None:
 async def test_seating_capacity_is_copied_unchanged() -> None:
     _, pipeline = await _run(_need(seating=SeatingCapacityConstraint.at_least(4)))
 
-    assert pipeline.calls[0].request.seating_capacity == (
-        SeatingCapacityConstraint.at_least(4)
-    )
+    assert pipeline.calls[0].request.seating_capacity == (SeatingCapacityConstraint.at_least(4))
 
 
 async def test_a_design_derived_seating_requirement_is_locked() -> None:
@@ -322,9 +294,7 @@ async def test_the_room_budget_never_becomes_a_per_item_price_bound() -> None:
     all, while looking as though it had (CLAUDE.md 27)."""
     request = _request(budget=PriceConstraint.at_most(Decimal("15000"), "SAR"))
 
-    _, pipeline = await _run(
-        _need(), _need("tables", "center-table"), request=request
-    )
+    _, pipeline = await _run(_need(), _need("tables", "center-table"), request=request)
 
     assert all(call.request.price is None for call in pipeline.calls)
 
@@ -374,9 +344,9 @@ async def test_design_preferences_reach_ranking_and_never_sql() -> None:
     assert resolved.request.styles_all_of == ()
 
 
-async def test_the_brief_is_never_reparsed_into_a_search() -> None:
-    """"No TV unit" and "a family of six" are prose the specialist already
-    turned into needs. Reading them again here would invent constraints."""
+async def test_no_constraint_is_invented_for_a_need() -> None:
+    """A need is searched as it was planned. Anything more here would invent
+    constraints."""
     _, pipeline = await _run(_need())
 
     resolved = pipeline.calls[0]
@@ -567,7 +537,16 @@ def test_the_pipeline_is_the_only_search_facade_the_bridge_calls() -> None:
     ]
     attributes = {node.attr for node in awaited if isinstance(node, ast.Attribute)}
 
-    assert attributes == {"execute_candidate_pool", "execute_forced_pool", "_for_need"}
+    # The one other awaited call is the batch embedder: every piece's ranking
+    # text in one request, read back by the same pipeline searches.
+    assert attributes == {
+        "execute_candidate_pool",
+        "execute_forced_pool",
+        "_for_need",
+        "_side_by_side",
+        "_vectors_ahead",
+        "embed_queries",
+    }
 
 
 def test_the_bridge_consults_no_model() -> None:
@@ -636,18 +615,17 @@ async def test_room_preferences_and_need_intent_stay_separate() -> None:
 
 
 async def test_the_query_text_is_the_field_and_never_composed_prose() -> None:
-    """Not the brief, not guidance, not a measurement, not an anchor. M12C
-    consumes the structured result only."""
-    brief = "a calm living room for a family of six, no TV unit"
-
+    """Not a measurement, not a room preference. M12C consumes the structured
+    result only."""
     _, pipeline = await _run(_need(intent="clean-lined"), request=_request())
 
     assert pipeline.calls[0].semantic_text == "clean-lined"
-    assert brief not in (pipeline.calls[0].semantic_text or "")
 
 
 def test_the_bridge_composes_no_text_of_its_own() -> None:
-    """Structural: the intent is copied, never concatenated or formatted."""
+    """Structural: the wording is the plan's (or a staged override), and a
+    designed piece's look words joined to it by one helper - nothing else
+    writes search language here (CLAUDE.md 10.1)."""
     source = (Path(__file__).parents[2] / "app/services/design_discovery.py").read_text()
     tree = ast.parse(source)
 
@@ -656,12 +634,21 @@ def test_the_bridge_composes_no_text_of_its_own() -> None:
             if node.func.id != "ResolvedSearch":
                 continue
             text = next(k for k in node.keywords if k.arg == "semantic_text")
-            # A call to the one helper that chooses between the plan's wording
-            # and a staged override. A JoinedStr, a BinOp or a .join() here
-            # would mean the bridge had started writing search language.
-            assert isinstance(text.value, ast.Call), ast.dump(text.value)
-            assert isinstance(text.value.func, ast.Name)
-            assert text.value.func.id == "_wording"
+            assert isinstance(text.value, ast.Name) and text.value.id == "wording"
+    # `wording` is only ever the plan's (`_wording`) or its look words added
+    # (`_look_words`): no JoinedStr, BinOp or .join() inline.
+    assigned = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "wording" for t in node.targets)
+    ]
+    assert assigned and all(
+        isinstance(v, ast.Call)
+        and isinstance(v.func, ast.Name)
+        and v.func.id in {"_wording", "_look_words"}
+        for v in assigned
+    )
 
 
 # ── the M9 seam ─────────────────────────────────────────────────────────────
@@ -671,9 +658,7 @@ def test_a_design_intent_activates_the_semantic_ranking_path() -> None:
     """M9's own predicate, unmodified: something fuzzy was asked for."""
     from app.services.query_document import build_query_document, has_semantic_intent
 
-    resolved = _service(FakePipeline())._resolve(
-        _need(intent="visually light"), _request()
-    )
+    resolved = _service(FakePipeline())._resolve(_need(intent="visually light"), _request())
 
     assert has_semantic_intent(resolved) is True
     assert "visually light" in build_query_document(resolved)
@@ -718,9 +703,7 @@ async def test_a_hostile_intent_cannot_move_the_retailer_scope() -> None:
 
 async def test_a_hostile_intent_changes_no_structured_constraint() -> None:
     """It is rankable text and nothing else: eligibility is untouched."""
-    _, pipeline = await _run(
-        _need(seating=SeatingCapacityConstraint.at_least(4), intent=HOSTILE)
-    )
+    _, pipeline = await _run(_need(seating=SeatingCapacityConstraint.at_least(4), intent=HOSTILE))
 
     request = pipeline.calls[0].request
     assert request.commerce_category == "seating"
@@ -735,9 +718,7 @@ async def test_a_hostile_intent_changes_no_structured_constraint() -> None:
 
 async def test_a_hostile_intent_does_not_soften_a_locked_constraint() -> None:
     """Relaxation reads typed semantics only. Wording is not a licence."""
-    _, pipeline = await _run(
-        _need(seating=SeatingCapacityConstraint.at_least(4), intent=HOSTILE)
-    )
+    _, pipeline = await _run(_need(seating=SeatingCapacityConstraint.at_least(4), intent=HOSTILE))
 
     semantics = pipeline.calls[0].semantics
     assert semantics.seating_min is ConstraintStrength.LOCKED
@@ -746,9 +727,274 @@ async def test_a_hostile_intent_does_not_soften_a_locked_constraint() -> None:
 
 async def test_an_intent_naming_another_product_type_does_not_move_the_search() -> None:
     """The category is the customer's basic intent and is never relaxable."""
-    _, pipeline = await _run(
-        _need("tables", "center-table", intent="lamp-like and sculptural")
-    )
+    _, pipeline = await _run(_need("tables", "center-table", intent="lamp-like and sculptural"))
 
     assert pipeline.calls[0].request.commerce_category == "tables"
     assert pipeline.calls[0].request.commerce_subcategory == "center-table"
+
+
+# ── pieces searched side by side ───────────────────────────────────────────
+
+
+class _SlowPipeline(FakePipeline):
+    """Answers late for the first needs, so the last finish first - and counts
+    how many searches ran at once."""
+
+    def __init__(self, pools: dict[str, tuple[int, ...]], delays: dict[str, float]) -> None:
+        super().__init__(pools)
+        self.delays = delays
+        self.running = 0
+        self.most_at_once = 0
+        self.fail: str | None = None
+
+    async def execute_candidate_pool(
+        self, resolved: ResolvedSearch, context: RetailerContext
+    ) -> CandidatePoolResult:
+        import asyncio
+
+        key = resolved.request.commerce_subcategory or resolved.request.commerce_category
+        self.running += 1
+        self.most_at_once = max(self.most_at_once, self.running)
+        try:
+            await asyncio.sleep(self.delays.get(key, 0))
+            if key == self.fail:
+                raise CatalogUnavailableError(dependency="postgres")
+            return await super().execute_candidate_pool(resolved, context)
+        finally:
+            self.running -= 1
+
+
+def _side_by_side(
+    pipeline: FakePipeline, concurrency: int
+) -> tuple[DesignDiscoveryService, list[str]]:
+    from contextlib import asynccontextmanager
+
+    opened: list[str] = []
+
+    @asynccontextmanager
+    async def fresh() -> Any:
+        opened.append("open")
+        try:
+            yield pipeline
+        finally:
+            opened.append("closed")
+
+    service = DesignDiscoveryService(
+        cast(ProductSearchPipeline, pipeline), TAXONOMY, fresh=fresh, concurrency=concurrency
+    )
+    return service, opened
+
+
+ROOM_NEEDS = (
+    _need("seating", "sofa"),
+    _need("seating", "lounge-chair"),
+    _need("tables", "center-table"),
+)
+ROOM_POOLS = {"sofa": (1, 2), "lounge-chair": (3,), "center-table": (4, 5)}
+DELAYS = {"sofa": 0.03, "lounge-chair": 0.02, "center-table": 0.0}
+
+
+async def test_side_by_side_finds_the_same_pieces_in_the_plans_order() -> None:
+    one_by_one = await DesignDiscoveryService(
+        cast(ProductSearchPipeline, FakePipeline(ROOM_POOLS)), TAXONOMY
+    ).discover(_request(), InteriorDesignResult(needs=ROOM_NEEDS), CONTEXT)
+    service, _ = _side_by_side(_SlowPipeline(ROOM_POOLS, DELAYS), concurrency=3)
+
+    together = await service.discover(_request(), InteriorDesignResult(needs=ROOM_NEEDS), CONTEXT)
+
+    def ids(result: Any) -> list[tuple[int, list[int]]]:
+        return [
+            (e.need_index, [c.product.product_id for c in e.pool.candidates]) for e in result.needs
+        ]
+
+    assert ids(together) == ids(one_by_one)
+
+
+async def test_never_more_searches_at_once_than_the_setting() -> None:
+    pipeline = _SlowPipeline(ROOM_POOLS, DELAYS)
+    service, opened = _side_by_side(pipeline, concurrency=2)
+
+    await service.discover(_request(), InteriorDesignResult(needs=ROOM_NEEDS), CONTEXT)
+
+    assert pipeline.most_at_once == 2
+    # One search ran on the request's own pipeline; only the rest opened one.
+    assert opened.count("open") == opened.count("closed") == 2
+
+
+async def test_one_failed_piece_stops_the_room_with_its_own_error() -> None:
+    pipeline = _SlowPipeline(ROOM_POOLS, DELAYS)
+    pipeline.fail = "center-table"
+    service, opened = _side_by_side(pipeline, concurrency=3)
+
+    with pytest.raises(CatalogUnavailableError):
+        await service.discover(_request(), InteriorDesignResult(needs=ROOM_NEEDS), CONTEXT)
+
+    # Every session opened was closed, the cancelled ones included.
+    assert opened.count("open") == opened.count("closed")
+
+
+async def test_a_stopped_turn_leaves_no_search_running() -> None:
+    import asyncio
+
+    pipeline = _SlowPipeline(ROOM_POOLS, {"sofa": 1.0, "lounge-chair": 1.0, "center-table": 1.0})
+    service, opened = _side_by_side(pipeline, concurrency=3)
+    task = asyncio.ensure_future(
+        service.discover(_request(), InteriorDesignResult(needs=ROOM_NEEDS), CONTEXT)
+    )
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert pipeline.running == 0
+    assert opened.count("open") == opened.count("closed")
+
+
+async def test_a_stopped_search_whose_session_fails_on_close_stays_a_stop() -> None:
+    """A search cancelled mid-query can have its session fail while closing;
+    that must not turn the turn's stop into a database error."""
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    pipeline = _SlowPipeline(ROOM_POOLS, {"sofa": 1.0, "lounge-chair": 1.0, "center-table": 1.0})
+
+    @asynccontextmanager
+    async def fresh() -> Any:
+        try:
+            yield pipeline
+        finally:
+            raise RuntimeError("another operation is in progress")
+
+    service = DesignDiscoveryService(
+        cast(ProductSearchPipeline, pipeline), TAXONOMY, fresh=fresh, concurrency=3
+    )
+    task = asyncio.ensure_future(
+        service.discover(_request(), InteriorDesignResult(needs=ROOM_NEEDS), CONTEXT)
+    )
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+# ── every piece's ranking text embedded in one request ─────────────────────
+
+
+class _BatchEmbedder:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.batches: list[list[str]] = []
+        self.error = error
+
+    async def embed_queries(self, texts: Any) -> tuple[tuple[float, ...], ...]:
+        self.batches.append(list(texts))
+        if self.error is not None:
+            raise self.error
+        return tuple((0.1,) * 4 for _ in texts)
+
+
+async def test_the_pieces_texts_are_embedded_together_before_the_searches() -> None:
+    embedder = _BatchEmbedder()
+    service = DesignDiscoveryService(
+        cast(ProductSearchPipeline, FakePipeline(ROOM_POOLS)), TAXONOMY, embedder=embedder
+    )
+    needs = (
+        _need("seating", "sofa", intent="warm and soft"),
+        _need("tables", "center-table", intent="light oak"),
+        _need("seating", "lounge-chair"),
+    )
+
+    await service.discover(_request(), InteriorDesignResult(needs=needs), CONTEXT)
+
+    assert len(embedder.batches) == 1 and len(embedder.batches[0]) == 2
+
+
+async def test_a_failed_batch_leaves_every_piece_searched_as_before() -> None:
+    from app.core.exceptions import EmbeddingUnavailableError
+
+    pipeline = FakePipeline(ROOM_POOLS)
+    service = DesignDiscoveryService(
+        cast(ProductSearchPipeline, pipeline),
+        TAXONOMY,
+        embedder=_BatchEmbedder(EmbeddingUnavailableError(reason="down")),
+    )
+    needs = (
+        _need("seating", "sofa", intent="warm and soft"),
+        _need("tables", "center-table", intent="light oak"),
+    )
+
+    result = await service.discover(_request(), InteriorDesignResult(needs=needs), CONTEXT)
+
+    assert len(pipeline.calls) == 2 and len(result.needs) == 2
+
+
+class _SpyPipeline(FakePipeline):
+    """Notes, for each search, whether its ranking text had a vector ready."""
+
+    def __init__(self, pools: dict[str, tuple[int, ...]], hits: list[bool]) -> None:
+        super().__init__(pools)
+        self.hits = hits
+
+    async def execute_candidate_pool(
+        self, resolved: ResolvedSearch, context: RetailerContext
+    ) -> CandidatePoolResult:
+        from app.services.embedding_prefetch import prefetched_vector
+        from app.services.query_document import build_query_document
+
+        self.hits.append(prefetched_vector(build_query_document(resolved)) is not None)
+        return await super().execute_candidate_pool(resolved, context)
+
+
+INTENT_NEEDS = (
+    _need("seating", "sofa", intent="warm and soft"),
+    _need("tables", "center-table", intent="light oak"),
+    _need("seating", "lounge-chair", intent="cosy"),
+)
+
+
+@pytest.mark.parametrize("side_by_side", [False, True])
+async def test_every_search_finds_its_vector_ready_and_none_is_left_after(
+    side_by_side: bool,
+) -> None:
+    from contextlib import asynccontextmanager
+
+    from app.services.embedding_prefetch import prefetched_vector
+
+    hits: list[bool] = []
+    pipeline = _SpyPipeline(ROOM_POOLS, hits)
+
+    @asynccontextmanager
+    async def fresh() -> Any:
+        yield _SpyPipeline(ROOM_POOLS, hits)
+
+    service = DesignDiscoveryService(
+        cast(ProductSearchPipeline, pipeline),
+        TAXONOMY,
+        embedder=_BatchEmbedder(),
+        fresh=fresh if side_by_side else None,
+        concurrency=3 if side_by_side else 1,
+    )
+
+    await service.discover(_request(), InteriorDesignResult(needs=INTENT_NEEDS), CONTEXT)
+
+    assert hits == [True, True, True]
+    assert prefetched_vector("anything") is None
+
+
+async def test_only_searched_pieces_with_wording_are_batched_and_one_is_not() -> None:
+    embedder = _BatchEmbedder()
+    service = DesignDiscoveryService(
+        cast(ProductSearchPipeline, FakePipeline(ROOM_POOLS)), TAXONOMY, embedder=embedder
+    )
+    needs = (
+        _need("seating", "sofa", intent="warm and soft"),
+        _need("seating", "lounge-chair"),  # nothing fuzzy: never embedded
+        _need("tables", "center-table", intent="light oak"),
+    )
+    forced = {2: DesignNeedSearchOverride(need_id=1, forced_product_id=9)}
+
+    await service.discover(_request(), InteriorDesignResult(needs=needs), CONTEXT, overrides=forced)
+
+    # One piece left with wording once the forced one is out: no batch.
+    assert embedder.batches == []

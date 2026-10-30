@@ -282,9 +282,7 @@ def _enum(value: Any, kind: type[StrEnum], *, field: str, source: str) -> Any:
         ) from None
 
 
-def _parse_subcategory(
-    name: str, raw: Any, *, source: str
-) -> SubcategoryDimensions:
+def _parse_subcategory(name: str, raw: Any, *, source: str) -> SubcategoryDimensions:
     if not isinstance(raw, dict):
         raise TaxonomyConfigurationError(detail=f"{source}: {name} must be a mapping")
 
@@ -310,9 +308,7 @@ def _parse_subcategory(
                 detail=f"{source}: {name}.{raw_role} is both supported and unsupported"
             )
         if not isinstance(spec, dict) or "reason" not in spec:
-            raise TaxonomyConfigurationError(
-                detail=f"{source}: {name}.{raw_role} needs a reason"
-            )
+            raise TaxonomyConfigurationError(detail=f"{source}: {name}.{raw_role} needs a reason")
         unsupported[role] = _enum(
             spec["reason"],
             UnsupportedDimensionReason,
@@ -360,9 +356,7 @@ def load_dimension_semantics(
             detail=f"{source_path.name} is not valid YAML: {type(exc).__name__}"
         ) from exc
     if not isinstance(document, dict):
-        raise TaxonomyConfigurationError(
-            detail=f"{source_path.name}: top level must be a mapping"
-        )
+        raise TaxonomyConfigurationError(detail=f"{source_path.name}: top level must be a mapping")
 
     version = document.get("version")
     if not isinstance(version, str) or not version:

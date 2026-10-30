@@ -121,22 +121,16 @@ class ProductComparisonService:
 
     # ── one field across the products ───────────────────────────────────────
 
-    def _row(
-        self, field: ComparisonField, products: Sequence[ProductCandidate]
-    ) -> ComparisonRow:
+    def _row(self, field: ComparisonField, products: Sequence[ProductCandidate]) -> ComparisonRow:
         cells = tuple(self._cell(field, product) for product in products)
         return ComparisonRow(field=field, cells=cells, status=_status(cells))
 
-    def _cell(
-        self, field: ComparisonField, product: ProductCandidate
-    ) -> ComparisonCell:
+    def _cell(self, field: ComparisonField, product: ProductCandidate) -> ComparisonCell:
         if field in _DIMENSION_FIELDS:
             return self._measurement(_DIMENSION_FIELDS[field], product)
         return _catalog_value(field, product)
 
-    def _measurement(
-        self, role: DimensionRole, product: ProductCandidate
-    ) -> ComparisonCell:
+    def _measurement(self, role: DimensionRole, product: ProductCandidate) -> ComparisonCell:
         """Only where the registry maps this role for this product's type.
 
         A role it does not map is unknown rather than approximated by whichever
@@ -149,9 +143,7 @@ class ProductComparisonService:
         return _optional(None if value is None else f"{value} cm")
 
 
-def _count_refusal(
-    product_ids: Sequence[int], maximum: int
-) -> ComparisonUnavailable | None:
+def _count_refusal(product_ids: Sequence[int], maximum: int) -> ComparisonUnavailable | None:
     requested = len(product_ids)
     reason: ComparisonFailureReason | None = None
     if requested < MIN_COMPARED_PRODUCTS:
@@ -166,14 +158,10 @@ def _count_refusal(
         reason = ComparisonFailureReason.DUPLICATE_PRODUCT
     if reason is None:
         return None
-    return ComparisonUnavailable(
-        reason=reason, requested_count=requested, allowed_maximum=maximum
-    )
+    return ComparisonUnavailable(reason=reason, requested_count=requested, allowed_maximum=maximum)
 
 
-def _catalog_value(
-    field: ComparisonField, product: ProductCandidate
-) -> ComparisonCell:
+def _catalog_value(field: ComparisonField, product: ProductCandidate) -> ComparisonCell:
     match field:
         case ComparisonField.PRICE:
             # The currency is part of the value: SAR 100 is not USD 100, and

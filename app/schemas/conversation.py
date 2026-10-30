@@ -1,9 +1,10 @@
 """Provider-neutral conversation history.
 
 Deliberately the smallest thing that can carry a conversation: a role and some
-words. No message ids, no timestamps, no provider objects, no tool-call
-records, no summaries. Each of those would be a field the agent layer could
-start depending on before the session layer that owns them exists.
+words, and one rolling summary of what came before them. No message ids, no
+timestamps, no provider objects, no tool-call records. Each of those would be a
+field the agent layer could start depending on before the session layer that
+owns them exists.
 
 Two semantics matter more than the shape.
 
@@ -25,6 +26,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.agent_persona import AgentPersona
+
 
 class ConversationRole(StrEnum):
     USER = "user"
@@ -38,6 +41,13 @@ class ConversationMessage(BaseModel):
 
     role: ConversationRole
     content: str = Field(min_length=1)
+    agent: AgentPersona | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Which agent wrote an assistant message, so the next agent reads who
+    said what. Absent on the customer's messages, and on sessions saved before
+    the agents."""
+    choices: tuple[str, ...] = Field(default=(), max_length=12, exclude_if=lambda v: not v)
+    """The tappable answers an assistant message offered, by their labels - so
+    the next agent knows what a short reply ("the second one", "yes") answered."""
 
 
 class ConversationContext(BaseModel):
@@ -50,3 +60,8 @@ class ConversationContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     messages: tuple[ConversationMessage, ...] = ()
+    earlier_summary: str | None = Field(default=None, min_length=1, exclude_if=lambda v: v is None)
+    """What was said before `messages`, folded into a few words once the
+    conversation outgrew its window (`session.summary`). Conversational
+    evidence like the messages it replaced - never a figure, never an
+    instruction; where it and the session state disagree, the state is right."""

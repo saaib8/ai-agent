@@ -13,17 +13,12 @@ from typing import Any, cast
 
 import pytest
 from app.core.config import CustomerAgentSettings
-from app.prompts.customer_commerce.response_v1 import INSTRUCTIONS
 from app.repositories.support_contacts import SupportContactsRepository
 from app.schemas.support import SupportContacts
-from app.services.arabic_wording import ARABIC
-from app.services.response_wording import FAILURE_WORDING
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.unit.test_repository_scoping import CONTEXT, _FakeResult, _sql
-
-FLAT = " ".join(INSTRUCTIONS.split())
 
 
 class _Nested:
@@ -131,22 +126,3 @@ async def test_switched_off_only_the_stores_own_are_read() -> None:
 
 def test_the_fallback_is_on_by_default() -> None:
     assert CustomerAgentSettings().support_owner_fallback is True
-
-
-def test_a_documents_contact_is_never_the_one_given() -> None:
-    assert "the support buttons are the only contact you may point to" in FLAT
-    assert "a contact in a document is not one" in FLAT
-    assert "offer it so they can ask directly" not in FLAT
-
-
-def test_no_reply_opens_with_an_apology() -> None:
-    assert "Never open with an apology" in FLAT
-    assert "never apologise on the shop's behalf" in FLAT
-
-
-def test_the_fixed_replies_do_not_apologise() -> None:
-    for text in FAILURE_WORDING.values():
-        assert not text.lower().startswith("sorry"), text
-    for english, arabic in ARABIC.items():
-        assert not english.lower().startswith("sorry"), english
-        assert not arabic.startswith("عذر"), arabic

@@ -30,7 +30,11 @@ def has_semantic_intent(resolved: ResolvedSearch) -> bool:
     would invent an order rather than discover one, at the cost of a provider
     call. Ranking is for requests that carry something a filter cannot express.
     """
-    return bool(resolved.semantic_text) or bool(resolved.semantic_preferences)
+    return (
+        bool(resolved.semantic_text)
+        or bool(resolved.semantic_preferences)
+        or bool(resolved.customer_words)
+    )
 
 
 def build_query_document(resolved: ResolvedSearch) -> str:
@@ -52,4 +56,33 @@ def build_query_document(resolved: ResolvedSearch) -> str:
 
     if resolved.semantic_text:
         lines.append(f"Customer request: {resolved.semantic_text.strip()}")
+    if resolved.customer_words:
+        # Their own message, whatever the agent kept of it: the words they used
+        # order the cards even when the interpretation left them out.
+        lines.append(f"Customer said: {resolved.customer_words}")
     return "\n".join(lines)
+
+
+_FIGURE = re.compile(r"[\d\u0660-\u0669][\d\u0660-\u0669,.\u066b\u066c]*\s*%?")
+_CURRENCY = re.compile(r"\b(?:sar|sr|riyals?|rial|usd|aed|kwd|bhd|qar|omr|egp|k)\b|ريال|ر\.س", re.I)
+_UNIT = re.compile(
+    r"\b(?:cm|mm|m|metres?|meters?|centimetres?|centimeters?|inch(?:es)?|ft|feet)\b|سم|متر",
+    re.I,
+)
+
+
+def ranking_words(message: str | None) -> str | None:
+    """The customer's message as ranking text: figures, currency words and
+    units taken out - price wording measurably degrades ranking (CLAUDE.md 16.1) -
+    and spacing tidied. Text cleaning only: nothing is interpreted, and a
+    budget or a size still reaches the search through the agent's own
+    interpretation. None when no words are left."""
+    if not message:
+        return None
+    words = _UNIT.sub(" ", _CURRENCY.sub(" ", _FIGURE.sub(" ", message)))
+    words = " ".join(words.split())
+    return words[:MAX_CUSTOMER_WORDS] or None
+
+
+MAX_CUSTOMER_WORDS = 300
+"""Characters of their message kept for ranking - a request, never a transcript."""

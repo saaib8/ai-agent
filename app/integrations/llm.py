@@ -1,7 +1,8 @@
 """The single boundary between this service and a language-model provider.
 
-Nothing outside this module imports the provider SDK or holds its credentials
-(CLAUDE.md 20.3). Services depend on :class:`StructuredLLMClient`, so the
+Nothing outside `app/integrations` imports the provider SDK or holds its
+credentials (CLAUDE.md 20.3); `chat_models.py` shares this module's error
+mapping. Services depend on :class:`StructuredLLMClient`, so the
 provider can be swapped or faked without touching domain code.
 
 Only structured output crosses this boundary. No caller ever sees provider
@@ -106,9 +107,7 @@ class OpenAIStructuredClient:
     ) -> StructuredT:
         # The customer's words are untrusted DATA, carried in the user turn -
         # never merged into the instructions (CLAUDE.md 20.1).
-        return await self._request(
-            instructions, [{"role": "user", "content": user_input}], schema
-        )
+        return await self._request(instructions, [{"role": "user", "content": user_input}], schema)
 
     async def parse_images(
         self,
@@ -175,37 +174,8 @@ class OpenAIStructuredClient:
             self._reject_as_schema_violation(exc)
         except ArithmeticError as exc:
             self._reject_as_unreadable(exc)
-        except (APITimeoutError, APIConnectionError) as exc:
-            logger.warning("llm_unreachable", error_type=type(exc).__name__)
-            raise LLMUnavailableError(provider="openai", reason=type(exc).__name__) from exc
-        except APIStatusError as exc:
-            # The status and exception class are safe to log; the response body
-            # may echo the prompt, so it never is.
-            status = exc.status_code
-            if status >= 500 or status in _TRANSIENT_CLIENT_STATUSES:
-                logger.warning(
-                    "llm_provider_unavailable",
-                    status_code=status,
-                    error_type=type(exc).__name__,
-                )
-                raise LLMUnavailableError(provider="openai", status_code=status) from exc
-            if _content_filtered(exc):
-                # Blocked twice by the provider's content classifier. Ours is a
-                # furniture conversation, so this is a false positive: handled
-                # as unusable output, which every caller answers gracefully
-                # (CLAUDE.md 21.1), never as a request we got wrong.
-                logger.warning("llm_content_filtered", attempts=_FILTER_ATTEMPTS)
-                raise LLMResponseInvalidError(reason="content_filter") from exc
-            # The provider is healthy and rejected what we sent.
-            logger.error(
-                "llm_request_rejected",
-                status_code=status,
-                error_type=type(exc).__name__,
-            )
-            raise LLMRequestError(provider="openai", status_code=status) from exc
         except OpenAIError as exc:
-            logger.warning("llm_call_failed", error_type=type(exc).__name__)
-            raise LLMUnavailableError(provider="openai", reason=type(exc).__name__) from exc
+            raise_provider_error(exc)
 
         parsed = response.output_parsed
         if parsed is None:
@@ -257,6 +227,43 @@ class OpenAIStructuredClient:
 
     async def close(self) -> None:
         await self._client.close()
+
+
+def raise_provider_error(exc: OpenAIError, *, attempts: int = _FILTER_ATTEMPTS) -> NoReturn:
+    """A provider failure as the application error it means.
+
+    Shared by every adapter that calls the SDK, so a structured parse and an
+    agent's tool call fail alike. The status and exception class are safe to
+    log; the response body may echo the prompt, so it never is.
+    """
+    if isinstance(exc, APITimeoutError | APIConnectionError):
+        logger.warning("llm_unreachable", error_type=type(exc).__name__)
+        raise LLMUnavailableError(provider="openai", reason=type(exc).__name__) from exc
+    if isinstance(exc, APIStatusError):
+        status = exc.status_code
+        if status >= 500 or status in _TRANSIENT_CLIENT_STATUSES:
+            logger.warning(
+                "llm_provider_unavailable",
+                status_code=status,
+                error_type=type(exc).__name__,
+            )
+            raise LLMUnavailableError(provider="openai", status_code=status) from exc
+        if _content_filtered(exc):
+            # Blocked by the provider's content classifier. Ours is a
+            # furniture conversation, so this is a false positive: handled as
+            # unusable output, which every caller answers gracefully
+            # (CLAUDE.md 21.1), never as a request we got wrong.
+            logger.warning("llm_content_filtered", attempts=attempts)
+            raise LLMResponseInvalidError(reason="content_filter") from exc
+        # The provider is healthy and rejected what we sent.
+        logger.error(
+            "llm_request_rejected",
+            status_code=status,
+            error_type=type(exc).__name__,
+        )
+        raise LLMRequestError(provider="openai", status_code=status) from exc
+    logger.warning("llm_call_failed", error_type=type(exc).__name__)
+    raise LLMUnavailableError(provider="openai", reason=type(exc).__name__) from exc
 
 
 MAX_REPORTED_VIOLATIONS = 5

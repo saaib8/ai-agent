@@ -56,9 +56,7 @@ def _unresolved(reason: ReferenceFailureReason) -> ReferenceUnresolved:
 class ProductReferenceResolver:
     """Selector plus state plus catalog -> exactly one product, or a reason."""
 
-    def __init__(
-        self, repository: ProductRepository, attributes: CatalogAttributes
-    ) -> None:
+    def __init__(self, repository: ProductRepository, attributes: CatalogAttributes) -> None:
         self._repository = repository
         self._attributes = attributes
 
@@ -74,11 +72,7 @@ class ProductReferenceResolver:
             store_id=context.store_id,
             selector=type(selector).__name__,
             resolved=isinstance(outcome, ResolvedProductReference),
-            reason=(
-                str(outcome.reason)
-                if isinstance(outcome, ReferenceUnresolved)
-                else None
-            ),
+            reason=(str(outcome.reason) if isinstance(outcome, ReferenceUnresolved) else None),
         )
         return outcome
 
@@ -208,9 +202,7 @@ class ProductReferenceResolver:
 
     # ── conversational memory ───────────────────────────────────────────────
 
-    async def _focused(
-        self, state: AgentStateV1, context: RetailerContext
-    ) -> ReferenceOutcome:
+    async def _focused(self, state: AgentStateV1, context: RetailerContext) -> ReferenceOutcome:
         """Focus outlives a result set, so this needs no presentation lineage.
 
         M10 already constrains a focus to a presented or selected product, so
@@ -256,7 +248,7 @@ class ProductReferenceResolver:
         state: AgentStateV1,
         context: RetailerContext,
     ) -> ReferenceOutcome:
-        """"The beige one" - matched against fresh facts, not remembered ones."""
+        """ "The beige one" - matched against fresh facts, not remembered ones."""
         approved = self._attributes.canonical(selector.family, selector.value)
         if approved is None:
             return _unresolved(ReferenceFailureReason.UNAPPROVED_ATTRIBUTE_VALUE)
@@ -279,7 +271,7 @@ class ProductReferenceResolver:
         state: AgentStateV1,
         context: RetailerContext,
     ) -> ReferenceOutcome:
-        """"The cheaper one" - an extreme of a verified fact, never a judgement."""
+        """ "The cheaper one" - an extreme of a verified fact, never a judgement."""
         rows = await self._presented_rows(state, context)
         if isinstance(rows, ReferenceUnresolved):
             return rows
@@ -289,11 +281,7 @@ class ProductReferenceResolver:
             return _unresolved(ReferenceFailureReason.MIXED_CURRENCY_PRESENTATION)
 
         prices = [row.price_amount for row in rows]
-        target = (
-            min(prices)
-            if selector.direction is ExtremumDirection.LOWEST
-            else max(prices)
-        )
+        target = min(prices) if selector.direction is ExtremumDirection.LOWEST else max(prices)
         at_extreme = [row for row in rows if row.price_amount == target]
         if len(at_extreme) > 1:
             # Two products share it; picking the earlier one is a coin toss.
@@ -327,9 +315,7 @@ class ProductReferenceResolver:
         by_id = {row.id: row for row in rows}
         return [by_id[product_id] for product_id in presented]
 
-    async def _verify(
-        self, product_id: int, context: RetailerContext
-    ) -> ReferenceOutcome:
+    async def _verify(self, product_id: int, context: RetailerContext) -> ReferenceOutcome:
         """A remembered id is a claim; the catalog decides whether it holds.
 
         Scoped by construction: the repository only returns products this
@@ -360,4 +346,3 @@ def _has_attribute(row: ProductRow, selector: PresentedAttributeMatch) -> bool:
     if selector.family is AttributeFamily.COLOR:
         return row.main_color == selector.value
     return selector.value in row.styles
-

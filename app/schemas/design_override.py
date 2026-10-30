@@ -57,7 +57,5 @@ class DesignNeedSearchOverride(BaseModel):
         if len(self.exclude_product_ids) != len(set(self.exclude_product_ids)):
             raise ValueError("a product is excluded at most once")
         if len(self.exclude_product_ids) > MAX_EXCLUDED_PRODUCT_IDS:
-            raise ValueError(
-                f"a need may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products"
-            )
+            raise ValueError(f"a need may exclude at most {MAX_EXCLUDED_PRODUCT_IDS} products")
         return self

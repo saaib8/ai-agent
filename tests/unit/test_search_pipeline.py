@@ -85,9 +85,7 @@ class FakeRelaxation:
             final_request=request,
             candidates=tuple(
                 RelaxedCandidate(
-                    product=EligibleProduct(
-                        product_id=i, price_amount=Decimal(f"{1000 + i}.00")
-                    ),
+                    product=EligibleProduct(product_id=i, price_amount=Decimal(f"{1000 + i}.00")),
                     relaxation_depth=depth,
                 )
                 for i, depth in self.depths.items()
@@ -173,9 +171,7 @@ def _pipeline(
 
 def _resolved() -> ResolvedSearch:
     return ResolvedSearch(
-        request=ProductSearchRequest(
-            commerce_category="seating", commerce_subcategory="sofa"
-        ),
+        request=ProductSearchRequest(commerce_category="seating", commerce_subcategory="sofa"),
         semantics=ConstraintSemantics(),
         semantic_text="a cosy reading sofa",
     )
@@ -193,9 +189,7 @@ async def _run(
 ) -> tuple[ProductSearchExecutionResult, FakeRanking, FakeHydration]:
     ranking = FakeRanking(order, used=used, skip=skip)
     hydration = FakeHydration(missing)
-    pipeline = _pipeline(
-        FakeRelaxation(depths, exact_count), ranking, hydration, limit=limit
-    )
+    pipeline = _pipeline(FakeRelaxation(depths, exact_count), ranking, hydration, limit=limit)
     return await pipeline.execute(_resolved(), CONTEXT), ranking, hydration
 
 
@@ -311,9 +305,7 @@ async def test_nothing_eligible_is_a_zero_result() -> None:
 
 async def test_all_selected_stale_is_also_a_zero_result() -> None:
     """A successful execution whose products vanished before the read."""
-    result, _, _ = await _run(
-        dict.fromkeys(range(1, 6), 0), missing={1, 2, 3, 4, 5}, limit=5
-    )
+    result, _, _ = await _run(dict.fromkeys(range(1, 6), 0), missing={1, 2, 3, 4, 5}, limit=5)
     grounding = result.grounding
 
     assert grounding.outcome is SearchOutcome.ZERO_RESULTS
@@ -325,9 +317,7 @@ async def test_all_selected_stale_is_also_a_zero_result() -> None:
 async def test_the_two_zero_results_are_distinguishable_by_counts() -> None:
     """No prose, no third outcome: the counts carry the cause."""
     empty, _, _ = await _run({}, limit=5)
-    stale, _, _ = await _run(
-        dict.fromkeys(range(1, 21), 0), missing=set(range(1, 21)), limit=5
-    )
+    stale, _, _ = await _run(dict.fromkeys(range(1, 21), 0), missing=set(range(1, 21)), limit=5)
 
     assert empty.grounding.eligible_count == 0
     assert empty.grounding.stale_dropped_count == 0
@@ -343,9 +333,7 @@ async def test_a_stale_row_is_never_replaced_from_further_down() -> None:
     """Rank six must not step into rank three's place."""
     depths = dict.fromkeys(range(1, 7), 0)
 
-    result, _, hydration = await _run(
-        depths, order=[1, 2, 3, 4, 5, 6], missing={3}, limit=5
-    )
+    result, _, hydration = await _run(depths, order=[1, 2, 3, 4, 5, 6], missing={3}, limit=5)
 
     assert result.presented_product_ids == (1, 2, 4, 5)
     assert 6 not in result.presented_product_ids
@@ -375,9 +363,7 @@ async def test_refs_and_ordinals_agree_position_by_position() -> None:
 
 async def test_verified_depths_reach_every_grounded_product() -> None:
     result, _, _ = await _run({1: 0, 2: 2, 3: 1}, order=[1, 2, 3], limit=3)
-    depths = {
-        p.name_english: p.relaxation_depth for p in result.grounding.products
-    }
+    depths = {p.name_english: p.relaxation_depth for p in result.grounding.products}
 
     assert depths == {"Sofa 1": 0, "Sofa 2": 2, "Sofa 3": 1}
     assert [p.matched_exactly for p in result.grounding.products] == [True, False, False]
@@ -405,9 +391,7 @@ async def test_depths_survive_a_degraded_ranking() -> None:
 
 
 async def test_semantic_status_is_reported_not_reinterpreted() -> None:
-    result, _, _ = await _run(
-        {1: 0}, used=False, skip=SemanticSkipReason.NOT_CONFIGURED, limit=3
-    )
+    result, _, _ = await _run({1: 0}, used=False, skip=SemanticSkipReason.NOT_CONFIGURED, limit=3)
 
     assert result.grounding.semantic_used is False
     assert result.grounding.semantic_skip_reason is SemanticSkipReason.NOT_CONFIGURED
@@ -451,9 +435,7 @@ async def test_dropped_constraints_are_carried_not_discovered() -> None:
     )
     pipeline = _pipeline(FakeRelaxation({1: 0}), FakeRanking(), FakeHydration())
 
-    result = await pipeline.execute(
-        _resolved(), CONTEXT, dropped_constraints=dropped
-    )
+    result = await pipeline.execute(_resolved(), CONTEXT, dropped_constraints=dropped)
 
     assert result.grounding.dropped_constraints == dropped
 
@@ -495,9 +477,7 @@ async def test_the_sort_reaches_ranking_untouched() -> None:
     ranking = FakeRanking()
     pipeline = _pipeline(FakeRelaxation({1: 0}), ranking, FakeHydration())
     resolved = ResolvedSearch(
-        request=ProductSearchRequest(
-            commerce_category="seating", sort=ProductSort.PRICE_ASC
-        )
+        request=ProductSearchRequest(commerce_category="seating", sort=ProductSort.PRICE_ASC)
     )
 
     result = await pipeline.execute(resolved, CONTEXT)
@@ -743,9 +723,7 @@ async def test_the_two_paths_agree_on_what_the_customer_would_have_seen() -> Non
     page, _, _ = await _run(depths, order=order, limit=3)
     pool, _, _ = await _pool(depths, order=order, limit=3)
 
-    assert page.presented_product_ids == tuple(
-        c.product.product_id for c in pool.candidates[:3]
-    )
+    assert page.presented_product_ids == tuple(c.product.product_id for c in pool.candidates[:3])
 
 
 # ── the pool carries nothing customer-facing ────────────────────────────────
@@ -753,7 +731,10 @@ async def test_the_two_paths_agree_on_what_the_customer_would_have_seen() -> Non
 
 @pytest.mark.parametrize(
     "forbidden",
-    ["ordinal", "grounding", "presented", "similarity", "score", "rank"],
+    # `similarity` travels on a pool candidate for one agreed use (a room
+    # piece's upgrade only to an equally close look) and is excluded from every
+    # dump - see the test below.
+    ["ordinal", "grounding", "presented", "score", "rank"],
 )
 def test_the_pool_contract_holds_no_presentation_concept(forbidden: str) -> None:
     for model in (CandidatePoolResult, RankedProductCandidate):
@@ -761,15 +742,17 @@ def test_the_pool_contract_holds_no_presentation_concept(forbidden: str) -> None
             assert forbidden not in name, f"{model.__name__}.{name}"
 
 
-def test_the_pool_contract_reaches_no_similarity() -> None:
-    """Ranking's numbers stop at ranking. Carrying them forward is how a
-    blended relevance score gets invented later (CLAUDE.md 16.1)."""
+def test_the_pool_carries_similarity_for_the_optimiser_only() -> None:
+    """Ranking's numbers never reach a dump: the one carried forward,
+    similarity, serves only a room piece's upgrade to an equally close look
+    (agreed 2026-10-26) and is never blended into a score (CLAUDE.md 16.1)."""
     definitions = CandidatePoolResult.model_json_schema().get("$defs", {})
+    candidate = RankedProductCandidate(product=_candidate(1), relaxation_depth=0, similarity=0.8)
 
     assert "SemanticRankedCandidate" not in definitions
-    for definition in definitions.values():
-        for name in definition.get("properties", {}):
-            assert "similarity" not in name
+    assert candidate.similarity == 0.8
+    assert "similarity" not in candidate.model_dump()
+    assert "similarity" not in candidate.model_dump_json()
 
 
 def test_a_hydrated_pool_cannot_exceed_the_pool_that_was_ranked() -> None:
@@ -795,8 +778,7 @@ def test_the_candidate_pool_method_cannot_read_the_presentation_limit() -> None:
     method = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef)
-        and node.name == "execute_candidate_pool"
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "execute_candidate_pool"
     )
     body = ast.dump(method)
 
@@ -819,3 +801,28 @@ def test_both_public_methods_run_the_one_shared_search_path() -> None:
         assert "_search_and_rank" in body, name
         assert "_relaxation" not in body, name
         assert "_ranking" not in body, name
+
+
+async def test_forced_pools_read_every_product_once_and_keep_a_missing_one_empty() -> None:
+    from app.services.search_pipeline import ProductSearchPipeline
+
+    class Hydration:
+        def __init__(self) -> None:
+            self.reads: list[tuple[int, ...]] = []
+
+        async def hydrate_ids(self, ids: Any, context: Any) -> Any:
+            self.reads.append(tuple(ids))
+            from tests.unit.test_design_discovery import product_candidate
+
+            return tuple(product_candidate(i) for i in ids if i != 2)
+
+    hydration = Hydration()
+    pipeline = ProductSearchPipeline(
+        cast(Any, None), cast(Any, None), cast(Any, hydration), presentation_limit=5
+    )
+
+    pools = await pipeline.execute_forced_pools((1, 2, 3, 1), RetailerContext(store_id=50))
+
+    assert hydration.reads == [(1, 2, 3)]
+    assert [c.product.product_id for c in pools[1].candidates] == [1]
+    assert pools[2].candidates == () and pools[2].eligible_count == 0

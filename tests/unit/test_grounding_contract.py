@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from app.schemas.agent_turn import CustomerResponse, TurnGrounding
+from app.schemas.agent_turn import CustomerResponse
 from app.schemas.comparison import (
     ComparisonCell,
     ComparisonField,
@@ -86,11 +86,6 @@ def test_a_presented_ordinal_is_optional() -> None:
     assert product.presented_ordinal is None
 
 
-def test_an_older_product_gets_no_invented_position() -> None:
-    detail = TurnGrounding(product_detail=_product(1))
-
-    assert detail.product_detail is not None
-    assert detail.product_detail.presented_ordinal is None
 
 
 def test_refs_are_one_to_n_in_order() -> None:
@@ -373,11 +368,6 @@ def test_a_response_states_no_price_field() -> None:
 # ── the turn envelope ───────────────────────────────────────────────────────
 
 
-def test_a_turn_can_ground_nothing_at_all() -> None:
-    grounding = TurnGrounding()
-
-    assert grounding.search is None
-    assert grounding.failure is None
 
 
 def test_a_failure_is_a_code_not_a_message() -> None:
@@ -476,11 +466,6 @@ def test_a_comparison_may_carry_products_of_unknown_provenance() -> None:
     assert all(p.matched_exactly is None for p in result.products)
 
 
-def test_a_detail_product_may_carry_unknown_provenance() -> None:
-    grounding = TurnGrounding(product_detail=_product(1))
-
-    assert grounding.product_detail is not None
-    assert grounding.product_detail.matched_exactly is None
 
 
 def test_provenance_and_presentation_position_stay_independent() -> None:

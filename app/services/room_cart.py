@@ -19,7 +19,9 @@ from app.taxonomy.words import customer_words_or_none
 
 def room_words(room: RoomProjectState) -> str:
     """The room in customer words ("living room")."""
-    return customer_words_or_none(room.room_kind or room.room_type) or "room"
+    # Room kinds are keyed with "_" (living_room), product kinds with "-".
+    words = customer_words_or_none(room.room_kind or room.room_type)
+    return words.replace("_", " ") if words else "room"
 
 
 def room_in_cart(state: AgentStateV1) -> RoomProjectState | None:

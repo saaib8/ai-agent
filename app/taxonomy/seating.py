@@ -50,6 +50,7 @@ class SeatingSemantics:
         combination_extras: frozenset[str] = frozenset(),
         combination_main: frozenset[str] | None = None,
         shown_with: Mapping[str, tuple[str, ...]] | None = None,
+        never_counted: frozenset[str] = frozenset(),
     ) -> None:
         self._version = version
         self._implied = dict(implied)
@@ -57,6 +58,7 @@ class SeatingSemantics:
         self._combination_extras = combination_extras
         self._combination_main = multi_seat if combination_main is None else combination_main
         self._shown_with = dict(shown_with or {})
+        self._never_counted = never_counted
 
     @property
     def version(self) -> str:
@@ -78,9 +80,22 @@ class SeatingSemantics:
         """Every product of this type seats exactly one person."""
         return self.implied_capacity(subcategory) == 1
 
+    def one_seat_types(self) -> tuple[str, ...]:
+        """Every reviewed type that seats exactly one person."""
+        return tuple(sorted(k for k, seats in self._implied.items() if seats == 1))
+
     def seats_several(self, subcategory: str | None) -> bool:
         """Every product of this type seats two or more."""
         return subcategory is not None and subcategory in self._multi_seat
+
+    def counts_as_seats(self, subcategory: str | None) -> bool:
+        """Whether a piece of this type may count toward a room's head count.
+        False for the reviewed types that never do (a chaise lounge, a
+        recliner) - said as not counted, never as seating none."""
+        return subcategory is None or subcategory not in self._never_counted
+
+    def never_counted_types(self) -> tuple[str, ...]:
+        return tuple(sorted(self._never_counted))
 
     def is_combination_main(self, subcategory: str | None) -> bool:
         """A multi-seat type a combination may be built around unasked. Any
@@ -163,6 +178,14 @@ def load_seating_semantics(
             detail=f"{source.name}: combination_main {sorted(main - multi_seat)} must seat several"
         )
     shown_with = _shown_with(document.get("shown_with", {}), multi_seat, source, taxonomy)
+    never_counted = _type_list(
+        document.get("never_counts_as_seats", []), "never_counts_as_seats", source, taxonomy
+    )
+    counted_and_not = sorted(never_counted & (multi_seat | frozenset(implied)))
+    if counted_and_not:
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: {counted_and_not} cannot both seat and never count as seats"
+        )
     return SeatingSemantics(
         version=version,
         implied=implied,
@@ -170,6 +193,7 @@ def load_seating_semantics(
         combination_extras=extras,
         combination_main=main,
         shown_with=shown_with,
+        never_counted=never_counted,
     )
 
 
@@ -209,9 +233,7 @@ def _shown_with(
     return shown
 
 
-def _implied_capacity(
-    raw: Any, source: Path, taxonomy: CommerceTaxonomy | None
-) -> dict[str, int]:
+def _implied_capacity(raw: Any, source: Path, taxonomy: CommerceTaxonomy | None) -> dict[str, int]:
     if not isinstance(raw, dict) or not raw:
         raise TaxonomyConfigurationError(
             detail=f"{source.name}: 'implied_capacity' must be a non-empty mapping"
