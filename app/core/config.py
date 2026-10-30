@@ -193,6 +193,13 @@ class SessionSettings(BaseModel):
     shopper the platform names at the front of a conversation id; an id with
     no shopper keeps its cart to itself. 0 switches it off."""
 
+    guest_handover: bool = True
+    """A guest who signs in keeps their chat: the platform, having checked the
+    guest was that browser, asks for it to move from the guest's name to the
+    account's (`POST /v1/sessions/adopt`) - the chat, its room photo and its
+    finder photos - and the guest's cart joins the account's (CLAUDE.md 36).
+    Off, the route refuses and a signed-in shopper starts their chat afresh."""
+
     @model_validator(mode="after")
     def _summary_fits_the_window(self) -> SessionSettings:
         if self.summary.enabled:
@@ -684,6 +691,12 @@ class CustomerAgentSettings(BaseModel):
     sends the request to the store's own WhatsApp or email. Needs
     `support_agent`. Off by default: each button is a plain link to the store,
     as before."""
+
+    support_owner_fallback: bool = True
+    """Where a store saved no support email or WhatsApp, its owner's - the email
+    and phone given when their account was created - are the store's support.
+    Never a contact from the store's documents, which nobody checked. A phone
+    without its country code is left out. Off: only the store's own."""
 
     designer_led_buttons: bool = True
     """The ♡ Like button on every card - a silent liked list, kept apart from the

@@ -29,6 +29,7 @@ from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
 from app.orchestration.graph import ChatGraphRunner
 from app.repositories.catalog_cache import OverviewCache
+from app.repositories.conversation_moves import ConversationMoves
 from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
@@ -37,6 +38,7 @@ from app.repositories.stores import StoreRepository
 from app.repositories.support_contacts import SupportContactsRepository
 from app.schemas.furniture_finder import (
     WIDGET_KEY_PATTERN,
+    WIDGET_ORIGIN_PATTERN,
     WIDGET_SESSION_PATTERN,
     WIDGET_STORE_PATTERN,
     ShopperCredentials,
@@ -50,6 +52,7 @@ from app.services.chat_runtime import ChatRuntime
 from app.services.click_tracking import ClickTrackingService
 from app.services.comparison import ProductComparisonService
 from app.services.controlled_search import ControlledRelaxationService
+from app.services.conversation_adoption import ConversationAdoptionService
 from app.services.cross_sell import CompanionSearchBuilder
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.discovery import ProductDiscoveryService
@@ -340,6 +343,23 @@ SupportHandoverServiceDep = Annotated[
 ]
 
 
+def conversation_adoption_service(
+    sessions: SessionStoreDep, app_resources: ResourcesDep
+) -> ConversationAdoptionService | None:
+    """A signed-in guest's chat moved to their account; None where it is off."""
+    settings = app_resources.settings.session
+    if not settings.guest_handover:
+        return None
+    return ConversationAdoptionService(
+        sessions, ConversationMoves(app_resources.redis.client, settings)
+    )
+
+
+ConversationAdoptionServiceDep = Annotated[
+    ConversationAdoptionService | None, Depends(conversation_adoption_service)
+]
+
+
 def store_cart_check(session: SessionDep, app_resources: ResourcesDep) -> StoreCartCheck | None:
     """The store's own cart, asked before ours takes more - None where the
     check is switched off (CLAUDE.md 36)."""
@@ -455,7 +475,10 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         cart=CartService(repository),
         store_knowledge=app_resources.store_knowledge,
         support=(
-            SupportService(SupportContactsRepository(session), handover=agent.support_handover)
+            SupportService(
+                SupportContactsRepository(session, owner_fallback=agent.support_owner_fallback),
+                handover=agent.support_handover,
+            )
             if agent.support_agent
             else None
         ),
@@ -579,6 +602,10 @@ def shopper_credentials(
     store_public_id: Annotated[
         str | None, Header(alias="X-Zory-Widget-Store-Id", pattern=WIDGET_STORE_PATTERN)
     ] = None,
+    origin: Annotated[
+        str | None,
+        Header(alias="X-Zory-Widget-Origin", max_length=270, pattern=WIDGET_ORIGIN_PATTERN),
+    ] = None,
 ) -> ShopperCredentials | None:
     """The shopper's widget session, as the gateway forwarded it, or None.
 
@@ -588,7 +615,10 @@ def shopper_credentials(
     if token is None:
         return None
     return ShopperCredentials(
-        token=SecretStr(token), widget_key=widget_key, store_public_id=store_public_id
+        token=SecretStr(token),
+        widget_key=widget_key,
+        store_public_id=store_public_id,
+        origin=origin,
     )
 
 

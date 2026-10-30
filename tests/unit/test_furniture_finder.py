@@ -407,7 +407,18 @@ class TestScan:
             size=(200, 120),
         )
         assert [d.label for d in scan.detections] == ["sofa"]
+        assert all("Origin" not in r.headers for r in seen), "no website was forwarded"
         await client.close()
+
+    async def test_the_shoppers_website_goes_back_as_the_origin_of_every_call(self) -> None:
+        """Strict origins refuse a widget token without an approved website."""
+        seen: list[httpx.Request] = []
+        shopper = SHOPPER.model_copy(update={"origin": "https://demostore.salla.sa"})
+
+        await a_client(scan_handler(seen)).scan(shopper, a_photo_file())
+
+        assert len(seen) == 3
+        assert all(r.headers["Origin"] == "https://demostore.salla.sa" for r in seen)
 
     @pytest.mark.parametrize("stored", ["https://evil.test/x.png", "../x.png", "", None])
     async def test_a_stored_copy_that_is_not_a_plain_key_is_refused(self, stored: Any) -> None:
@@ -499,10 +510,13 @@ class TestRecommend:
             seen.append(request)
             return httpx.Response(200, json={"recommendations": {"matches": []}})
 
-        await recommend(a_client(handle), SHOPPER)
+        await recommend(
+            a_client(handle), SHOPPER.model_copy(update={"origin": "https://demostore.salla.sa"})
+        )
 
         assert seen[0].headers["Authorization"] == "Bearer aaa.bbb.ccc"
         assert seen[0].headers["X-Zory-Widget-Key"] == "ai-agent"
+        assert seen[0].headers["Origin"] == "https://demostore.salla.sa"
 
     async def test_a_category_the_platform_has_no_products_for_is_an_empty_answer(self) -> None:
         client = a_client(lambda _: httpx.Response(400, json={"error": "Category not supported."}))
@@ -1346,6 +1360,7 @@ WIDGET_HEADERS = {
     "X-Zory-Widget-Token": "aaa.bbb.ccc",
     "X-Zory-Widget-Key": "ai-agent",
     "X-Zory-Widget-Store-Id": str(STORE_UUID),
+    "X-Zory-Widget-Origin": "https://demostore.salla.sa",
 }
 
 
@@ -1380,6 +1395,7 @@ class TestRoutes:
         scanned_as = parts["zory"].scan_calls[0][0]
         assert scanned_as.token.get_secret_value() == "aaa.bbb.ccc"
         assert (scanned_as.widget_key, scanned_as.store_public_id) == ("ai-agent", str(STORE_UUID))
+        assert scanned_as.origin == "https://demostore.salla.sa"
         assert parts["zory"].recommend_calls[0]["shopper"] == scanned_as
         assert parts["zory"].visitor_calls == []
 
@@ -1399,6 +1415,8 @@ class TestRoutes:
             {"X-Zory-Widget-Token": "not a token"},
             {"X-Zory-Widget-Token": "a.b.c", "X-Zory-Widget-Key": "Bad Key"},
             {"X-Zory-Widget-Token": "a.b.c", "X-Zory-Widget-Store-Id": "../x"},
+            {"X-Zory-Widget-Token": "a.b.c", "X-Zory-Widget-Origin": "https://shop.example/page"},
+            {"X-Zory-Widget-Token": "a.b.c", "X-Zory-Widget-Origin": "javascript:alert(1)"},
         ],
     )
     async def test_a_malformed_widget_header_is_refused_before_anything_runs(

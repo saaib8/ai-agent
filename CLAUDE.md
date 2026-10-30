@@ -2572,6 +2572,18 @@ keeps a cart of its own.
   so "what's in my cart?" answers the same in every chat. An id naming no
   shopper (the console, direct calls) keeps its own cart. A change made only on
   the store's own cart page never reaches us; that needs the widget.
+- **A guest who signs in keeps their chat** (`session.guest_handover`, on by
+  default). Signing in changes the shopper, so the chat would be looked for
+  under a new name and found empty. Once the platform has checked the guest's
+  own sign-in, it asks `POST /v1/sessions/adopt` to move the chat from the
+  guest's name to the account's - the same chat id, one shopper to another,
+  nothing else (`app/services/conversation_adoption.py`). The chat, its room
+  photo and its finder photos move in one transaction, unchanged and with the
+  time each had left (`app/repositories/conversation_moves.py`); the finder's
+  local sign-in stays behind. An account chat under that name is never
+  overwritten, and asked twice the chat is already moved. The guest's cart
+  joins the account's after its own lines, a product in both keeping the larger
+  quantity, so every account chat loads it.
 - **The agents read it** in the session brief (10.4): each line by its place
   in the cart (`picked_ordinal`), with name, kind, quantity, line total and the
   room it was bought for, and the totals per currency - summed by the
