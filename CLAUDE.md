@@ -437,7 +437,7 @@ Reviewed domain data, loaded and validated at startup:
 | `app/taxonomy/seating_v1.yaml` | how many each seating type seats; which never count as seats (chaise lounge, recliner); which types stand beside a sofa | seat filters, a room's seats (27.1), `store_shelf`, mixed sofa searches |
 | `app/taxonomy/complements_v1.yaml` | the kinds reviewed to go with each kind | `what_goes_with`, `room_could_add` (`usually_paired`) |
 | `app/taxonomy/compare_groups_v1.yaml` | which kinds compare with which | `compare_products` |
-| `app/taxonomy/subcategory_questions_v1.yaml` | the questions the store's designers ask for each kind, with their usual answers | `search_products` facts (`a_designer_might_ask`) - knowledge the agent chooses from, never a script |
+| `app/taxonomy/subcategory_questions_v1.yaml` | the questions the store's designers ask about for each kind (the subjects; the answer options are the agent's to decide) | `ask_about` and `search_products` facts (`a_designer_might_ask`) - a baseline the agent rephrases in its own words, choosing the options itself, never a script |
 
 `app/taxonomy/briefs_v1.yaml` is kept but no longer loaded; only its question
 kinds (`BriefQuestionKind`) are still imported.
@@ -584,12 +584,30 @@ a list of search cards while it is built.
 
 ### 10.2 A product search (Sara)
 
-Sara searches as soon as she knows the kind of product. A vague kind ("a
-table", "a light") is a question - which kind - never a guess (14.5). For a new
-kind she may first invite them to say more (the room it is for, how many sit
-there, the look), choosing from `a_designer_might_ask`; at most one question a
-reply, and never the budget as an opener - budget comes once they are engaged
-(comparing, choosing, talking price).
+Sara leans to asking first - a few questions up front make the journey feel
+personal. A vague kind ("a table", "a light") is a question - which kind - never
+a guess (14.5). For a new kind, whether they state a need ("I want a recliner")
+or ask to see it ("show me sofas"), she `ask_about`s it first - a cheap tool that
+resolves the kind and returns the store's reviewed designer questions for it
+(`a_designer_might_ask`: the subjects only, no answer options) and what this
+store carries of it (`this_store_has`: its colours, styles and seats from the cached
+catalog overview, never its prices; `kinds_stocked` before the kind is chosen), with
+nothing searched - then asks **two or three** before showing anything, **one a
+reply**, one after another, in her own words: two when that is all the kind
+needs, three when more would change what she shows. She chooses the answer
+options herself, never a fixed list: colour, style, seat and kind options only
+from what the store carries; a feature the data does not hold (power, massage) is
+asked as a wish that leans the search, never promised. Each answer moves to the
+next question still open, never one already answered; what they said counts, so
+"a beige sofa" leaves fewer to ask, and when they already named enough ("a
+3-seater beige sofa under 4000") she shows at once. A kind chosen from her own
+question (which kind of table, an alternative she offered) counts as an answer.
+Once those questions are answered she searches with everything they said and
+shows; "just show me", a decline or impatience shows at once.
+Never the budget as an opener - budget comes once they are engaged (comparing,
+choosing, talking price). Once products are on screen the rhythm drops to **at
+most one follow-up a turn, or none**: the same questions ride on a
+`search_products` result, for the one that narrows the results already shown.
 
 - **Their words, as the search.** `search_products` takes the whole search each
   time, in approved values only (14). Colours and styles are preferences unless
@@ -642,8 +660,9 @@ reply, and never the budget as an opener - budget comes once they are engaged
   time, never as a ready-made combination: Sara opens a seating goal (10.5),
   asks what the first piece should seat, and after each add the goal says how
   many seats are left; the next piece is searched to match what they chose
-  (`match_goal`). Before the second piece she asks the room (10.6) - two sofas
-  must fit together.
+  (`match_goal`). Before the second piece Nora asks the room (10.6) - two sofas
+  must fit together (she matches and sizes the next seat, so the room is hers to
+  ask).
 
 ### 10.3 After a pick (Salman)
 
@@ -652,16 +671,24 @@ pick with no goal open - never in the middle of one: a first sofa of ten seats
 is followed by the next sofa, not a rug. With the room known, Nora's
 `next_sizes` and `placements` come first: the next piece is searched at her
 size (`designer_size`). Otherwise `what_goes_with` without a kind lists the
-reviewed pairings the store stocks, most stocked first, no counts (never the
-piece's own kind - that is `more_like_this`); Salman chooses one, or another
+reviewed pairings the store stocks, most stocked first, no counts - and, for
+a piece that seats several (a sofa, sectional or sofa set), another of its own
+kind (`another_of_its_kind`: a second sofa for two facing, an L or a majlis),
+shown with `more_like_this`; no other piece's own kind is listed. A kind
+with no reviewed pairing the store stocks gets the stocked kinds instead
+(`none_reviewed`), so the offer never ends empty; Salman chooses one, or another
 kind `store_shelf` lists, and calls it again with `show_kind`: a page of that
 kind leaning to the piece's look. It is a reason it could suit, never "usually
 bought together" and never a verdict that it goes - whether it goes is Nora's.
 
 After a room is in the cart he offers its styling, on top of the room's budget,
-and `finish_room` asks in his own words which room is next. Once a main piece
-and another are chosen for one room, Sara or Salman may offer to design the
-rest of that room around them; on yes Nora designs it with `around_picks`.
+and `finish_room` asks in his own words which room is next. When a room-defining
+pick - a sofa, a bed, a dining set, anything a sale could grow a room from (the
+agent's judgement; a lamp or a vase is not one) - is in the cart and no goal is
+still open, Salman offers the whole room **alongside what goes with it**, as one
+choice: to design the rest of that room around their picks. A seating goal still
+open finishes first - the offer waits until it is met. On yes Nora designs it
+with `around_picks`.
 
 ### 10.4 What every agent is told, and what the screen shows
 
@@ -1635,7 +1662,7 @@ A supervisor and four agents, built on LangGraph (`app/agents/`).
 | Agent | Owns | Tools (`app/agents/tools/`) |
 |---|---|---|
 | Supervisor | who handles the turn | `transfer_to_<agent>`, `finish` - it never talks to the customer |
-| Sara | finding, comparing, the cart, a group's seating one piece at a time | `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room` - the only owner of the cart's adds and of comparisons |
+| Sara | finding, comparing, the cart, a group's seating one piece at a time | `ask_about`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room` - the only owner of the cart's adds and of comparisons |
 | Nora | how it looks and whether it works: design, matching, their room, fit and placement, whole rooms | `design_room`, `revise_room_piece`, `measure_fit`, `record_design_notes` and a search `direction` (hers alone), `store_shelf`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `change_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
 | Salman | what goes with a finished choice, finishing a designed room and its styling, rooms into the cart, value | `what_goes_with` and `add_room_to_cart` (his alone), `store_shelf`, `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
 | Faysal | the store itself | `store_policy`, `contact_store`, `product_details` |

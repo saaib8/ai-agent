@@ -32,6 +32,7 @@ from app.schemas.agent_state import (
 from app.schemas.card_comparison import CardRef
 from app.schemas.conversation import ConversationContext
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
+from app.schemas.discovery import DesignerQuestion
 from app.schemas.query import ClarificationReason, ClarificationRequired
 from app.schemas.resolution import (
     ComparisonFailureReason,
@@ -44,6 +45,7 @@ from app.services.cross_sell import CompanionSearchBuilder
 from app.services.support import SupportService
 from app.taxonomy.subcategory_questions import load_subcategory_questions
 from langchain_core.messages import HumanMessage
+from pydantic import ValidationError
 
 from tests.unit.agents.fake_chat_model import ScriptedChatModel, call, step
 from tests.unit.agents.fakes import (
@@ -417,6 +419,50 @@ async def test_what_goes_with_lists_kinds_until_one_is_chosen() -> None:
     assert refused.code == "kind_not_stocked"
 
 
+async def test_what_goes_with_offers_another_sofa_beside_the_pairings() -> None:
+    """A piece that seats several lists another of its kind with the pairings -
+    a second sofa for two facing or an L - shown with more_like_this."""
+    from app.taxonomy.complements import load_complements
+    from app.taxonomy.seating import load_seating_semantics
+
+    from tests.unit.agents.fakes import TAXONOMY, FakeCapabilities
+
+    services = agent_services(
+        hydration=FakeHydration(available=(OFF_SCREEN, 10, 11)),
+        capabilities=FakeCapabilities(pairs=(("seating", "sofa"), ("decor", "carpet"))),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
+        seating=load_seating_semantics(taxonomy=TAXONOMY),
+    )
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, _state(), services=services)
+
+    kinds = listed.facts["kinds"]
+    assert [k["kind"] for k in kinds] == ["sofa", "carpet"]
+    assert kinds[0]["another_of_its_kind"] and kinds[0]["show_with"] == "more_like_this"
+
+
+async def test_what_goes_with_offers_stocked_kinds_when_none_is_reviewed() -> None:
+    """A piece with no reviewed pairing still gets kinds to choose from - the
+    store's stocked kinds, never its own - so the offer never ends empty."""
+    from tests.unit.agents.fakes import FakeCapabilities
+
+    services = agent_services(
+        hydration=FakeHydration(available=(OFF_SCREEN, 10, 11)),
+        capabilities=FakeCapabilities(pairs=(("seating", "sofa"), ("decor", "carpet"))),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=None,
+    )
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, _state(), services=services)
+
+    assert listed.code is None
+    assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
+    assert "none_reviewed" in listed.facts
+
+
 class _Contacts:
     async def for_store(self, context: Any) -> SupportContacts:
         return SupportContacts(email="help@example.test")
@@ -452,7 +498,55 @@ def test_a_search_tells_the_agent_what_designers_ask_for_the_kind() -> None:
 
     asked = _designer_questions(services, search)["a_designer_might_ask"]
 
+    # The questions as subjects, with no answer options - the agent decides the
+    # options itself, from the catalog and the conversation (CLAUDE.md 10.2).
+    # Each is the typed DesignerQuestion contract, not an arbitrary dict (12.1).
+    assert asked
+    questions = [DesignerQuestion.model_validate(topic) for topic in asked]
+    assert all(q.question for q in questions)
+    assert all("examples" not in topic for topic in asked)
+    assert "sofa" in " ".join(q.question for q in questions).casefold()
+
+
+def test_designer_question_is_a_typed_contract() -> None:
+    q = DesignerQuestion(topic="budget", question="What's your approximate budget?")
+    assert q.model_dump() == {"topic": "budget", "question": "What's your approximate budget?"}
+    with pytest.raises(ValidationError):
+        DesignerQuestion(topic="", question="x")  # a subject is required
+    with pytest.raises(ValidationError):
+        # No answer options on the contract - the agent decides those (10.2).
+        DesignerQuestion.model_validate({"topic": "t", "question": "q", "options": []})
+
+
+def test_a_kind_the_sheet_does_not_cover_yields_no_designer_topics() -> None:
+    # A kind with no row, and no sheet at all: nothing is offered, and the agent
+    # asks from its own judgement rather than a cheat sheet (CLAUDE.md 10.2).
+    loaded = agent_services(subcategory_questions=load_subcategory_questions(taxonomy=TAXONOMY))
+    uncovered = SimpleNamespace(commerce_category="not-a-real-category", commerce_subcategory=None)
+
+    assert _designer_questions(loaded, uncovered) == {}
+    assert _designer_questions(agent_services(subcategory_questions=None), uncovered) == {}
+
+
+async def test_ask_about_gives_the_kinds_topics_and_shows_nothing() -> None:
+    # A bare need gets the kind's designer topics before any search, so the
+    # agent can ask one in its own words - nothing searched, no products shown.
+    tool = _tool("ask_about")
+    assert tool.owners == frozenset({AgentPersona.SARA})
+    services = agent_services(subcategory_questions=load_subcategory_questions(taxonomy=TAXONOMY))
+
+    outcome = await tool.handler(
+        tool.args.model_validate(
+            {"search": {"commerce_category": "seating", "commerce_subcategory": "recliner"}}
+        ),
+        tool_context(services),
+        TurnWork.starting(AgentStateV1()),
+    )
+
+    asked = outcome.facts["a_designer_might_ask"]
     assert asked and all(q["question"] for q in asked)
+    assert all("examples" not in q for q in asked)  # options are agentic
+    assert outcome.payload is None
 
 
 def test_a_figure_in_words_in_a_product_name_is_not_a_figure() -> None:

@@ -88,6 +88,53 @@ complements:
     - {category: tables, subcategory: center-table, label: center tables}
     - {category: seating, subcategory: sofa, label: sofas}
 
+  # Lighting: what a light stands beside or over.
+  floor-lamp:
+    - {category: tables, subcategory: service-table, label: side tables}
+    - {category: seating, subcategory: chair, label: accent chairs}
+    - {category: decor, subcategory: carpet, label: rugs}
+    - {category: seating, subcategory: sofa, label: sofas}
+  table-lamp:
+    - {category: tables, subcategory: nightstand, label: nightstands}
+    - {category: tables, subcategory: service-table, label: side tables}
+    - {category: tables, subcategory: console, label: consoles}
+  chandelier: &overhead
+    - {category: dining, subcategory: dining-table, label: dining tables}
+    - {category: tables, subcategory: center-table, label: center tables}
+    - {category: decor, subcategory: carpet, label: rugs}
+  pendant-lighting: *overhead
+  wall-lighting:
+    - {category: decor, subcategory: mirror, label: mirrors}
+    - {category: decor, subcategory: art-canvas, label: wall art}
+    - {category: tables, subcategory: console, label: consoles}
+
+  # Decor: where a piece sits, and what sits with it.
+  mirror:
+    - {category: tables, subcategory: console, label: consoles}
+    - {category: lighting, subcategory: wall-lighting, label: wall lights}
+    - {category: decor, subcategory: vase, label: vases}
+  art-canvas:
+    - {category: tables, subcategory: console, label: consoles}
+    - {category: lighting, subcategory: wall-lighting, label: wall lights}
+    - {category: decor, subcategory: mirror, label: mirrors}
+  vase: &tabletop
+    - {category: decor, subcategory: flower, label: flowers}
+    - {category: tables, subcategory: console, label: consoles}
+    - {category: tables, subcategory: center-table, label: center tables}
+  statue-and-antique: *tabletop
+  flower-pot-and-plant:
+    - {category: decor, subcategory: vase, label: vases}
+    - {category: tables, subcategory: service-table, label: side tables}
+  candle:
+    - {category: decor, subcategory: candlestick, label: candlesticks}
+    - {category: decor, subcategory: vase, label: vases}
+  candlestick:
+    - {category: decor, subcategory: candle, label: candles}
+    - {category: tables, subcategory: console, label: consoles}
+  wall-clock:
+    - {category: tables, subcategory: console, label: consoles}
+    - {category: decor, subcategory: mirror, label: mirrors}
+
 # How each companion reads on a chip to a customer answered in Arabic
 # (docs/arabic-replies-plan.md). Display only; every label above has exactly
 # one entry. Reviewed by a native speaker before production.
@@ -113,3 +160,9 @@ arabic:
   mirrors: مرايا
   vases: مزهريات
   dressers: خزائن أدراج
+  consoles: كونسولات
+  wall art: لوحات فنية
+  wall lights: إضاءات جدارية
+  flowers: ورود
+  candlesticks: شمعدانات
+  candles: شموع

@@ -48,9 +48,14 @@ def test_a_bed_is_shown_nightstands_first() -> None:
     )
 
 
-@pytest.mark.parametrize("anchor", ["vase", "table-lamp", "treadmill", "cooking-pot"])
-def test_decor_lighting_kitchen_and_fitness_have_no_cross_sell(anchor: str) -> None:
+@pytest.mark.parametrize("anchor", ["treadmill", "cooking-pot"])
+def test_kitchen_and_fitness_have_no_cross_sell(anchor: str) -> None:
     assert load_complements(taxonomy=TAXONOMY).for_type(anchor) == ()
+
+
+@pytest.mark.parametrize("anchor", ["vase", "table-lamp", "floor-lamp", "mirror"])
+def test_decor_and_lighting_have_reviewed_companions(anchor: str) -> None:
+    assert load_complements(taxonomy=TAXONOMY).for_type(anchor)
 
 
 def test_an_unclassified_product_has_no_companions() -> None:

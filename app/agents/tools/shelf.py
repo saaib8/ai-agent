@@ -180,6 +180,8 @@ def _close_look(
     elif shelf.seating is not None:
         look["seats_from"] = shelf.seating.minimum
         look["seats_to"] = shelf.seating.maximum
+        if shelf.seating.counts:
+            look["seat_counts"] = list(shelf.seating.counts)
     elif shelf.implied_seats is not None:
         look["seats_each"] = shelf.implied_seats
     if shelf.long_and_shallow:
@@ -203,6 +205,41 @@ async def stocked_kinds(services: AgentServices, retailer: RetailerContext) -> d
         if shelf.commerce_subcategory is not None:
             families.setdefault(shelf.commerce_category, []).append(shelf.commerce_subcategory)
     return {"store_stocks": dict(sorted(families.items()))} if families else {}
+
+
+async def kind_on_shelf(
+    services: AgentServices, retailer: RetailerContext, category: str, subcategory: str | None
+) -> dict[str, Any]:
+    """What this store carries of one kind - its colours, styles and seats - or,
+    before the kind is chosen, the kinds of its family, so the answers an agent
+    offers come from stock, never from its own guess (CLAUDE.md 10.2). Empty
+    when the catalog cannot be read now.
+
+    No prices: the budget is never an opening question, and a shelf's price
+    range beside a customer's own budget is a figure an agent could quote as
+    theirs."""
+    try:
+        overview = await services.capabilities.overview(retailer)
+    except IntegrationUnavailableError:
+        return {}
+    shelves = [s for s in overview.shelves if s.commerce_subcategory is not None]
+    bounds = services.shelf_depth
+    if subcategory is None:
+        kinds = sorted(
+            (s for s in shelves if s.commerce_category == category), key=lambda s: -s.active_count
+        )
+        if not kinds:
+            return {"not_stocked": customer_words(category)}
+        return {"kinds_stocked": [_unpriced(_entry(s, frozenset(), bounds)) for s in kinds]}
+    shelf = next((s for s in shelves if s.commerce_subcategory == subcategory), None)
+    if shelf is None:
+        return {"not_stocked": customer_words(subcategory)}
+    look = _close_look(shelf, frozenset(), bounds, services.attributes, services.seating)
+    return {"this_store_has": _unpriced(look)}
+
+
+def _unpriced(entry: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in entry.items() if k not in ("price_from", "price_to")}
 
 
 def _room_hints(rooms: RoomPieces | None, room_type: str | None) -> frozenset[str]:

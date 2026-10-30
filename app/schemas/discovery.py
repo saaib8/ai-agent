@@ -407,6 +407,26 @@ class ProductSearchRequest(BaseModel):
         return tuple(filters)
 
 
+class DesignerQuestion(BaseModel):
+    """One question the store's designers ask about a kind, for the single-
+    product search journey (CLAUDE.md 10.2).
+
+    The subject to ask about - the agent asks it in its own words, a baseline it
+    rephrases rather than a script it recites. It carries **no answer options**:
+    the agent decides those from the catalog and the conversation, so the typed
+    contract is deliberately the question alone, never a fixed list of answers.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    topic: str = Field(min_length=1, max_length=80)
+    """The subject as a short tag - "the kind or style", "colour", "budget" - so
+    the agent can reason about it (budget is never the opener)."""
+
+    question: str = Field(min_length=1, max_length=200)
+    """The designer's question for this kind, which the agent rephrases."""
+
+
 class ProductSearchResult(BaseModel):
     """An eligible candidate pool, in a deterministic order.
 

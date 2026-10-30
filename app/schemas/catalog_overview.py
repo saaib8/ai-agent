@@ -61,6 +61,11 @@ class SeatingSpread(BaseModel):
     piece of this type can reach - the figure that decides whether a request for
     more seats needs a combination rather than one product."""
 
+    counts: tuple[int, ...] = ()
+    """Every confirmed seat count the type comes in, smallest first - so a
+    choice of seats offers what is stocked, not only the two ends of the range.
+    Empty in a summary cached before it was recorded."""
+
     @model_validator(mode="after")
     def _min_within_max(self) -> Self:
         if self.minimum > self.maximum:

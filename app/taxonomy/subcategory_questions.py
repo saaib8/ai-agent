@@ -82,6 +82,13 @@ class SheetAsk(StrEnum):
         rank and never filter - so a card may hold several."""
         return _KINDS[self]
 
+    @property
+    def topic(self) -> str:
+        """The subject a designer asks about, as a talking point for the agent -
+        never the verbatim question, which the agent would only recite
+        (CLAUDE.md 10.2). The agent asks about this in its own words."""
+        return _TOPICS[self]
+
 
 _KINDS: Final[dict[SheetAsk, BriefQuestionKind]] = {
     SheetAsk.TYPE: BriefQuestionKind.TYPE,
@@ -89,6 +96,14 @@ _KINDS: Final[dict[SheetAsk, BriefQuestionKind]] = {
     SheetAsk.COLOUR: BriefQuestionKind.COLOUR,
     SheetAsk.BUDGET: BriefQuestionKind.BUDGET,
     SheetAsk.DETAIL: BriefQuestionKind.FEEL,
+}
+
+_TOPICS: Final[dict[SheetAsk, str]] = {
+    SheetAsk.TYPE: "the kind or style",
+    SheetAsk.PEOPLE: "how many it seats",
+    SheetAsk.COLOUR: "colour",
+    SheetAsk.BUDGET: "budget",
+    SheetAsk.DETAIL: "a detail (material, feature, shape or use)",
 }
 
 _LIVE: Final[frozenset[SheetAsk]] = frozenset({SheetAsk.COLOUR, SheetAsk.BUDGET})

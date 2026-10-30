@@ -30,6 +30,7 @@ from app.agents.work import ToolStatus, TurnWork
 from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import MAX_FINISHED_ROOMS
+from app.schemas.product import CommerceClassification
 from app.schemas.retailer import RetailerCatalogCapabilities
 from app.services.design_checks import not_the_anchors_kind
 from app.services.room_cart import finished
@@ -101,13 +102,19 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                 }
                 for _, kind in stocked
             ]
+            facts: dict[str, Any] = {"goes_with": product_facts(anchor, None)}
+            if not kinds:
+                # No reviewed pairing the store stocks: the stocked kinds
+                # themselves, so the choice never ends empty-handed - which
+                # suit it is the agent's call.
+                kinds = _stocked_kinds(services, capabilities, anchor_kinds)
+                facts["none_reviewed"] = "choose the kinds that would suit it from these"
+            else:
+                facts["other_kinds"] = "store_shelf lists every other kind the store stocks"
+            kinds = [*_another_of_its_kind(services, capabilities, anchor.commerce), *kinds]
             return ToolOutcome(
                 code=None if kinds else "nothing_to_suggest",
-                facts={
-                    "goes_with": product_facts(anchor, None),
-                    "kinds": kinds,
-                    "other_kinds": "store_shelf lists every other kind the store stocks",
-                },
+                facts={**facts, "kinds": kinds},
             )
         if not not_the_anchors_kind(args.show_kind, anchor_kinds):
             # Another of its own kind is a similar-product search, not a pairing.
@@ -134,13 +141,67 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
         description=(
             "What goes with a piece they chose. Without show_kind: the reviewed pairings the "
             "store stocks, the most stocked first - you choose which suits it best, or "
-            "another kind store_shelf lists. With show_kind: products of that kind, leaning "
-            "to the piece's look. Never its own kind (that is more_like_this)."
+            "another kind store_shelf lists; with none reviewed (none_reviewed), the kinds "
+            "the store stocks, to choose the ones that suit it. With show_kind: products "
+            "of that kind, leaning to the piece's look. Its own kind is listed only for a "
+            "piece that seats several (another_of_its_kind), shown with more_like_this."
         ),
         args=GoesWithArgs,
         owners=SALMAN,
         handler=goes_with,
     )
+
+
+MAX_STOCKED_KINDS = 20
+"""Stocked kinds offered when none is reviewed to go with a piece: the most
+stocked, enough to choose from without listing the whole shop."""
+
+
+def _stocked_kinds(
+    services: AgentServices,
+    capabilities: RetailerCatalogCapabilities,
+    anchor_kinds: tuple[str | None, ...],
+) -> list[dict[str, Any]]:
+    entries = sorted(
+        (
+            e
+            for e in capabilities.capabilities
+            if e.commerce_subcategory is not None
+            and not_the_anchors_kind(e.commerce_subcategory, anchor_kinds)
+            and services.taxonomy.is_pair(e.commerce_category, e.commerce_subcategory)
+        ),
+        key=lambda e: -e.active_product_count,
+    )
+    return [
+        {"kind": e.commerce_subcategory, "label": customer_words(e.commerce_subcategory)}
+        for e in entries[:MAX_STOCKED_KINDS]
+        if e.commerce_subcategory is not None
+    ]
+
+
+def _another_of_its_kind(
+    services: AgentServices,
+    capabilities: RetailerCatalogCapabilities,
+    commerce: CommerceClassification,
+) -> list[dict[str, Any]]:
+    """Another of the piece's own kind, for a piece that seats several: a
+    second sofa beside the first is a common choice (two facing, an L, a
+    majlis), so it is offered with the pairings - shown with more_like_this,
+    which keeps the piece's look, and listed first so it is never crowded out of
+    the choices. Any other kind's own kind is never offered."""
+    own, family, seating = commerce.subcategory, commerce.category, services.seating
+    if seating is None or own is None or family is None or not seating.seats_several(own):
+        return []
+    if not capabilities.product_count(family, own):
+        return []
+    return [
+        {
+            "kind": own,
+            "label": customer_words(own),
+            "another_of_its_kind": True,
+            "show_with": "more_like_this",
+        }
+    ]
 
 
 def _unique(kinds: Sequence[Companion]) -> list[Companion]:
