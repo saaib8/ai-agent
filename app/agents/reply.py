@@ -22,6 +22,7 @@ from app.agents.tools.common import RespondArgs
 from app.agents.work import TurnWork
 from app.schemas.agent_turn import CustomerResponse
 from app.schemas.conversation import ConversationContext, ConversationRole
+from app.schemas.text_choice import asks_a_question
 from app.services.numeric_guard import (
     NumericPolicyViolation,
     build_allowance,
@@ -167,10 +168,12 @@ def customer_response(reply: RespondArgs) -> CustomerResponse:
     """The reply as the client receives it. Chips that answer no question are
     dropped rather than shown as a dead end, and a reply with a follow-up asks
     it once: the client shows the follow-up apart, so a question the message
-    also asks - the same one in other words - is left out of the message."""
+    also asks - the same one in other words - is left out of the message. Only
+    when the follow-up is itself a question: worded as a request ("Choose a
+    colour"), the message's question is the one the choices answer, so it stays."""
     message = reply.message
-    if reply.follow_up_question:
-        message = keep_sentences(message, lambda s: not s.rstrip().endswith(_ASKS)) or message
+    if asks_a_question(reply.follow_up_question):
+        message = keep_sentences(message, lambda s: not asks_a_question(s)) or message
     try:
         return CustomerResponse(
             message=message,
@@ -180,6 +183,3 @@ def customer_response(reply: RespondArgs) -> CustomerResponse:
     except ValidationError:
         return CustomerResponse(message=message, follow_up_question=reply.follow_up_question)
 
-
-_ASKS = ("?", "؟")
-"""A sentence that asks: an English or an Arabic question mark."""
