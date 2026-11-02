@@ -116,6 +116,7 @@ class FakeSessionStore:
             self.carts[(store_id, shopper)] = ShopperCart(
                 selected_product_ids=interaction.selected_product_ids,
                 cart_quantities=interaction.cart_quantities,
+                liked_product_ids=interaction.liked_product_ids,
             )
         return True
 

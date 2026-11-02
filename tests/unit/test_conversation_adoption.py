@@ -19,13 +19,13 @@ import pytest
 from app.api.dependencies import conversation_adoption_service, retailer_context_provider
 from app.api.errors import register_exception_handlers
 from app.api.routes.sessions import router as sessions_router
-from app.core.config import SessionSettings
+from app.core.config import CustomerAgentSettings, SessionSettings
 from app.core.exceptions import InvalidRequestError, SessionConflictError
 from app.repositories.conversation_moves import ConversationMoves
 from app.repositories.sessions import SHOPPER_CART_KEY_TEMPLATE, SessionStore, session_key
-from app.schemas.agent_state import CartQuantity
+from app.schemas.agent_state import CartQuantity, ProductInteractionState
 from app.schemas.retailer import RetailerContext
-from app.schemas.session import ShopperCart
+from app.schemas.session import ShopperCart, new_session
 from app.schemas.session_adoption import AdoptionOutcome, ConversationAdoptionRequest
 from app.services.conversation_adoption import ConversationAdoptionService, merged_cart
 from fastapi import FastAPI
@@ -139,7 +139,9 @@ def _service(redis: MemoryRedis) -> ConversationAdoptionService:
     client = cast(Redis, redis)
     settings = SessionSettings()
     return ConversationAdoptionService(
-        SessionStore(client, settings), ConversationMoves(client, settings)
+        SessionStore(client, settings),
+        ConversationMoves(client, settings),
+        max_likes=CustomerAgentSettings().max_likes,
     )
 
 
@@ -260,6 +262,55 @@ def test_a_cart_merged_twice_is_the_same_cart() -> None:
     assert added == 0
 
 
+def test_the_guests_likes_follow_the_accounts_each_once() -> None:
+    account = ShopperCart(liked_product_ids=(6, 9))
+    guest = ShopperCart(liked_product_ids=(5, 6))
+
+    merged, added = merged_cart(account, guest)
+
+    assert merged.liked_product_ids == (6, 9, 5)
+    assert added == 0, "only cart lines are counted"
+
+
+def test_too_many_likes_keep_the_newest_up_to_the_configured_limit() -> None:
+    """Fifteen and fifteen are thirty: a chat holds twenty, so the newest twenty."""
+    account = ShopperCart(liked_product_ids=tuple(range(1, 16)))
+    guest = ShopperCart(liked_product_ids=tuple(range(101, 116)))
+
+    merged, _ = merged_cart(account, guest, max_likes=20)
+
+    assert merged.liked_product_ids == (*range(11, 16), *range(101, 116))
+
+
+async def test_the_service_caps_the_merge_at_the_setting() -> None:
+    redis = MemoryRedis()
+    limit = CustomerAgentSettings().max_likes
+    _keep_cart(redis, GUEST_SHOPPER, ShopperCart(liked_product_ids=tuple(range(101, 116))))
+    _keep_cart(redis, ACCOUNT_SHOPPER, ShopperCart(liked_product_ids=tuple(range(1, 16))))
+
+    await _service(redis).adopt(CONTEXT, _request())
+
+    kept = ShopperCart.model_validate_json(redis.values[_cart_key(ACCOUNT_SHOPPER)])
+    assert kept.liked_product_ids is not None and len(kept.liked_product_ids) == limit
+    assert kept.liked_product_ids[-1] == 115
+
+
+def test_records_kept_before_likes_followed_them_merge_to_none() -> None:
+    merged, _ = merged_cart(None, ShopperCart(selected_product_ids=(5,)))
+
+    assert merged.liked_product_ids is None
+
+
+async def test_a_guest_with_only_likes_still_hands_them_over() -> None:
+    redis = MemoryRedis()
+    _keep_cart(redis, GUEST_SHOPPER, ShopperCart(liked_product_ids=(5,)))
+
+    await _service(redis).adopt(CONTEXT, _request())
+
+    kept = ShopperCart.model_validate_json(redis.values[_cart_key(ACCOUNT_SHOPPER)])
+    assert kept.liked_product_ids == (5,)
+
+
 async def test_the_guests_cart_joins_the_one_every_account_chat_loads() -> None:
     redis = MemoryRedis()
     _guest_with_a_chat(redis)
@@ -354,3 +405,20 @@ async def test_the_route_refuses_where_chats_are_not_handed_over() -> None:
 
     assert answer.status_code == 404
     assert answer.json()["error"]["code"] == "guest_handover_off"
+
+
+async def test_every_saved_turn_keeps_the_shoppers_likes_beside_the_cart() -> None:
+    redis = MemoryRedis()
+    store = SessionStore(cast(Redis, redis), SessionSettings())
+    state = new_session().state.model_copy(
+        update={
+            "product_interaction": ProductInteractionState(
+                selected_product_ids=(5,), liked_product_ids=(7, 8)
+            )
+        }
+    )
+
+    await store._remember_cart(STORE, GUEST, state)
+
+    kept = ShopperCart.model_validate_json(redis.values[_cart_key(GUEST_SHOPPER)])
+    assert (kept.selected_product_ids, kept.liked_product_ids) == ((5,), (7, 8))

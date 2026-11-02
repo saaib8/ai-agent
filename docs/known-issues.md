@@ -2074,8 +2074,6 @@ disabled, or the action queued and sent after); a refused save is logged as a
 warning. The widget needs the same.
 
 **Reported:** by the user (2026-10-23).
-<<<<<<< Updated upstream
-=======
 
 ## 34. A liked product is bookmarked, but its look never shapes later searches
 
@@ -2379,4 +2377,3 @@ pieces of a room using one product.
 **Status:** Fixed.
 
 **Reported:** by the user (2026-11-02).
->>>>>>> Stashed changes
