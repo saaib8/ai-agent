@@ -70,7 +70,17 @@ export function CatalogTile({
         >
           {text.name}
         </h4>
-        <div className="text-sm font-semibold text-clay">{text.price}</div>
+        <div className="flex flex-wrap items-baseline gap-x-1.5">
+          <span className="text-sm font-semibold text-clay">{text.price}</span>
+          {text.old_price && (
+            <span className="text-[11px] text-muted line-through">{text.old_price}</span>
+          )}
+          {text.discount && (
+            <span className="rounded-full bg-clay-soft px-1.5 py-0.5 text-[10px] font-medium text-clay">
+              {text.discount}
+            </span>
+          )}
+        </div>
         {text.kind && <div className="text-[11px] capitalize text-muted">{text.kind}</div>}
         {dims && <div className="text-[11px] text-muted">{dims}</div>}
 

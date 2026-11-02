@@ -134,6 +134,9 @@ def test_eligible_product_carries_only_what_ranking_orders_on() -> None:
         # A designer's size role orders by the floor sides.
         "long_side_cm",
         "short_side_cm",
+        # "Best rated" and "best selling" order on these; neither is shown.
+        "weighted_rating",
+        "sold",
     }
 
 

@@ -16,18 +16,20 @@ import pytest
 from app.core.config import CustomerAgentSettings
 from app.repositories.products import ProductRepository
 from app.schemas.comparison import (
+    LISTED_FIELDS,
     MAX_COMPARED_PRODUCTS,
     ComparisonField,
     ComparisonStatus,
     ProductComparisonResult,
 )
 from app.schemas.dimensions import RawDimensions
-from app.schemas.product import CommerceClassification, ProductRow
+from app.schemas.product import CommerceClassification, ProductListing, ProductRow
 from app.schemas.resolution import ComparisonFailureReason, ComparisonUnavailable
 from app.schemas.retailer import RetailerContext
 from app.services.comparison import ProductComparisonService
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.seating import load_seating_semantics
 
 CONTEXT = RetailerContext(store_id=50)
 
@@ -70,14 +72,10 @@ class FakeRepository:
         self.rows = rows
         self.calls: list[RetailerContext] = []
 
-    async def get_by_ids(
-        self, product_ids: Any, context: RetailerContext
-    ) -> list[ProductRow]:
+    async def get_by_ids(self, product_ids: Any, context: RetailerContext) -> list[ProductRow]:
         self.calls.append(context)
         wanted = set(product_ids)
-        return [
-            r for r in self.rows if r.id in wanted and r.store_id == context.store_id
-        ]
+        return [r for r in self.rows if r.id in wanted and r.store_id == context.store_id]
 
 
 def _service(
@@ -89,6 +87,7 @@ def _service(
         ProductComparisonService(
             cast(ProductRepository, repository),
             load_dimension_semantics(taxonomy=taxonomy),
+            load_seating_semantics(taxonomy=taxonomy),
             CustomerAgentSettings(comparison_max_products=maximum),
         ),
         repository,
@@ -153,9 +152,7 @@ def test_the_default_maximum_is_the_picks_trays_size() -> None:
     """A product decision: customers compare as many as they like, and the
     default lets "compare my picks" cover a full tray."""
     assert (
-        CustomerAgentSettings().comparison_max_products
-        == CustomerAgentSettings().max_picks
-        == 10
+        CustomerAgentSettings().comparison_max_products == CustomerAgentSettings().max_picks == 10
     )
 
 
@@ -171,7 +168,7 @@ async def test_the_same_product_twice_is_refused() -> None:
 
 
 async def test_input_order_is_preserved() -> None:
-    """"The first two" is how the customer referred to them."""
+    """ "The first two" is how the customer referred to them."""
     result = _ok(await _compare([_row(1), _row(2), _row(3)], [3, 1]))
 
     assert [p.name_english for p in result.products] == ["Sofa 3", "Sofa 1"]
@@ -211,15 +208,11 @@ async def test_equal_known_values_are_the_same() -> None:
 async def test_differing_known_values_differ() -> None:
     result = _ok(await _compare([_row(1, color="Beige"), _row(2, color="Taupe")], [1, 2]))
 
-    assert (
-        _row_for(result, ComparisonField.MAIN_COLOR).status is ComparisonStatus.DIFFERENT
-    )
+    assert _row_for(result, ComparisonField.MAIN_COLOR).status is ComparisonStatus.DIFFERENT
 
 
 async def test_two_absences_are_unknown_not_the_same() -> None:
-    result = _ok(
-        await _compare([_row(1, capacity=None), _row(2, capacity=None)], [1, 2])
-    )
+    result = _ok(await _compare([_row(1, capacity=None), _row(2, capacity=None)], [1, 2]))
 
     row = _row_for(result, ComparisonField.SEATING_CAPACITY)
     assert row.status is ComparisonStatus.UNKNOWN
@@ -229,10 +222,7 @@ async def test_two_absences_are_unknown_not_the_same() -> None:
 async def test_one_absence_makes_the_row_unknown() -> None:
     result = _ok(await _compare([_row(1, capacity=3), _row(2, capacity=None)], [1, 2]))
 
-    assert (
-        _row_for(result, ComparisonField.SEATING_CAPACITY).status
-        is ComparisonStatus.UNKNOWN
-    )
+    assert _row_for(result, ComparisonField.SEATING_CAPACITY).status is ComparisonStatus.UNKNOWN
 
 
 # ── fields ══════════════════════════════════════════════════════════════════
@@ -266,14 +256,8 @@ async def test_subcategory_and_seating_are_compared() -> None:
         )
     )
 
-    assert (
-        _row_for(result, ComparisonField.COMMERCE_SUBCATEGORY).status
-        is ComparisonStatus.SAME
-    )
-    assert (
-        _row_for(result, ComparisonField.SEATING_CAPACITY).status
-        is ComparisonStatus.DIFFERENT
-    )
+    assert _row_for(result, ComparisonField.COMMERCE_SUBCATEGORY).status is ComparisonStatus.SAME
+    assert _row_for(result, ComparisonField.SEATING_CAPACITY).status is ComparisonStatus.DIFFERENT
 
 
 async def test_styles_compare_as_a_set_not_as_typed_order() -> None:
@@ -327,8 +311,9 @@ async def test_a_supported_role_is_compared() -> None:
     assert all(cell.value == "220 cm" for cell in row.cells)
 
 
-async def test_an_unmapped_role_is_unknown_not_approximated() -> None:
-    """A sectional's stored axes were never established for this role."""
+async def test_an_unmapped_role_is_left_out_not_approximated() -> None:
+    """A sectional's stored axes were never established for this role, so no
+    width is read for it - and none is shown as merely not listed."""
     result = _ok(
         await _compare(
             [
@@ -339,10 +324,7 @@ async def test_an_unmapped_role_is_unknown_not_approximated() -> None:
         )
     )
 
-    assert (
-        _row_for(result, ComparisonField.OVERALL_WIDTH).status
-        is ComparisonStatus.UNKNOWN
-    )
+    assert ComparisonField.OVERALL_WIDTH not in {r.field for r in result.rows}
 
 
 async def test_an_unusable_unit_makes_a_measurement_unknown() -> None:
@@ -356,16 +338,87 @@ async def test_an_unusable_unit_makes_a_measurement_unknown() -> None:
         )
     )
 
-    assert (
-        _row_for(result, ComparisonField.OVERALL_WIDTH).status
-        is ComparisonStatus.UNKNOWN
+    assert _row_for(result, ComparisonField.OVERALL_WIDTH).status is ComparisonStatus.UNKNOWN
+
+
+async def test_every_field_a_sofa_has_appears_once_filled_or_not() -> None:
+    """A store that lists no extras still shows their rows, empty: a gap is
+    worth seeing, never hidden."""
+    result = _ok(await _compare([_measured(1), _measured(2)], [1, 2]))
+    fields = [r.field for r in result.rows]
+
+    assert len(fields) == len(set(fields))
+    assert set(fields) >= LISTED_FIELDS
+    for field in LISTED_FIELDS - {ComparisonField.DISCOUNT}:
+        assert not any(c.known for c in _row_for(result, field).cells)
+        assert _row_for(result, field).status is ComparisonStatus.UNKNOWN
+
+
+async def test_a_detail_the_kind_does_not_have_is_left_out() -> None:
+    """Seats on a coffee maker are not a gap in its listing - it has none."""
+    result = _ok(
+        await _compare(
+            [
+                _row(1, subcategory="coffee-maker", capacity=None),
+                _row(2, subcategory="coffee-maker", capacity=None),
+            ],
+            [1, 2],
+        )
+    )
+    fields = {r.field for r in result.rows}
+
+    assert ComparisonField.SEATING_CAPACITY not in fields
+    assert ComparisonField.RATING in fields
+
+
+async def test_a_one_seat_kind_keeps_its_seats_row_though_none_is_recorded() -> None:
+    result = _ok(
+        await _compare(
+            [
+                _row(1, subcategory="chair", capacity=None),
+                _row(2, subcategory="chair", capacity=None),
+            ],
+            [1, 2],
+        )
     )
 
+    assert ComparisonField.SEATING_CAPACITY in {r.field for r in result.rows}
 
-async def test_every_supported_field_appears_once() -> None:
-    result = _ok(await _compare([_measured(1), _measured(2)], [1, 2]))
 
-    assert [r.field for r in result.rows] == list(ComparisonField)
+def _listed(product_id: int, listing: ProductListing, *, price: str = "1000.00") -> ProductRow:
+    return _row(product_id, price=price).model_copy(update={"listing": listing})
+
+
+async def test_listed_extras_are_compared_where_a_product_has_them() -> None:
+    reviewed = ProductListing(
+        material="Velvet",
+        rating=Decimal("4.50"),
+        review_count=2,
+        weight_kg=Decimal("42.500"),
+        warranty_months=24,
+        regular_price=Decimal("1250.00"),
+    )
+    result = _ok(await _compare([_listed(1, reviewed), _listed(2, ProductListing())], [1, 2]))
+
+    def cells(field: ComparisonField) -> list[str | None]:
+        return [c.value for c in _row_for(result, field).cells]
+
+    assert cells(ComparisonField.MAIN_MATERIAL) == ["Velvet", None]
+    assert cells(ComparisonField.RATING) == ["4.5 from 2 reviews", None]
+    assert cells(ComparisonField.WEIGHT) == ["42.5 kg", None]
+    assert cells(ComparisonField.WARRANTY) == ["24 months", None]
+    # No reduction is a known "none", so the row says what differs.
+    assert cells(ComparisonField.DISCOUNT) == ["20% off, was 1250 SAR", "none"]
+    assert _row_for(result, ComparisonField.DISCOUNT).status is ComparisonStatus.DIFFERENT
+
+
+async def test_nothing_reduced_still_shows_the_discount_row_as_none() -> None:
+    plain_old = ProductListing(regular_price=Decimal("1000.00"))  # the same as now
+    result = _ok(await _compare([_listed(1, plain_old), _listed(2, plain_old)], [1, 2]))
+
+    row = _row_for(result, ComparisonField.DISCOUNT)
+    assert [c.value for c in row.cells] == ["none", "none"]
+    assert row.status is ComparisonStatus.SAME
 
 
 # ── grounding and neutrality ════════════════════════════════════════════════
@@ -405,5 +458,5 @@ def test_the_service_authors_no_prose() -> None:
     source = (Path(__file__).parents[2] / "app/services/comparison.py").read_text()
     statements = source.split('"""')[-1]
 
-    for forbidden in ("f\"The ", "recommend", "better", "you should"):
+    for forbidden in ('f"The ', "recommend", "better", "you should"):
         assert forbidden not in statements

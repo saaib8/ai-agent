@@ -143,7 +143,19 @@ export function ProductCard({
         <h4 className="text-sm font-medium leading-snug text-ink" title={text.name} dir="auto">
           {text.name}
         </h4>
-        {price && <div className="text-[15px] font-semibold text-clay">{price}</div>}
+        {price && (
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-[15px] font-semibold text-clay">{price}</span>
+            {text.old_price && (
+              <span className="text-xs text-muted line-through">{text.old_price}</span>
+            )}
+            {text.discount && (
+              <span className="rounded-full bg-clay-soft px-1.5 py-0.5 text-[11px] font-medium text-clay">
+                {text.discount}
+              </span>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-1.5">
           {text.kind && <Chip tone="accent">{text.kind}</Chip>}
@@ -155,6 +167,11 @@ export function ProductCard({
         </div>
 
         {dims && <div className="text-[11.5px] text-muted">{dims}</div>}
+        {(text.weight || text.sku) && (
+          <div className="text-[11.5px] text-muted" dir="auto">
+            {[text.weight, text.sku ? words.sku(text.sku) : null].filter(Boolean).join(' · ')}
+          </div>
+        )}
 
         <div className="mt-auto flex flex-col gap-2 pt-1">
           {compare && (!pick || !pick.adds) && product.presented_ordinal != null && (

@@ -28,8 +28,9 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Table,
+    Text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 metadata = MetaData()
 
@@ -112,11 +113,26 @@ core_product = Table(
     Column("salla_product_id", String(255), nullable=True, index=True),
     Column("time_created", DateTime(timezone=True), nullable=True),
     Column("time_updated", DateTime(timezone=True), nullable=True),
+    # Product data the store's import fills (Salla's pipeline in Django), read
+    # as stored. `material` is the enrichment's one main material, used by
+    # meaning and shown as the main material - never a filter (CLAUDE.md 6).
+    Column("material", String(100), nullable=True),
+    Column("description", Text, nullable=True),
+    Column("description_english", Text, nullable=True),
+    Column("regular_price", Numeric(10, 2), nullable=True),
+    Column("rating", Numeric(3, 2), nullable=True),
+    Column("review_count", Integer, nullable=True),
+    Column("reviews_json", JSONB, nullable=True),
+    # Read only for ordering and the best-seller rule: the number itself never
+    # reaches a fact, a reply or a client.
+    Column("sold_quantity", Integer, nullable=True),
+    Column("weight_kg", Numeric(10, 3), nullable=True),
+    Column("sku", String(255), nullable=True),
+    Column("warranty_months", SmallInteger, nullable=True),
 )
 
 # Commerce columns this service requires the live catalog to have. Verified at
-# startup (see app/db/catalog_schema.py). `material` is NOT here: it is
-# deferred, and nothing may depend on it.
+# startup (see app/db/catalog_schema.py).
 SUPPORT_CONTACT_COLUMNS: frozenset[str] = frozenset({"support_email", "support_whatsapp"})
 """What the support agent reads from ``core_store``, checked at startup where it
 is on."""
@@ -128,3 +144,22 @@ REQUIRED_COMMERCE_COLUMNS: frozenset[str] = frozenset(
         "seating_capacity",
     }
 )
+
+PRODUCT_DATA_COLUMNS: frozenset[str] = frozenset(
+    {
+        "material",
+        "description",
+        "description_english",
+        "regular_price",
+        "rating",
+        "review_count",
+        "reviews_json",
+        "sold_quantity",
+        "weight_kg",
+        "sku",
+        "warranty_months",
+    }
+)
+"""The product data every product read selects: checked at startup like the
+commerce columns, so a catalog without them fails loudly rather than per query.
+Empty values are expected - most stores have not filled them."""

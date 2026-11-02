@@ -945,13 +945,13 @@ cases:
     checks: {popup_refused: true}
 
   - id: compare_two_picks_typed
-    issue: "discovery: 'compare the two I picked'"
-    turns: [{search: "show me sofas"}, {tick: 1}, {tick: 2}, "compare the two I picked"]
+    issue: "discovery: 'compare the two I picked' (both sofas, from the first list: after the first pick a list of what goes with it may follow)"
+    turns: [{search: "show me sofas"}, {tick: 1}, {tick: {ordinal: 2, grid: 0}}, "compare the two I picked"]
     checks: {not_fallback: true, comparison: true}
 
   - id: compare_popup_earlier_list
     issue: "compare: two sofas on a list the screen has moved past still compare"
-    turns: [{search: "show me sofas"}, {tick: 1}, {chip: "Rugs"}, {compare_cards: [{ordinal: 2, grid: -2}, {ordinal: 4, grid: -2}]}]
+    turns: [{search: "show me sofas"}, {tick: 1}, {compare_cards: [{ordinal: 2, grid: -2}, {ordinal: 4, grid: -2}]}]
     checks: {popup: true}
 
   - id: compare_positions_typed
@@ -1696,3 +1696,66 @@ cases:
     issue: "known issue 28 in Arabic: a mattress is shown at once"
     turns: ["أبحث عن مرتبة"]
     checks: {not_fallback: true, min_products: 3, subcategory: mattresses, card: false, arabic_reply: true}
+
+  # ── product data on store 21: ratings, reviews, best sellers, discounts, material ──
+  # Store 21 is the store with the new core_product columns. Best-rated and
+  # material ranking are most meaningful with ZORY_PINECONE__INDEX_NAME=ai-agent-v2.
+  - id: data_best_rated_coffee_makers
+    issue: "product data: best-rated coffee makers lead with the 5-star kit and say its review count"
+    store: 21
+    turns: [{search: "show me the best rated coffee makers, just show me"}]
+    checks: {not_fallback: true, min_products: 3, subcategory: coffee-maker, first_card_rated: true, mentions: ["review", "rated", "rating"]}
+
+  - id: data_best_rated_sofas_none_rated
+    issue: "product data: no sofa has a review, so the reply says so instead of inventing a rating"
+    store: 21
+    turns: [{search: "which sofas are the best rated? just show me"}]
+    checks: {not_fallback: true, mentions: ["review", "rating", "rated"], not_mentions: ["5 stars", "4.", "top rated"]}
+
+  - id: data_reviews_of_a_product
+    issue: "product data: asked about a rated product's reviews, the rating comes with its count"
+    store: 21
+    turns: [{search: "show me the best rated coffee makers, just show me"}, "what do the reviews say about the first one?"]
+    checks: {not_fallback: true, mentions: ["7", "seven"]}
+
+  - id: data_tell_me_about_a_product
+    issue: "product data: 'tell me about it' answers from the store's description"
+    store: 21
+    turns: [{search: "show me coffee makers, just show me"}, "tell me more about the first one"]
+    checks: {not_fallback: true, engages: true}
+
+  - id: data_what_is_it_made_of
+    issue: "product data: 'what is it made of?' answers with the main material"
+    store: 21
+    turns: [{search: "show me velvet sofas, just show me"}, "what is the first one made of?"]
+    checks: {not_fallback: true, mentions: ["velvet", "fabric", "material", "made"]}
+
+  - id: data_velvet_sofas_by_meaning
+    issue: "product data: 'velvet sofas' ranks velvet ones first by meaning, never filters on it"
+    store: 21
+    turns: [{search: "show me velvet sofas, just show me"}]
+    checks: {not_fallback: true, min_products: 3, top_materials_any: [Velvet]}
+
+  - id: data_best_selling_coffee_makers
+    issue: "product data: best-selling coffee makers are named best sellers, never with a sales number"
+    store: 21
+    turns: [{search: "show me your best selling coffee makers, just show me"}]
+    checks: {not_fallback: true, min_products: 3, subcategory: coffee-maker, not_mentions: ["sold", "units", "times"]}
+
+  - id: data_popular_bed_never_negative
+    issue: "product data: 'is it popular?' for a bed (no best sellers) never says it is not one"
+    store: 21
+    turns: [{search: "show me beds, just show me"}, "is the first one popular?"]
+    checks: {not_fallback: true, not_mentions: ["not a best seller", "not one of our best", "isn't a best", "is not among", "isn't among", "less popular", "doesn't sell", "sold"]}
+
+  - id: data_discount_on_cards
+    issue: "product data: a reduced product's card shows its old price crossed out (the best-rated coffee maker is reduced; few others are)"
+    store: 21
+    turns: [{search: "show me the best rated coffee makers, just show me"}]
+    checks: {not_fallback: true, min_products: 3, discounted_card: true}
+
+  - id: data_compare_coffee_makers
+    issue: "product data: comparing two coffee makers through the chat Compare draws the table"
+    store: 21
+    turns: [{search: "show me coffee makers, just show me"}, {compare_cards: [{ordinal: 1}, {ordinal: 2}]}]
+    checks: {popup: true}

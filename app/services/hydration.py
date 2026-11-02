@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from app.core.config import DEFAULT_DISCOUNT_MAX_SHARE
 from app.core.logging import get_logger
 from app.repositories.products import ProductRepository
 from app.schemas.product import ProductCandidate
@@ -23,8 +24,14 @@ logger = get_logger(__name__)
 class ProductHydrationService:
     """Loads ranked products from PostgreSQL, in the ranked order."""
 
-    def __init__(self, repository: ProductRepository) -> None:
+    def __init__(
+        self,
+        repository: ProductRepository,
+        *,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
+    ) -> None:
         self._repository = repository
+        self._discount_max_share = discount_max_share
 
     async def hydrate(
         self, ranking: SemanticRankingResult, context: RetailerContext
@@ -67,4 +74,7 @@ class ProductHydrationService:
                 store_id=context.store_id,
                 dropped_count=len(stale),
             )
-        return tuple(to_candidate(by_id[i]) for i in ordered_ids if i in by_id)
+        share = self._discount_max_share
+        return tuple(
+            to_candidate(by_id[i], discount_max_share=share) for i in ordered_ids if i in by_id
+        )

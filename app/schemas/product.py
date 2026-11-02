@@ -8,9 +8,10 @@ allowlisted public DTO arrives with the guardrail milestone (CLAUDE.md 20.4).
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.dimensions import NormalisedDimensions, RawDimensions
 
@@ -64,6 +65,12 @@ class EligibleProduct(BaseModel):
     """The recorded seat count, or ``None`` when the catalog has none - never
     filled in here. A seating combination groups a type's products by it."""
 
+    weighted_rating: Decimal | None = None
+    sold: int | None = None
+    """What "best rated" and "best selling" order on - the weighted rating and
+    the sales count, None where there are none. Internal to ranking: neither
+    is ever shown, and the sales count never leaves it."""
+
     long_side_cm: Decimal | None = None
     short_side_cm: Decimal | None = None
     """The longer and shorter floor side in centimetres, whichever column each
@@ -91,6 +98,106 @@ class CommerceClassification(BaseModel):
     seating_capacity: int | None = None
 
 
+def _absent(value: object) -> bool:
+    return value is None
+
+
+class ProductListing(BaseModel):
+    """What the store lists about a product beyond its card, as stored.
+
+    Filled by the store's own import (Salla's pipeline); most stores have none
+    of it yet, and each field is simply absent where the store left it empty.
+    `material` is the enrichment's one main material - many pieces are made of
+    more than one, so it is said as the main material, never as everything the
+    piece is made of. Nothing here is derived or corrected (CLAUDE.md 6.1), and
+    the sales count is deliberately not here: it orders, and is never shown.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    material: str | None = Field(default=None, exclude_if=_absent)
+    regular_price: Decimal | None = Field(default=None, exclude=True)
+    """The price before a reduction, as the store lists it. Never serialized: a
+    client or an agent gets only the checked discount
+    (`app/services/product_value.py`), never an old price the store may have
+    listed wrongly."""
+    rating: Decimal | None = Field(default=None, exclude_if=_absent)
+    """Present only together with `review_count`: a rating is never said
+    without how many reviews it rests on."""
+    review_count: int | None = Field(default=None, exclude_if=_absent)
+    """Reviews behind `rating`: the store's own totals, never recounted. None
+    where nobody has reviewed it - the import stores those as 0."""
+    weight_kg: Decimal | None = Field(default=None, exclude_if=_absent)
+    sku: str | None = Field(default=None, exclude_if=_absent)
+    warranty_months: int | None = Field(default=None, exclude_if=_absent)
+
+    @model_validator(mode="after")
+    def _rating_with_its_count(self) -> Self:
+        if (self.rating is None) != (self.review_count is None):
+            raise ValueError("a rating and its review count come together or not at all")
+        return self
+
+    @property
+    def is_empty(self) -> bool:
+        """Nothing a client would receive - the old price never is."""
+        return not self.model_dump()
+
+
+EMPTY_LISTING = ProductListing()
+
+
+class BestSellerRule(BaseModel):
+    """What makes a best seller, one rule for every store: sold at least
+    `min_sold`, within the top `top_share` of its kind's products that have sold
+    in its store (rounded up, so at least one), and within the first
+    `max_per_kind` of that kind."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    min_sold: int = Field(ge=1)
+    top_share: float = Field(gt=0, le=1)
+    max_per_kind: int = Field(ge=1)
+
+
+class ProductDiscount(BaseModel):
+    """A reduction the store's old price shows, checked in code
+    (`app/services/product_value.py`) - the only form an old price leaves in."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    old_price: Decimal
+    saving: Decimal
+    percent: int = Field(ge=1, le=100)
+    """Whole percent, rounded down - a reduction is never overstated."""
+
+
+class ProductReview(BaseModel):
+    """One customer review as an agent may read it: cleaned, never verbatim
+    contact details, and words to quote, never instructions to follow."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    stars: int | None = Field(default=None, ge=1, le=5)
+    """None for a comment left without a rating (the import stores it as 0)."""
+    text: str = Field(min_length=1)
+    verified_buyer: bool
+    written_on: str | None = None
+    """The date it was written (YYYY-MM-DD), where the store records it."""
+
+
+class ProductDetailsText(BaseModel):
+    """A product's long text, read only when one product's details are asked
+    for: the store's description and the reviews with text, cleaned."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    description: str | None = None
+    """The store's description, as stored (often Arabic), whitespace tidied."""
+    description_english: str | None = None
+    """The English description the import made, where the store's is Arabic."""
+    reviews: tuple[ProductReview, ...] = ()
+
+
 class ProductRow(BaseModel):
     """Internal projection of a ``core_product`` row for the active store."""
 
@@ -114,6 +221,7 @@ class ProductRow(BaseModel):
     main_color: str | None
     styles: tuple[str, ...]
     is_active: bool
+    listing: ProductListing = EMPTY_LISTING
 
 
 class ProductDisplay(BaseModel):
@@ -146,6 +254,16 @@ class ProductDisplay(BaseModel):
     """The listed size, where it normalised: "L 220 · W 95 · H 85 cm" /
     "الطول 220 · العرض 95 · الارتفاع 85 سم"."""
 
+    old_price: str | None = Field(default=None, exclude_if=_absent)
+    """The price before a checked reduction, to show crossed out beside
+    `price`: "2,499 SAR" / "2,499 ريال". Absent where there is none."""
+    discount: str | None = Field(default=None, exclude_if=_absent)
+    """The reduction in words: "20% off" / "خصم 20%"."""
+    weight: str | None = Field(default=None, exclude_if=_absent)
+    """"42.5 kg" / "42.5 كجم", where the store lists it."""
+    sku: str | None = Field(default=None, exclude_if=_absent)
+    """The store's product code, as stored."""
+
 
 class ProductCandidate(BaseModel):
     """A discovery result: the allowlisted view of a catalog product.
@@ -155,8 +273,9 @@ class ProductCandidate(BaseModel):
 
     Deliberately absent: `store_id` (scope is the server's business, never the
     caller's), `pinecone_id`, `file_id`, `is_active` (everything here is
-    active), and the visual `category` - exposing the latter would invite
-    exactly the derivation the architecture forbids (CLAUDE.md 6.1).
+    active), the visual `category` - exposing the latter would invite
+    exactly the derivation the architecture forbids (CLAUDE.md 6.1) - and
+    `sold_quantity`, which orders and is never shown.
 
     There is no relevance score: nothing has ranked these.
     """
@@ -178,3 +297,10 @@ class ProductCandidate(BaseModel):
 
     styles: tuple[str, ...]
     """Approved style tokens, parsed by :func:`parse_style_tokens`."""
+
+    listing: ProductListing = EMPTY_LISTING
+    """What the store lists beyond the card, where it has: main material, old
+    price, rating with its count, weight, SKU, warranty."""
+
+    discount: ProductDiscount | None = None
+    """The checked reduction from the store's old price, or None."""

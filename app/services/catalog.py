@@ -16,7 +16,11 @@ from __future__ import annotations
 
 import math
 
-from app.core.config import CatalogSettings
+from app.core.config import (
+    DEFAULT_DISCOUNT_MAX_SHARE,
+    DEFAULT_RATING_PRIOR_REVIEWS,
+    CatalogSettings,
+)
 from app.core.exceptions import CatalogFilterRejectedError
 from app.prompts.visualization.v1 import ROOM_TYPES
 from app.repositories.products import ProductRepository
@@ -74,7 +78,11 @@ class CatalogService:
         render_available: bool,
         display: ProductDisplayWords | None = None,
         arabic_replies: bool = False,
+        rating_prior_reviews: int = DEFAULT_RATING_PRIOR_REVIEWS,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
     ) -> None:
+        self._rating_prior_reviews = rating_prior_reviews
+        self._discount_max_share = discount_max_share
         self._display = display
         """Tiles' and filters' text, ready to show in the requested language;
         None sends none."""
@@ -93,13 +101,25 @@ class CatalogService:
         count = await self._repository.count_browse(filters, context)
         offset = (query.page - 1) * size
         rows = (
-            await self._repository.browse(filters, context, offset=offset, limit=size)
+            await self._repository.browse(
+                filters,
+                context,
+                offset=offset,
+                limit=size,
+                prior_reviews=self._rating_prior_reviews,
+            )
             if offset < count
             else []
         )
         return CatalogPage(
             items=tuple(
-                catalog_item(row, self._display, self._language(query.language)) for row in rows
+                catalog_item(
+                    row,
+                    self._display,
+                    self._language(query.language),
+                    discount_max_share=self._discount_max_share,
+                )
+                for row in rows
             ),
             page=query.page,
             page_size=size,
@@ -278,8 +298,10 @@ def catalog_item(
     row: ProductRow,
     display: ProductDisplayWords | None = None,
     language: ReplyLanguage = ReplyLanguage.EN,
+    *,
+    discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
 ) -> CatalogItem:
-    candidate = to_candidate(row)
+    candidate = to_candidate(row, discount_max_share=discount_max_share)
     footprint, longest = _floor_facts(candidate.commerce.category, candidate.dimensions)
     return CatalogItem(
         product_id=candidate.product_id,

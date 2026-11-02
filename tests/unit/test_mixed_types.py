@@ -261,7 +261,9 @@ async def test_the_cheapest_is_the_cheapest_whatever_its_type() -> None:
         _card(4, "sectional-sofa", price="3000"),
     ]
 
-    assert await _order(_mixed(sort=ProductSort.PRICE_ASC), cards) == [1, 2, 3, 4]
+    # Ranking applies the sort itself, so the 3000 sectional comes before the
+    # 4000 set even when the pool did not arrive in price order.
+    assert await _order(_mixed(sort=ProductSort.PRICE_ASC), cards) == [1, 2, 4, 3]
 
 
 async def test_a_search_of_one_type_keeps_its_order() -> None:

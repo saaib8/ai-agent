@@ -25,7 +25,8 @@ function cellText(
   product: GroundedProduct,
   words: CardWords,
 ): string {
-  if (!cell.known || cell.value == null) return '—'
+  if (!cell.known || cell.value == null) return words.comparison.notListed
+  if (cell.display) return cell.display
   if (!product.display) return cell.value
   const text = productText(product)
   if (field === 'commerce_subcategory') return text.kind ?? cell.value
@@ -45,10 +46,9 @@ export function ComparisonTable({
   const { products } = comparison
   const all = cardWords(labels)
   const words = all.comparison
-  // A row no product's listing fills tells the customer nothing, so it is
-  // left out. A row only some fill stays: the known value is still worth
-  // comparing, with a dash where the other listing is silent.
-  const rows = comparison.rows.filter((row) => row.cells.some((cell) => cell.known))
+  // Every row the backend sends is a detail these kinds have: one the store
+  // left empty is shown as not listed, never hidden.
+  const { rows } = comparison
   // The stored columns, for each product none of whose measurements was read:
   // a sofa's `length` column is its width, so listing both for one product
   // would contradict the rows the backend read correctly. A product whose

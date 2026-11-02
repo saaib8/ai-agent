@@ -43,6 +43,7 @@ from app.schemas.furniture_finder import (
     WIDGET_STORE_PATTERN,
     ShopperCredentials,
 )
+from app.services.best_sellers import BestSellerService
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.card_comparison import CardComparisonService
 from app.services.cart import CartService
@@ -60,6 +61,7 @@ from app.services.furniture_finder import FinderTurnRuntime, FurnitureFinderServ
 from app.services.health import HealthService
 from app.services.hydration import ProductHydrationService
 from app.services.picks import PicksRuntime
+from app.services.product_details import ProductDetailsService
 from app.services.product_display import ProductDisplayWords
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
@@ -159,6 +161,9 @@ def product_discovery_service(
         app_resources.settings.discovery,
         app_resources.attributes,
         app_resources.dimensions,
+        discount_max_share=app_resources.settings.products.discount_max_share,
+        rating_prior_reviews=app_resources.settings.products.rating_prior_reviews,
+        best_sellers_enabled=app_resources.settings.products.best_sellers_enabled,
     )
 
 
@@ -185,6 +190,9 @@ def controlled_relaxation_service(
             settings.discovery,
             app_resources.attributes,
             app_resources.dimensions,
+            discount_max_share=app_resources.settings.products.discount_max_share,
+            rating_prior_reviews=app_resources.settings.products.rating_prior_reviews,
+            best_sellers_enabled=app_resources.settings.products.best_sellers_enabled,
         ),
         RelaxationPlanner(settings.relaxation),
         settings.relaxation,
@@ -220,8 +228,13 @@ def semantic_ranking_service(app_resources: ResourcesDep) -> SemanticRankingServ
     )
 
 
-def product_hydration_service(session: SessionDep) -> ProductHydrationService:
-    return ProductHydrationService(ProductRepository(session))
+def product_hydration_service(
+    session: SessionDep, app_resources: ResourcesDep
+) -> ProductHydrationService:
+    return ProductHydrationService(
+        ProductRepository(session),
+        discount_max_share=app_resources.settings.products.discount_max_share,
+    )
 
 
 def product_search_pipeline(
@@ -248,7 +261,7 @@ def product_search_pipeline(
     return ProductSearchPipeline(
         controlled_relaxation_service(session, app_resources),
         semantic_ranking_service(app_resources),
-        product_hydration_service(session),
+        product_hydration_service(session, app_resources),
         presentation_limit=limit,
         pinecone=settings.pinecone,
     )
@@ -385,7 +398,7 @@ def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRunt
     repository = ProductRepository(session)
     return PicksRuntime(
         ProductReferenceResolver(repository, app_resources.attributes),
-        product_hydration_service(session),
+        product_hydration_service(session, app_resources),
         session_store(app_resources),
         app_resources.settings.customer_agent,
         display=product_display_words(app_resources),
@@ -411,7 +424,11 @@ def card_comparison_service(
     return CardComparisonService(
         ProductReferenceResolver(repository, app_resources.attributes),
         ProductComparisonService(
-            repository, app_resources.dimensions, app_resources.settings.customer_agent
+            repository,
+            app_resources.dimensions,
+            app_resources.seating,
+            app_resources.settings.customer_agent,
+            discount_max_share=app_resources.settings.products.discount_max_share,
         ),
         session_store(app_resources),
         app_resources.compare_groups,
@@ -426,7 +443,7 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
     settings = app_resources.settings
     pipeline = product_search_pipeline(session, app_resources)
     repository = ProductRepository(session)
-    hydration = product_hydration_service(session)
+    hydration = product_hydration_service(session, app_resources)
     capability = catalog_capability_service(session, app_resources)
     agent = settings.customer_agent
     return AgentServices(
@@ -448,7 +465,13 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         ),
         hydration=hydration,
         references=ProductReferenceResolver(repository, app_resources.attributes),
-        comparison=ProductComparisonService(repository, app_resources.dimensions, agent),
+        comparison=ProductComparisonService(
+            repository,
+            app_resources.dimensions,
+            app_resources.seating,
+            agent,
+            discount_max_share=app_resources.settings.products.discount_max_share,
+        ),
         similar_search=SimilarSearchBuilder(app_resources.taxonomy, app_resources.attributes),
         capabilities=capability,
         cart_operations=CartOperations(
@@ -474,6 +497,8 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         companion_search=CompanionSearchBuilder(app_resources.attributes),
         cart=CartService(repository),
         store_knowledge=app_resources.store_knowledge,
+        details=ProductDetailsService(repository, settings.products),
+        best_sellers=BestSellerService(repository, settings.products),
         support=(
             SupportService(
                 SupportContactsRepository(session, owner_fallback=agent.support_owner_fallback),
@@ -547,7 +572,9 @@ def furniture_finder_service(
         zory,
         FinderPhotoStore(app_resources.redis.client, app_resources.settings.session),
         repository,
-        ProductHydrationService(repository),
+        ProductHydrationService(
+            repository, discount_max_share=app_resources.settings.products.discount_max_share
+        ),
         StoreRepository(session),
         session_store(app_resources),
         settings,
@@ -638,7 +665,13 @@ def _room_visualizer(session: AsyncSession, app_resources: AppResources) -> Room
             detail="visualization must be configured to render rooms",
             public_message="Room visualisation is not configured.",
         )
-    return RoomVisualizer(ProductRepository(session), photos, generator, settings)
+    return RoomVisualizer(
+        ProductRepository(session),
+        photos,
+        generator,
+        settings,
+        discount_max_share=app_resources.settings.products.discount_max_share,
+    )
 
 
 def visualization_turn_runtime(
@@ -703,6 +736,8 @@ def catalog_service(session: SessionDep, app_resources: ResourcesDep) -> Catalog
         render_available=app_resources.render_generator is not None,
         display=product_display_words(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
+        rating_prior_reviews=app_resources.settings.products.rating_prior_reviews,
+        discount_max_share=app_resources.settings.products.discount_max_share,
     )
 
 

@@ -50,6 +50,12 @@ export interface ProductDisplay {
   seats: string | null
   price: string | null
   size: string | null
+  /** The price before a checked reduction, to cross out beside `price`. */
+  old_price?: string
+  /** The reduction in words: "20% off". */
+  discount?: string
+  weight?: string
+  sku?: string
 }
 
 /** Every word drawn around the conversation, in the reply's language - the
@@ -73,6 +79,7 @@ export interface CardLabels {
   show_different_options: string
   compare_same_kind: string
   compare_limit: string
+  card_sku: string
   compare_title: string
   compare_count: string
   compare_need_two: string
@@ -149,6 +156,11 @@ export interface CardLabels {
   field_overall_width: string
   field_depth: string
   field_height: string
+  field_main_material: string
+  field_rating: string
+  field_weight: string
+  field_warranty: string
+  field_discount: string
   comparison_different: string
   comparison_same: string
   listed_dimensions: string
@@ -285,9 +297,23 @@ export interface GroundedProduct {
   styles: string[]
   /** 0 = matched the request exactly; >0 = surfaced only after widening. */
   relaxation_depth: number | null
+  /** What the store lists beyond the card, where it has. Absent when it has none. */
+  listing?: ProductListing
   /** Its card text, ready to show in the reply's language. Display only:
    *  everything the console sends back uses the English values. */
   display?: ProductDisplay | null
+}
+
+/** A product's listed extras, as stored. Each field is absent where the store
+ *  left it empty; `material` is the main material only; a rating always comes
+ *  with its review count. */
+export interface ProductListing {
+  material?: string
+  rating?: string
+  review_count?: number
+  weight_kg?: string
+  sku?: string
+  warranty_months?: number
 }
 
 export type ComparisonStatus = 'same' | 'different' | 'unknown'
@@ -295,6 +321,8 @@ export type ComparisonStatus = 'same' | 'different' | 'unknown'
 export interface ComparisonCell {
   known: boolean
   value: string | null
+  /** The value worded for the reply's language, for the listed extras. */
+  display?: string
 }
 
 export interface ComparisonRow {

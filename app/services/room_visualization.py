@@ -31,7 +31,12 @@ from typing import TYPE_CHECKING, Protocol
 
 from PIL import Image, UnidentifiedImageError
 
-from app.core.config import CatalogSettings, SessionSettings, VisualizationSettings
+from app.core.config import (
+    DEFAULT_DISCOUNT_MAX_SHARE,
+    CatalogSettings,
+    SessionSettings,
+    VisualizationSettings,
+)
 from app.core.exceptions import (
     NothingToVisualizeError,
     RenderUnavailableError,
@@ -110,7 +115,10 @@ class RoomVisualizer:
         photos: PhotoFetcher,
         generator: ImageGenerator,
         settings: VisualizationSettings,
+        *,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
     ) -> None:
+        self._discount_max_share = discount_max_share
         self._repository = repository
         self._photos = photos
         self._generator = generator
@@ -153,7 +161,8 @@ class RoomVisualizer:
         store no longer sells are left out, in the order the customer picked.
         """
         rows = await self._repository.get_by_ids([item.product_id for item in selection], context)
-        by_id = {row.id: to_candidate(row) for row in rows}
+        share = self._discount_max_share
+        by_id = {row.id: to_candidate(row, discount_max_share=share) for row in rows}
         items = [
             (by_id[item.product_id], item.quantity)
             for item in selection
@@ -303,7 +312,8 @@ class RoomVisualizer:
         for line in room.bundle_items:
             quantities[line.product_id] = quantities.get(line.product_id, 0) + line.quantity
         rows = await self._repository.get_by_ids(list(quantities), context)
-        by_id = {row.id: to_candidate(row) for row in rows}
+        share = self._discount_max_share
+        by_id = {row.id: to_candidate(row, discount_max_share=share) for row in rows}
         return [(by_id[pid], qty) for pid, qty in quantities.items() if pid in by_id]
 
     async def _photos_for(

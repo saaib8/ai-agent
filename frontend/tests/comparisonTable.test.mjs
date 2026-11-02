@@ -53,7 +53,9 @@ test('Catalog sizes remain visible when semantic measurement rows are unknown', 
   assert.match(html, /L 220 · W 180 · H 90 cm/)
   assert.match(html, /L 200 · W 160 · H 85 cm/)
   assert.match(html, /length and width may be recorded in either order/)
-  assert.doesNotMatch(html, /overall width/i)
+  // A detail the kind has but the store left empty is shown, never hidden.
+  assert.match(html, /overall width/i)
+  assert.match(html, /Not listed/)
 })
 
 test('Known measurement rows replace the listed sizes rather than sit beside them', () => {

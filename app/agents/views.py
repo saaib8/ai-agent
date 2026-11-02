@@ -431,6 +431,8 @@ def _seating_option(
                 quantity=line.quantity,
                 price=plain(product.price_amount),
                 currency=product.price_unit,
+                was_price=plain(product.discount.old_price) if product.discount else None,
+                percent_off=product.discount.percent if product.discount else None,
             )
         )
         totals[product.price_unit] = (

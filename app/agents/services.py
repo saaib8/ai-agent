@@ -12,11 +12,13 @@ from dataclasses import dataclass
 from app.agents.operations.cart import CartOperations
 from app.agents.operations.rooms import RoomEngine
 from app.agents.operations.search import SearchRunner
+from app.services.best_sellers import BestSellerService
 from app.services.cart import CartService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.comparison import ProductComparisonService
 from app.services.cross_sell import CompanionSearchBuilder
 from app.services.hydration import ProductHydrationService
+from app.services.product_details import ProductDetailsService
 from app.services.product_display import ProductDisplayWords
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
@@ -54,6 +56,10 @@ class AgentServices:
     companion_search: CompanionSearchBuilder | None = None
     cart: CartService | None = None
     store_knowledge: StoreKnowledgeService | None = None
+    details: ProductDetailsService | None = None
+    """One product's description and reviews, for product details."""
+    best_sellers: BestSellerService | None = None
+    """Which products are best sellers, asked for by the customer only."""
     support: SupportService | None = None
     display: ProductDisplayWords | None = None
     looks: StockedLooks | None = None

@@ -188,4 +188,10 @@ def test_arbitrary_sort_values_are_rejected(sort: str) -> None:
 
 def test_there_are_only_deterministic_sorts() -> None:
     """No relevance ordering exists yet, so none may be offered."""
-    assert {str(s) for s in ProductSort} == {"default", "price_asc", "price_desc"}
+    assert {str(s) for s in ProductSort} == {
+        "default",
+        "price_asc",
+        "price_desc",
+        "best_rated",
+        "best_selling",
+    }

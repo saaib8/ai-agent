@@ -17,7 +17,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.grounding import GroundedProduct
 
@@ -43,7 +43,11 @@ class ComparisonField(StrEnum):
     reliable at all, so comparing columns across product types would state a
     difference that does not exist (CLAUDE.md 15.1).
 
-    `material` is absent because the catalog cannot yet answer it.
+    The listed extras (main material onwards) come from what the store lists,
+    where it has: material is the one main material the store records, a rating
+    always carries its review count, a discount is the checked one. Every
+    detail the kinds compared have is a row, filled or not: what the store left
+    empty is a gap in it, never a missing row.
     """
 
     PRICE = "price"
@@ -55,6 +59,23 @@ class ComparisonField(StrEnum):
     OVERALL_WIDTH = "overall_width"
     DEPTH = "depth"
     HEIGHT = "height"
+    MAIN_MATERIAL = "main_material"
+    RATING = "rating"
+    WEIGHT = "weight"
+    WARRANTY = "warranty"
+    DISCOUNT = "discount"
+
+
+LISTED_FIELDS = frozenset(
+    {
+        ComparisonField.MAIN_MATERIAL,
+        ComparisonField.RATING,
+        ComparisonField.WEIGHT,
+        ComparisonField.WARRANTY,
+        ComparisonField.DISCOUNT,
+    }
+)
+"""The store's listed extras, worded in the shopper's language like the rest."""
 
 
 class ComparisonCell(BaseModel):
@@ -64,6 +85,10 @@ class ComparisonCell(BaseModel):
 
     known: bool
     value: str | None = None
+    display: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The value worded for the reply's language, where it is a listed extra
+    (rating, warranty, weight, discount) - display only; `value` stays the
+    English every later turn reads."""
 
     @model_validator(mode="after")
     def _known_means_a_value(self) -> Self:

@@ -52,6 +52,8 @@ class CardLabels(BaseModel):
     """Why a card of another kind cannot be checked."""
     compare_limit: str
     """"Up to {max} products at a time - uncheck one first"."""
+    card_sku: str
+    """The store's product code on a card: "SKU {sku}"."""
     compare_title: str
     compare_count: str
     """"Compare {count}"."""
@@ -164,6 +166,11 @@ class CardLabels(BaseModel):
     field_overall_width: str
     field_depth: str
     field_height: str
+    field_main_material: str
+    field_rating: str
+    field_weight: str
+    field_warranty: str
+    field_discount: str
     """A row's name is `field_` + its `field`, for every comparison field."""
     comparison_different: str
     comparison_same: str

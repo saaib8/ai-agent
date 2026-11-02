@@ -33,6 +33,7 @@ from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.compare_groups import load_compare_groups
 from app.taxonomy.dimensions import load_dimension_semantics
 from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.seating import load_seating_semantics
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
@@ -81,6 +82,7 @@ def _service(sessions: FakeSessionStore, maximum: int = 10) -> CardComparisonSer
         ProductComparisonService(
             repository,
             load_dimension_semantics(taxonomy=TAXONOMY),
+            load_seating_semantics(taxonomy=TAXONOMY),
             CustomerAgentSettings(comparison_max_products=maximum),
         ),
         sessions,  # type: ignore[arg-type]

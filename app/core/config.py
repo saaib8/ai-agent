@@ -838,6 +838,55 @@ class AgentsSettings(BaseModel):
     non-reasoning model on chat completions."""
 
 
+DEFAULT_DISCOUNT_MAX_SHARE = 0.9
+"""The default largest reduction believed - one definition, so a service built
+without settings (a test, a renderer that shows no prices) agrees with the
+configured default."""
+
+DEFAULT_RATING_PRIOR_REVIEWS = 3
+"""m in the weighted rating (R*v + C*m) / (v + m): the reviews a product is
+treated as already having at the store's average, so one review cannot win."""
+
+
+class ProductDataSettings(BaseModel):
+    """How the store's product data reaches an agent: descriptions, reviews and
+    a reduced price. One set for every store; each store's own data fills it."""
+
+    description_max_chars: int = Field(default=600, ge=100, le=4000)
+    """A description is the store's long text, often shared boilerplate: cut at
+    a word to this many characters before an agent reads it."""
+
+    reviews_max_shown: int = Field(default=3, ge=1, le=10)
+    """Reviews with text an agent is given for one product: verified buyers
+    first, then the newest."""
+
+    reviews_max_chars: int = Field(default=400, ge=50, le=2000)
+    """Each review's text is cut at a word to this many characters."""
+
+    discount_max_share: float = Field(default=DEFAULT_DISCOUNT_MAX_SHARE, gt=0, le=1)
+    """A reduction larger than this share of the old price is not believed: an
+    old price that far above the current one is a data error, not a sale."""
+
+    rating_prior_reviews: int = Field(default=DEFAULT_RATING_PRIOR_REVIEWS, ge=1, le=50)
+    """m in the weighted rating used to order "best rated": a product's own
+    rating counts half once it has m reviews. The store's average rating is the
+    other half, worked out from that store's own rated products."""
+
+    best_sellers_enabled: bool = True
+    """Whether "best sellers" can be asked for at all - a store may not want its
+    sales to shape answers. Off: the sort and the tool both answer nothing."""
+
+    best_sellers_min_sold: int = Field(default=5, ge=1)
+    """Sold at least this many to be a best seller: one lucky sale never is."""
+
+    best_sellers_top_share: float = Field(default=0.10, gt=0, le=1)
+    """Within the top share of its kind's products that have sold, in its store
+    (rounded up, so at least one)."""
+
+    best_sellers_max_per_kind: int = Field(default=10, ge=1)
+    """At most this many best sellers per kind, so the label stays special."""
+
+
 class ObservabilitySettings(BaseModel):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_format: Literal["json", "console"] = "json"
@@ -918,6 +967,7 @@ class Settings(BaseSettings):
     # And again: without it the Visualize route refuses and nothing else changes.
     visualization: VisualizationSettings | None = None
     catalog: CatalogSettings = CatalogSettings()
+    products: ProductDataSettings = ProductDataSettings()
     salla: SallaSettings = SallaSettings()
     observability: ObservabilitySettings = ObservabilitySettings()
     aws: AwsSettings = AwsSettings()

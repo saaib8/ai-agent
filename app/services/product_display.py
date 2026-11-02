@@ -26,6 +26,12 @@ from app.schemas.bundle_presentation import (
     GroundedBundleTotals,
 )
 from app.schemas.chat import ChatPresentation
+from app.schemas.comparison import (
+    LISTED_FIELDS,
+    ComparisonField,
+    ComparisonRow,
+    ProductComparisonResult,
+)
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
@@ -95,7 +101,32 @@ class ProductDisplayWords:
             ),
             price=price_words(product.price_amount, product.price_unit, language),
             size=size_words(product.dimensions, language),
+            **listed_words(product, language),
         )
+
+    def comparison_cell(
+        self, field: ComparisonField, product: ShownProduct, language: ReplyLanguage
+    ) -> str | None:
+        """A listed extra's comparison cell in `language`, read from the product
+        in that column - never re-read from the English cell text."""
+        listing = getattr(product, "listing", None)
+        if field is ComparisonField.RATING:
+            if listing is None or listing.rating is None or not listing.review_count:
+                return None
+            return rating_words(listing.rating, listing.review_count, language)
+        if field is ComparisonField.WARRANTY:
+            months = listing.warranty_months if listing is not None else None
+            return month_words(months, language) if months else None
+        if field is ComparisonField.WEIGHT:
+            weight = listing.weight_kg if listing is not None else None
+            return weight_words(weight, language) if weight is not None else None
+        if field is ComparisonField.DISCOUNT:
+            found = getattr(product, "discount", None)
+            if found is None:
+                return _NONE[language]
+            was = price_words(found.old_price, product.price_unit, language)
+            return _WAS[language].format(off=off_words(found.percent, language), was=was)
+        return None
 
     def bundle_item(self, item: GroundedBundleItem, language: ReplyLanguage) -> BundleItemDisplay:
         """One room piece's card text in `language`: its name, kind, seats, the
@@ -199,6 +230,25 @@ def displayed(
             }
         )
 
+    def worded_rows(compared: ProductComparisonResult) -> tuple[ComparisonRow, ...]:
+        return tuple(
+            row.model_copy(
+                update={
+                    "cells": tuple(
+                        cell.model_copy(
+                            update={"display": words.comparison_cell(row.field, product, language)}
+                        )
+                        if cell.known
+                        else cell
+                        for cell, product in zip(row.cells, compared.products, strict=True)
+                    )
+                }
+            )
+            if row.field in LISTED_FIELDS
+            else row
+            for row in compared.rows
+        )
+
     comparison = presentation.comparison
     return presentation.model_copy(
         update={
@@ -206,7 +256,10 @@ def displayed(
             "focus": card(presentation.focus) if presentation.focus is not None else None,
             "comparison": (
                 comparison.model_copy(
-                    update={"products": tuple(card(p) for p in comparison.products)}
+                    update={
+                        "products": tuple(card(p) for p in comparison.products),
+                        "rows": worded_rows(comparison),
+                    }
                 )
                 if comparison is not None
                 else None
@@ -220,6 +273,72 @@ def displayed(
             ),
         }
     )
+
+
+_NONE = {ReplyLanguage.EN: "none", ReplyLanguage.AR: "لا يوجد"}
+_WAS = {ReplyLanguage.EN: "{off}, was {was}", ReplyLanguage.AR: "{off}، كان {was}"}
+
+
+def listed_words(product: ShownProduct, language: ReplyLanguage) -> dict[str, str]:
+    """The card's listed extras, where the product has them: the old price and
+    the reduction (checked in code), its weight and the store's code."""
+    words: dict[str, str] = {}
+    found = getattr(product, "discount", None)
+    if found is not None:
+        words["old_price"] = price_words(found.old_price, product.price_unit, language)
+        words["discount"] = off_words(found.percent, language)
+    listing = getattr(product, "listing", None)
+    if listing is not None and listing.weight_kg is not None:
+        words["weight"] = weight_words(listing.weight_kg, language)
+    if listing is not None and listing.sku:
+        words["sku"] = listing.sku
+    return words
+
+
+def off_words(percent: int, language: ReplyLanguage) -> str:
+    """ "20% off" / "خصم 20%"."""
+    return f"{percent}% off" if language is ReplyLanguage.EN else f"خصم {percent}%"
+
+
+def weight_words(kilograms: Decimal, language: ReplyLanguage) -> str:
+    """ "42.5 kg" / "42.5 كجم"."""
+    unit = "kg" if language is ReplyLanguage.EN else "كجم"
+    # The column keeps grams (3 places): "1.03 kg" stays 1.03, never "1 kg".
+    return f"{_figure(kilograms, 3)} {unit}"
+
+
+def rating_words(rating: Decimal, reviews: int, language: ReplyLanguage) -> str:
+    """ "4.5 from 2 reviews" / "4.5 من تقييمين" - the rating never without its count."""
+    stars = _figure(rating, 2)
+    if language is ReplyLanguage.EN:
+        return f"{stars} from {reviews} review{'' if reviews == 1 else 's'}"
+    forms = ("تقييم واحد", "تقييمين", "تقييمات", "تقييمًا", "تقييم")
+    return f"{stars} من {_counted(reviews, forms)}"
+
+
+def month_words(months: int, language: ReplyLanguage) -> str:
+    """ "24 months" / "24 شهرًا"."""
+    if language is ReplyLanguage.EN:
+        return f"{months} month{'' if months == 1 else 's'}"
+    return _counted(months, ("شهر واحد", "شهران", "أشهر", "شهرًا", "شهر"))
+
+
+def _counted(count: int, forms: tuple[str, str, str, str, str]) -> str:
+    """An Arabic count with its noun, by its last two digits: one and two have
+    their own words; 3-10 take the plural ("5 تقييمات", "103 تقييمات"), 11-99
+    the accusative singular ("20 تقييمًا", "120 شهرًا"), and a round hundred
+    the genitive singular ("100 تقييم", "200 شهر")."""
+    one, two, few, many, hundred = forms
+    if count == 1:
+        return one
+    if count == 2:
+        return two
+    last = count % 100
+    if 3 <= last <= 10:
+        return f"{count} {few}"
+    if 11 <= last <= 99:
+        return f"{count} {many}"
+    return f"{count} {hundred}"
 
 
 def arabic_name(name_english: str, name_arabic: str | None) -> str:

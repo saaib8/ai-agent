@@ -20,6 +20,7 @@ Deterministic: one scoped query and a registry check. No model, no cache.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from app.core.config import SizeSettings
 from app.core.logging import get_logger
@@ -35,6 +36,7 @@ from app.schemas.retailer import (
     RetailerCatalogCapability,
     RetailerContext,
 )
+from app.taxonomy.name_match import NameMatch
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.seating import SeatingSemantics
 
@@ -102,6 +104,17 @@ class CatalogCapabilityService:
             rejected_count=len(rejected),
         )
         return RetailerCatalogCapabilities(capabilities=tuple(approved))
+
+    async def answers_named(
+        self, subcategory: str, answers: Mapping[str, NameMatch], context: RetailerContext
+    ) -> tuple[str, ...]:
+        """Which of a question's answers this store's names carry for the kind,
+        most-named first - "Arabic coffee" where coffee makers are named dallahs.
+        Reviewed match terms only, one scoped count; no count leaves here, so a
+        reply can never say how many the store holds."""
+        counts = await self._repository.name_match_counts((subcategory,), answers, context)
+        named = sorted((label for label, n in counts.items() if n > 0), key=lambda k: -counts[k])
+        return tuple(named)
 
     async def overview(self, context: RetailerContext) -> CatalogOverview:
         """The store's shelf as the agent reads it before deciding a move.

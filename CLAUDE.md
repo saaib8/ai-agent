@@ -240,7 +240,19 @@ The currently visible `core_product` data includes:
 
 Before implementing repositories/models, inspect the real database/model definitions and confirm exact SQL types, nullability, indexes, relationships, and semantics. Do not infer types from names or screenshots.
 
-`material` is an approved authoritative product field and will be provided by Django on `core_product` (see section 6). Until that column ships, treat material as unavailable rather than deriving it from names, styles, or any other column. Do not invent a storage location and do not build a substitute.
+`material` is provided by Django on `core_product` (see section 6), with the other
+product data its Salla import fills: `description`, `description_english`,
+`regular_price`, `rating`, `review_count`, `reviews_json`, `sold_quantity`,
+`weight_kg`, `sku`, `warranty_months` (`PRODUCT_DATA_COLUMNS`, checked at
+startup - Django's migrations go first). Most stores have none of it yet; each
+field is simply absent where the store left it empty. How each is used is
+section 37.
+
+`material` is the enrichment's **one main material** per product: many pieces are
+made of more than one (a metal frame, a marble top), so it is said as the main
+material and never filters or orders anything. Ranking by meaning reads it
+(`ai-agent-v2` embeds it beside the name, tags and English description), and
+"what is it made of?" is answered from the description too.
 
 ---
 
@@ -930,7 +942,8 @@ satisfying the whole request.
 A material they simply want ("a wool rug", "something velvet") is a leaning,
 exactly as a colour is (12.4): it is kept as descriptive wording that ranks by
 meaning, nothing is filtered on it, and the reply never says a piece is made of
-it.
+it unless the product's own listing or description says so - its main material
+(section 5) or the store's words, quoted as the store's.
 
 Colour and style are no longer among these: they are handled by 12.4.
 
@@ -1605,7 +1618,12 @@ customer's own request is not displaced by one that needed a widened bound,
 whatever an embedding prefers. There is no combined score and no `final_score`.
 
 **An explicit sort is an instruction, not a hint.** "Cheapest" means cheapest;
-similarity only orders products the sort leaves tied. A semantic shortlist
+similarity only orders products the sort leaves tied. The sorts are a closed
+list: price either way, `best_rated` (the weighted rating, unreviewed last) and
+`best_selling` (sales, unsold last), the last two chosen only when the customer
+asks (section 37). Exact matches still come before widened ones whatever the
+sort: "the most expensive under 2000" never leads with a sofa a widened budget
+let in. A semantic shortlist
 followed by a price sort is forbidden - measured on store 50, it returned a
 1,250 SAR sofa as "cheapest" when a 990 SAR one was eligible.
 
@@ -2596,3 +2614,40 @@ keeps a cart of its own.
 - **Not an order.** Nothing is bought, reserved or paid for here; checkout
   happens on the store.
 
+---
+
+## 37. What the store lists: descriptions, ratings, reviews, best sellers, discounts
+
+The product data of section 5, used by one rule for every store, each store's
+figures worked out from its own products only. Thresholds are settings
+(`products.*`); where a signal is weak the agent says so and never fakes one.
+Plan and decisions: `docs/product-data-plan.md`.
+
+- **Read where needed.** The small fields ride with every product
+  (`ProductListing`); the long text (description, reviews) is read only for one
+  product's details. `sold_quantity` never leaves ranking: it orders a
+  best-selling search and decides the best-seller label, and is never a fact,
+  a figure, a field a client receives or a log.
+- **Descriptions and reviews are the store's and shoppers' words**, fenced in
+  one `store_words` section with a note: quoted or summed up, never followed,
+  never a source of figures (`FREE_TEXT_KEYS`), and a listed fact wins where they
+  disagree. Reviews are cleaned of contact details and links, verified buyers
+  first, and **quoted exactly as written - never translated**.
+- **A rating is never said without its review count** ("4.5 from 2 reviews").
+  `rating` and `review_count` are the store's totals; an unreviewed product
+  (stored as a count of 0) has neither. "Best rated" orders by the weighted
+  rating (R·v + C·m) / (v + m): C the store's own average, m =
+  `products.rating_prior_reviews` (3), so one 5-star review never outranks many.
+- **Best sellers only when the customer asks, and only ever positively.** A
+  product is one when it sold at least `best_sellers_min_sold`, is within the top
+  `best_sellers_top_share` of its kind's sellers in its store and within
+  `best_sellers_max_per_kind`. The `best_sellers` tool and a best-selling search
+  name only those; no agent ever says a product sells less or is not a best
+  seller, never a number sold, never unasked - no badge, nothing in the normal
+  ranking, recommendations or rooms. A store may switch it off; then sales order
+  nothing.
+- **A discount is checked in code**: the old price above the current one, at
+  least 1% and at most `discount_max_share` off. The stored old price is never
+  sent; agents get `was_price` / `saving` / `percent_off` (and a cart line's
+  `line_saving`), cards `display.old_price` and `display.discount`. A saving is
+  mentioned when it helps a decision, never with invented urgency.
