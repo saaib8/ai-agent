@@ -310,3 +310,84 @@ async def test_ask_about_gives_what_the_store_carries_of_the_kind() -> None:
     assert [k["kind"] for k in seating["kinds_stocked"]] == ["sofa", "chair", "chaise-lounge"]
     assert all("price_from" not in k for k in seating["kinds_stocked"])
     assert "price_to" not in sofa["this_store_has"], "a shelf price is never an opening figure"
+
+
+# ── the designers' answers this store carries ═══════════════════════════════
+
+
+class _NamedShelves(_Shelves):
+    """A store whose coffee makers are named dallahs and grinders."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        super().__init__(
+            CatalogOverview(
+                store_id=CONTEXT.store_id,
+                shelves=(_shelf("kitchen-appliances", "coffee-maker", 180),),
+            )
+        )
+        self.error = error
+        self.asked: list[tuple[str, ...]] = []
+
+    async def answers_named(self, subcategory: str, answers: Any, context: Any) -> tuple[str, ...]:
+        if self.error is not None:
+            raise self.error
+        self.asked.append(tuple(answers))
+        return tuple(a for a in ("Coffee grinder", "Arabic coffee (dallah)") if a in answers)
+
+
+async def _ask_coffee(shelves: _NamedShelves) -> dict[str, Any]:
+    from app.taxonomy.subcategory_questions import load_subcategory_questions
+
+    tool = LOOP._registry.get("ask_about")
+    assert tool is not None and tool.handler is not None
+    services = agent_services(
+        capabilities=shelves,  # type: ignore[arg-type]
+        seating=SEATING,
+        subcategory_questions=load_subcategory_questions(taxonomy=TAXONOMY),
+    )
+    outcome = await tool.handler(
+        tool.args.model_validate(
+            {
+                "search": {
+                    "commerce_category": "kitchen-appliances",
+                    "commerce_subcategory": "coffee-maker",
+                }
+            }
+        ),
+        tool_context(services),
+        TurnWork.starting(AgentStateV1()),
+    )
+    return outcome.facts
+
+
+async def test_a_question_carries_the_answers_this_stores_names_back() -> None:
+    """Sara offers what the store sells - dallahs and grinders here - never a
+    guess of her own (CLAUDE.md 10.2)."""
+    asked = (await _ask_coffee(_NamedShelves()))["a_designer_might_ask"]
+
+    kind, people = asked[0], asked[1]
+    assert list(kind["this_store_carries"]) == ["Coffee grinder", "Arabic coffee (dallah)"]
+    # Names cannot say how many it is for: the subject alone, her own answers.
+    assert "this_store_carries" not in people
+
+
+async def test_an_unreadable_catalog_keeps_the_questions_without_answers() -> None:
+    from app.core.exceptions import IntegrationUnavailableError
+
+    asked = (await _ask_coffee(_NamedShelves(IntegrationUnavailableError(dependency="postgres"))))[
+        "a_designer_might_ask"
+    ]
+
+    assert asked and all("this_store_carries" not in q for q in asked)
+
+
+async def test_answers_are_ordered_by_how_many_names_carry_them_and_none_is_counted() -> None:
+    class _Repository:
+        async def name_match_counts(self, types: Any, matches: Any, context: Any) -> dict[str, int]:
+            return {"Espresso": 20, "Coffee grinder": 46, "Capsule": 0}
+
+    service = CatalogCapabilityService(_Repository(), TAXONOMY, SEATING)  # type: ignore[arg-type]
+
+    named = await service.answers_named("coffee-maker", {"x": None}, CONTEXT)  # type: ignore[dict-item]
+
+    assert named == ("Coffee grinder", "Espresso")

@@ -124,7 +124,13 @@ class FakeBrowseRepository:
         return self.count
 
     async def browse(
-        self, filters: CatalogFilter, context: RetailerContext, *, offset: int, limit: int
+        self,
+        filters: CatalogFilter,
+        context: RetailerContext,
+        *,
+        offset: int,
+        limit: int,
+        prior_reviews: int = 3,
     ) -> list[ProductRow]:
         self.pages.append((offset, limit))
         return self.rows[:limit]

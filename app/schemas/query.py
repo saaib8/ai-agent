@@ -376,8 +376,9 @@ class CommerceInterpretation(BaseModel):
     sort: ProductSort | None = Field(
         default=None,
         description=(
-            "Only when the customer explicitly asked for cheapest or most "
-            "expensive. Null otherwise."
+            "Only when the customer explicitly asked for an order: cheapest or most "
+            "expensive (price), best rated (best_rated), or best selling / most popular "
+            "(best_selling). Null otherwise."
         ),
     )
     commerce_subcategory_strength: ConstraintStrength | None = Field(

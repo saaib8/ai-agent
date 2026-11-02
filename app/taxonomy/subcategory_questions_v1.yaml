@@ -1497,19 +1497,20 @@ rows:
     for: [coffee-maker]
     questions:
       - ask: detail
-        q: {en: "What type of coffee machine are you looking for?", ar: "أي نوع ماكينة قهوة تبحث عنه؟"}
+        q: {en: "What kind of coffee do you mostly make?", ar: "أي نوع قهوة تحضّر غالبًا؟"}
         options:
-          - {en: "Espresso", ar: "إسبريسو"}
-          - {en: "Capsule", ar: "كبسولات"}
-          - {en: "Drip coffee", ar: "قهوة مقطرة"}
-          - {en: "Turkish coffee", ar: "قهوة تركية"}
-          - {en: "Arabic coffee", ar: "قهوة عربية"}
+          - {en: "Arabic coffee (dallah)", ar: "قهوة عربية (دلة)", match: [arabic coffee, arab coffee, dallah, dala, دلة, قهوة عربية]}
+          - {en: "Turkish coffee", ar: "قهوة تركية", match: [turkish, تركي, تركية]}
+          - {en: "Espresso", ar: "إسبريسو", match: [espresso, اسبريسو, إسبريسو]}
+          - {en: "Capsule", ar: "كبسولات", match: [capsule, nespresso, كبسولة, كبسولات]}
+          - {en: "Drip / filter coffee", ar: "قهوة مقطرة / فلتر", match: [drip, filter coffee, american coffee, مقطرة, امريكية]}
+          - {en: "Coffee grinder", ar: "مطحنة قهوة", match: [grinder, mill, مطحنة, طاحونة]}
       - ask: detail
-        q: {en: "Which level of operation do you prefer?", ar: "أي مستوى تشغيل تفضّل؟"}
+        q: {en: "How many people do you usually make coffee for?", ar: "لكم شخص تحضّر القهوة عادةً؟"}
         options:
-          - {en: "Fully automatic", ar: "أوتوماتيك بالكامل"}
-          - {en: "Semi-automatic", ar: "شبه أوتوماتيك"}
-          - {en: "Manual", ar: "يدوي"}
+          - {en: "Just me", ar: "لي وحدي"}
+          - {en: "A few people", ar: "لعدد قليل"}
+          - {en: "Guests and gatherings", ar: "للضيوف والمناسبات"}
       - ask: budget
         q: {en: "What's your approximate budget?", ar: "كم ميزانيتك التقريبية؟"}
   cooking-appliance:

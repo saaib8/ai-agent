@@ -35,6 +35,47 @@ The Arabic name is the store's `name_arabic` exactly as stored (a store that sav
 English there shows English). Keep sending the **English values and ids** back in
 actions, as today - `display` is for reading only.
 
+### 1.1 What the store lists beyond the card (new)
+
+Where the store lists them (today store 21; most stores none), `display` also
+carries, each **absent** when the product has none - never `null`, so a store
+without the data gets exactly the JSON it got before:
+
+```json
+"display": {
+  "price": "254 ريال",
+  "old_price": "289 ريال",
+  "discount": "خصم 12%",
+  "weight": "3.2 كجم",
+  "sku": "DLC-750"
+}
+```
+
+- `old_price` + `discount`: a **checked** reduction - show `price` as the price,
+  `old_price` crossed out beside it, `discount` as a small badge. The server only
+  sends them when the old price is really above the current one (and not an
+  implausible "90%+ off"); the stored old price itself is never sent. Never add
+  urgency ("ends soon") of your own - the store gives no end date.
+- `weight`: worded with its unit. `sku`: the store's code as stored - draw it
+  with `labels.card_sku` ("SKU {sku}" / "رمز المنتج {sku}").
+- A product may also carry `listing` (`material`, `rating`, `review_count`,
+  `weight_kg`, `sku`, `warranty_months`) - English values for reading, absent when
+  empty; a `rating` always comes with its `review_count`. Draw the card from
+  `display`, not from `listing`.
+
+The comparison table (`presentation.comparison.rows[]`) gains rows for **main
+material, rating, weight, warranty and discount**. **Draw every row it sends,
+filled or not**: a cell with `known: false` is a detail the store left empty -
+show `labels.not_listed` ("Not listed" / "غير مذكور"), never drop the row. Only
+details the compared kinds do not have are left out by the server (seats on a
+coffee maker, a depth on a rug). A piece whose store recorded only one floor size
+shows it in the width row with `one_side: true` and `display` worded as listed
+("240 cm (one side listed)" / "240 سم (مذكور ضلع واحد)"). The rating, weight, warranty and discount cells carry
+`display` - the value worded for the reply's language ("4.5 من تقييمين", "24 شهرًا",
+"خصم 20%، كان 1,250 ريال") - show it in place of `value`. Main material has no
+reviewed Arabic words, so it is shown as the store stored it (`value`). Row names are `labels.field_main_material`, `field_rating`,
+`field_weight`, `field_warranty`, `field_discount`.
+
 ## 2. Every reply carries `labels`
 
 `ChatResponse.labels` - **every word a widget draws around the conversation**, in

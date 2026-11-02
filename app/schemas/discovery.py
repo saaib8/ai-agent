@@ -47,6 +47,12 @@ class ProductSort(StrEnum):
 
     PRICE_ASC = "price_asc"
     PRICE_DESC = "price_desc"
+    BEST_RATED = "best_rated"
+    """By the weighted rating, so one review cannot outrank many; products with
+    no reviews follow every rated one."""
+    BEST_SELLING = "best_selling"
+    """By sales in the store; unsold products follow. The sales number itself
+    is never shown."""
 
 
 class PriceConstraint(BaseModel):
@@ -412,9 +418,10 @@ class DesignerQuestion(BaseModel):
     product search journey (CLAUDE.md 10.2).
 
     The subject to ask about - the agent asks it in its own words, a baseline it
-    rephrases rather than a script it recites. It carries **no answer options**:
-    the agent decides those from the catalog and the conversation, so the typed
-    contract is deliberately the question alone, never a fixed list of answers.
+    rephrases rather than a script it recites. It carries no fixed answer
+    options: only, where product names can tell, which reviewed answers this
+    store carries; the agent decides and words the options from that, the
+    catalog and the conversation.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -425,6 +432,12 @@ class DesignerQuestion(BaseModel):
 
     question: str = Field(min_length=1, max_length=200)
     """The designer's question for this kind, which the agent rephrases."""
+
+    this_store_carries: tuple[str, ...] = ()
+    """The reviewed answers this store's product names carry, most-named first -
+    so the answers offered come from stock, never a guess. Empty where names
+    cannot tell (how many it is for); the agent then chooses its own, as a
+    wish that leans the search. Never a fixed list to recite."""
 
 
 class ProductSearchResult(BaseModel):

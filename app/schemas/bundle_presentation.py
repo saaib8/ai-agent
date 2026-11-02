@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.bundle import BundleStatus, TotalUnavailableReason
-from app.schemas.product import CommerceClassification
+from app.schemas.product import CommerceClassification, ProductDiscount
 
 
 class BundleItemDisplay(BaseModel):
@@ -90,6 +90,9 @@ class GroundedBundleItem(BaseModel):
     """What one costs today, as the catalog has it. Present whatever the
     acquisition, because "you already own one of these, they're SAR 1,200"
     is a true and useful thing to show."""
+
+    discount: ProductDiscount | None = Field(default=None, exclude=True)
+    """The piece's checked reduction, for the agents' facts - never sent."""
 
     new_spend_line_total: Decimal | None = None
     """What this line adds to the bill, or None when it adds nothing.

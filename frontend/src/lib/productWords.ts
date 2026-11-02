@@ -10,6 +10,10 @@ export interface ProductText {
   seats: string | null
   price: string | null
   size: string | null
+  old_price?: string
+  discount?: string
+  weight?: string
+  sku?: string
 }
 
 /** Anything the console draws as a product - a card, a pick, a catalogue tile. */

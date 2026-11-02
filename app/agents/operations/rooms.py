@@ -102,7 +102,7 @@ from app.schemas.discovery import (
 )
 from app.schemas.geometry import RoomGeometry
 from app.schemas.grounding import GroundedProduct
-from app.schemas.product import ProductCandidate
+from app.schemas.product import ProductCandidate, ProductDiscount
 from app.schemas.query import (
     ConstraintStrength,
     DimensionConstraintSemantics,
@@ -1713,6 +1713,17 @@ def _commit_refinement(
     )
 
 
+def _reduction(discount: ProductDiscount | None) -> dict[str, object]:
+    """A piece's checked saving, as the briefs say it - nothing where none."""
+    if discount is None:
+        return {}
+    return {
+        "was_price": discount.old_price,
+        "saving": discount.saving,
+        "percent_off": discount.percent,
+    }
+
+
 def _facts(
     view: GroundedBundlePresentation | None,
     bundle: RoomBundle | None,
@@ -1739,6 +1750,7 @@ def _facts(
                 "line_total": item.new_spend_line_total,
                 "locked": item.locked,
                 "owned": item.acquisition is BundleAcquisition.ALREADY_OWNED,
+                **_reduction(item.discount),
             }
             for item in view.items
         ]
@@ -1858,6 +1870,7 @@ def _options_facts(
             "currency": product.price_unit,
             "colour": product.main_color,
             "styles": list(product.styles),
+            **_reduction(product.discount),
         }
         if total is not None and current_line is not None and product.price_unit == currency:
             new_total = total - current_line + product.price_amount * card.quantity

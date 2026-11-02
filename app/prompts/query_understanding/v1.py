@@ -14,7 +14,7 @@ from __future__ import annotations
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 
-VERSION = "query_understanding/v1.4"
+VERSION = "query_understanding/v1.5"
 
 _INSTRUCTIONS = """\
 You interpret a furniture shopper's message into a structured product search.
@@ -81,8 +81,10 @@ used for the money.
 - When the amount itself is loose, record it as the upper bound and mark that \
 bound approximate. Do not also set the lower bound to the same figure: that \
 would demand exactly that price, which is not what they asked for.
-- Only set sort when they explicitly asked for cheapest or most expensive. \
-Words like best, nicest or recommended are not sorting instructions.
+- Only set sort when they explicitly asked for an order: cheapest or most \
+expensive, best rated (best_rated), or best selling / most popular \
+(best_selling). Words like best, nicest or recommended on their own are not \
+sorting instructions.
 - Set every field you were not told about to null. Do not fill gaps with \
 plausible defaults.
 

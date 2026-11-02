@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.agents.figures import keep_sentences
+from app.agents.figures import FREE_TEXT_KEYS, keep_sentences
 from app.agents.tools.common import RespondArgs
 from app.agents.work import TurnWork
 from app.schemas.agent_turn import CustomerResponse
@@ -57,7 +57,9 @@ def figures_in(value: Any, *, written: bool = False) -> Iterable[Decimal]:
             # "fourteen days", "10k" in a store's policy: said in digits.
             yield from written_figures(value)
     elif isinstance(value, dict):
-        for item in value.values():
+        for key, item in value.items():
+            if key in FREE_TEXT_KEYS:
+                continue
             yield from figures_in(item, written=written)
     elif isinstance(value, list | tuple):
         for item in value:

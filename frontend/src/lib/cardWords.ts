@@ -28,6 +28,7 @@ export const ENGLISH: CardLabels = {
   show_different_options: 'Show me different options',
   compare_same_kind: 'Compare it with products of the same kind',
   compare_limit: 'Up to {max} products at a time - uncheck one first',
+  card_sku: 'SKU {sku}',
   compare_title: 'Compare',
   compare_count: 'Compare {count}',
   compare_need_two: 'Check at least two products of the same kind',
@@ -104,6 +105,11 @@ export const ENGLISH: CardLabels = {
   field_overall_width: 'Overall width',
   field_depth: 'Depth',
   field_height: 'Height',
+  field_main_material: 'Main material',
+  field_rating: 'Rating',
+  field_weight: 'Weight',
+  field_warranty: 'Warranty',
+  field_discount: 'Discount',
   comparison_different: 'different',
   comparison_same: 'same',
   listed_dimensions: 'Listed dimensions',
@@ -242,6 +248,7 @@ export interface CardWords {
   differentOptions: string
   compareHintKind: string
   compareHintMax: (max: number) => string
+  sku: (sku: string) => string
   tray: {
     yourPicks: (count: number) => string
     goesWith: string
@@ -481,6 +488,7 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
     differentOptions: l.show_different_options,
     compareHintKind: l.compare_same_kind,
     compareHintMax: (max) => fill(l.compare_limit, { max }),
+    sku: (sku) => fill(l.card_sku, { sku }),
     tray: {
       yourPicks: (count) => fill(l.your_picks, { count }),
       goesWith: l.goes_with,

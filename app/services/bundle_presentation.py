@@ -120,6 +120,7 @@ def _cards(groups: Sequence[tuple[BundleLine, int]]) -> tuple[GroundedBundleItem
             locked=line.locked,
             unit_price=line.product.price_amount,
             price_unit=line.product.price_unit,
+            discount=line.product.discount,
             new_spend_line_total=(
                 line.product.price_amount * quantity
                 if line.acquisition is BundleAcquisition.TO_BUY
@@ -222,6 +223,7 @@ def build_state_bundle_presentation(
                 locked=card.locked,
                 unit_price=product.price_amount,
                 price_unit=product.price_unit,
+                discount=product.discount,
                 new_spend_line_total=(product.price_amount * card.quantity if buying else None),
             )
         )

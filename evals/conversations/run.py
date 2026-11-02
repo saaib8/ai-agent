@@ -66,9 +66,12 @@ class TurnResult:
     body: dict[str, Any] = field(default_factory=dict)
     kind: str = "chat"
     """`chat` for a message or a screen action sent as a chat turn; `picks`
-    for a silent tick or untick; `comparison` for the compare pop-up."""
+    for a silent tick or untick."""
     chosen_budget: str | None = None
     """The budget band tapped on a card, as its label, for checking prices."""
+    compared: int | None = None
+    """How many different products the Compare button named: two cards on two
+    lists can be the same product, which the table shows once."""
 
     @property
     def message(self) -> str:
@@ -181,10 +184,11 @@ def _check(
     live = {k: v for k, v in checks.items() if k not in RETIRED_CHECKS}
     checks = live if live or not checks else {"not_fallback": True}
     if checks.get("popup_refused"):
-        code = (turn.body.get("error") or {}).get("code")
-        if turn.kind == "comparison" and turn.status == 422 and code == "comparison_refused":
+        # The console's Compare is a chat turn: a mixed set is refused by the
+        # comparison tool, so the reply explains and draws no table.
+        if turn.status == 200 and not turn.has_comparison and turn.message:
             return []
-        return [f"expected the pop-up to refuse, got HTTP {turn.status} {code}"]
+        return [f"expected the comparison to be refused, got HTTP {turn.status} with a table"]
     if turn.status != 200:
         return [f"HTTP {turn.status}"]
     failures: list[str] = []
@@ -306,9 +310,7 @@ def _check(
         turn.body.get("reply_language") == "ar" and writes_arabic_script(turn.message)
     ):
         failures.append(f"not an Arabic reply ({turn.body.get('reply_language')})")
-    if checks.get("arabic_text") and not writes_arabic_script(
-        turn.message if turn.kind != "comparison" else str(turn.body.get("message") or "")
-    ):
+    if checks.get("arabic_text") and not writes_arabic_script(turn.message):
         failures.append("the text is not in Arabic")
     if checks.get("arabic_chips"):
         labels = _screen_labels(turn)
@@ -327,6 +329,17 @@ def _check(
         failures.append(f"not an English reply ({turn.body.get('reply_language')})")
     if (words := checks.get("mentions")) and not any(w in turn.message.lower() for w in words):
         failures.append(f"reply mentions none of {words}")
+    listings = [p.get("listing") or {} for p in products]
+    if checks.get("first_card_rated") and not (listings and listings[0].get("rating")):
+        failures.append("the first card carries no rating")
+    if checks.get("discounted_card") and not any(
+        (p.get("display") or {}).get("old_price") for p in products
+    ):
+        failures.append("no card shows an old price")
+    if materials := checks.get("top_materials_any"):
+        top = [x.get("material") for x in listings[:3]]
+        if not any(m in materials for m in top):
+            failures.append(f"top materials {top}, expected one of {materials}")
     if (status := checks.get("room_status")) and turn.room.get("status") != status:
         failures.append(f"room status {turn.room.get('status')!r}, expected {status!r}")
     if kinds := checks.get("room_has"):
@@ -482,9 +495,9 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
     if checks.get("comparison") and not turn.has_comparison:
         failures.append("no comparison table")
     if checks.get("popup"):
-        columns = (turn.body.get("comparison") or {}).get("products") or []
-        wanted = checks.get("popup_columns", 2)
-        if turn.kind != "comparison" or len(columns) != wanted or not turn.body.get("message"):
+        columns = (turn.presentation.get("comparison") or {}).get("products") or []
+        wanted = min(checks.get("popup_columns", 2), turn.compared or 2)
+        if len(columns) != wanted or not turn.message:
             failures.append(f"no pop-up comparison of {wanted} products with a take")
     if checks.get("next_step"):
         choices = turn.presentation.get("choices") or []
@@ -531,8 +544,10 @@ def _discovery_checks(checks: dict[str, Any], turn: TurnResult) -> list[str]:
 class Conversation:
     """One case's session, sending turns the way the console does."""
 
-    def __init__(self, client: httpx.AsyncClient, base: str, session: str) -> None:
-        self.client, self.base, self.session = client, base, session
+    def __init__(
+        self, client: httpx.AsyncClient, base: str, session: str, store_id: int = STORE_ID
+    ) -> None:
+        self.client, self.base, self.session, self.store_id = client, base, session, store_id
         self.turns: list[TurnResult] = []
 
     @property
@@ -573,7 +588,7 @@ class Conversation:
         try:
             reply = await self.client.post(
                 f"{self.base}{path}",
-                json={"session_id": self.session, "store_id": STORE_ID, **body},
+                json={"session_id": self.session, "store_id": self.store_id, **body},
                 timeout=REQUEST_TIMEOUT_S,
             )
             data = reply.json() if reply.content else {}
@@ -666,13 +681,21 @@ class Conversation:
             chip = turn["chip"]
             return await self._chip(chip if isinstance(chip, int) else str(chip))
         if "compare_cards" in turn:
-            cards = []
+            # The console's Compare button: a chat turn naming the checked cards.
+            cards, names, urls = [], [], set()
             for spec in turn["compare_cards"]:
                 grid = self.grid(int(spec.get("grid", -1)))
-                cards.append(
-                    {"list_revision": grid["list_revision"], "ordinal": int(spec["ordinal"])}
-                )
-            return await self._post("/v1/comparisons", {"cards": cards}, "comparison")
+                ordinal = int(spec["ordinal"])
+                card = grid["products"][ordinal - 1]
+                cards.append({"list_revision": grid["list_revision"], "ordinal": ordinal})
+                names.append(str(card["name_english"]))
+                urls.add(card.get("product_url"))
+            result = await self.chat(
+                f"Compare these products: {', '.join(names)}",
+                product_action={"kind": "compare_cards", "cards": cards},
+            )
+            result.compared = len(urls)
+            return result
         if "more_options" in turn:
             return await self.chat(
                 "Show me different options", search_action={"kind": "more_options"}
@@ -821,7 +844,9 @@ async def _run_case(
     client: httpx.AsyncClient, base: str, case: dict[str, Any], gate: asyncio.Semaphore
 ) -> CaseResult:
     safe_id = "".join(ch if ch.isalnum() else "-" for ch in case["id"])
-    conversation = Conversation(client, base, f"eval-{safe_id}-{uuid.uuid4().hex[:8]}")
+    conversation = Conversation(
+        client, base, f"eval-{safe_id}-{uuid.uuid4().hex[:8]}", int(case.get("store", STORE_ID))
+    )
     problem: str | None = None
     async with gate:
         for step, turn in enumerate(case["turns"], start=1):

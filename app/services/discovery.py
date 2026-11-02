@@ -26,7 +26,11 @@ from __future__ import annotations
 
 import time
 
-from app.core.config import DiscoverySettings
+from app.core.config import (
+    DEFAULT_DISCOUNT_MAX_SHARE,
+    DEFAULT_RATING_PRIOR_REVIEWS,
+    DiscoverySettings,
+)
 from app.core.exceptions import (
     InvalidRequestError,
     UnknownCatalogAttributeError,
@@ -40,10 +44,12 @@ from app.schemas.discovery import (
     PairMatch,
     ProductSearchRequest,
     ProductSearchResult,
+    ProductSort,
 )
 from app.schemas.product import EligibleProduct, ProductCandidate, ProductRow
 from app.schemas.retailer import RetailerContext
 from app.services.dimensions import normalise_dimensions
+from app.services.product_value import discount_of
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.dimensions import DimensionSemantics, FloorSide
 from app.taxonomy.registry import CommerceTaxonomy
@@ -51,7 +57,11 @@ from app.taxonomy.registry import CommerceTaxonomy
 logger = get_logger(__name__)
 
 
-def to_candidate(row: ProductRow) -> ProductCandidate:
+def to_candidate(
+    row: ProductRow, *, discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE
+) -> ProductCandidate:
+    """The allowlisted product, with its old price checked once, here, into a
+    discount - every brief, card and comparison reads that, never the old price."""
     return ProductCandidate(
         product_id=row.id,
         name_english=row.name_english,
@@ -64,6 +74,8 @@ def to_candidate(row: ProductRow) -> ProductCandidate:
         dimensions=normalise_dimensions(row.dimensions),
         main_color=row.main_color,
         styles=row.styles,
+        listing=row.listing,
+        discount=discount_of(row.price_amount, row.listing, discount_max_share),
     )
 
 
@@ -75,12 +87,26 @@ class ProductDiscoveryService:
         settings: DiscoverySettings,
         attributes: CatalogAttributes,
         dimensions: DimensionSemantics,
+        *,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
+        rating_prior_reviews: int = DEFAULT_RATING_PRIOR_REVIEWS,
+        best_sellers_enabled: bool = True,
     ) -> None:
         self._repository = repository
         self._taxonomy = taxonomy
         self._settings = settings
         self._attributes = attributes
         self._dimensions = dimensions
+        self._discount_max_share = discount_max_share
+        self._rating_prior_reviews = rating_prior_reviews
+        self._best_sellers_enabled = best_sellers_enabled
+
+    def _sales_allowed(self, request: ProductSearchRequest) -> ProductSearchRequest:
+        """The request as it may run: a best-selling order falls back to the
+        normal one where the store switched best sellers off."""
+        if self._best_sellers_enabled or request.sort is not ProductSort.BEST_SELLING:
+            return request
+        return request.model_copy(update={"sort": ProductSort.DEFAULT})
 
     async def search(
         self, request: ProductSearchRequest, context: RetailerContext
@@ -95,16 +121,19 @@ class ProductDiscoveryService:
         # One extra row answers "was there more?" without a second count query
         # over a 77k-row table.
         rows = await self._repository.search(
-            request,
+            self._sales_allowed(request),
             context,
             limit=limit + 1,
             axis_constraints=axis_constraints,
             planar=planar,
+            prior_reviews=self._rating_prior_reviews,
         )
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
         truncated = len(rows) > limit
-        candidates = tuple(to_candidate(row) for row in rows[:limit])
+        candidates = tuple(
+            to_candidate(row, discount_max_share=self._discount_max_share) for row in rows[:limit]
+        )
 
         logger.info(
             "product_discovery_completed",
@@ -144,11 +173,16 @@ class ProductDiscoveryService:
 
         started = time.perf_counter()
         pool = await self._repository.search_eligible_pool(
-            request,
+            self._sales_allowed(request),
             context,
             axis_constraints=axis_constraints,
             planar=planar,
+            prior_reviews=self._rating_prior_reviews,
         )
+        if not self._best_sellers_enabled:
+            # Sales never order anything for a store that switched them off -
+            # not even the ranking that follows, which would read them here.
+            pool = [p.model_copy(update={"sold": None}) for p in pool]
         logger.info(
             "product_eligible_pool_completed",
             store_id=context.store_id,

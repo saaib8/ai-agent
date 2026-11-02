@@ -510,7 +510,10 @@ def test_a_search_tells_the_agent_what_designers_ask_for_the_kind() -> None:
 
 def test_designer_question_is_a_typed_contract() -> None:
     q = DesignerQuestion(topic="budget", question="What's your approximate budget?")
-    assert q.model_dump() == {"topic": "budget", "question": "What's your approximate budget?"}
+    assert q.model_dump(exclude_defaults=True) == {
+        "topic": "budget",
+        "question": "What's your approximate budget?",
+    }
     with pytest.raises(ValidationError):
         DesignerQuestion(topic="", question="x")  # a subject is required
     with pytest.raises(ValidationError):

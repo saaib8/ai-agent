@@ -40,10 +40,26 @@ bounds."""
 _LABELS = ("label", "measures", "wall", "kind", "currency")
 """What else can name an object - used only where it is unique in its list."""
 _NOT_FIGURES = frozenset(
-    {"card", "pick", "piece", "goal", "option", "position", "matching_in_store", "exact_matches"}
+    {
+        "card",
+        "pick",
+        "piece",
+        "goal",
+        "option",
+        "position",
+        "matching_in_store",
+        "exact_matches",
+        "sku",
+    }
 )
-"""Fields that are not figures to say: an object's own number, and how many
-products the store holds (never said, CLAUDE.md 10.2)."""
+"""Fields that are not figures to say: an object's own number, how many
+products the store holds (never said, CLAUDE.md 10.2), and a product's SKU - a
+code, which "001234" must stay, never a figure written as 1,234."""
+FREE_TEXT_KEYS = frozenset({"store_description", "said", "written_on", "note"})
+"""The store's description and customers' reviews, the date a review was written
+and the note fencing them: words to quote, never a source of figures. A
+description's "seats 6" is the merchant's claim, not the listed seat count, so
+none gets a figure key nor licenses a reply's number."""
 _LISTS_CARDS = "cards_on_screen"
 
 
@@ -94,7 +110,7 @@ def flatten(value: Any, prefix: str = "") -> dict[str, Decimal]:
             found[prefix] = Decimal(value.strip())
     elif isinstance(value, Mapping):
         for key, item in value.items():
-            if str(key) in _NOT_FIGURES:
+            if str(key) in _NOT_FIGURES or str(key) in FREE_TEXT_KEYS:
                 continue
             found.update(flatten(item, _join(prefix, _slug(str(key)))))
     elif isinstance(value, list | tuple):

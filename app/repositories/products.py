@@ -25,6 +25,7 @@ from sqlalchemy import (
     Text,
     case,
     func,
+    literal,
     or_,
     select,
     type_coerce,
@@ -33,7 +34,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import SizeSettings
+from app.core.config import DEFAULT_RATING_PRIOR_REVIEWS, SizeSettings
 from app.db.tables import core_product
 from app.schemas.catalog import CatalogFilter
 from app.schemas.dimensions import CENTIMETRES_PER_UNIT, UNIT_ALIASES, RawDimensions
@@ -47,8 +48,10 @@ from app.schemas.discovery import (
 from app.schemas.product import (
     STYLE_IGNORED_CHARACTER,
     STYLE_VALUE_SEPARATOR,
+    BestSellerRule,
     CommerceClassification,
     EligibleProduct,
+    ProductListing,
     ProductRow,
     parse_style_tokens,
 )
@@ -83,6 +86,13 @@ _SELECTED_COLUMNS = (
     core_product.c.main_color,
     core_product.c.styles,
     core_product.c.is_active,
+    core_product.c.material,
+    core_product.c.regular_price,
+    core_product.c.rating,
+    core_product.c.review_count,
+    core_product.c.weight_kg,
+    core_product.c.sku,
+    core_product.c.warranty_months,
 )
 
 
@@ -98,14 +108,60 @@ _POOL_COLUMNS = (
 reading the COMPLETE eligible pool affordable (CLAUDE.md 16.1)."""
 
 
-# Sort key -> ORDER BY. An enum, not a caller-supplied column name, so no
-# request can order by an arbitrary database column. Product id is the stable
-# tiebreaker, so repeated identical searches return an identical order.
-_ORDER_BY: dict[ProductSort, tuple[ColumnElement[Any], ...]] = {
-    ProductSort.DEFAULT: (core_product.c.id.asc(),),
-    ProductSort.PRICE_ASC: (core_product.c.price_amount.asc(), core_product.c.id.asc()),
-    ProductSort.PRICE_DESC: (core_product.c.price_amount.desc(), core_product.c.id.asc()),
-}
+def _store_average_rating(context: RetailerContext) -> ColumnElement[Any]:
+    """C in the weighted rating: the average rating of the store's own rated
+    products, worked out in the same query so it is never stale."""
+    return (
+        select(func.avg(core_product.c.rating))
+        .where(
+            core_product.c.store_id == context.store_id,
+            core_product.c.is_active.is_(True),
+            core_product.c.review_count > 0,
+            core_product.c.rating.isnot(None),
+        )
+        .scalar_subquery()
+    )
+
+
+def _weighted_rating(context: RetailerContext, prior_reviews: int) -> ColumnElement[Any]:
+    """The weighted rating that orders "best rated": (R*v + C*m) / (v + m).
+
+    NULL for a product nobody has reviewed - it follows every rated one, never
+    mixed in as if it were. Internal: it orders, and is never shown."""
+    reviews = core_product.c.review_count
+    return case(
+        (
+            (reviews > 0) & core_product.c.rating.isnot(None),
+            (core_product.c.rating * reviews + _store_average_rating(context) * prior_reviews)
+            / (reviews + prior_reviews),
+        ),
+        else_=None,
+    )
+
+
+_SOLD = case((core_product.c.sold_quantity > 0, core_product.c.sold_quantity), else_=None)
+"""Sales, for ordering only: NULL where nothing sold, so unsold follow sold.
+The number never leaves this module except as an order or a best-seller label."""
+
+
+def _order_by(
+    sort: ProductSort, context: RetailerContext, prior_reviews: int
+) -> tuple[ColumnElement[Any], ...]:
+    """Sort key -> ORDER BY. An enum, not a caller-supplied column name, so no
+    request can order by an arbitrary database column. Product id is the stable
+    tiebreaker, so repeated identical searches return an identical order."""
+    match sort:
+        case ProductSort.PRICE_ASC:
+            return (core_product.c.price_amount.asc(), core_product.c.id.asc())
+        case ProductSort.PRICE_DESC:
+            return (core_product.c.price_amount.desc(), core_product.c.id.asc())
+        case ProductSort.BEST_RATED:
+            score = _weighted_rating(context, prior_reviews)
+            return (score.desc().nulls_last(), core_product.c.id.asc())
+        case ProductSort.BEST_SELLING:
+            return (_SOLD.desc().nulls_last(), core_product.c.id.asc())
+        case _:
+            return (core_product.c.id.asc(),)
 
 
 _AXIS_COLUMNS: dict[SourceAxis, ColumnElement[Any]] = {
@@ -290,7 +346,40 @@ def _to_product_row(row: Row[Any]) -> ProductRow:
         main_color=row.main_color,
         styles=parse_style_tokens(row.styles),
         is_active=row.is_active,
+        listing=ProductListing(
+            material=_text(row.material),
+            regular_price=row.regular_price,
+            **_rating(row.rating, row.review_count),
+            weight_kg=row.weight_kg,
+            sku=_text(row.sku),
+            warranty_months=row.warranty_months,
+        ),
     )
+
+
+def _rating(rating: Decimal | None, count: int | None) -> dict[str, Any]:
+    """The rating with the reviews it rests on, or neither: the import stores
+    an unreviewed product as a count of 0, which is no reviews, not a rating."""
+    if rating is None or not count or count < 1:
+        return {}
+    return {"rating": rating, "review_count": count}
+
+
+def _text(value: str | None) -> str | None:
+    """A stored text field, or None where it is blank."""
+    text = (value or "").strip()
+    return text or None
+
+
+@dataclass(frozen=True, slots=True)
+class DetailsTextRow:
+    """One product's long text, as stored - for :meth:`ProductRepository.details_text`."""
+
+    description: str | None
+    description_english: str | None
+    reviews: Any
+    """`reviews_json` as the driver returns it: a list, or text; read by
+    `app/services/product_details.py`, which trusts neither."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -397,6 +486,85 @@ class ProductRepository:
         )
         result = await self._session.execute(statement)
         return [_to_product_row(row) for row in result]
+
+    async def best_sellers(
+        self,
+        context: RetailerContext,
+        rule: BestSellerRule,
+        *,
+        product_ids: Sequence[int] = (),
+        kinds: Sequence[str] = (),
+    ) -> list[int]:
+        """The best sellers of the given products' kinds, or of the given kinds,
+        best first within each kind - ids only, never a sales number.
+
+        Ranked within the store's own products of each kind, so a small store's
+        favourite is its own best seller whatever a larger store sells.
+        """
+        if not product_ids and not kinds:
+            return []
+        kind = core_product.c.commerce_subcategory
+        if product_ids:
+            asked_kinds: Any = select(kind).where(
+                *self._scope_clauses(context), core_product.c.id.in_(sorted(set(product_ids)))
+            )
+        else:
+            asked_kinds = sorted(set(kinds))
+        sellers = (
+            select(
+                core_product.c.id,
+                kind.label("kind"),
+                core_product.c.sold_quantity.label("sold"),
+                func.row_number()
+                .over(
+                    partition_by=kind,
+                    order_by=(core_product.c.sold_quantity.desc(), core_product.c.id.asc()),
+                )
+                .label("place"),
+                func.count().over(partition_by=kind).label("sellers"),
+            )
+            .where(
+                *self._scope_clauses(context),
+                core_product.c.sold_quantity > 0,
+                kind.in_(asked_kinds),
+            )
+            .subquery()
+        )
+        # The share as an exact decimal, so "the top 7% of 100" is 7, never the
+        # 8 a binary float's 7.000000000000001 would round up to.
+        share = literal(Decimal(str(rule.top_share)), Numeric(6, 4))
+        top = func.least(rule.max_per_kind, func.ceil(sellers.c.sellers * share))
+        statement = select(sellers.c.id).where(
+            sellers.c.sold >= rule.min_sold, sellers.c.place <= top
+        )
+        if product_ids:
+            statement = statement.where(sellers.c.id.in_(sorted(set(product_ids))))
+        statement = statement.order_by(sellers.c.kind, sellers.c.place)
+        result = await self._session.execute(statement)
+        return [int(row.id) for row in result]
+
+    async def details_text(
+        self, product_id: int, context: RetailerContext
+    ) -> DetailsTextRow | None:
+        """One product's description, English description and stored reviews,
+        as stored - None when the active store has no such product.
+
+        Read only for one product's details: the long text never rides along
+        with a list of products.
+        """
+        statement = select(
+            core_product.c.description,
+            core_product.c.description_english,
+            core_product.c.reviews_json,
+        ).where(*self._scope_clauses(context), core_product.c.id == product_id)
+        row = (await self._session.execute(statement)).first()
+        if row is None:
+            return None
+        return DetailsTextRow(
+            description=row.description,
+            description_english=row.description_english,
+            reviews=row.reviews_json,
+        )
 
     async def store_identities(
         self, product_ids: Sequence[int], context: RetailerContext
@@ -550,6 +718,7 @@ class ProductRepository:
         limit: int,
         axis_constraints: Sequence[AxisConstraint] = (),
         planar: PairMatch | None = None,
+        prior_reviews: int = DEFAULT_RATING_PRIOR_REVIEWS,
     ) -> list[ProductRow]:
         """Products matching an already-validated structured request.
 
@@ -560,7 +729,9 @@ class ProductRepository:
         statement = self._eligible_select(
             _SELECTED_COLUMNS, request, context, axis_constraints, planar
         )
-        statement = statement.order_by(*_ORDER_BY[request.sort]).limit(limit)
+        statement = statement.order_by(*_order_by(request.sort, context, prior_reviews)).limit(
+            limit
+        )
         result = await self._session.execute(statement)
         return [_to_product_row(row) for row in result]
 
@@ -596,6 +767,7 @@ class ProductRepository:
         *,
         axis_constraints: Sequence[AxisConstraint] = (),
         planar: PairMatch | None = None,
+        prior_reviews: int = DEFAULT_RATING_PRIOR_REVIEWS,
     ) -> list[EligibleProduct]:
         """Every eligible product with the one fact ranking orders on.
 
@@ -604,19 +776,25 @@ class ProductRepository:
         prices, and fetching them separately would mean a second query over the
         same rows. Same eligibility, same absence of a `limit` parameter.
 
-        Ordered by the request's own sort, from the same `_ORDER_BY` table
+        Ordered by the request's own sort, from the same `_order_by`
         :meth:`search` uses. That matters beyond tidiness: when semantic
         ranking is switched off or degrades, the order this returns is the
         order the customer sees, so "cheapest first" has to already be true
         here (CLAUDE.md 16.1).
         """
         statement = self._eligible_select(
-            (*_POOL_COLUMNS, _LONG_SIDE.label("long_side_cm"), _SHORT_SIDE.label("short_side_cm")),
+            (
+                *_POOL_COLUMNS,
+                _LONG_SIDE.label("long_side_cm"),
+                _SHORT_SIDE.label("short_side_cm"),
+                _weighted_rating(context, prior_reviews).label("weighted_rating"),
+                _SOLD.label("sold"),
+            ),
             request,
             context,
             axis_constraints,
             planar,
-        ).order_by(*_ORDER_BY[request.sort])
+        ).order_by(*_order_by(request.sort, context, prior_reviews))
         result = await self._session.execute(statement)
         return [
             EligibleProduct(
@@ -628,6 +806,8 @@ class ProductRepository:
                 seating_capacity=row.seating_capacity,
                 long_side_cm=row.long_side_cm,
                 short_side_cm=row.short_side_cm,
+                weighted_rating=row.weighted_rating,
+                sold=row.sold,
             )
             for row in result
         ]
@@ -867,9 +1047,10 @@ class ProductRepository:
         *,
         offset: int,
         limit: int,
+        prior_reviews: int = DEFAULT_RATING_PRIOR_REVIEWS,
     ) -> list[ProductRow]:
         """One page of the store's catalog, in the requested order."""
-        order = list(_ORDER_BY[filters.sort])
+        order = list(_order_by(filters.sort, context, prior_reviews))
         if filters.lead_categories and filters.sort is ProductSort.DEFAULT:
             leads = case(
                 (core_product.c.commerce_category.in_(filters.lead_categories), 0), else_=1

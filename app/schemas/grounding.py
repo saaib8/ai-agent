@@ -26,7 +26,13 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.dimensions import NormalisedDimensions
-from app.schemas.product import CommerceClassification, ProductDisplay
+from app.schemas.product import (
+    EMPTY_LISTING,
+    CommerceClassification,
+    ProductDiscount,
+    ProductDisplay,
+    ProductListing,
+)
 from app.schemas.query import ConstraintStrength
 from app.schemas.relaxation import RelaxableField, SetAsideOption, StopReason
 from app.schemas.semantic import SemanticSkipReason
@@ -181,6 +187,14 @@ class GroundedProduct(BaseModel):
     name_arabic: str = ""
     """The store's Arabic name, as stored - what a reply written in Arabic
     calls the product. Merchant-controlled text, like the English name."""
+
+    listing: ProductListing = Field(default=EMPTY_LISTING, exclude_if=lambda v: v.is_empty)
+    """What the store lists beyond the card, where it has - absent from the JSON
+    where it has none, so a store without the data answers exactly as before."""
+
+    discount: ProductDiscount | None = Field(default=None, exclude=True)
+    """The checked reduction, for the agents' facts. Never sent as it is: a
+    client reads it worded, as `display.old_price` and `display.discount`."""
 
     display: ProductDisplay | None = Field(default=None, exclude_if=lambda v: v is None)
     """The card's text, ready to show in the reply's language - name, kind,

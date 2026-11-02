@@ -42,6 +42,14 @@ class BriefProduct(_Brief):
     styles: tuple[str, ...] | None = None
     seats: int | None = None
     size_cm: dict[str, str] | None = None
+    main_material: str | None = None
+    """The one material the store records - many pieces have more than one, so
+    it is said as the main material, never as all it is made of."""
+    was_price: str | None = None
+    saving: str | None = None
+    percent_off: int | None = None
+    """A checked reduction: the old price, the saving on one and the whole
+    percent."""
 
 
 class CartLine(BriefProduct):
@@ -49,6 +57,9 @@ class CartLine(BriefProduct):
     """Its place in the cart - what a `picked` reference names."""
     quantity: int = Field(ge=1)
     line_total: str
+    line_saving: str | None = None
+    """The saving on the whole line - `saving` times the quantity, worked out in
+    code, so "you save 600 on three" is a figure the facts hold."""
     room: str | None = None
     """The room it was bought for, when it is one of a room's pieces."""
 
@@ -191,6 +202,8 @@ class SeatingPiece(_Brief):
     quantity: int = Field(ge=1)
     price: str
     currency: str
+    was_price: str | None = None
+    percent_off: int | None = None
 
 
 class SeatingOption(_Brief):

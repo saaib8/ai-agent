@@ -4,8 +4,11 @@ Checked once at startup. A reachable catalog that is missing a required column
 is a deployment error and fails startup loudly, rather than degrading into
 queries that silently return nothing.
 
-``material`` is deferred and is deliberately not checked. The store's support
-columns are checked only where the support agent reads them.
+The product data columns (``PRODUCT_DATA_COLUMNS``) are checked the same way,
+so the deploy order matters: Django's migrations that add them go first, and
+rolling them back takes this service down with them. A database copied from
+before them (a staging copy, a local dump) needs migrating before it is used.
+The store's support columns are checked only where the support agent reads them.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.core.exceptions import CatalogSchemaError
 from app.db.tables import (
+    PRODUCT_DATA_COLUMNS,
     REQUIRED_COMMERCE_COLUMNS,
     SUPPORT_CONTACT_COLUMNS,
     core_product,
@@ -50,6 +54,24 @@ async def verify_commerce_schema(connection: AsyncConnection) -> None:
         raise CatalogSchemaError(
             detail=(
                 f"{core_product.name} is missing required column(s): "
+                f"{', '.join(sorted(missing))}. The Django catalog migration "
+                f"has probably not been applied to this database."
+            ),
+            missing_columns=sorted(missing),
+        )
+
+
+async def verify_product_data_schema(connection: AsyncConnection) -> None:
+    """Raise :class:`CatalogSchemaError` if a product data column is absent."""
+    result = await connection.execute(
+        _COLUMN_PRESENCE,
+        {"table_name": core_product.name, "column_names": sorted(PRODUCT_DATA_COLUMNS)},
+    )
+    missing = PRODUCT_DATA_COLUMNS - frozenset(row[0] for row in result)
+    if missing:
+        raise CatalogSchemaError(
+            detail=(
+                f"{core_product.name} is missing product data column(s): "
                 f"{', '.join(sorted(missing))}. The Django catalog migration "
                 f"has probably not been applied to this database."
             ),

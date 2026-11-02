@@ -20,7 +20,11 @@ from app.agents.tools.schemas import ToolSchemas
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
-from app.db.catalog_schema import verify_commerce_schema, verify_support_schema
+from app.db.catalog_schema import (
+    verify_commerce_schema,
+    verify_product_data_schema,
+    verify_support_schema,
+)
 from app.integrations.chat_models import build_chat_model, build_wording_model
 from app.integrations.embeddings import OpenAIQueryEmbedder
 from app.integrations.image_generation import (
@@ -173,6 +177,7 @@ async def _check_catalog_schema(database: Database, *, support: bool = False) ->
     try:
         async with database.engine.connect() as connection:
             await verify_commerce_schema(connection)
+            await verify_product_data_schema(connection)
             if support:
                 await verify_support_schema(connection)
     except (SQLAlchemyError, OSError) as exc:

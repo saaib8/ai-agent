@@ -24,6 +24,7 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from itertools import groupby
+from typing import Any
 
 from app.core.config import SizeSettings
 from app.core.exceptions import (
@@ -50,10 +51,21 @@ from app.taxonomy.attributes import AttributeFamily
 
 logger = get_logger(__name__)
 
-_SORT_KEYS: dict[ProductSort, bool] = {
-    ProductSort.PRICE_ASC: False,
-    ProductSort.PRICE_DESC: True,
+
+def _by_score(value: Decimal | int | None) -> tuple[int, Decimal]:
+    """Highest first, and products without one after every product with one."""
+    return (1, Decimal(0)) if value is None else (0, -Decimal(value))
+
+
+_SORT_KEYS: dict[ProductSort, Callable[[RelaxedCandidate], Any]] = {
+    ProductSort.PRICE_ASC: lambda c: c.product.price_amount,
+    ProductSort.PRICE_DESC: lambda c: -c.product.price_amount,
+    ProductSort.BEST_RATED: lambda c: _by_score(c.product.weighted_rating),
+    ProductSort.BEST_SELLING: lambda c: _by_score(c.product.sold),
 }
+"""The customer's own sort, as a key: it decides the order after their stated
+preferences, before similarity - "the best rated beige sofas" are the beige ones
+by rating, then the rest by rating, nothing hidden."""
 
 
 _MatchRank = Callable[[RelaxedCandidate], tuple[int, ...]]
@@ -383,7 +395,7 @@ class SemanticRankingService:
         sort = resolved.request.sort
         matches = _preference_match(resolved, self._size)
         if sort in _SORT_KEYS:
-            ordered = self._by_explicit_sort(candidates, scores, matches, reverse=_SORT_KEYS[sort])
+            ordered = self._by_explicit_sort(candidates, scores, matches, key=_SORT_KEYS[sort])
         else:
             ordered = _taking_turns(
                 self._by_depth_then_similarity(candidates, scores, matches), resolved, matches
@@ -432,10 +444,14 @@ class SemanticRankingService:
         scores: dict[int, float],
         matches: _MatchRank,
         *,
-        reverse: bool,
+        key: Callable[[RelaxedCandidate], Any],
     ) -> list[RelaxedCandidate]:
-        """Preference matches first, then the customer's sort; similarity
-        only settles equal prices.
+        """Exact matches before widened ones, then preference matches, then
+        the customer's sort; similarity only settles ties.
+
+        "The most expensive under 2000" never leads with a sofa a widened
+        budget let in: a product that met their own request comes first
+        whatever the sort says of the rest (CLAUDE.md 16.1).
 
         "The cheapest beige one" means the cheapest of the beige ones - a
         cheaper grey sofa ahead of them would answer a different question. The
@@ -445,12 +461,12 @@ class SemanticRankingService:
         can hide a genuinely cheaper eligible product behind a less similar
         one, which answers a question they did not ask.
         """
-        sign = Decimal(-1) if reverse else Decimal(1)
         return sorted(
             candidates,
             key=lambda c: (
+                c.relaxation_depth,
                 matches(c),
-                sign * c.product.price_amount,
+                key(c),
                 0 if c.product.product_id in scores else 1,
                 -scores.get(c.product.product_id, 0.0),
                 c.product.product_id,
@@ -470,10 +486,13 @@ class SemanticRankingService:
         """
         matches = _preference_match(resolved, self._size)
         if resolved.request.sort in _SORT_KEYS:
-            # The pool already arrives in the customer's price order; keep it
-            # within each match group, exactly as the scored path orders an
-            # explicit sort, so both paths agree on the same pool.
-            ordered = sorted(candidates, key=matches)
+            # Exact matches first, then the customer's sort within each match
+            # group - exactly as the scored path orders an explicit sort, so
+            # both paths agree.
+            sort_key = _SORT_KEYS[resolved.request.sort]
+            ordered = sorted(
+                candidates, key=lambda c: (c.relaxation_depth, matches(c), sort_key(c))
+            )
         else:
             ordered = _taking_turns(
                 sorted(candidates, key=lambda c: (c.relaxation_depth, matches(c))),

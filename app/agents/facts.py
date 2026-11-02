@@ -36,6 +36,10 @@ def brief_product(
         styles=tuple(product.styles) or None,
         seats=product.commerce.seating_capacity or None,
         size_cm=_size(product) or None,
+        main_material=product.listing.material,
+        was_price=plain(product.discount.old_price) if product.discount else None,
+        saving=plain(product.discount.saving) if product.discount else None,
+        percent_off=product.discount.percent if product.discount else None,
     )
 
 
@@ -97,6 +101,9 @@ def cart_brief(
                 pick=pick,
                 quantity=quantity,
                 line_total=plain(line_total),
+                line_saving=(
+                    plain(product.discount.saving * quantity) if product.discount else None
+                ),
                 room=(rooms or {}).get(product_id),
             )
         )

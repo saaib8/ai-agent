@@ -25,6 +25,7 @@ from app.schemas.discovery import (
     ProductSort,
     SeatingCapacityConstraint,
 )
+from app.schemas.product import BestSellerRule
 from app.schemas.retailer import RetailerContext
 from app.taxonomy.name_match import name_match
 from sqlalchemy import Select
@@ -81,6 +82,10 @@ def _repository(session: RecordingSession) -> ProductRepository:
 # name -> a call that exercises the method against the recording session.
 PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "get_by_ids": lambda repo: repo.get_by_ids([1, 2], CONTEXT),
+    "details_text": lambda repo: repo.details_text(1, CONTEXT),
+    "best_sellers": lambda repo: repo.best_sellers(
+        CONTEXT, BestSellerRule(min_sold=5, top_share=0.1, max_per_kind=10), product_ids=[1, 2]
+    ),
     "store_identities": lambda repo: repo.store_identities([1, 2], CONTEXT),
     "count_active": lambda repo: repo.count_active(CONTEXT),
     "search": lambda repo: repo.search(
