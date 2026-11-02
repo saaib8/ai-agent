@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from dataclasses import replace
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
+import pytest
 from app.agents.work import TurnWork
+from app.core.exceptions import TaxonomyConfigurationError
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.catalog_overview import CatalogOverview, SeatingSpread, SubcategoryShelf
 from app.services.room_design import PieceSpec, RoomDesignChecker, RoomDesignProblem
+from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
 
 from tests.unit.agents.fakes import (
@@ -430,3 +434,71 @@ def test_seating_well_beyond_the_head_count_is_said_never_refused() -> None:
 
     assert not isinstance(checked, RoomDesignProblem)
     assert checked.facts["seats_planned"] == 12 and checked.facts["seats_over"] == 4
+
+
+# ── art is never one print bought twice (known issue 38) ────────────────────
+
+ROOMS = load_room_pieces(taxonomy=TAXONOMY, seating=SEATING)
+CHECKER_ONCE = RoomDesignChecker(TAXONOMY, ATTRIBUTES, SEATING, ROOMS.bought_once)
+
+
+def test_the_kinds_never_bought_twice_are_reviewed_data() -> None:
+    assert {"art-canvas", "mirror", "vase"} <= ROOMS.bought_once
+    assert "table-lamp" not in ROOMS.bought_once, "a pair of lamps may be identical"
+
+
+def test_two_of_one_print_is_refused_with_what_to_plan_instead() -> None:
+    checked = CHECKER_ONCE.check(
+        (PieceSpec(role="wall art", types=("art-canvas",), quantity=2),),
+        OVERVIEW,
+        head_count=None,
+        walls=(),
+    )
+
+    assert isinstance(checked, RoomDesignProblem)
+    assert checked.code == "never_the_same_one_twice"
+    assert checked.piece == 1 and "own piece" in str(checked.detail["instead"])
+
+
+def test_two_pieces_of_art_and_an_identical_pair_of_chairs_are_fine() -> None:
+    checked = CHECKER_ONCE.check(
+        (
+            PieceSpec(role="wall art left", types=("art-canvas",)),
+            PieceSpec(role="wall art right", types=("art-canvas",)),
+            PieceSpec(role="reading chairs", types=("lounge-chair",), quantity=2),
+        ),
+        OVERVIEW,
+        head_count=None,
+        walls=(),
+    )
+
+    assert not isinstance(checked, RoomDesignProblem)
+
+
+async def test_the_design_tool_hands_back_a_repeated_print() -> None:
+    art = {
+        **ARGS,
+        "pieces": [
+            *ARGS["pieces"],  # type: ignore[list-item]
+            {"role": "wall art", "types": ["art-canvas"], "quantity": 2, "priority": "nice"},
+        ],
+    }
+
+    outcome, rooms = await _design(art)
+
+    assert outcome.status == "invalid" and rooms.inputs == []
+    assert outcome.code == "never_the_same_one_twice"
+
+
+def test_an_unapproved_kind_in_the_list_fails_at_startup(tmp_path: Any) -> None:
+    source = Path(__file__).parents[3] / "app" / "taxonomy" / "room_pieces_v1.yaml"
+    broken = tmp_path / "rooms.yaml"
+    broken.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "bought_once: [art-canvas,", "bought_once: [luxury-couch, art-canvas,"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TaxonomyConfigurationError):
+        load_room_pieces(broken, taxonomy=TAXONOMY, seating=SEATING)

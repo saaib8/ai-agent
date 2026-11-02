@@ -129,6 +129,10 @@ core_product = Table(
     Column("weight_kg", Numeric(10, 3), nullable=True),
     Column("sku", String(255), nullable=True),
     Column("warranty_months", SmallInteger, nullable=True),
+    # How many the store has, as its import last saw it - a limit on how many
+    # one product can fill, never a filter or an order; the store's own cart
+    # check at add time is the final word.
+    Column("stock_quantity", Integer, nullable=True),
 )
 
 # Commerce columns this service requires the live catalog to have. Verified at
@@ -158,6 +162,7 @@ PRODUCT_DATA_COLUMNS: frozenset[str] = frozenset(
         "weight_kg",
         "sku",
         "warranty_months",
+        "stock_quantity",
     }
 )
 """The product data every product read selects: checked at startup like the

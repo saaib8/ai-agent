@@ -796,6 +796,7 @@ def _replanned(
             seating_capacity=spec.seating_capacity,
             semantic_intent=spec.semantic_intent,
             design=spec.design,
+            rejected_product_ids=spec.rejected_product_ids,
         )
         for offset, spec in enumerate(operation.needs)
     ]

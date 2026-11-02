@@ -25,6 +25,7 @@ from app.agents.operations.rooms import open_room_options
 from app.core.config import CustomerAgentSettings
 from app.core.exceptions import (
     CartQuantityError,
+    IntegrationUnavailableError,
     PickLimitError,
     PickUnavailableError,
 )
@@ -63,6 +64,7 @@ from app.schemas.session import new_session
 from app.services.agent_state import apply_update
 from app.services.cart import CartService
 from app.services.hydration import ProductHydrationService
+from app.services.picks_words import say
 from app.services.product_display import ProductDisplayWords
 from app.services.product_interaction import build_liked, build_picks, interaction_update
 from app.services.reference_resolver import ProductReferenceResolver
@@ -71,19 +73,18 @@ from app.services.store_cart_check import StoreCartCheck
 
 logger = get_logger(__name__)
 
-_GONE = "That product is no longer available, so it can't be picked."
-_GONE_LIKE = "That product is no longer available, so it can't be liked."
-_OFF_SCREEN_LIKE = "That card isn't on screen any more, so it can't be liked from here."
 
-
-def _liked_card(outcome: ResolvedProductReference | ReferenceUnresolved) -> int:
+def _liked_card(
+    outcome: ResolvedProductReference | ReferenceUnresolved, language: ReplyLanguage
+) -> int:
     """The product a ♡ names, or the reason it names none, in our words."""
     if isinstance(outcome, ReferenceUnresolved):
         raise PickUnavailableError(
-            public_message=(
-                _GONE_LIKE
+            public_message=say(
+                language,
+                "gone_like"
                 if outcome.reason is ReferenceFailureReason.PRODUCT_UNAVAILABLE
-                else _OFF_SCREEN_LIKE
+                else "off_screen_like",
             ),
             reason=str(outcome.reason),
         )
@@ -243,24 +244,22 @@ class PicksRuntime:
     async def _changed(
         self, request: PicksRequest, state: AgentStateV1, context: RetailerContext
     ) -> AgentStateV1 | None:
-        """The state after the action, or None when it changes nothing."""
+        """The state after the action, or None when it changes nothing - and
+        when it cannot be done, why, in the conversation's language."""
         picked = state.product_interaction.selected_product_ids
+        language = self._language(state)
         if isinstance(request.action, LikeCardAction | UnlikeAction | SelectLikedAction):
             if not self._buttons:
                 raise PickUnavailableError(
-                    public_message="Likes aren't available here.", reason="likes_switched_off"
+                    public_message=say(language, "likes_off"), reason="likes_switched_off"
                 )
-            return await self._liked_changed(request.action, state, context)
+            return await self._liked_changed(request.action, state, context, language)
         match request.action:
             case SelectPickAction(ordinal=ordinal, list_revision=list_revision):
                 if open_room_options(state) is not None:
                     # A room piece's options go into the room, not the cart.
                     raise PickUnavailableError(
-                        public_message=(
-                            "These are options for a piece of your room - choose "
-                            "'Use this' to put one in the room."
-                        ),
-                        reason="room_option",
+                        public_message=say(language, "room_option"), reason="room_option"
                     )
                 outcome = await self._references.resolve_on_list(
                     ordinal, list_revision, state, context
@@ -268,7 +267,7 @@ class PicksRuntime:
                 if isinstance(outcome, ReferenceUnresolved):
                     raise PickUnavailableError(
                         public_message=(
-                            _GONE
+                            say(language, "gone")
                             if outcome.reason is ReferenceFailureReason.PRODUCT_UNAVAILABLE
                             else None
                         ),
@@ -278,21 +277,17 @@ class PicksRuntime:
                     return None
                 if len(picked) >= self._max_picks:
                     raise PickLimitError(
-                        public_message=(
-                            f"Your cart holds up to {self._max_picks} products. "
-                            "Remove one to add another."
-                        ),
+                        public_message=say(language, "cart_full", max=self._max_picks)
                     )
                 product_id = outcome.product_id
-                await self._the_store_takes(product_id, 1, context)
+                await self._the_store_takes(product_id, 1, context, language)
                 op = ProductInteractionOp.SELECT
             case SetQuantityAction(pick=pick, quantity=quantity):
-                return await self._with_quantity(state, pick, quantity, context)
+                return await self._with_quantity(state, pick, quantity, context, language)
             case DeselectPickAction(pick=pick):
                 if pick > len(picked):
                     raise PickUnavailableError(
-                        public_message="That product is no longer in your cart.",
-                        reason="pick_out_of_range",
+                        public_message=say(language, "not_in_cart"), reason="pick_out_of_range"
                     )
                 # Removing needs no catalog read: a pick that has left the
                 # catalog is exactly the kind a customer wants to clear.
@@ -304,7 +299,7 @@ class PicksRuntime:
         )
 
     async def _the_store_takes(
-        self, product_id: int, quantity: int, context: RetailerContext
+        self, product_id: int, quantity: int, context: RetailerContext, language: ReplyLanguage
     ) -> None:
         """Refuse a tap the store's own cart would refuse, in words to show."""
         if self._store_check is None:
@@ -316,35 +311,50 @@ class PicksRuntime:
             return
         match refused.reason:
             case CartRefusalReason.OUT_OF_STOCK:
-                message = "That product is out of stock."
+                message = say(language, "out_of_stock")
             case CartRefusalReason.OVER_LIMIT:
-                message = f"The store takes up to {refused.max_quantity} of this product per order."
+                message = say(language, "over_limit", max=refused.max_quantity)
             case CartRefusalReason.NOT_IN_STORE:
-                message = "That product can't be added to this store's cart."
+                message = say(language, "not_in_store")
             case CartRefusalReason.UNCONFIRMED:
-                message = "I couldn't check that with the store just now. Please try again."
+                message = say(language, "unconfirmed")
         raise PickUnavailableError(public_message=message, reason=str(refused.reason))
 
     async def _with_quantity(
-        self, state: AgentStateV1, pick: int, quantity: int, context: RetailerContext
+        self,
+        state: AgentStateV1,
+        pick: int,
+        quantity: int,
+        context: RetailerContext,
+        language: ReplyLanguage,
     ) -> AgentStateV1 | None:
         """How many of a cart product, from now on - or None when that is
-        already how many. Needs no catalog read: the cart names the product."""
+        already how many. More of it is never more than the store has, where
+        it says (known issue 37), and then the store's own cart is asked."""
         picked = state.product_interaction.selected_product_ids
         if pick > len(picked):
             raise PickUnavailableError(
-                public_message="That product is no longer in your cart.",
-                reason="pick_out_of_range",
+                public_message=say(language, "not_in_cart"), reason="pick_out_of_range"
             )
         if quantity > self._max_quantity:
             raise CartQuantityError(
-                public_message=f"You can add up to {self._max_quantity} of one product."
+                public_message=say(language, "max_quantity", max=self._max_quantity)
             )
         product_id = picked[pick - 1]
         if state.product_interaction.quantity_of(product_id) == quantity:
             return None
         if quantity > state.product_interaction.quantity_of(product_id):
-            await self._the_store_takes(product_id, quantity, context)
+            try:
+                found = await self._hydration.hydrate_ids((product_id,), context)
+            except IntegrationUnavailableError:
+                # Stock unread is no limit: the store's own cart is still asked.
+                found = ()
+            stock = found[0].listing.stock_quantity if found else None
+            if stock is not None and quantity > stock:
+                raise PickUnavailableError(
+                    public_message=say(language, "only_left", count=stock), reason="only_left"
+                )
+            await self._the_store_takes(product_id, quantity, context, language)
         return apply_update(
             state,
             AgentStateUpdate(
@@ -359,6 +369,7 @@ class PicksRuntime:
         action: LikeCardAction | UnlikeAction | SelectLikedAction,
         state: AgentStateV1,
         context: RetailerContext,
+        language: ReplyLanguage,
     ) -> AgentStateV1 | None:
         """A like, an unlike, or a pick from the liked list.
 
@@ -372,7 +383,7 @@ class PicksRuntime:
                 outcome = await self._references.resolve_on_list(
                     ordinal, list_revision, state, context
                 )
-                product_id = _liked_card(outcome)
+                product_id = _liked_card(outcome, language)
                 if product_id in liked:
                     return None
                 change: AddItems[int] | RemoveItems[int] | ReplaceItems[int] = (
@@ -385,13 +396,13 @@ class PicksRuntime:
             case UnlikeAction(liked=int(position)):
                 if position > len(liked):
                     raise PickUnavailableError(
-                        public_message="That is no longer in your liked list.",
-                        reason="liked_out_of_range",
+                        public_message=say(language, "not_in_liked"), reason="liked_out_of_range"
                     )
                 change = RemoveItems(items=(liked[position - 1],))
             case UnlikeAction(ordinal=int(ordinal), list_revision=list_revision):
                 product_id = _liked_card(
-                    await self._references.resolve_on_list(ordinal, list_revision, state, context)
+                    await self._references.resolve_on_list(ordinal, list_revision, state, context),
+                    language,
                 )
                 if product_id not in liked:
                     return None
@@ -400,22 +411,20 @@ class PicksRuntime:
                 picked = state.product_interaction.selected_product_ids
                 if position > len(liked):
                     raise PickUnavailableError(
-                        public_message="That is no longer in your liked list.",
-                        reason="liked_out_of_range",
+                        public_message=say(language, "not_in_liked"), reason="liked_out_of_range"
                     )
                 product_id = liked[position - 1]
                 if product_id in picked:
                     return None
                 if len(picked) >= self._max_picks:
                     raise PickLimitError(
-                        public_message=(
-                            f"Your cart holds up to {self._max_picks} products. "
-                            "Remove one to add another."
-                        ),
+                        public_message=say(language, "cart_full", max=self._max_picks)
                     )
                 if not await self._hydration.hydrate_ids((product_id,), context):
-                    raise PickUnavailableError(public_message=_GONE, reason="product_unavailable")
-                await self._the_store_takes(product_id, 1, context)
+                    raise PickUnavailableError(
+                        public_message=say(language, "gone"), reason="product_unavailable"
+                    )
+                await self._the_store_takes(product_id, 1, context, language)
                 return apply_update(
                     state,
                     AgentStateUpdate(

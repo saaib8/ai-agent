@@ -2235,3 +2235,145 @@ ones with no size question.
 **Status:** Open.
 
 **Reported:** by the user (2026-11-02).
+
+## 37. Stock: the agents never know how many are left, and a room's pairs go into the cart as one
+
+**Seen:** testing store 151 (2026-11-02). A room Nora designed held two art
+canvases and two floor lamps; "add to cart" put in one of each, and nothing
+said so. A typed "add two of these" is cut to one the same way.
+
+**Cause:**
+- `core_product.stock_quantity` exists (filled by the Salla import) but the
+  agent service never reads it: not in `ProductListing`, not in any facts.
+- The live store check before the cart (`StoreCartCheck`, Salla storefront
+  `max_quantity`) already limits each line to what the store will sell - so
+  the cart is right - but the shortfall is not reported in the reply.
+- Store 151's figures look like placeholder data: 12,724 of 12,764 active
+  products have exactly 1 in stock (highest 6), on Salla's demo store - the
+  same pattern as its "1 review, no rating" on every product. Store 21:
+  5,201 filled, 212 at 1, up to 999. To confirm on the storefront first.
+
+**Agreed rules (2026-11-02):**
+- Stock never chooses a product. Nora designs by colour, style, size and
+  budget exactly as today; Sara searches as today. No filter, no ranking.
+- A piece the room needs more than one of - an identical pair or set of
+  lamps, side tables, nightstands, dining chairs - is **the same product
+  first**. Only when the store has fewer than needed does Nora fall back to
+  **the closest-matching product** for the rest (e.g. one lamp of the chosen
+  one, one of the closest match) - and **never mentions it**: the room is
+  presented as designed, with no word of stock or a fallback (as CLAUDE.md
+  10.1: never the work behind the room).
+- Unknown stock counts as available (store 50, store 21's empty rows, any
+  store that does not send it). The live store check at the cart stays the
+  final word, since the database can be stale.
+- Nothing is cut silently: when the cart takes fewer than asked, the reply
+  says which pieces and how many went in, and offers the closest match for
+  the rest.
+- Sara: asked for more than one when fewer are left, she says so before
+  adding ("only 1 of these is left - shall I add it and find a similar
+  second one?"). A last piece may be said when it helps a decision, never as
+  invented urgency (as discounts, CLAUDE.md 37).
+
+**Plan:**
+1. Read `stock_quantity` into `ProductListing` (an optional field, absent
+   when the store left it empty; add it to `PRODUCT_DATA_COLUMNS` and the
+   startup check). Agents get `stock_left` only where it matters: when a
+   quantity above it is asked or planned, or when it is 1.
+2. Room engine (`app/agents/operations/rooms.py` / optimiser): after a piece
+   with quantity > 1 is chosen by look as today, if its known stock is below
+   the quantity, keep that product for what is in stock and fill the rest
+   with the next-closest look of the same piece (a second line, within the
+   share-upgrade similarity margin; else the next by look) - costed in the
+   same budget. Nora is not told to explain it; the room is shown as
+   designed.
+3. `add_room_to_cart` and `add_to_cart` return what the store refused or cut
+   (`refused_by_store` with the kept quantity, as `add_to_cart` partly does
+   today) and the prompt says to report it and offer the closest match.
+4. Prompt (Sara, Nora, Salman): the stock rules above, in a few lines.
+5. Tests: unit tests for the listing field, the engine's same-product-first
+   fallback (enough stock / short / unknown), cart reporting; live store 151
+   and 21 cases - a room with a pair, "add two of these".
+
+**Built (2026-11-02):** as planned, plus what the QA review found:
+- stock read into listings (never sent to a client); a room's pairs are the
+  same product first and the closest look for the rest, at build time and
+  after every swap, revision or change; no two pieces use more of a product
+  than the store has; each half keeps its part of the budget share;
+  `no_more_in_store` tells Nora alone, so she never offers "the same one"
+  (`app/services/room_stock.py`, `app/agents/operations/rooms.py`);
+- the cart: a line never asks for more than the store has, one note per
+  product with how many were asked and kept; the cart's + refuses past the
+  stock too, and every refused tap is in the conversation's language
+  (`app/services/picks_words.py`).
+- Verified live on store 151 (Salla confirms one per order there): rooms with
+  pairs go into the cart whole; "add two" says only one was left and offers
+  the closest match; "+" in an Arabic chat answers in Arabic.
+- "Make both nightstands the same" once left one nightstand: `change_room`
+  put the one product in at quantity 1. Now one product in place of several
+  pieces of its kind takes all of them (and their budget share), so the
+  stock rule keeps a pair; Nora answers a "make them the same" on a last one
+  by keeping the coordinated pair, with no question.
+- Second QA review (2026-11-02), fixed: the step after a swap or change is
+  part of its price - the total quoted is the total saved, and nothing is
+  dropped to make room; it repeats until every piece fits the stock (sets of
+  three); turned-down products are kept through it and preferred against
+  (used only when no other look would complete a pair); two products for two
+  pieces keep each piece's design; an unreadable stock on the cart's + is no
+  limit. Big sets on a store with one of everything keep the current flow
+  (closest matches), by decision.
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-02).
+
+## 38. Nora puts the same art canvas in a room twice
+
+**Seen:** in rooms Nora designs (store 151, 2026-11-02, and before): wall
+art comes as two copies of one print.
+
+**Cause:** no code rule - two lines of Nora's design knowledge
+(`app/prompts/agents/design_knowledge.py`) combine:
+- "art in proportion - a long wall often takes two or three pieces, or one
+  large one", and
+- "Say more than one of a piece only when the room needs that many of the
+  same piece - a matching pair either side of something".
+She wants two artworks and the only way to say two is a quantity on one
+piece, so the engine fills "wall art x 2" with the same canvas twice.
+
+**Agreed direction:** identical pairs are for symmetry pieces - lamps either
+side, side tables, nightstands, dining chairs. Art (and mirrors, plants,
+vases, statues) in more than one is either **a set sold as one** (one piece,
+quantity 1) or **different pieces that go together** (two pieces in the plan,
+each found by its own look), never the same print repeated.
+
+**Plan:**
+1. Design knowledge: say the above plainly where pairs and art are described.
+2. Optionally a reviewed list of kinds never bought as identical multiples
+   (art-canvas, mirror, plant, vase, statue) checked in
+   `app/services/room_design.py`: a quantity above 1 on those is refused with
+   "plan two pieces, or a set" - so the rule holds whatever the model writes.
+3. Live check: rooms with a long wall (living room, majlis, bedroom) on
+   stores 21 and 151 - art comes as a set or as different pieces.
+
+**Cause, confirmed (2026-11-02):** two layers. Nora's instructions gave "art x 3
+for a long wall" as an example of a quantity, so she planned one art piece x 2
+in every saved room; and once she planned two separate art pieces, each was
+searched on its own and both took the same best print - nothing stopped two
+pieces of a room using one product.
+
+**Fixed (2026-11-02):**
+- Reviewed list `bought_once` in `room_pieces_v1.yaml` (art canvas, mirror,
+  plant, vase, statue, wall clock), validated at startup.
+- `room_design.py` refuses a quantity above one on those kinds
+  (`never_the_same_one_twice`), telling Nora to plan separate pieces or a set.
+- The room's product limit (`app/services/room_stock.py` `allowed`) is one for
+  those kinds, so a second piece takes the next-closest look - at build time
+  and after every swap, revision or change.
+- Prompt (v2.51) and design knowledge (v7): identical pairs are for symmetry
+  pieces; art is different works that go together, or a set.
+- Live, store 21: 6 of 6 rooms with no print repeated (two or three
+  different prints where a room had several).
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-02).

@@ -130,6 +130,10 @@ class ProductListing(BaseModel):
     weight_kg: Decimal | None = Field(default=None, exclude_if=_absent)
     sku: str | None = Field(default=None, exclude_if=_absent)
     warranty_months: int | None = Field(default=None, exclude_if=_absent)
+    stock_quantity: int | None = Field(default=None, gt=0, exclude=True)
+    """How many the store has, as its import last saw it; None when it did not
+    say. Never serialized and never a filter or an order: it only limits how
+    many of one product a room piece or a cart line asks for (known issue 37)."""
 
     @model_validator(mode="after")
     def _rating_with_its_count(self) -> Self:

@@ -21,8 +21,9 @@ from app.agents.tools.schemas import ToolSchemas
 from app.agents.tools.shopping import (
     NoArgs,
     ProductRef,
-    _names,
     hydrated,
+    in_stock,
+    refusal_facts,
     resolve_product,
     search_outcome,
 )
@@ -244,17 +245,16 @@ def room_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
         if not wanted:
             return ToolOutcome(status=ToolStatus.REFUSED, code="nothing_to_add")
         # The same rules as any add: the cart's limit and the store's own cart.
+        products = await hydrated(services, tuple(p for p, _ in wanted), context) or ()
         change = await services.cart_operations.add(
-            work.staged, context.retailer, wanted, whole=True
+            work.staged, context.retailer, wanted, whole=True, stock=in_stock(products)
         )
         took = change.added or change.already
         state = as_room_in_cart(work.staged, change.state) if took else change.state
-        names = await _names(services, tuple(p for p, _ in wanted), context)
+        names = {p.product_id: p.name_english for p in products}
         facts = {
             "added": [names.get(p) for p in change.added],
-            "refused_by_store": [
-                {"name": names.get(r.product_id), "reason": r.reason} for r in change.refused
-            ],
+            "refused_by_store": refusal_facts(change.refused, names),
             "cart_full": change.full,
         }
         code = "cart_full" if change.full else None

@@ -96,9 +96,21 @@ class RoomTemplate:
 class RoomPieces:
     """Every room template, keyed by room kind."""
 
-    def __init__(self, version: str, rooms: Mapping[str, RoomTemplate]) -> None:
+    def __init__(
+        self,
+        version: str,
+        rooms: Mapping[str, RoomTemplate],
+        bought_once: frozenset[str] = frozenset(),
+    ) -> None:
         self._version = version
         self._rooms = dict(rooms)
+        self._bought_once = bought_once
+
+    @property
+    def bought_once(self) -> frozenset[str]:
+        """Kinds never bought as identical copies: more than one of them is
+        different pieces, or a set sold as one."""
+        return self._bought_once
 
     @property
     def version(self) -> str:
@@ -148,6 +160,7 @@ def load_room_pieces(
         if not isinstance(kind, str) or not kind or not isinstance(raw, dict):
             raise TaxonomyConfigurationError(detail=f"{source.name}: each room must be a mapping")
         rooms[kind] = _room(kind, raw, source, taxonomy, seating)
+    bought_once = _bought_once(document.get("bought_once", []), source, taxonomy)
     arabic = parse_arabic_labels(
         document.get("arabic"),
         {piece.label for room in rooms.values() for piece in room.pieces},
@@ -162,7 +175,22 @@ def load_room_pieces(
             )
             for kind, room in rooms.items()
         },
+        bought_once=bought_once,
     )
+
+
+def _bought_once(raw: Any, source: Path, taxonomy: CommerceTaxonomy | None) -> frozenset[str]:
+    if not isinstance(raw, list) or not all(isinstance(k, str) and k for k in raw):
+        raise TaxonomyConfigurationError(
+            detail=f"{source.name}: 'bought_once' must be a list of product types"
+        )
+    if taxonomy is not None:
+        unknown = sorted(k for k in raw if taxonomy.category_of(k) is None)
+        if unknown:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: 'bought_once' names unapproved types {unknown}"
+            )
+    return frozenset(raw)
 
 
 def _room(

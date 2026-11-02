@@ -445,7 +445,12 @@ def design_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
         walls += [
             s.label for s in room_spaces(geometry or (room.geometry if room else None)) if s.label
         ]
-        checked = RoomDesignChecker(services.taxonomy, services.attributes, services.seating).check(
+        checked = RoomDesignChecker(
+            services.taxonomy,
+            services.attributes,
+            services.seating,
+            schemas.room_pieces.bought_once if schemas.room_pieces else frozenset(),
+        ).check(
             [_spec(p) for p in args.pieces],
             overview,
             head_count=args.head_count or (room.regular_seating_count if room else None),
