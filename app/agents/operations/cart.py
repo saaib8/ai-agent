@@ -8,7 +8,7 @@ reported, never worked around.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from app.core.exceptions import IntegrationUnavailableError
@@ -36,6 +36,8 @@ class CartRefused:
     product_id: int
     reason: str
     kept: int
+    asked: int | None = None
+    """How many they asked for, when the cut was to fewer rather than none."""
 
 
 @dataclass(slots=True)
@@ -71,11 +73,14 @@ class CartOperations:
         items: Sequence[tuple[int, int | None]],
         *,
         whole: bool = False,
+        stock: Mapping[int, int] | None = None,
     ) -> CartChange:
         """Each product, with how many, in the order asked; the ones that fit go
         in, and what could not is said. `whole` is a room or a seating
         combination: it goes in whole, even past `max_picks` - half a room is
-        not a choice they made - and the store's own cart is still asked."""
+        not a choice they made - and the store's own cart is still asked.
+        `stock` is how many the store has of each, where it said: a line never
+        asks for more, and the cut is said (`only_left`)."""
         change = CartChange(state=state)
         for product_id, quantity in items:
             interaction = change.state.product_interaction
@@ -85,11 +90,18 @@ class CartOperations:
                 change.full = True
                 break
             wants = min(quantity if quantity is not None else max(had, 1), self._max_quantity)
+            asked = wants
+            left = (stock or {}).get(product_id)
+            if left is not None and wants > left:
+                change.refused.append(
+                    CartRefused(product_id, "only_left", max(left, had), asked=wants)
+                )
+                wants = max(left, had)
             if held and wants == had:
                 change.already.append(product_id)
                 continue
             if wants > had:
-                taken = await self._store_takes(product_id, wants, had, context, change)
+                taken = await self._store_takes(product_id, wants, had, context, change, asked)
                 if taken is None:
                     continue
                 wants = taken
@@ -135,8 +147,11 @@ class CartOperations:
         had: int,
         context: RetailerContext,
         change: CartChange,
+        asked: int,
     ) -> int | None:
-        """How many the store's own cart takes, or None for none at all."""
+        """How many the store's own cart takes, or None for none at all. Its
+        word is the last on the product: it replaces a cut to the stock, so
+        each product is said once, with how many they asked for."""
         if self._check is None:
             return wants
         try:
@@ -147,13 +162,18 @@ class CartOperations:
                 return wants
             # The store's own cart could not be asked: never promised, since
             # the widget cannot take back what that cart then refuses.
-            change.refused.append(CartRefused(product_id, "unconfirmed", had))
+            _said_once(change, CartRefused(product_id, "unconfirmed", had, asked=asked))
             return None
         if refused is None:
             return wants
         keep = max(refused.takes, had)
-        change.refused.append(CartRefused(product_id, str(refused.reason), keep))
+        _said_once(change, CartRefused(product_id, str(refused.reason), keep, asked=asked))
         return keep if keep > had else None
+
+
+def _said_once(change: CartChange, refusal: CartRefused) -> None:
+    change.refused = [r for r in change.refused if r.product_id != refusal.product_id]
+    change.refused.append(refusal)
 
 
 def room_pieces_to_buy(state: AgentStateV1) -> list[tuple[int, int]]:

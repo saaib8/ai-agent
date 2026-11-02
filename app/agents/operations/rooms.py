@@ -119,9 +119,15 @@ from app.services.bundle_presentation import (
     present_room_bundle,
 )
 from app.services.room_cart import finished, room_words
+from app.services.room_stock import (
+    part_of,
+    short_by_stock,
+    split_short_pieces,
+    without_used_up,
+)
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, FloorSide
-from app.taxonomy.rooms import RoomPieces
+from app.taxonomy.rooms import MAX_PIECE_QUANTITY, RoomPieces
 from app.taxonomy.seating import SEATING_CATEGORY, SeatingSemantics
 from app.taxonomy.words import customer_words
 
@@ -289,6 +295,7 @@ class RoomEngine:
         self._capabilities = capabilities
         self._hydration = hydration
         self._rooms = rooms
+        self._bought_once = rooms.bought_once if rooms is not None else frozenset()
         """The room guide - read only to say what a finished room could still
         take (finishing touches)."""
         self._seating = seating
@@ -437,17 +444,15 @@ class RoomEngine:
         except _CATALOG_FAILURES:
             logger.warning("room_engine_discovery_unavailable", store_id=context.store_id)
             return _refused(original, "catalog_unavailable")
+        locked = tuple(product for _, product in locks)
         outcome = self._optimizer.optimize(
-            BundleOptimizationRequest(
-                discovery=discovery,
-                budget=room.budget,
-                locked=tuple(product for _, product in locks),
-            )
+            BundleOptimizationRequest(discovery=discovery, budget=room.budget, locked=locked)
         )
         if not isinstance(outcome, RoomBundle):
             return _unavailable(original, outcome)
         if outcome.status is BundleStatus.INFEASIBLE:
             return self._proposal(original, outcome, "infeasible", room.budget, [])
+        plan, outcome = self._stocked(plan, discovery, outcome, room.budget, locked)
         committed = _commit_plan(staged, plan, outcome)
         logger.info(
             "room_engine_designed",
@@ -458,6 +463,151 @@ class RoomEngine:
         )
         built = self._committed(committed, outcome)
         return built
+
+    def _stocked(
+        self,
+        plan: InteriorDesignResult,
+        discovery: DesignDiscoveryResult,
+        outcome: RoomBundle,
+        budget: PriceConstraint | None,
+        locked: tuple[LockedBundleProduct, ...],
+    ) -> tuple[InteriorDesignResult, RoomBundle]:
+        """The room with every piece the store has too few of filled as far as
+        it goes by the chosen product, and the rest by the closest look - the
+        same search, nothing searched again (known issue 37). A rest the
+        budget cannot carry is left out like any piece it cannot afford - the
+        room keeps what is in stock, never more of it; a split the locks make
+        infeasible leaves the room as first chosen."""
+        for _ in range(MAX_PIECE_QUANTITY):
+            split = split_short_pieces(plan, discovery, outcome, self._bought_once)
+            if split is None:
+                break
+            again = self._optimizer.optimize(
+                BundleOptimizationRequest(discovery=split[1], budget=budget, locked=locked)
+            )
+            if not isinstance(again, RoomBundle) or again.status is BundleStatus.INFEASIBLE:
+                break
+            (plan, discovery), outcome = split, again
+        return plan, outcome
+
+    async def _with_stock(
+        self,
+        state: AgentStateV1,
+        outcome: RoomBundle,
+        context: RetailerContext,
+        *,
+        budget: PriceConstraint | None,
+    ) -> tuple[AgentStateV1, RoomBundle]:
+        """The room after a change, with every piece that now asks for more of
+        its product than the room may use (the store's stock; one of a kind
+        never bought twice) kept to that, and a piece of the same kind added
+        for the rest - the closest look the search finds that is not already
+        in the room, every other piece pinned - again until every piece fits.
+        The same rule as a new room (known issues 37, 38); nothing is said of
+        it. It is priced as the change itself was: `budget` None for a swap or
+        a change, whose total the customer is quoted with the split in it, so
+        nothing is dropped to make room; the room's budget for Nora's own
+        revision. Each piece keeps what they turned down. With no other match
+        a piece keeps only what the room may use; with the catalog unreachable
+        the room stays as it was."""
+        searched: dict[str, tuple[ProductCandidate, ...]] = {}
+        for _ in range(MAX_PIECE_QUANTITY):
+            step = await self._stock_step(state, outcome, context, budget, searched)
+            if step is None:
+                break
+            state, outcome = step
+        return state, outcome
+
+    async def _stock_step(
+        self,
+        state: AgentStateV1,
+        outcome: RoomBundle,
+        context: RetailerContext,
+        budget: PriceConstraint | None,
+        searched: dict[str, tuple[ProductCandidate, ...]],
+    ) -> tuple[AgentStateV1, RoomBundle] | None:
+        room = state.room_project
+        short = short_by_stock(outcome, self._bought_once)
+        if room is None or not short:
+            return None
+        plan = _plan_from(room)
+        held: dict[int, int] = {}
+        for line in room.bundle_items:
+            if line.need_id is not None and line.status is not BundleItemStatus.LOCKED:
+                held.setdefault(line.need_id, line.product_id)
+        in_room = {line.product_id for line in room.bundle_items}
+        rejected = [stored.rejected_product_ids for stored in room.design_needs]
+        try:
+            locks = await self._verify_locks(state, context)
+            if locks is None:
+                return None
+            needs = list(plan.needs)
+            extra: list[tuple[DesignCategoryNeed, int, tuple[int, ...]]] = []
+            for index, stock in sorted(short.items()):
+                whole = plan.needs[index]
+                needs[index] = part_of(whole, stock)
+                rest = part_of(whole, whole.quantity - stock)
+                candidates = await self._closest(room, rest, context, searched)
+                # Never one they turned down while another look will do; a
+                # pair is never left one short for it though.
+                free = [p for p in candidates if p.product_id not in in_room]
+                match = next(
+                    (p for p in free if p.product_id not in rejected[index]),
+                    free[0] if free else None,
+                )
+                if match is None:
+                    # No other look to fill the rest: the piece keeps what the
+                    # room may use, never more than the store has.
+                    continue
+                extra.append((rest, match.product_id, rejected[index]))
+                in_room.add(match.product_id)
+            current = [held.get(stored.need_id) for stored in room.design_needs]
+            pools = await self._pipeline.execute_forced_pools(
+                (*(p for p in current if p is not None), *(p for _, p, _ in extra)), context
+            )
+        except _CATALOG_FAILURES:
+            logger.warning("room_engine_stock_split_unavailable", store_id=context.store_id)
+            return None
+        entries = [
+            _forced_entry(index, need, current[index], pools) for index, need in enumerate(needs)
+        ]
+        entries.extend(
+            _forced_entry(len(needs) + offset, need, product_id, pools)
+            for offset, (need, product_id, _) in enumerate(extra)
+        )
+        again = self._optimizer.optimize(
+            BundleOptimizationRequest(
+                discovery=DesignDiscoveryResult(needs=tuple(entries)),
+                budget=budget,
+                locked=tuple(product for _, product in locks),
+            )
+        )
+        if not isinstance(again, RoomBundle) or again.status is BundleStatus.INFEASIBLE:
+            return None
+        split = InteriorDesignResult(needs=(*needs, *(need for need, _, _ in extra)))
+        kept = (*rejected, *(turned_down for _, _, turned_down in extra))
+        return _commit_plan(state, split, again, rejected=kept), again
+
+    async def _closest(
+        self,
+        room: RoomProjectState,
+        need: DesignCategoryNeed,
+        context: RetailerContext,
+        searched: dict[str, tuple[ProductCandidate, ...]],
+    ) -> tuple[ProductCandidate, ...]:
+        """The products that could fill `need`, closest look first - searched
+        once per piece however many rounds the split takes."""
+        key = need.model_copy(update={"quantity": 1}).model_dump_json(
+            exclude={"design": {"share_percent"}}
+        )
+        if key not in searched:
+            capabilities = await self._capabilities.capabilities(context)
+            found = await self._design_discovery.discover(
+                _room_request(room, capabilities), InteriorDesignResult(needs=(need,)), context
+            )
+            pool = found.needs[0].pool if found.needs else None
+            searched[key] = tuple(c.product for c in pool.candidates) if pool else ()
+        return searched[key]
 
     # ── one piece's options, and swapping one in ───────────────────────────
 
@@ -663,15 +813,18 @@ class RoomEngine:
         if not any(line.product.product_id == chosen for line in outcome.lines):
             return _refused(state, "option_unavailable")
 
-        overage = _over_budget(outcome, room.budget)
-        if overage is not None and not allow_over_budget:
-            return self._proposal(state, outcome, "over_budget", room.budget, [])
         override = DesignNeedSearchOverride(
             need_id=need_id,
             exclude_product_ids=_with_rejection(room, need_id, card.product_id),
             forced_product_id=chosen,
         )
         committed = _commit_refinement(state, outcome, override)
+        # The stock split is part of the swap's price: the total they are asked
+        # about is the total they get (known issue 37).
+        committed, outcome = await self._with_stock(committed, outcome, context, budget=None)
+        overage = _over_budget(outcome, room.budget)
+        if overage is not None and not allow_over_budget:
+            return self._proposal(state, outcome, "over_budget", room.budget, [])
         raised_from = None
         if overage is not None:
             committed, raised_from = _raise_budget(committed, outcome)
@@ -756,6 +909,7 @@ class RoomEngine:
         if outcome.status is BundleStatus.INFEASIBLE:
             return self._proposal(state, outcome, "infeasible", room.budget, [])
         committed = _commit_refinement(state, outcome, None, revised=refinements)
+        committed, outcome = await self._with_stock(committed, outcome, context, budget=room.budget)
         logger.info(
             "room_engine_piece_revised", store_id=context.store_id, revised=len(refinements)
         )
@@ -998,7 +1152,12 @@ class RoomEngine:
             if any(product_id not in by_id for product_id in wanted):
                 return _refused(state, "option_unavailable")
             added = tuple(
-                (_replacing_need(by_id[product_id], removed_needs.values()), product_id)
+                (
+                    _replacing_need(
+                        by_id[product_id], removed_needs.values(), [by_id[p] for p in wanted]
+                    ),
+                    product_id,
+                )
                 for product_id in wanted
             )
             if not staged_room.design_needs and not added:
@@ -1013,13 +1172,20 @@ class RoomEngine:
         placed = {line.product.product_id for line in outcome.lines}
         if any(product_id not in placed for product_id in wanted):
             return _refused(state, "option_unavailable")
-        overage = _over_budget(outcome, room.budget)
-        if overage is not None and not allow_over_budget:
-            return self._proposal(state, outcome, "over_budget", room.budget, [])
         plan = InteriorDesignResult(
             needs=(*_plan_from(staged_room).needs, *(need for need, _ in added))
         )
-        committed = _commit_plan(staged, plan, outcome)
+        committed = _commit_plan(
+            staged,
+            plan,
+            outcome,
+            rejected=[stored.rejected_product_ids for stored in staged_room.design_needs],
+        )
+        # The stock split is part of the change's price (known issue 37).
+        committed, outcome = await self._with_stock(committed, outcome, context, budget=None)
+        overage = _over_budget(outcome, room.budget)
+        if overage is not None and not allow_over_budget:
+            return self._proposal(state, outcome, "over_budget", room.budget, [])
         raised_from = None
         if overage is not None:
             committed, raised_from = _raise_budget(committed, outcome)
@@ -1220,13 +1386,24 @@ class RoomEngine:
             entries.append(_forced_entry(index, need, current.get(need_id), pools))
         for offset, (need, product_id) in enumerate(added):
             entries.append(_forced_entry(len(plan.needs) + offset, need, product_id, pools))
-        return self._optimizer.optimize(
-            BundleOptimizationRequest(
-                discovery=DesignDiscoveryResult(needs=tuple(entries)),
-                budget=budget,
-                locked=tuple(product for _, product in locks),
-            )
+        locked = tuple(product for _, product in locks)
+        discovery = DesignDiscoveryResult(needs=tuple(entries))
+        outcome = self._optimizer.optimize(
+            BundleOptimizationRequest(discovery=discovery, budget=budget, locked=locked)
         )
+        # A piece found again never takes a product the rest of the room has
+        # used up in this store - it moves on to the next closest look.
+        for _ in range(MAX_PIECE_QUANTITY):
+            if not found_again or not isinstance(outcome, RoomBundle):
+                break
+            narrower = without_used_up(discovery, outcome, found_again.keys(), self._bought_once)
+            if narrower is None:
+                break
+            discovery = narrower
+            outcome = self._optimizer.optimize(
+                BundleOptimizationRequest(discovery=discovery, budget=budget, locked=locked)
+            )
+        return outcome
 
     async def _verify_locks(
         self,
@@ -1529,24 +1706,40 @@ def _forced_entry(
 
 
 def _replacing_need(
-    product: ProductCandidate, removed: Iterable[RoomDesignNeedState]
+    product: ProductCandidate,
+    removed: Iterable[RoomDesignNeedState],
+    added: Sequence[ProductCandidate],
 ) -> DesignCategoryNeed:
     """The role a product put into the room fills: the role of a piece of its
-    kind taken out in the same change, else a finishing touch of its own."""
+    kind taken out in the same change, else a finishing touch of its own. The
+    one product put in for several pieces of its kind takes all of them - "make
+    both nightstands this one" is still two nightstands, and the stock rule
+    then fills what the store lacks (known issue 37); several products of the
+    kind put in take one each."""
     kind = product.commerce.subcategory or product.commerce.category or "piece"
-    replaced = next(
-        (need for need in removed if need.commerce_subcategory == product.commerce.subcategory),
-        None,
-    )
+    subcategory = product.commerce.subcategory
+    same_kind = [need for need in removed if need.commerce_subcategory == subcategory]
+    kin = [p.product_id for p in added if p.commerce.subcategory == subcategory]
+    alone = len(kin) == 1
+    # Several products of a kind take the removed pieces of it in turn, each
+    # with that piece's own design - its wall, what it stands beside.
+    position = kin.index(product.product_id) if product.product_id in kin else 0
+    replaced = (
+        same_kind[min(position, len(same_kind) - 1)] if same_kind and not alone else None
+    ) or (same_kind[0] if same_kind else None)
+    taken = same_kind if alone else ([replaced] if replaced is not None else [])
+    quantity = (sum(need.quantity for need in taken) or 1) if alone else 1
+    design = replaced.design if replaced is not None else None
+    shares = [n.design.share_percent for n in taken if n.design and n.design.share_percent]
+    if design is not None and len(shares) > 1:
+        # It carries the budget share of every piece it takes the place of.
+        design = design.model_copy(update={"share_percent": min(100, sum(shares))})
     return DesignCategoryNeed(
         commerce_category=product.commerce.category,
         commerce_subcategory=product.commerce.subcategory,
+        quantity=quantity,
         priority=replaced.priority if replaced is not None else DesignPriority.OPTIONAL,
-        design=(
-            replaced.design
-            if replaced is not None and replaced.design is not None
-            else PieceDesign(role=customer_words(kind)[:40])
-        ),
+        design=design if design is not None else PieceDesign(role=customer_words(kind)[:40]),
     )
 
 
@@ -1593,7 +1786,11 @@ def _raise_budget(state: AgentStateV1, outcome: RoomBundle) -> tuple[AgentStateV
 
 
 def _commit_plan(
-    state: AgentStateV1, plan: InteriorDesignResult, outcome: RoomBundle
+    state: AgentStateV1,
+    plan: InteriorDesignResult,
+    outcome: RoomBundle,
+    *,
+    rejected: Sequence[tuple[int, ...]] = (),
 ) -> AgentStateV1:
     """A new plan and the room chosen from it, in one operation; locks kept."""
     room = state.room_project
@@ -1627,8 +1824,11 @@ def _commit_plan(
                                 seating_capacity=need.seating_capacity,
                                 semantic_intent=need.semantic_intent,
                                 design=need.design,
+                                rejected_product_ids=(
+                                    rejected[index] if index < len(rejected) else ()
+                                ),
                             )
-                            for need in plan.needs
+                            for index, need in enumerate(plan.needs)
                         ),
                         preserved=tuple(
                             PreservedBundleLine(line_id=line_id) for line_id in locked_ids
@@ -1803,6 +2003,10 @@ def _review_facts(
             continue
         piece["colour"] = product.main_color
         piece["styles"] = list(product.styles)
+        stock = product.listing.stock_quantity
+        if stock is not None and stock <= card.quantity:
+            # For her alone: never offer this product again for another piece.
+            piece["no_more_in_store"] = True
         size = listed_size(product)
         piece["size"] = size or "not listed"
         role = design.role if design is not None else piece.get("kind") or "piece"

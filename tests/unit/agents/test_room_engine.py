@@ -27,7 +27,7 @@ from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.discovery import PriceConstraint, SeatingCapacityConstraint
 from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
 from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome
-from app.schemas.product import CommerceClassification, ProductCandidate
+from app.schemas.product import CommerceClassification, ProductCandidate, ProductListing
 from app.schemas.relaxation import StopReason
 from app.schemas.resolution import (
     CandidatePoolResult,
@@ -63,9 +63,13 @@ KINDS: dict[int, tuple[str, str, str]] = {
     40: ("seating", "chair", "700"),
     41: ("seating", "lounge-chair", "900"),
     42: ("seating", "lounge-chair", "1400"),
+    50: ("decor", "art-canvas", "300"),
+    51: ("decor", "art-canvas", "450"),
 }
 COLOURS = {40: "Olive", 41: "Beige", 42: "Beige"}
 LONGER_CM = {1: 260, 2: 200}
+STOCK: dict[int, int] = {}
+"""How many the store has of a product, where a test says; unknown otherwise."""
 
 
 def _product(product_id: int) -> ProductCandidate:
@@ -90,6 +94,7 @@ def _product(product_id: int) -> ProductCandidate:
         ),
         main_color=COLOURS.get(product_id, "Beige"),
         styles=("Modern",),
+        listing=ProductListing(stock_quantity=STOCK.get(product_id)),
     )
 
 

@@ -7,6 +7,7 @@ Store scope and product identity never pass through a model.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -21,6 +22,7 @@ from app.agents.facts import (
     search_facts,
     searched_for,
 )
+from app.agents.operations.cart import CartRefused
 from app.agents.operations.rooms import open_room_options
 from app.agents.payloads import (
     ComparisonShown,
@@ -863,7 +865,7 @@ def more_like_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
 
 def _listed_extras(product: ProductCandidate) -> dict[str, Any]:
     """What the store lists beyond the card: the rating always with how many
-    reviews it rests on, weight, SKU, warranty."""
+    reviews it rests on, weight, SKU, warranty, and how many it has in stock."""
     listing = product.listing
     extras: dict[str, Any] = {}
     if listing.rating is not None and listing.review_count:
@@ -874,6 +876,8 @@ def _listed_extras(product: ProductCandidate) -> dict[str, Any]:
         extras["sku"] = listing.sku
     if listing.warranty_months:
         extras["warranty_months"] = listing.warranty_months
+    if listing.stock_quantity is not None:
+        extras["in_stock"] = listing.stock_quantity
     return extras
 
 
@@ -1067,17 +1071,17 @@ def add_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[AddToCartArgs]:
                 code="option_is_for_the_room",
                 facts={"piece": piece, "use_instead": "swap_room_piece"},
             )
-        change = await services.cart_operations.add(work.staged, context.retailer, wanted)
+        products = await hydrated(services, tuple(p for p, _ in wanted), context) or ()
+        change = await services.cart_operations.add(
+            work.staged, context.retailer, wanted, stock=in_stock(products)
+        )
         if args.for_goal is not None and change.added:
             change.state = add_to_goal(change.state, args.for_goal, change.added)
-        names = await _names(services, tuple(p for p, _ in wanted), context)
+        names = {p.product_id: p.name_english for p in products}
         facts = {
             "added": [names.get(p) for p in change.added],
             "already_in_cart": [names.get(p) for p in change.already],
-            "refused_by_store": [
-                {"name": names.get(r.product_id), "reason": r.reason, "kept": r.kept}
-                for r in change.refused
-            ],
+            "refused_by_store": refusal_facts(change.refused, names),
             "cart_full": change.full,
             "cart": cart_facts(
                 await hydrated(
@@ -1185,6 +1189,29 @@ def show_chosen_tool(schemas: ToolSchemas) -> ZoryTool[ShowChosenArgs]:
         owners=SARA,
         handler=show,
     )
+
+
+def in_stock(products: Sequence[ProductCandidate]) -> dict[int, int]:
+    """How many the store has of each product, where it said."""
+    return {
+        p.product_id: p.listing.stock_quantity
+        for p in products
+        if p.listing.stock_quantity is not None
+    }
+
+
+def refusal_facts(refused: Sequence[CartRefused], names: Mapping[int, str]) -> list[dict[str, Any]]:
+    """What the store would not take: none of it, or fewer than asked
+    (`asked`, `kept`) - said plainly, never cut in silence."""
+    return [
+        {
+            "name": names.get(r.product_id),
+            "reason": r.reason,
+            "kept": r.kept,
+            **({"asked": r.asked} if r.asked is not None else {}),
+        }
+        for r in refused
+    ]
 
 
 async def _names(

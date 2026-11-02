@@ -243,7 +243,7 @@ Before implementing repositories/models, inspect the real database/model definit
 `material` is provided by Django on `core_product` (see section 6), with the other
 product data its Salla import fills: `description`, `description_english`,
 `regular_price`, `rating`, `review_count`, `reviews_json`, `sold_quantity`,
-`weight_kg`, `sku`, `warranty_months` (`PRODUCT_DATA_COLUMNS`, checked at
+`weight_kg`, `sku`, `warranty_months`, `stock_quantity` (`PRODUCT_DATA_COLUMNS`, checked at
 startup - Django's migrations go first). Most stores have none of it yet; each
 field is simply absent where the store left it empty. How each is used is
 section 37.
@@ -494,7 +494,21 @@ a list of search cards while it is built.
   small vase, a plant) are nice - included when the budget allows, given up
   first when it is short; pairs and sets are a quantity, bought whole or not
   at all. No second build: budget still left is said, with what could finish
-  it offered for the next message. `app/services/room_design.py` checks it: approved types
+  it offered for the next message. **Stock never chooses a product**: a piece
+  wanted in more than one goes to the same product first; where the store has
+  fewer (`stock_quantity`), code splits it into two pieces of that kind - the
+  chosen product for what is in stock, the closest look from the same search
+  for the rest (`app/services/room_stock.py`) - and the room is presented as
+  designed, with no word of stock. The same holds after every change - a
+  swap, a revision, a change of pieces - and no two pieces use more of a
+  product than the store has; each half keeps its part of the budget share. A
+  piece that is the last of its product carries `no_more_in_store` for Nora
+  alone, so she never offers "the same one again". Art, mirrors, plants,
+  vases, statues and wall clocks are never one product bought twice
+  (`room_pieces_v1.yaml` `bought_once`): a quantity above one on them is
+  refused (`never_the_same_one_twice`), and two pieces of them in a room are
+  two different products - the second takes the next-closest look (known
+  issue 38). `app/services/room_design.py` checks it: approved types
   only (a refusal names the family), unstocked types and looks left out and
   said, `seats_each` only on multi-seat types, shares at most the whole budget,
   no figure in prose, and a seat count no piece of its types has in this store
@@ -2564,6 +2578,17 @@ keeps a cart of its own.
   (`finished_rooms`), the room is no longer the one on record, and the reply
   asks in the agent's own words which room they would like next - never one
   in `rooms_finished`. Only a room in the cart is closed.
+- **Stock is a limit, never a choice.** A line never asks for more than the
+  store has (`stock_quantity`, where it says; unknown is no limit), and the
+  live store check stays the final word. A cut is never silent:
+  `refused_by_store` carries `asked` and `kept` (`only_left`, or the store's
+  own limit), and the reply says how many went in and offers the closest match
+  for the rest - for a whole room too; one note per product. A tap on the
+  cart's + is refused past the stock too (`only_left`), and every refused tap
+  is worded in the conversation's language (`app/services/picks_words.py`).
+  Stock is otherwise said only when they
+  ask how many there are (`in_stock` in a product's details) - never on cards,
+  never as urgency (known issue 37).
 - **Liking is not adding.** "I like the fifth one" is not an add: the agent says
   what it costs and offers to add it; ♡ keeps it in the liked list. An
   explicit "add it", "I'll take it", a tap, or their yes is an add.

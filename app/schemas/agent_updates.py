@@ -238,6 +238,9 @@ class DesignNeedSpec(BaseModel):
     seating_capacity: SeatingCapacityConstraint | None = None
     semantic_intent: str | None = None
     design: PieceDesign | None = None
+    rejected_product_ids: tuple[int, ...] = ()
+    """What they turned down for this role, kept when a room is planned again
+    around the same pieces - a turned-down product never comes back."""
 
 
 class DesignNeedRefinement(BaseModel):

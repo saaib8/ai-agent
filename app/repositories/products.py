@@ -93,6 +93,7 @@ _SELECTED_COLUMNS = (
     core_product.c.weight_kg,
     core_product.c.sku,
     core_product.c.warranty_months,
+    core_product.c.stock_quantity,
 )
 
 
@@ -353,8 +354,15 @@ def _to_product_row(row: Row[Any]) -> ProductRow:
             weight_kg=row.weight_kg,
             sku=_text(row.sku),
             warranty_months=row.warranty_months,
+            stock_quantity=_in_stock(row.stock_quantity),
         ),
     )
+
+
+def _in_stock(quantity: int | None) -> int | None:
+    """How many the store has, or None when it said nothing usable - a count of
+    zero or less limits nothing, the store's own cart check refuses it."""
+    return quantity if quantity is not None and quantity > 0 else None
 
 
 def _rating(rating: Decimal | None, count: int | None) -> dict[str, Any]:

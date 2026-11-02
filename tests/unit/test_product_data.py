@@ -216,6 +216,7 @@ def _db_row(**listing: Any) -> SimpleNamespace:
         "weight_kg": None,
         "sku": None,
         "warranty_months": None,
+        "stock_quantity": None,
     }
     return SimpleNamespace(**{**base, **listing})
 
