@@ -13,7 +13,7 @@ import pytest
 from app.repositories.sessions import shopper_of
 from app.schemas.agent_state import CartQuantity
 from app.schemas.cart import CartQuery
-from app.schemas.picks import DeselectPickAction, PicksRequest, SelectPickAction
+from app.schemas.picks import DeselectPickAction, LikeCardAction, PicksRequest, SelectPickAction
 from app.schemas.session import ShopperCart
 from app.services.shopper_cart import with_shopper_cart
 
@@ -154,3 +154,50 @@ async def test_another_shopper_another_store_and_an_id_without_a_shopper_share_n
     assert await _cart_lines(sessions, NEW_CHAT, store_id=STORE + 1) == []
     assert await _cart_lines(sessions, "web-another-console") == []
     assert await _cart_lines(sessions, "web-console") == ["Sofa 103"], "its own cart, as before"
+
+
+# ── the liked list follows them too (known issue 34) ────────────────────────
+
+
+def _liking(session_id: str, ordinal: int) -> PicksRequest:
+    return PicksRequest(
+        session_id=session_id, store_id=STORE, action=LikeCardAction(ordinal=ordinal)
+    )
+
+
+def test_a_new_conversation_starts_with_the_shoppers_likes() -> None:
+    cart = ShopperCart(liked_product_ids=(102, 103))
+
+    state = with_shopper_cart(_state(presented=()), cart, new_conversation=True)
+
+    assert state.product_interaction.liked_product_ids == (102, 103)
+
+
+def test_a_record_kept_before_likes_followed_them_keeps_this_chats_own() -> None:
+    stored = _state(picks=(101,)).model_copy(
+        update={
+            "product_interaction": _state(picks=(101,)).product_interaction.model_copy(
+                update={"liked_product_ids": (103,)}
+            )
+        }
+    )
+
+    state = with_shopper_cart(
+        stored, ShopperCart(selected_product_ids=(101,)), new_conversation=False
+    )
+
+    assert state is stored
+    assert state.product_interaction.liked_product_ids == (103,)
+
+
+async def test_a_like_in_one_chat_is_in_the_next_one() -> None:
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state(), session_id=NEW_CHAT)
+    await _stored(sessions, _state(), session_id=FIRST_CHAT)
+    await _runtime(sessions).apply(_liking(FIRST_CHAT, 2), CONTEXT)
+
+    await _runtime(sessions).apply(_liking(NEW_CHAT, 3), CONTEXT)
+
+    saved = sessions.saved[(STORE, NEW_CHAT)].state.product_interaction
+    assert saved.liked_product_ids == (102, 103)
+    assert sessions.carts[(STORE, SHOPPER)].liked_product_ids == (102, 103)

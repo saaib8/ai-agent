@@ -2074,3 +2074,164 @@ disabled, or the action queued and sent after); a refused save is logged as a
 warning. The widget needs the same.
 
 **Reported:** by the user (2026-10-23).
+
+## 34. A liked product is bookmarked, but its look never shapes later searches
+
+**Seen:** in the console (store 21, 2026-11-02). Liking several beige sofas
+keeps them in the liked list, but the next sofa search is ordered exactly as if
+nothing had been liked.
+
+**Cause:**
+- `like_product` and the ♡ tap only add the product to
+  `liked_product_ids`. Every agent sees the liked list in its brief (colour,
+  styles, size), so "the one I liked" and Nora's matching work.
+- The ranking already has a tier for taste learned from likes
+  (`RankingLean.learned_colours` / `learned_styles`,
+  `app/services/semantic_ranking.py`), but nothing sets it any more - left
+  over from the scripted flow.
+- The prompt tells agents to call `remember_taste` when the customer says a
+  taste or taps "More like this", not when they like a product.
+- The liked list lives in one chat; unlike the cart it does not follow the
+  shopper into their other chats.
+
+**Proposed fix (one of):**
+1. Prompt: Sara keeps the look with `remember_taste` when they like several
+   products of the same colour or style.
+2. Code: fill the learned tier from the liked products' colours (same kind
+   only) and styles - it only orders, never hides, and ranks below what they
+   said.
+
+**Fixed (2026-11-02):** both parts, the code way.
+- A search the customer asks for (and its pages) leans to the liked
+  products' look - colours from liked pieces of that kind, styles from any -
+  in the existing learned tier: after what they said and what they avoid,
+  before a designer's direction; it orders and never hides
+  (`app/services/liked_look.py`, `search_products`, `leaning_to_liked` in the
+  facts). Matched searches, more like this and what goes with a pick are
+  unchanged; a sort they asked for ("cheapest") is never leaned, and a colour
+  or style they said to avoid is never leaned to. The lean is worked out when
+  a search starts and kept by its pages.
+- The liked list follows the shopper into their other chats beside the cart
+  (`ShopperCart.liked_product_ids`; a record kept before has none and leaves
+  the chat's own), and joins the account's when a guest signs in (newest
+  `customer_agent.max_likes` kept).
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-02).
+
+## 35. Nora's room questions offer chips that only promise an answer
+
+**Seen:** reproduced on store 21 (2026-11-02), four new rooms (three living
+rooms, one bedroom):
+- The size question offered "I'll share the measurements" (or "I'll provide
+  the measurements") in 4 of 4.
+- The budget question offered "I'll enter my budget" / "Help me set a budget"
+  (or "I'll give my budget" / "Help me set it") in 2 of 5 openers.
+
+Tapping one answers nothing: Nora must ask again and the customer types the
+figure anyway - one wasted turn of 15-60 s. "Design without measurements" and
+"I don't know the size" are fine; they are complete answers.
+
+**Cause:** the prompt (`app/prompts/agents/v2.py`, Finishing) says choices are
+"tappable answers to the question your reply asks", but not that a chip must
+be the answer itself. For a question whose answer is a number, the model makes
+a chip that promises one. The reply check only requires a question beside
+chips.
+
+**Decided (2026-11-02, after review):** the room is asked as **one plain
+question in words** - "What's your room size?" - with no form and no choices,
+and never about doors, windows, the TV or the walls: the designer works with
+the size. A two-step form (size, then what is on each wall, with TV for TV
+rooms) was built and tested, then dropped on review as too many questions.
+Kept from that work: a chip must be an answer in itself, never a promise to
+answer, so the budget and the size are asked with no chips
+(`app/prompts/agents/v2.py`, `RespondArgs.choices`). Walls the customer
+mentions on their own are still recorded with `note_room`. The form code was
+not kept.
+
+**Status:** Fixed (prompt only).
+
+**Reported:** by the user (2026-11-02).
+
+## 36. Nora steps into a single-product search to ask the room's size, and never its kind
+
+**Seen:** reproduced on store 21 (2026-11-02), three single-product journeys:
+- "I need sofas to seat 8 people" -> added the first sofa -> Nora answered the
+  add: "What are the room's length and width, and where are the door, window
+  and TV?" (chips "Share room details" / "I don't know yet"). The customer
+  said "next one", Sara took it, and the room question was dropped.
+- Added a sofa -> "show me a rug that goes with it" -> Nora showed rugs, then
+  asked the same question.
+- Added a sofa -> "I want another sofa for the same room" -> Nora asked the
+  same question and showed nothing.
+
+In all three, the session's `room_project.room_kind` stayed empty: she asked
+the size but never which room it is.
+
+**Cause:** three prompt rules (`app/prompts/agents/v2.py`):
+- "Their room" (shared by Sara, Nora and Salman): ask "when sizes start to
+  decide (a second sofa in one room, a rug) and the room is unknown ... its
+  length and width, and where the door, window and TV are, as one question".
+- Nora's matching: "Before the next seat in a seating goal, if their room is
+  unknown, ask its size and where the TV and window are".
+- Nora's room section: "When the context has no room size and it would
+  decide, ask its length and width and where the door, window and TV are".
+
+Nora gets these turns for good reasons - the next piece of a seating goal is
+handed to her for matching, as is "something that goes with it" and "another
+sofa for the same room" - but once she has the turn the rules make her ask.
+Nothing tells any agent to work out or ask the room's kind outside a whole
+room.
+
+**Why the kind matters:** a size recorded with no room cannot
+be matched to a later "design my living room"; and what goes with a piece
+differs by room (the room guide is by room kind).
+
+**Direction (revised 2026-11-02 after the senior's review - ask less, let the
+designer work):**
+- **The room's kind is never asked.** Nora works it out from what is already
+  said or bought (a bed: bedroom; a dining table: dining room; "for my
+  majlis") and records it with `note_room` when it is plain; otherwise it
+  stays unknown and she designs without it.
+- **The size is asked only when it decides the next piece** - the next seat
+  of a seating goal, a rug, a coffee table for their sofa, another sofa for
+  the same room, "will it fit?". Never for a first piece, a lamp or a vase.
+  One plain question, as 35 decided ("What's your room size?"), nothing
+  about the walls.
+- **Asked once, at most.** Answered, it is kept for the whole chat
+  (`note_room`). Declined, or the customer carries on without answering,
+  it is never asked again in that chat (`declined_size`): the next pieces
+  are shown unsized, and the customer can still give the size any time.
+- Dropped from the earlier proposal: the room-kind chips (Living room /
+  Majlis / Bedroom / Other) and a separate "question waiting" record - an
+  extra question and extra machinery the review asked to avoid; whoever
+  takes the next turn reads the question in the conversation.
+
+**Rechecked live without changes (2026-11-02, store 21, 10 conversations):**
+- Right already: only the size is asked, in plain words - never doors,
+  windows, TV or which room; no promise chips; no size question for a first
+  piece (a coffee table) or a lamp; the rug for a sofa shows rugs **and**
+  asks the size once, and is not asked again when the customer carries on.
+- Still wrong: "another sofa for the same room" asks the size with no sofas
+  shown, and asks it again when the customer answers "something in grey"
+  (2/2); a seating goal's next piece ("3 seats") asks the size with no
+  sofas shown (2/2).
+
+**Agreed behaviour (2026-11-02), as the rug already does:**
+1. Always show something: a customer who asked for products gets them in the
+   same reply.
+2. Ask the size once, beside the products, never instead of them, with why
+   in a few words.
+3. Ignored or declined, never asked again in that chat; the next pieces are
+   matched by look only.
+4. Given later, used at once (the pieces that fit lead, and why).
+
+Example - "I want another sofa for the same room": Nora shows sofas that go
+with the beige one and asks "What's your room size? Then I can make sure the
+two fit together"; the customer says "something in grey"; she shows grey
+ones with no size question.
+
+**Status:** Open.
+
+**Reported:** by the user (2026-11-02).

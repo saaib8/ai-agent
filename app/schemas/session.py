@@ -131,3 +131,7 @@ class ShopperCart(BaseModel):
 
     selected_product_ids: tuple[int, ...] = ()
     cart_quantities: tuple[CartQuantity, ...] = ()
+    liked_product_ids: tuple[int, ...] | None = None
+    """Their liked list (♡), which follows them too, oldest first. None in a
+    record kept before likes were: the conversation then keeps its own, never
+    an empty list read as "nothing liked"."""
