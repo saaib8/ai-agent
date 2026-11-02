@@ -2377,3 +2377,68 @@ pieces of a room using one product.
 **Status:** Fixed.
 
 **Reported:** by the user (2026-11-02).
+
+
+## 39. Sizes are missing from the comparison, and size searches refuse many kinds
+
+**What the customer sees:** comparing a sofa with a sofa set, the sofa has
+Overall width / Depth / Height rows and the set has none. Asking for
+"nightstands under 50 cm wide" or "chairs under 90 cm tall" returns cards that
+were never filtered by size.
+
+**Cause:** the size rules (`dimension_semantics_v1.yaml`) were reviewed on
+store 50 alone and listed only the kinds whose columns looked reliable there.
+Every other kind - sets, sectionals, nightstands, lights, most decor - had no
+roles, so search refused its sizes and the comparison, which reads the same
+rules, showed no size rows. Stores 21 and 151 list sizes for most kinds.
+
+**Fixed (2026-11-03):** a store's listed size is trusted like its price.
+- With `discovery.size_by_side` (on), every kind is searched and compared by
+  its sides: the longer side is the width, the shorter the depth, height is
+  height. No per-store rule.
+- `flat_kinds` (rug, art, mirror, wall clock, hanger, bedding, yoga mat): two
+  sides - the two largest of the three listed sizes, wherever the store put
+  them (the smallest is the thickness). "Tall" or "long" is the longer side;
+  no depth. Store 151 lists many hangers as -/66/55 and store 50 some art as
+  120/2/90; both now read as their real two sides.
+- A pair of sides reads for every kind.
+- Prompt (v2.52, v2.53): a set, corner sofa or hanging light is the listed
+  size, never "the whole set is that size"; art's "tall" is its longer side.
+- The comparison needed no change: its rows follow the same rules.
+
+- Live, stores 21 and 151: nightstands under 50 cm wide, chairs under 90 cm
+  tall, sofa sets under 300 cm and a 200 x 300 rug all filtered by size; a
+  comparison of sofa sets shows Overall width / Depth / Height, said as the
+  listed size. A product the store lists no size for still shows none.
+- Live after the flat-thing fix (stores 151 and 21): "wall hangers under 80 cm
+  wide" now includes store 151's hangers listed -/66/55; "art under 100 cm
+  tall" and "wall art 90 x 60" are filtered on both stores, the 90 x 60 set
+  store 151 lists as 90/-/60 included.
+- Live across stores 21, 151, 50, 145 and 101 (2026-11-03): floor lamps by
+  width and height, sofa sets, corner sofas, chandeliers, vases, Arabic art,
+  comparisons of corner sofas, sofa sets and chandeliers, and a room's rug and
+  sofa options (none offered under the designed size) all behave as above.
+- Store data the rule now trusts as listed (the stores' to correct):
+  store 50 lists 28 of 31 sofa sets by one piece (about 100 x 100), so they
+  pass "sofa sets under 200 cm wide"; about 50 floor lamps (stores 21, 151,
+  101) carry their height in `length` and no height, so they drop out of
+  height searches and fail narrow width limits; some vases list their height
+  in `length` too.
+- Found on the way (not from the size rule): on "a console 120 x 40" with
+  nothing within 5% (store 145), Sara said the unit was missing instead of
+  offering the closest - the search summary only said "sizes: yes" and the
+  tool gave no nearer size. Fixed (2026-11-03): the summary names the size
+  that ran ("120 x 40 cm"), and a size nothing meets on a customer's own
+  search shows the closest sizes, nearest first, said as such
+  (`ClosestSizeChange`, `relaxation.closest_size_steps`); a loose size of any
+  kind widens 5% then 10% first. Prompt v2.54.
+  Live: "a console 120 x 40" (store 145, twice) - "there isn't one at exactly
+  120 x 40 cm; the closest is 120 x 35", no unit question; "a rug 170 x 260"
+  (store 21) - the closest, 170 x 240, first; "a sofa about 205 cm wide" -
+  widened, said, and its next page; "a mattress 160 x 200" (store 151, listed
+  with no sizes) - the mattresses shown and said to be the closest; an exact
+  match still shows alone.
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-03).

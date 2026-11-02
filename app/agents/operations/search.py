@@ -145,6 +145,7 @@ class SearchRunner:
                 context,
                 dropped_constraints=composed.dropped_constraints,
                 earlier_sizes_applied=composed.earlier_sizes_applied,
+                closest_sizes=True,
             )
         except _UNAVAILABLE:
             logger.warning("agent_search_unavailable", store_id=context.store_id)

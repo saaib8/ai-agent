@@ -169,13 +169,16 @@ def test_conversion_factors_live_in_one_module() -> None:
     The SQL dimension filter builds its conversion from these same tables, so a
     second copy of a factor anywhere would let the two paths disagree.
     """
+    import re
     from pathlib import Path
 
     app_dir = Path(__file__).parents[2] / "app"
+    # The inch factor as a number - not a version such as "agents/v2.54".
+    factor = re.compile(r"(?<![\w.])2\.54\b")
     offenders = [
         module.relative_to(app_dir).as_posix()
         for module in app_dir.rglob("*.py")
         if module.as_posix().endswith("schemas/dimensions.py") is False
-        and "2.54" in module.read_text()
+        and factor.search(module.read_text())
     ]
     assert offenders == []

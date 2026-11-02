@@ -224,10 +224,10 @@ class RelaxationPlanner:
         widened = list(running)
         changes: list[AppliedRelaxation] = []
         for index, original in enumerate(request.dimensions):
-            if original.side is FloorSide.SHORTER or not self._dimension_policy.is_relaxable(
+            if not self._dimension_policy.is_relaxable(
                 request.commerce_subcategory, original.role
-            ):
-                # The allowlist widens an along-wall width - the long side.
+            ) or (original.side is FloorSide.SHORTER and not self._dimension_policy.every_kind):
+                # The V1 allowlist widens an along-wall width - the long side.
                 continue
             if not self._may_relax(semantics.strength_for_dimension(original.role), strength):
                 continue

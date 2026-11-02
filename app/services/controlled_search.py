@@ -22,14 +22,21 @@ import time
 from decimal import Decimal
 
 from app.core.config import RelaxationSettings
-from app.core.exceptions import InvalidRequestError
+from app.core.exceptions import InvalidRequestError, UnsupportedDimensionRoleError
 from app.core.logging import get_logger
-from app.schemas.discovery import PriceConstraint, ProductSearchRequest
+from app.schemas.discovery import (
+    DimensionConstraint,
+    DimensionConstraintKind,
+    PriceConstraint,
+    ProductSearchRequest,
+    size_words,
+)
 from app.schemas.product import EligibleProduct
 from app.schemas.query import ResolvedSearch
 from app.schemas.relaxation import (
     AppliedRelaxation,
     AttributeRelaxationChange,
+    ClosestSizeChange,
     ControlledSearchResult,
     RelaxableField,
     RelaxationAttempt,
@@ -42,7 +49,7 @@ from app.schemas.retailer import RetailerContext
 from app.services.discovery import ProductDiscoveryService
 from app.services.relaxation import RelaxationPlanner
 from app.taxonomy.attributes import AttributeFamily
-from app.taxonomy.dimensions import DimensionRole
+from app.taxonomy.dimensions import DimensionRole, FloorSide
 
 logger = get_logger(__name__)
 
@@ -64,6 +71,7 @@ class ControlledRelaxationService:
         context: RetailerContext,
         *,
         explain_empty: bool = False,
+        closest_sizes: bool = False,
     ) -> ControlledSearchResult:
         """Run the exact request, then widen only as far as policy allows.
 
@@ -76,8 +84,13 @@ class ControlledRelaxationService:
         the widest permitted search finds nothing, it also counts what each
         requirement set aside alone would find, so the reply can offer a real
         next step. Nothing is set aside for them.
+
+        `closest_sizes` is for a customer's own search: when nothing met their
+        sizes, the closest sizes are shown instead of nothing, and recorded so
+        the reply says so. Never for a room piece's options, whose sizes are
+        the floor the designer kept.
         """
-        result = await self._search(resolved, context)
+        result = await self._search(resolved, context, closest_sizes=closest_sizes)
         if not explain_empty or result.candidates:
             return result
         return result.model_copy(
@@ -85,7 +98,7 @@ class ControlledRelaxationService:
         )
 
     async def _search(
-        self, resolved: ResolvedSearch, context: RetailerContext
+        self, resolved: ResolvedSearch, context: RetailerContext, *, closest_sizes: bool
     ) -> ControlledSearchResult:
         self._require_resolved(resolved)
         original = resolved.request
@@ -124,6 +137,14 @@ class ControlledRelaxationService:
         if not pool and await self._lift_attributes(context, pool=pool, attempts=attempts):
             return self._finish(
                 original, attempts, pool, exact_count, StopReason.ATTRIBUTE_FALLBACK, started
+            )
+        if (
+            not pool
+            and closest_sizes
+            and await self._closest_sizes(original, context, pool=pool, attempts=attempts)
+        ):
+            return self._finish(
+                original, attempts, pool, exact_count, StopReason.CLOSEST_SIZES, started
             )
         return self._finish(
             original,
@@ -230,6 +251,47 @@ class ControlledRelaxationService:
             attempts=attempts,
         )
         return found > 0
+
+    async def _closest_sizes(
+        self,
+        original: ProductSearchRequest,
+        context: RetailerContext,
+        *,
+        pool: dict[int, RelaxedCandidate],
+        attempts: list[RelaxationAttempt],
+    ) -> bool:
+        """The last resort for sizes nothing in the store met.
+
+        Only when the pool is empty after everything else allowed. Everything
+        but the sizes stays as the widest search tried - the type, the budget,
+        the colour - and the sizes widen by a share of the customer's own
+        figures, band by band (`closest_size_steps`), until enough are found;
+        then any size, if even the widest band found none. Each band is a
+        deeper attempt, so the nearest sizes lead (CLAUDE.md 16.1), and each
+        records what they asked, so the reply says none is that size.
+        """
+        if not original.dimensions and original.planar_dimensions is None:
+            return False
+        base = attempts[-1].request
+        asked = size_words(original)
+        for share in (*self._settings.closest_size_steps, None):
+            if share is None and pool:
+                break
+            try:
+                await self._attempt(
+                    base.model_copy(update=_sizes_within(original, share)),
+                    context,
+                    depth=attempts[-1].depth + 1,
+                    changes=(ClosestSizeChange(asked=asked, within_share=share),),
+                    pool=pool,
+                    attempts=attempts,
+                )
+            except UnsupportedDimensionRoleError:
+                # A size this kind cannot be searched by is never widened into one.
+                return bool(pool)
+            if len(pool) >= self._settings.target_candidates:
+                break
+        return bool(pool)
 
     async def _set_aside(
         self, request: ProductSearchRequest, context: RetailerContext
@@ -399,6 +461,56 @@ class ControlledRelaxationService:
 def _words(resolved: ResolvedSearch, family: AttributeFamily) -> tuple[str, ...]:
     """The customer's words for one family's unmatchable strict values."""
     return tuple(a.raw_value for a in resolved.unmatched_strict if a.family is family)
+
+
+_CENTIMETRE_QUANTUM = Decimal("0.0001")
+
+
+def _sizes_within(original: ProductSearchRequest, share: Decimal | None) -> dict[str, object]:
+    """The customer's sizes widened by `share` of each of their own figures -
+    a pair as its shorter and longer side - or no sizes at all for None."""
+    if share is None:
+        return {"dimensions": (), "planar_dimensions": None}
+    sizes = [_widened(c, share) for c in original.dimensions]
+    pair = original.planar_dimensions
+    taken = {c.role for c in sizes}
+    if pair is not None and not taken & {DimensionRole.LENGTH, DimensionRole.OVERALL_WIDTH}:
+        shorter, longer = pair.sides
+        for role, side, figure in (
+            (DimensionRole.OVERALL_WIDTH, FloorSide.SHORTER, shorter),
+            (DimensionRole.LENGTH, FloorSide.LONGER, longer),
+        ):
+            sizes.append(
+                DimensionConstraint(
+                    role=role,
+                    side=side,
+                    kind=DimensionConstraintKind.RANGE,
+                    min_cm=_cm(figure * (1 - share)),
+                    max_cm=_cm(figure * (1 + share)),
+                )
+            )
+    return {"dimensions": tuple(sizes), "planar_dimensions": None}
+
+
+def _widened(constraint: DimensionConstraint, share: Decimal) -> DimensionConstraint:
+    """One size widened outward by `share` of the customer's own figure; a
+    figure to sit near becomes a band around it."""
+    kind = constraint.kind
+    low = constraint.target_cm if kind is DimensionConstraintKind.TARGET else constraint.min_cm
+    high = constraint.target_cm if kind is DimensionConstraintKind.TARGET else constraint.max_cm
+    return DimensionConstraint(
+        role=constraint.role,
+        side=constraint.side,
+        kind=DimensionConstraintKind.RANGE if kind is DimensionConstraintKind.TARGET else kind,
+        min_cm=None if low is None else _cm(low * (1 - share)),
+        max_cm=None if high is None else _cm(high * (1 + share)),
+        source_value=constraint.source_value,
+        source_unit=constraint.source_unit,
+    )
+
+
+def _cm(value: Decimal) -> Decimal:
+    return value.quantize(_CENTIMETRE_QUANTUM)
 
 
 def _nearest_price(price: PriceConstraint, pool: tuple[EligibleProduct, ...]) -> Decimal | None:

@@ -14,6 +14,7 @@ from typing import Any
 from app.schemas.agent_brief import BriefProduct, CartBrief, CartLine, MoneyTotal
 from app.schemas.agent_state import ActiveSearchState, AgentStateV1
 from app.schemas.design import InteriorDesignResult, NextSize
+from app.schemas.discovery import size_words
 from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding
 from app.schemas.product import ProductCandidate
 from app.taxonomy.attributes import AttributeFamily
@@ -208,7 +209,7 @@ def searched_for(search: ActiveSearchState | None) -> dict[str, Any]:
     if request.seating_capacity is not None:
         asked["seats"] = request.seating_capacity.model_dump(mode="json", exclude_none=True)
     if request.dimensions or request.planar_dimensions is not None:
-        asked["sizes"] = True
+        asked["sizes"] = size_words(request)
     if search.semantic_intent:
         asked["words"] = search.semantic_intent
     return {key: value for key, value in asked.items() if value not in ([], None)}

@@ -51,7 +51,7 @@ from app.schemas.retailer import RetailerContext
 from app.services.dimensions import normalise_dimensions
 from app.services.product_value import discount_of
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.dimensions import DimensionSemantics, FloorSide
+from app.taxonomy.dimensions import DimensionSemantics, FaceSide, FloorSide
 from app.taxonomy.registry import CommerceTaxonomy
 
 logger = get_logger(__name__)
@@ -250,8 +250,8 @@ class ProductDiscoveryService:
 
     def _resolve_planar(self, request: ProductSearchRequest) -> PairMatch | None:
         """A rug's reviewed pair, matched exactly; any other kind that can be
-        read by side, matched on its shorter and longer floor side within a
-        small tolerance; anything else refused."""
+        read by side, matched on its shorter and longer side (a flat thing's
+        two largest sizes) within a small tolerance; anything else refused."""
         constraint = request.planar_dimensions
         if constraint is None:
             return None
@@ -267,7 +267,11 @@ class ProductDiscoveryService:
             )
         return PairMatch(
             constraint=constraint,
-            axes=(FloorSide.SHORTER, FloorSide.LONGER),
+            axes=(
+                (FaceSide.SHORTER, FaceSide.LONGER)
+                if self._dimensions.is_flat(subcategory)
+                else (FloorSide.SHORTER, FloorSide.LONGER)
+            ),
             tolerance=self._settings.pair_tolerance_share,
         )
 

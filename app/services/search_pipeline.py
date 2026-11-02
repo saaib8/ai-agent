@@ -54,6 +54,7 @@ from app.schemas.query import ConstraintStrength, ResolvedSearch, SemanticPrefer
 from app.schemas.relaxation import (
     AppliedRelaxation,
     AttributeRelaxationChange,
+    ClosestSizeChange,
     ControlledSearchResult,
     DimensionRelaxationChange,
     RelaxableField,
@@ -118,6 +119,7 @@ class ProductSearchPipeline:
         dropped_constraints: tuple[DroppedConstraint, ...] = (),
         earlier_sizes_applied: bool = False,
         presentation_limit: int | None = None,
+        closest_sizes: bool = False,
     ) -> ProductSearchExecutionResult:
         """Run one search and return what may be committed and explained.
 
@@ -130,10 +132,15 @@ class ProductSearchPipeline:
         suggestion beside a product is a few pieces, not a page. It can only
         lower the configured limit, never raise it, and like that limit it is
         display policy applied after ranking (CLAUDE.md 16.1).
+
+        `closest_sizes` is for a customer's own search: sizes nothing met are
+        answered with the closest, said as such (CLAUDE.md 13.5).
         """
         started = time.perf_counter()
 
-        searched, ranked = await self._search_and_rank(resolved, context, explain_empty=True)
+        searched, ranked = await self._search_and_rank(
+            resolved, context, explain_empty=True, closest_sizes=closest_sizes
+        )
 
         limit = (
             self._presentation_limit
@@ -208,6 +215,7 @@ class ProductSearchPipeline:
         context: RetailerContext,
         *,
         explain_empty: bool = False,
+        closest_sizes: bool = False,
     ) -> tuple[ControlledSearchResult, SemanticRankingResult]:
         """Eligibility, then order, then the proof that they are the same set.
 
@@ -221,7 +229,9 @@ class ProductSearchPipeline:
         differ, so they stay with the callers rather than being hidden behind a
         flag here.
         """
-        searched = await self._relaxation.search(resolved, context, explain_empty=explain_empty)
+        searched = await self._relaxation.search(
+            resolved, context, explain_empty=explain_empty, closest_sizes=closest_sizes
+        )
         eligible_ids = tuple(c.product.product_id for c in searched.candidates)
         ranked = await self._ranking.rank(
             _ranking_view(resolved, searched),
@@ -478,6 +488,13 @@ def _ranking_view(resolved: ResolvedSearch, searched: ControlledSearchResult) ->
 
 
 def _summary_item(change: AppliedRelaxation) -> RelaxationSummaryItem:
+    if isinstance(change, ClosestSizeChange):
+        return RelaxationSummaryItem(
+            field=change.field,
+            strength=change.strength,
+            original_value=change.asked,
+            applied_value="none at that size - the closest sizes, nearest first",
+        )
     if isinstance(change, AttributeRelaxationChange):
         return RelaxationSummaryItem(
             field=change.field,

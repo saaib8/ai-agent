@@ -91,3 +91,13 @@ async def test_a_search_of_ours_never_takes_their_message() -> None:
     )
 
     assert pipeline.calls[-1].customer_words is None
+
+
+async def test_a_customer_search_shows_the_closest_sizes_when_none_is_theirs() -> None:
+    """Their own search answers a size nothing meets with the closest, said
+    as such (CLAUDE.md 13.5); a room piece's options never do."""
+    services, pipeline = _services()
+
+    await _call("search_products", {"search": BEDS}, AgentStateV1(), services, "beige king beds")
+
+    assert pipeline.closest_sizes is True

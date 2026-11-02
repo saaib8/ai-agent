@@ -56,7 +56,7 @@ from app.schemas.product import (
     parse_style_tokens,
 )
 from app.schemas.retailer import RetailerContext
-from app.taxonomy.dimensions import FloorSide, SourceAxis
+from app.taxonomy.dimensions import FaceSide, FloorSide, Measure, SourceAxis
 from app.taxonomy.name_match import (
     ARABIC_FOLD_FROM,
     ARABIC_FOLD_TO,
@@ -211,15 +211,42 @@ def _floor_sides() -> tuple[ColumnElement[Any], ColumnElement[Any]]:
 _LONG_SIDE, _SHORT_SIDE = _floor_sides()
 
 
-def _measured(axis: SourceAxis | FloorSide) -> ColumnElement[Any]:
-    """What one constraint compares, in centimetres: a stored column, or the
+def _face_sides() -> tuple[ColumnElement[Any], ColumnElement[Any]]:
+    """A flat thing's longer and shorter side, in centimetres: the two largest
+    of its three listed sizes, whichever columns hold them - the smallest is
+    its thickness. NULL unless at least two are present in a recognised unit.
+
+    GREATEST and LEAST skip NULLs, so with two sizes they are the two sides,
+    and with three the middle one is the total less the largest and smallest.
+    """
+    sizes = [_centimetres(axis) for axis in SourceAxis]
+    present = sum((case((size.isnot(None), 1), else_=0) for size in sizes), literal(0))
+    largest, smallest = func.greatest(*sizes), func.least(*sizes)
+    middle = sizes[0] + sizes[1] + sizes[2] - largest - smallest
+    return (
+        case((present >= 2, largest), else_=None),
+        case((present == 3, middle), (present == 2, smallest), else_=None),
+    )
+
+
+_LONG_FACE, _SHORT_FACE = _face_sides()
+
+_SIDES: dict[FloorSide | FaceSide, ColumnElement[Any]] = {
+    FloorSide.LONGER: _LONG_SIDE,
+    FloorSide.SHORTER: _SHORT_SIDE,
+    FaceSide.LONGER: _LONG_FACE,
+    FaceSide.SHORTER: _SHORT_FACE,
+}
+
+
+def _measured(axis: Measure) -> ColumnElement[Any]:
+    """What one constraint compares, in centimetres: a stored column, the
     piece's longer or shorter floor side - the larger or smaller of its two
-    floor columns, so a merchant's column habits make no difference."""
-    if axis is FloorSide.LONGER:
-        return _LONG_SIDE
-    if axis is FloorSide.SHORTER:
-        return _SHORT_SIDE
-    return _centimetres(axis)
+    floor columns, so a merchant's column habits make no difference - or a
+    flat thing's side."""
+    if isinstance(axis, SourceAxis):
+        return _centimetres(axis)
+    return _SIDES[axis]
 
 
 def _axis_clauses(constraint: AxisConstraint) -> list[ColumnElement[bool]]:
@@ -246,7 +273,7 @@ def _planar_clause(match: PairMatch) -> ColumnElement[bool]:
     """
     low, high = match.constraint.sides
     first_axis, second_axis = match.axes
-    if isinstance(first_axis, FloorSide):
+    if not isinstance(first_axis, SourceAxis):
         share = match.tolerance
         return _measured(first_axis).between(low * (1 - share), low * (1 + share)) & _measured(
             second_axis

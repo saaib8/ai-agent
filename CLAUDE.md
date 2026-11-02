@@ -1201,20 +1201,30 @@ What may widen, and by how much:
   Replacing one subcategory with another needs an approved alternative policy,
   and none exists. Its recorded strength is preserved for that future decision.
 
-- **A measurement widens only where the approved allowlist permits it** (15.2),
-  by 5% then 10% of the original, and a target widens symmetrically about its
-  figure rather than becoming a ceiling.
+- **A measurement widens only where the policy permits it** (15.2) - read by
+  side, a loose size of any kind - by 5% then 10% of the original, and a
+  target widens symmetrically about its figure rather than becoming a ceiling.
 - **A strict colour or style is the one exception to "locked never relaxes",
   and only as a last resort** (12.4): when the pool is still empty after every
   permitted widening, that filter alone is lifted, everything else is kept, and
   the lift is always recorded and disclosed. A requirement some product meets
   is never lifted. A strict value no approved value expresses cannot match at
   all, so its exact attempt is recorded as zero and the lift runs at once.
+- **Sizes nothing meets are answered with the closest, on a customer's own
+  search** - the other exception, and only as a last resort, after the colour
+  or style one: their sizes widen by a share of their own figures, band by band
+  (`relaxation.closest_size_steps`, 20%, 35%, 50% - a pair as its shorter and
+  longer side), nearest band first, until enough are found, and to any size
+  only if even the widest band finds none. Everything else they asked is kept.
+  Each band is recorded (`ClosestSizeChange`: what they asked, how far) and the
+  reply says there is none at exactly their size and these are the closest -
+  never that they are their size, and never a question first. A room piece's
+  options never do it: their size is the designer's floor (10.1).
 
 Within one strength, price is offered before seating, and measurements come
 last. With two price steps, one seating step and two dimension steps per
 strength, at most ten widened attempts can follow the exact search, plus the
-single colour/style last resort.
+single colour/style last resort and the closest-size bands.
 
 Only a fully resolved search may be relaxed. A request carrying an unsupported
 requirement (material, an unreliable measurement), or one awaiting
@@ -1253,7 +1263,9 @@ empty, the relaxation layer also counts what each of the customer's own
 requirements, set aside alone, would find (`set_aside`: price, seats, each
 measurement, a size pair, strict colour, strict style - never the product
 type), and for a budget nothing meets, the nearest real price in their
-currency. Only on a customer search, never for room optimisation. The reply
+currency. Only on a customer search, never for room optimisation. Sizes are
+answered with the closest instead (above), so a search held back only by its
+sizes is never empty. The reply
 offers the most useful one as a question they can say yes to ("sofas here start
 at 990 SAR - shall I show you the most affordable ones?"). Nothing is set aside
 for them: that stays their decision.
@@ -1472,10 +1484,11 @@ and not width. **Absence of a role means unsupported, never "guess"**, and the
 registry records a machine-readable reason for the refusals it states
 deliberately.
 
-**Not every product type qualifies.** Where the audit found the stored axes
-unreliable - beds, whose two planar axes both sit in 190-230 cm with some rows
-transposed; sectionals, which record one span or the other - planar filtering is
-refused rather than offered approximately.
+**Read by column (`discovery.size_by_side` off), not every product type
+qualifies.** Where the store-50 audit found the stored axes unreliable - beds,
+whose two planar axes both sit in 190-230 cm with some rows transposed;
+sectionals, which record one span or the other - planar filtering is refused.
+Read by side, the sides answer it.
 
 **Read by side (`discovery.size_by_side`, on by default).** Merchants put a
 piece's floor measurements in either column, so a floor measurement is read as
@@ -1483,19 +1496,22 @@ the piece's **longer or shorter floor side** - the larger or smaller of its two
 floor columns - never as a named column. The model says which side the customer
 meant (a sofa's width is its long side, a bed's width its short side; depth is
 always the short side, enforced in code by `side_of`); it never names a column.
-A store that keeps a sofa's width in `width` gets exactly the answers store 50
-does. Refusals about which column holds which side (beds, chairs) are answered
-this way; what the shape or the data cannot answer - a corner set's width, a
-rug's single side, an unreliable height column - is still refused. Off, each
-role reads the column reviewed for store 50. On store 50's data the two agree
-for every kind except rows whose columns contradict each other, where the side
-is the true reading.
+A store's listed size is trusted as it is, like its price: every kind is
+searched and compared by its sides, with no list of kinds whose columns are
+"unreliable" and no rule per store. A flat thing (`flat_kinds` in
+`dimension_semantics_v1.yaml`: a rug, art, a mirror, bedding) is its two
+sides - the two largest of its three listed sizes, wherever the store put
+them, since the smallest is its thickness (a canvas listed 120 x 2 x 90 is
+120 x 90); "tall" or "long" is its longer side, and it has no depth.
+A set, a corner sofa or a hanging light is searched by the size the store lists,
+and the reply says it is the listed size, never that the whole set or the L is
+that size. Off, each role reads the column reviewed for store 50, with the old
+refusals.
 
 A **pair of sides** - "a desk 120 x 60", "a sofa 220 by 90" - works the same way
-for any recorded piece with one footprint: the smaller figure is the shorter
-side, the larger the longer, each matched within `discovery.pair_tolerance_share`
-(5%). Rugs keep their exact unordered match; a corner set has no single
-footprint and is refused. A pair nothing meets offers what setting it aside
+for any kind: the smaller figure is the shorter side, the larger the longer,
+each matched within `discovery.pair_tolerance_share` (5%). Rugs keep their exact
+unordered match. A pair nothing meets offers what setting it aside
 finds - store 50 lists beds by frame size, so "a bed 160 x 200" finds none.
 A pair given with no unit is centimetres (`PAIR_UNIT_WHEN_UNSAID`); a single
 bare number is still asked about.
@@ -1547,7 +1563,14 @@ too little - not a routine broadening. Measured on the reviewed store-50 data,
 86% of bounds already return enough without it, so the policy is deliberately
 small and fails closed.
 
-**Only two pairs relax in V1**: `sofa` and `service-table`, role
+**Read by side (`discovery.size_by_side`), a loose size of any kind widens**
+(`EVERY_KIND_DIMENSION_RELAXATION_POLICY`): every role and either side, only
+when the customer said it loosely (`approximate` or `preferred`), never a
+locked one, and a pair still never step by step - the closest sizes (13.5)
+answer a pair nothing meets. Sizes read by side mean the same in every store,
+so the store-50 allowlist below no longer decides.
+
+**Read by column, only two pairs relax**: `sofa` and `service-table`, role
 `OVERALL_WIDTH`. `LENGTH`, `DEPTH` and `HEIGHT` do not relax for any
 subcategory, `OVERALL_WIDTH` does not relax for any other subcategory, and a
 carpet's planar pair does not relax at all. A pair absent from the allowlist is
