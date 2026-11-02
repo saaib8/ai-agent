@@ -364,7 +364,9 @@ def conversation_adoption_service(
     if not settings.guest_handover:
         return None
     return ConversationAdoptionService(
-        sessions, ConversationMoves(app_resources.redis.client, settings)
+        sessions,
+        ConversationMoves(app_resources.redis.client, settings),
+        max_likes=app_resources.settings.customer_agent.max_likes,
     )
 
 

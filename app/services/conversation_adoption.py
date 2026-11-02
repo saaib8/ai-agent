@@ -14,7 +14,7 @@ from app.core.exceptions import InvalidRequestError
 from app.core.logging import get_logger
 from app.repositories.conversation_moves import ConversationMoves
 from app.repositories.sessions import SessionStore, shopper_of
-from app.schemas.agent_state import CartQuantity
+from app.schemas.agent_state import MAX_LIKED, CartQuantity
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import ShopperCart
 from app.schemas.session_adoption import ConversationAdoption, ConversationAdoptionRequest
@@ -23,9 +23,10 @@ logger = get_logger(__name__)
 
 
 class ConversationAdoptionService:
-    def __init__(self, sessions: SessionStore, moves: ConversationMoves) -> None:
+    def __init__(self, sessions: SessionStore, moves: ConversationMoves, *, max_likes: int) -> None:
         self._sessions = sessions
         self._moves = moves
+        self._max_likes = max_likes
 
     async def adopt(
         self, context: RetailerContext, request: ConversationAdoptionRequest
@@ -43,21 +44,28 @@ class ConversationAdoptionService:
         return ConversationAdoption(outcome=outcome, cart_lines_added=added)
 
     async def _merge_carts(self, store_id: int, guest: str, account: str) -> int:
-        """Add the guest's cart to the account's, the one every chat loads."""
+        """Add the guest's cart and likes to the account's, the ones every chat
+        loads. The count is of cart lines only."""
         guest_cart = await self._sessions.shopper_cart(store_id, guest)
-        if guest_cart is None or not guest_cart.selected_product_ids:
+        if guest_cart is None or not (
+            guest_cart.selected_product_ids or guest_cart.liked_product_ids
+        ):
             return 0
         account_cart = await self._sessions.shopper_cart(store_id, account)
-        merged, added = merged_cart(account_cart, guest_cart)
+        merged, added = merged_cart(account_cart, guest_cart, max_likes=self._max_likes)
         if merged != account_cart:
             await self._moves.keep_cart(store_id, account, merged)
         return added
 
 
-def merged_cart(account: ShopperCart | None, guest: ShopperCart) -> tuple[ShopperCart, int]:
+def merged_cart(
+    account: ShopperCart | None, guest: ShopperCart, *, max_likes: int = MAX_LIKED
+) -> tuple[ShopperCart, int]:
     """The account's cart with the guest's products after its own, and how many
     were new. A product in both keeps the larger quantity, so a cart merged
-    twice never doubles a line (CLAUDE.md 36)."""
+    twice never doubles a line (CLAUDE.md 36). The guest's likes follow the
+    account's, each once, the newest `max_likes` kept - the most any chat
+    holds."""
     base = account or ShopperCart()
     quantities = {line.product_id: line.quantity for line in base.cart_quantities}
     guest_quantities = {line.product_id: line.quantity for line in guest.cart_quantities}
@@ -75,7 +83,25 @@ def merged_cart(account: ShopperCart | None, guest: ShopperCart) -> tuple[Shoppe
         for product_id in products
         if quantities.get(product_id, 1) > 1
     )
-    return ShopperCart(selected_product_ids=tuple(products), cart_quantities=lines), added
+    return (
+        ShopperCart(
+            selected_product_ids=tuple(products),
+            cart_quantities=lines,
+            liked_product_ids=_merged_likes(
+                base.liked_product_ids, guest.liked_product_ids, max_likes
+            ),
+        ),
+        added,
+    )
+
+
+def _merged_likes(
+    account: tuple[int, ...] | None, guest: tuple[int, ...] | None, max_likes: int
+) -> tuple[int, ...] | None:
+    if account is None and guest is None:
+        return None
+    liked = tuple(dict.fromkeys((*(account or ()), *(guest or ()))))
+    return liked[-max_likes:]
 
 
 def _check_hand_over(guest: str, account: str) -> None:

@@ -464,8 +464,9 @@ a list of search cards while it is built.
   brief does not hold: the budget (only when unknown; saved with `note_room` the
   moment it is said), what the room is mostly for (`note_room` `purpose` -
   hosting guests, family TV, reading, children), the room's size once and why
-  ("I can design your room better if I know its size" - declined is `note_room`
-  `declined_size`, never asked again), how many sit there, the colours (several
+  ("I can design your room better if I know its size" - one plain question,
+  never its doors, windows or TV; declined is `note_room` `declined_size`, never
+  asked again), how many sit there, the colours (several
   may be given) and look, what they must have, would rather not have, or already
   own. The budget, purpose, head count and colours or look are known before it is
   built; "just design it" builds now. An amount said without a currency is in the
@@ -645,6 +646,14 @@ most one follow-up a turn, or none**: the same questions ride on a
 - **Taste** they say - likes and what they would rather avoid - is kept with
   `remember_taste` (`customer_preferences`): likes lean every new search, what
   they avoid is pushed down in every search and its pages. Nothing is hidden.
+  What they **liked** (♡) leans a search they ask for and its pages too, read
+  from the liked products' stored values (`app/services/liked_look.py`): the
+  colours of liked pieces of that kind or one reviewed to be shown with it
+  (a sofa set for sofas, `seating_v1.yaml` `shown_with`), the styles of any - after what they
+  said and what they avoid, before a designer's direction (`leaning_to_liked`
+  in the facts), never to what they said to avoid, and never a sort they
+  asked for ("cheapest" stays cheapest). A matched search, more like this and
+  what goes with a pick follow their own look instead.
 - **Head count orders, seats filter.** How many usually sit there is
   `head_count`: pieces that seat them first, unknown seat counts next, fewer
   last. A seat count they require ("a 3-seater") is the search's seats.
@@ -722,8 +731,10 @@ The screen is built from what this turn's tools produced
 (`app/agents/screen.py`), never from the reply's words. The reply's `show`
 chooses among them - never something shown before the turn's last list, which
 is the list "the second one" means - and the last thing shown is the default.
-Chips (`choices`) must answer the question the reply asks; a reply that offers
-them without a question is sent back as broken arguments. The store's support
+Chips (`choices`) must answer the question the reply asks, each an answer in
+itself - never a promise to answer ("I'll enter my budget"), so a figure they
+type, like the budget, has none; a reply that offers them without a question is
+sent back as broken arguments. The store's support
 channels are drawn from its contacts when `contact_store` ran.
 
 ### 10.5 Goals: what they are working toward
@@ -761,6 +772,11 @@ kept on `room_project` (`geometry`, `layout`), merged wall by wall - a wall said
 again keeps what it does not restate - and builds nothing. It is asked once,
 after something has been shown, when sizes start to decide: a second sofa, a
 rug, a whole room.
+
+**Asked as one plain question** - "What's your room size?" - answered in words,
+with no choices: never the doors, windows, the TV or the walls. The designer
+works with the size; walls the customer mentions on their own are still
+recorded (known issue 35).
 
 **Code measures; Nora judges** (`app/services/fit.py`):
 
@@ -2584,7 +2600,7 @@ keeps a cart of its own.
   `salla.check_cart` switches the check off.
 - **The cart is the shopper's, not one chat's.** The platform names the
   shopper at the front of every conversation id (`<16 hex>.<the widget's id>`).
-  Every saved turn keeps that shopper's cart beside their conversations
+  Every saved turn keeps that shopper's cart and liked list beside their conversations
   (`session.shopper_cart_ttl_s`, seven days), and every conversation they load
   - a new chat, or one they come back to - holds it (`app/services/shopper_cart.py`),
   so "what's in my cart?" answers the same in every chat. An id naming no
@@ -2601,7 +2617,8 @@ keeps a cart of its own.
   local sign-in stays behind. An account chat under that name is never
   overwritten, and asked twice the chat is already moved. The guest's cart
   joins the account's after its own lines, a product in both keeping the larger
-  quantity, so every account chat loads it.
+  quantity, so every account chat loads it; their likes follow the
+  account's, each once.
 - **The agents read it** in the session brief (10.4): each line by its place
   in the cart (`picked_ordinal`), with name, kind, quantity, line total and the
   room it was bought for, and the totals per currency - summed by the

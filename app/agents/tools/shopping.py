@@ -75,6 +75,7 @@ from app.services.agent_state import (
 from app.services.design_checks import figure_free, stocked_direction
 from app.services.fit import room_fit
 from app.services.grounding_builder import to_grounded_product
+from app.services.liked_look import with_liked_look
 from app.services.product_details import description_for
 from app.services.query_document import ranking_words
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
@@ -441,6 +442,51 @@ def search_outcome(run: Any, extra: dict[str, Any]) -> ToolOutcome:
     )
 
 
+def _matching(args: Any) -> bool:
+    """Whether the search is matched with what they have - Nora's direction
+    orders it, not their likes."""
+    return bool(args.match_with or args.match_goal is not None or args.match_room)
+
+
+async def _leaning_to_liked(
+    services: AgentServices,
+    state: AgentStateV1,
+    context: ToolContext,
+    resolved: ResolvedSearch,
+    lean: RankingLean | None,
+) -> tuple[RankingLean | None, dict[str, Any]]:
+    """The lean with the look of their liked products, and what it leaned to.
+
+    A sort they asked for is never leaned - "cheapest" means cheapest
+    (CLAUDE.md 16.1) - and what they said to avoid is left out of it.
+    Unreadable likes lean nothing: the search runs as it would have."""
+    liked = state.product_interaction.liked_product_ids
+    if not liked or resolved.request.sort is not ProductSort.DEFAULT:
+        return lean, {}
+    products = await hydrated(services, liked, context)
+    if products is None:
+        return lean, {}
+    request = resolved.request
+    # Kinds reviewed to be shown together are one look: a grey sofa set they
+    # liked says as much about a grey sofa, whether or not this search shows sets.
+    related = services.seating.shown_with(request.commerce_subcategory) if services.seating else ()
+    said = state.customer_preferences
+    leaning = with_liked_look(
+        lean,
+        products,
+        request,
+        related,
+        avoid_colours=said.avoid_colours,
+        avoid_styles=said.avoid_styles,
+    )
+    looks = {
+        "colours": list(leaning.learned_colours),
+        "styles": list(leaning.learned_styles),
+    }
+    told = {key: value for key, value in looks.items() if value}
+    return leaning, ({"leaning_to_liked": told} if told else {})
+
+
 async def _design_direction(
     services: AgentServices,
     args: Any,
@@ -734,6 +780,11 @@ def search_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                     "ordered_near_longer_side_cm": size.longer_target_cm(),
                     "size_reason": size.reason,
                 }
+        if not _matching(args):
+            # A search they asked for leans to the look of what they liked;
+            # a matched one follows the designer's direction instead.
+            lean, leaned = await _leaning_to_liked(services, state, context, resolved, lean)
+            matched = {**matched, **leaned}
         if lean is not None:
             resolved = resolved.model_copy(update={"lean": lean})
         extra = {**extra, **matched}

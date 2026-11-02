@@ -27,7 +27,15 @@ class RespondArgs(ToolArgs):
             "here and leave it out of the message - never both, and never reworded twice."
         ),
     )
-    choices: tuple[TextReplyChoice, ...] = Field(default=(), max_length=6)
+    choices: tuple[TextReplyChoice, ...] = Field(
+        default=(),
+        max_length=6,
+        description=(
+            "Answers to the reply's question the customer can tap - each one an answer in "
+            "itself, never a promise to answer ('I'll enter my budget'): a question whose "
+            "answer is a figure they type has no choices."
+        ),
+    )
     """Short answers to the reply's question the customer can tap. Only with a
     question - the follow-up, or one the message asks."""
 

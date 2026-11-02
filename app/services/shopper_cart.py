@@ -1,4 +1,5 @@
-"""The shopper's cart, carried into every conversation they have in a store.
+"""The shopper's cart and liked list, carried into every conversation they
+have in a store.
 
 The cart belongs to the shopper, not to one chat (CLAUDE.md 36). A conversation
 that starts - the widget's "New chat", or one whose session expired - starts
@@ -25,9 +26,10 @@ logger = get_logger(__name__)
 def with_shopper_cart(state: AgentStateV1, cart: object, *, new_conversation: bool) -> AgentStateV1:
     """`state` holding the shopper's cart in place of its own.
 
-    Only the cart - its products and how many of each - is the shopper's;
-    everything else stays. A product in focus that the new cart and the screen
-    no longer hold loses the focus, as removing it would have done.
+    Only the cart - its products and how many of each - and the liked list are
+    the shopper's; everything else stays. A product in focus that the new cart
+    and the screen no longer hold loses the focus, as removing it would have
+    done.
     """
     if not isinstance(cart, ShopperCart):
         return state
@@ -35,6 +37,7 @@ def with_shopper_cart(state: AgentStateV1, cart: object, *, new_conversation: bo
     if (
         cart.selected_product_ids == interaction.selected_product_ids
         and cart.cart_quantities == interaction.cart_quantities
+        and cart.liked_product_ids in (None, interaction.liked_product_ids)
     ):
         return state
     updated = _with_cart(interaction, cart)
@@ -63,6 +66,12 @@ def _with_cart(
         **interaction.model_dump(),
         "selected_product_ids": cart.selected_product_ids,
         "cart_quantities": [line.model_dump() for line in cart.cart_quantities],
+        # A record kept before likes followed the shopper leaves this chat's own.
+        **(
+            {"liked_product_ids": cart.liked_product_ids}
+            if cart.liked_product_ids is not None
+            else {}
+        ),
     }
     try:
         return ProductInteractionState.model_validate(fields)
