@@ -28,6 +28,7 @@ from app.schemas.bundle_presentation import (
 from app.schemas.chat import ChatPresentation
 from app.schemas.comparison import (
     LISTED_FIELDS,
+    ComparisonCell,
     ComparisonField,
     ComparisonRow,
     ProductComparisonResult,
@@ -37,6 +38,7 @@ from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import CommerceClassification, ProductDisplay
 from app.services.chip_wording import currency_word
+from app.services.product_size import lone_floor_side
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.words import customer_words
@@ -230,22 +232,25 @@ def displayed(
             }
         )
 
+    def worded(row: ComparisonRow, cell: ComparisonCell, product: ShownProduct) -> ComparisonCell:
+        if cell.one_side:
+            shown = lone_side_words(product.dimensions, language)
+        elif cell.known and row.field in LISTED_FIELDS:
+            shown = words.comparison_cell(row.field, product, language)
+        else:
+            return cell
+        return cell.model_copy(update={"display": shown})
+
     def worded_rows(compared: ProductComparisonResult) -> tuple[ComparisonRow, ...]:
         return tuple(
             row.model_copy(
                 update={
                     "cells": tuple(
-                        cell.model_copy(
-                            update={"display": words.comparison_cell(row.field, product, language)}
-                        )
-                        if cell.known
-                        else cell
+                        worded(row, cell, product)
                         for cell, product in zip(row.cells, compared.products, strict=True)
                     )
                 }
             )
-            if row.field in LISTED_FIELDS
-            else row
             for row in compared.rows
         )
 
@@ -384,6 +389,22 @@ def size_words(dimensions: NormalisedDimensions, language: ReplyLanguage) -> str
         if value is not None
     ]
     return f"{' · '.join(parts)} {unit}" if parts else None
+
+
+_ONE_SIDE = {
+    ReplyLanguage.EN: "{size} {unit} (one side listed)",
+    ReplyLanguage.AR: "{size} {unit} (مذكور ضلع واحد)",
+}
+
+
+def lone_side_words(dimensions: NormalisedDimensions, language: ReplyLanguage) -> str | None:
+    """The one floor size a store recorded, as listed - never named the longer
+    or the shorter side (`lone_floor_side`)."""
+    lone = lone_floor_side(dimensions)
+    if lone is None:
+        return None
+    unit = _SIZE_WORDS[language][3]
+    return _ONE_SIDE[language].format(size=_figure(lone, 1), unit=unit)
 
 
 def _figure(value: Decimal, places: int) -> str:

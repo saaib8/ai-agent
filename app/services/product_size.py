@@ -61,6 +61,18 @@ def size_distance(long_cm: Decimal | None, target_cm: Decimal | None) -> Decimal
     return abs(long_cm - target_cm) / target_cm
 
 
+def lone_floor_side(dimensions: NormalisedDimensions) -> Decimal | None:
+    """The one floor size a store recorded where it left the other empty -
+    240 cm with no second side. Which side it is cannot be told, so it is
+    never read as the longer or the shorter; it is shown as listed."""
+    if not dimensions.is_usable:
+        return None
+    first, second = dimensions.length_cm, dimensions.width_cm
+    if (first is None) == (second is None):
+        return None
+    return first if first is not None else second
+
+
 _COLUMN_VALUES: dict[SourceAxis, str] = {
     SourceAxis.LENGTH: "length_cm",
     SourceAxis.WIDTH: "width_cm",

@@ -1287,12 +1287,17 @@ async def sorted_card_facts(
     sort = active.request.sort
     if sort is ProductSort.BEST_RATED:
         listings = [p.listing for p in run.grounding.products]
-        facts["products"] = [
+        rated = [
             {**card, "rating": {"stars": plain(lst.rating), "reviews": lst.review_count}}
             if lst.rating is not None and lst.review_count
             else card
             for card, lst in zip(cards, listings, strict=False)
         ]
+        facts["products"] = rated
+        if not any("rating" in card for card in rated):
+            # Nothing rated: the cards are tied, so the list is no rated order
+            # and the reply must not call it one.
+            facts["none_rated"] = True
         return replace(outcome, facts=facts)
     if sort is not ProductSort.BEST_SELLING or services.best_sellers is None:
         return outcome

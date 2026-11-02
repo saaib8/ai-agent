@@ -155,3 +155,17 @@ def test_a_weight_keeps_its_grams(stored: str, shown: str) -> None:
 def test_one_month_is_singular_in_both_languages() -> None:
     assert month_words(1, ReplyLanguage.EN) == "1 month"
     assert month_words(1, ReplyLanguage.AR) == "شهر واحد"
+
+
+def test_a_lone_floor_size_is_worded_as_listed_in_both_languages() -> None:
+    from app.schemas.dimensions import DimensionStatus as Status
+    from app.services.product_display import lone_side_words
+
+    lone = NormalisedDimensions(
+        status=Status.NORMALISED, length_cm=Decimal("240"), height_cm=Decimal("85")
+    )
+
+    assert lone_side_words(lone, ReplyLanguage.EN) == "240 cm (one side listed)"
+    assert lone_side_words(lone, ReplyLanguage.AR) == "240 سم (مذكور ضلع واحد)"
+    both = lone.model_copy(update={"width_cm": Decimal("95")})
+    assert lone_side_words(both, ReplyLanguage.EN) is None

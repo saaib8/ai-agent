@@ -68,7 +68,9 @@ material, rating, weight, warranty and discount**. **Draw every row it sends,
 filled or not**: a cell with `known: false` is a detail the store left empty -
 show `labels.not_listed` ("Not listed" / "غير مذكور"), never drop the row. Only
 details the compared kinds do not have are left out by the server (seats on a
-coffee maker, a depth on a rug). The rating, weight, warranty and discount cells carry
+coffee maker, a depth on a rug). A piece whose store recorded only one floor size
+shows it in the width row with `one_side: true` and `display` worded as listed
+("240 cm (one side listed)" / "240 سم (مذكور ضلع واحد)"). The rating, weight, warranty and discount cells carry
 `display` - the value worded for the reply's language ("4.5 من تقييمين", "24 شهرًا",
 "خصم 20%، كان 1,250 ريال") - show it in place of `value`. Main material has no
 reviewed Arabic words, so it is shown as the store stored it (`value`). Row names are `labels.field_main_material`, `field_rating`,

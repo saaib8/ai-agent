@@ -87,8 +87,11 @@ class ComparisonCell(BaseModel):
     value: str | None = None
     display: str | None = Field(default=None, exclude_if=lambda v: v is None)
     """The value worded for the reply's language, where it is a listed extra
-    (rating, warranty, weight, discount) - display only; `value` stays the
-    English every later turn reads."""
+    (rating, warranty, weight, discount) or a lone floor size - display only;
+    `value` stays the English every later turn reads."""
+    one_side: bool = Field(default=False, exclude_if=lambda v: not v)
+    """A floor size shown as the store listed it: the only one recorded, so
+    whether it is the longer or the shorter side is not claimed."""
 
     @model_validator(mode="after")
     def _known_means_a_value(self) -> Self:
@@ -96,6 +99,8 @@ class ComparisonCell(BaseModel):
             raise ValueError("a known cell needs a value")
         if not self.known and self.value is not None:
             raise ValueError("an unknown cell cannot carry a value")
+        if self.one_side and not self.known:
+            raise ValueError("a lone floor size is a known value")
         return self
 
 

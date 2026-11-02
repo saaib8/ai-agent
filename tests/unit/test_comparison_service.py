@@ -460,3 +460,23 @@ def test_the_service_authors_no_prose() -> None:
 
     for forbidden in ('f"The ', "recommend", "better", "you should"):
         assert forbidden not in statements
+
+
+async def test_a_lone_floor_size_is_shown_as_listed_never_as_a_side() -> None:
+    """A sofa listed only as 240 long and 85 high: the 240 on its card is in
+    the table, marked as the one side listed, and no depth is invented."""
+    lone = _row(1, dimensions=RawDimensions(length=Decimal("240"), height=Decimal("85"), unit="cm"))
+    both = _row(2, dimensions=RawDimensions(length=Decimal("75"), width=Decimal("150"), unit="cm"))
+    taxonomy = load_taxonomy()
+    service = ProductComparisonService(
+        cast(ProductRepository, FakeRepository([lone, both])),
+        load_dimension_semantics(taxonomy=taxonomy, by_side=True),
+        load_seating_semantics(taxonomy=taxonomy),
+        CustomerAgentSettings(),
+    )
+    result = _ok(await service.compare([1, 2], CONTEXT))
+
+    width = _row_for(result, ComparisonField.OVERALL_WIDTH).cells
+    assert (width[0].value, width[0].one_side) == ("240 cm (one side listed)", True)
+    assert (width[1].value, width[1].one_side) == ("150 cm", False)
+    assert [c.value for c in _row_for(result, ComparisonField.DEPTH).cells] == [None, "75 cm"]

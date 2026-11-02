@@ -53,8 +53,8 @@ from app.schemas.resolution import (
 from app.schemas.retailer import RetailerContext
 from app.services.discovery import to_candidate
 from app.services.grounding_builder import to_grounded_product
-from app.services.product_size import measurement
-from app.taxonomy.dimensions import DimensionRole, DimensionSemantics
+from app.services.product_size import lone_floor_side, measurement
+from app.taxonomy.dimensions import DimensionRole, DimensionSemantics, FloorSide
 from app.taxonomy.seating import SeatingSemantics
 
 logger = get_logger(__name__)
@@ -67,6 +67,8 @@ _DIMENSION_FIELDS: dict[ComparisonField, DimensionRole] = {
 }
 
 _UNKNOWN = ComparisonCell(known=False)
+ONE_SIDE = " (one side listed)"
+"""Marks a lone floor size in the English value the agent reads."""
 
 
 class ProductComparisonService:
@@ -172,6 +174,13 @@ class ProductComparisonService:
         if by is None:
             return _UNKNOWN
         value = measurement(product.dimensions, by)
+        if value is None and by is FloorSide.LONGER:
+            # Only one floor size recorded: shown in the width row as listed,
+            # never claimed as the longer side - a size on the card is never
+            # missing from the table.
+            lone = lone_floor_side(product.dimensions)
+            if lone is not None:
+                return ComparisonCell(known=True, value=f"{lone} cm{ONE_SIDE}", one_side=True)
         return _optional(None if value is None else f"{value} cm")
 
 

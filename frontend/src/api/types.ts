@@ -321,8 +321,12 @@ export type ComparisonStatus = 'same' | 'different' | 'unknown'
 export interface ComparisonCell {
   known: boolean
   value: string | null
-  /** The value worded for the reply's language, for the listed extras. */
+  /** The value worded for the reply's language, for the listed extras and a
+   *  lone floor size. */
   display?: string
+  /** The only floor size the store recorded, shown as listed - never claimed
+   *  as the longer or the shorter side. */
+  one_side?: boolean
 }
 
 export interface ComparisonRow {
