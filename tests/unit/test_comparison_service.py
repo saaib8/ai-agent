@@ -148,12 +148,13 @@ def test_the_configured_maximum_cannot_exceed_the_schema_ceiling() -> None:
     assert CustomerAgentSettings(comparison_max_products=MAX_COMPARED_PRODUCTS)
 
 
-def test_the_default_maximum_is_the_picks_trays_size() -> None:
-    """A product decision: customers compare as many as they like, and the
-    default lets "compare my picks" cover a full tray."""
-    assert (
-        CustomerAgentSettings().comparison_max_products == CustomerAgentSettings().max_picks == 10
-    )
+def test_the_default_maximum_is_ten_whatever_the_cart_holds() -> None:
+    """A comparison table stays readable at ten; the cart holds far more, so
+    "compare my picks" past ten is refused with the limit, never cut."""
+    settings = CustomerAgentSettings()
+    assert settings.comparison_max_products == 10
+    assert settings.max_picks == 100
+    assert settings.cart_max_quantity == 20
 
 
 async def test_the_same_product_twice_is_refused() -> None:

@@ -262,13 +262,13 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
   ("That product can't be added to this store's cart.", "That product is out of
   stock.", "The store takes up to 3 of this product per order."). So Salla refusing
   at `addItem` is now rare (a colour or size skipped, stock that moved) - still undo it.
-- **The cart holds 10 products** however they are added: a tap past it is refused
+- **The cart holds 100 products** however they are added: a tap past it is refused
   (`pick_limit`); a typed add or an offer's yes gets the reply "Your cart is full -
   remove a product from it to add another." and changes nothing.
 - **Changing it:** `POST /v1/picks` with `{"kind":"quantity","pick":N,"quantity":Q}`
-  (1..`cart_max_quantity`, default 10 - else 422 `cart_quantity`), `{"kind":"deselect","pick":N}`
+  (1..`cart_max_quantity`, default 20 - else 422 `cart_quantity`), `{"kind":"deselect","pick":N}`
   to remove, `{"kind":"select","ordinal":N,"list_revision":R}` to add a card (cart
-  full - default 10 products - is 422 `pick_limit`). After a new pick the widget
+  full - default 100 products - is 422 `pick_limit`). After a new pick the widget
   opens the turn as before (`goes_with`), now with `say_added_to_cart` as the message.
 - **"I like the fifth one" asks first.** The reply offers it - its price and what the
   cart would then come to - with two chips in `presentation.choices`: Yes
