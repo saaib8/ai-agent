@@ -163,4 +163,8 @@ def _product(action: ProductActionRequest) -> Tap:
             return Tap(
                 TapEvent(button="add_card_to_cart", card=action.card.ordinal), (action.card,)
             )
+        case "visualize":
+            return Tap(
+                TapEvent(button="visualize_card", card=action.card.ordinal), (action.card,)
+            )
     raise AssertionError(f"unhandled product action {action.kind}")

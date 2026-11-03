@@ -75,7 +75,6 @@ from app.services.retailer_context import RetailerContextProvider
 from app.services.room_photo import RoomPhotoService
 from app.services.room_visualization import (
     CatalogVisualizationRuntime,
-    ProductVisualizationRuntime,
     RoomVisualizer,
     VisualizationTurnRuntime,
 )
@@ -512,6 +511,7 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         cart=CartService(repository),
         store_knowledge=app_resources.store_knowledge,
         details=ProductDetailsService(repository, settings.products),
+        visualizer=_optional_room_visualizer(session, app_resources),
         best_sellers=BestSellerService(repository, settings.products),
         support=(
             SupportService(
@@ -688,6 +688,21 @@ def _room_visualizer(session: AsyncSession, app_resources: AppResources) -> Room
     )
 
 
+def _optional_room_visualizer(
+    session: AsyncSession, app_resources: AppResources
+) -> RoomVisualizer | None:
+    """The render pipeline for the agents' visualize_product tool, or None when
+    visualisation is not configured - a deployment without it serves chat
+    exactly as before, the tool simply refusing."""
+    if (
+        app_resources.settings.visualization is None
+        or app_resources.render_generator is None
+        or app_resources.render_photos is None
+    ):
+        return None
+    return _room_visualizer(session, app_resources)
+
+
 def visualization_turn_runtime(
     session: SessionDep, app_resources: ResourcesDep
 ) -> VisualizationTurnRuntime:
@@ -715,19 +730,6 @@ def catalog_visualization_runtime(
         _room_photo_store(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
         writer=reply_writer(session, app_resources),
-    )
-
-
-def product_visualization_runtime(
-    session: SessionDep, app_resources: ResourcesDep
-) -> ProductVisualizationRuntime:
-    """A render of one product the customer tapped, staged in a room."""
-    return ProductVisualizationRuntime(
-        _room_visualizer(session, app_resources),
-        ProductReferenceResolver(ProductRepository(session), app_resources.attributes),
-        session_store(app_resources),
-        app_resources.settings.session,
-        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
     )
 
 
@@ -773,8 +775,5 @@ VisualizationTurnRuntimeDep = Annotated[
 ]
 CatalogVisualizationRuntimeDep = Annotated[
     CatalogVisualizationRuntime, Depends(catalog_visualization_runtime)
-]
-ProductVisualizationRuntimeDep = Annotated[
-    ProductVisualizationRuntime, Depends(product_visualization_runtime)
 ]
 CatalogServiceDep = Annotated[CatalogService, Depends(catalog_service)]

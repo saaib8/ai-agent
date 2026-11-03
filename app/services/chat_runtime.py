@@ -171,7 +171,7 @@ class ChatRuntime:
                 self._worked(turn, trace),
                 short_s=self._deadline_s,
                 long_s=self._room_deadline_s,
-                extended=lambda: trace.room_design,
+                extended=lambda: trace.room_design or trace.rendering,
             )
         except TimeoutError:
             trace.finish(owner=None, fallback="turn deadline")

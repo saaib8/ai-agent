@@ -11,6 +11,7 @@ import pytest
 from app.agents.facts import cart_facts, product_facts
 from app.agents.loop import TurnBudget, json_facts
 from app.agents.operations.rooms import RoomEngine, RoomOutcome
+from app.agents.payloads import RenderShown
 from app.agents.reply import unsupported_figure
 from app.agents.services import AgentServices
 from app.agents.tools.common import RespondArgs
@@ -44,6 +45,7 @@ from app.schemas.resolution import (
 )
 from app.schemas.seating_solution import SeatingShape
 from app.schemas.support import SupportContacts
+from app.schemas.visualization import RenderSource, RoomRenderPresentation
 from app.services.cross_sell import CompanionSearchBuilder
 from app.services.grounding_builder import to_grounded_product
 from app.services.support import SupportService
@@ -59,6 +61,7 @@ from tests.unit.agents.fakes import (
     FakeComparison,
     FakeHydration,
     FakePipeline,
+    FakeReferences,
     _product,
     _state,
     agent_services,
@@ -674,3 +677,62 @@ def test_a_figure_in_words_in_a_product_name_is_not_a_figure() -> None:
     reply = RespondArgs(message="It seats 2.")
 
     assert unsupported_figure(reply, _work(facts), "seats?", ConversationContext(), [{}])
+
+
+# ── visualize_product (see it in a room) ────────────────────────────────────
+
+
+class _FakeVisualizer:
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    async def render_single(self, product_id: int, context: Any) -> RoomRenderPresentation:
+        self.calls.append(product_id)
+        return RoomRenderPresentation(
+            image_url="data:image/jpeg;base64,eA==",
+            width=1536,
+            height=1024,
+            view=None,
+            view_label="In a room",
+            items=(),
+            source=RenderSource.PRODUCT,
+        )
+
+
+async def test_visualize_product_stages_the_card_and_focuses_it() -> None:
+    """The tapped/typed card renders to a RenderShown, and the piece is put in
+    focus so the "Add to cart" chip adds that one."""
+    viz = _FakeVisualizer()
+    services = agent_services(
+        references=FakeReferences(default=ResolvedProductReference(product_id=10)),
+        hydration=FakeHydration(available=(10,)),
+        visualizer=cast(Any, viz),
+    )
+    outcome = await _call(
+        "visualize_product",
+        {"which": {"kind": "presented_ordinal", "position": 1}},
+        _state(presented=(10, 11)),
+        services=services,
+    )
+
+    assert outcome.status is ToolStatus.OK
+    assert isinstance(outcome.payload, RenderShown)
+    assert outcome.payload.render.source is RenderSource.PRODUCT
+    assert viz.calls == [10]
+    assert outcome.state is not None
+    assert outcome.state.product_interaction.focused_product_id == 10
+    assert "staged" in (outcome.facts or {})
+
+
+async def test_visualize_product_refused_when_visualisation_is_unconfigured() -> None:
+    """A deployment without visualisation configured has no visualizer; the
+    tool refuses rather than crashing, and nothing is rendered."""
+    outcome = await _call(
+        "visualize_product",
+        {"which": {"kind": "presented_ordinal", "position": 1}},
+        _state(presented=(10, 11)),
+        services=agent_services(visualizer=None),
+    )
+
+    assert outcome.status is ToolStatus.REFUSED
+    assert outcome.code == "visualisation_unavailable"

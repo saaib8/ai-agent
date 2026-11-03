@@ -41,6 +41,9 @@ class TurnTrace:
     room_design: bool = False
     """Nora is designing a whole room this turn: its time limits are the
     room's (`agents.room_*_deadline_s`)."""
+    rendering: bool = False
+    """An image is being generated this turn (visualize_product): slow like a
+    room design, so it takes the room's longer time limits too."""
 
     def add(self, event: TraceEvent) -> None:
         self.events.append(event)

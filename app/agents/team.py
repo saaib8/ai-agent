@@ -206,7 +206,7 @@ class AgentTeam:
                 self._graph.ainvoke(initial),
                 short_s=self._settings.work_deadline_s,
                 long_s=self._settings.room_work_deadline_s,
-                extended=lambda: trace.room_design,
+                extended=lambda: trace.room_design or trace.rendering,
             )
             reply = final.get("reply")
             if reply is None:

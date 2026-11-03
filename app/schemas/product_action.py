@@ -144,13 +144,25 @@ class AddToCartAction(BaseModel):
     card: CardRef | None = None
 
 
+class VisualizeAction(BaseModel):
+    """See this card's product staged in a room of its own - the "See it in a
+    room" button, routed to Sara exactly as a typed "show the second one in a
+    room" (visualize_product)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["visualize"] = "visualize"
+    card: CardRef
+
+
 ProductActionRequest = Annotated[
     GoesWithPickAction
     | ComparePicksAction
     | CompareCardsAction
     | CompanionAction
     | MoreLikeThisAction
-    | AddToCartAction,
+    | AddToCartAction
+    | VisualizeAction,
     Field(discriminator="kind"),
 ]
 """Any screen-driven product action, told apart by `kind`."""

@@ -599,17 +599,6 @@ export interface VisualizeRequest {
   expected_session_revision?: number
 }
 
-/** Stage one product on screen in a room of its own. The card is named by its
- *  position (`ordinal` + `list_revision`), resolved server-side; no product id
- *  is ever sent. */
-export interface ProductVisualizeRequest {
-  session_id: string
-  store_id: number
-  ordinal: number
-  list_revision?: number
-  expected_session_revision?: number
-}
-
 /** A room photo the server checked, emptied and keeps for the session. */
 export interface RoomPhotoResponse {
   room_photo_id: string
@@ -799,6 +788,8 @@ export type ProductAction =
   /** "Yes, add it" under an offer to add a piece they liked: its card, or the
    *  piece in focus when the card is null. */
   | { kind: 'add_to_cart'; card?: { list_revision: number; ordinal: number } | null }
+  /** "See it in a room" on a card: stage its product in a room of its own. */
+  | { kind: 'visualize'; card: { list_revision: number; ordinal: number } }
 
 /** A ready answer to tap; when it carries an action, tapping runs it. */
 export interface ReplyChoice {

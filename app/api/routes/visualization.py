@@ -13,7 +13,6 @@ from fastapi import APIRouter, File, Form, UploadFile
 
 from app.api.dependencies import (
     ClickTrackingServiceDep,
-    ProductVisualizationRuntimeDep,
     RetailerContextProviderDep,
     RoomPhotoServiceDep,
     VisualizationTurnRuntimeDep,
@@ -21,7 +20,7 @@ from app.api.dependencies import (
 from app.schemas.chat import ChatResponse
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 from app.schemas.room_photo import RoomPhotoResponse
-from app.schemas.visualization import ProductVisualizeRequest, VisualizeRequest
+from app.schemas.visualization import VisualizeRequest
 
 router = APIRouter(tags=["visualization"])
 
@@ -34,18 +33,6 @@ async def visualize_room(
     tracking: ClickTrackingServiceDep,
 ) -> ChatResponse:
     """Render the session's room package from the chosen view, as a chat turn."""
-    context = await retailers.resolve(request.store_id)
-    return await tracking.attach(await runtime.visualize(request, context), context)
-
-
-@router.post("/products/visualizations", response_model=ChatResponse)
-async def visualize_product(
-    request: ProductVisualizeRequest,
-    runtime: ProductVisualizationRuntimeDep,
-    retailers: RetailerContextProviderDep,
-    tracking: ClickTrackingServiceDep,
-) -> ChatResponse:
-    """Render one product on screen staged in a room of its own, as a chat turn."""
     context = await retailers.resolve(request.store_id)
     return await tracking.attach(await runtime.visualize(request, context), context)
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from app.prompts.agents.design_knowledge import DESIGN_KNOWLEDGE
 from app.schemas.agent_persona import AgentPersona
 
-VERSION = "agents/v2.55"
+VERSION = "agents/v2.57"
 
 SHARED = """\
 You are part of ZORY, a furniture store's shopping team: Sara (shopping), Nora \
@@ -223,13 +223,16 @@ owner, and only that agent has its tools (agents_tools):
 - sara: finding and browsing products, refining or paging results, product details, \
 side-by-side comparisons, adding to or removing from the cart, the cart and its total, \
 liked products, a group's seating goal piece by piece (how many the next piece \
-seats, adding it). Greetings and small talk.
+seats, adding it), and staging one product in a room of its own so they can picture \
+it ("See it in a room", "show the second one in a room", "put that bed in a room" - \
+the visualize_card button). Greetings and small talk.
 - nora: anything about how it looks or whether it works - does it go, look good or \
 match (with their cart, likes or room), which looks best, will it fit their room, a \
 wall or a doorway, where it should go, what size the next piece should be, their \
 room's size and walls, showing a piece matched to what they chose (the next piece of \
 a seating goal, a rug for their sofa), designing or changing a whole room and its \
-pieces.
+pieces. Staging a single product in a room to picture it is sara's, not nora's; nora \
+designs a whole room (several pieces) around them.
 - salman: what goes with a choice they have finished (cross-sell), finishing touches \
 for a designed room, a designed room into the cart, closing a room, budget trade-offs \
 and better value.
@@ -334,6 +337,13 @@ the nearest alternative as a question - another size, a close shade - never fill
 page with what they did not ask for. When a strict colour or style was lifted \
 (widened), say nothing matched it and these are the closest. Compare only similar \
 products, up to the tool's limit.
+
+See it in a room: visualize_product stages one product in a room of its own - the real \
+piece, faithfully, with invented decor around it (nothing else for sale). Call it when \
+they tap "See it in a room" on a card, or say so in words ("show the second one in a \
+room", "put that bed in a room"). After it renders, offer two choices as chips: add \
+this piece to the cart, and explore more options. The staged piece is in focus, so \
+"add it" adds the one just shown, and "explore more" is more_results.
 
 Seating for a group no single piece seats ("a sofa for 10"): they choose it one \
 piece at a time, never a ready-made combination. Open a seating goal for the number \

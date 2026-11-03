@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.agents.operations.cart import CartOperations
 from app.agents.operations.rooms import RoomEngine
@@ -35,6 +36,9 @@ from app.taxonomy.rooms import RoomPieces
 from app.taxonomy.seating import SeatingSemantics
 from app.taxonomy.subcategory_questions import SubcategoryQuestions
 
+if TYPE_CHECKING:
+    from app.services.room_visualization import RoomVisualizer
+
 
 @dataclass(frozen=True, slots=True)
 class AgentServices:
@@ -58,6 +62,9 @@ class AgentServices:
     store_knowledge: StoreKnowledgeService | None = None
     details: ProductDetailsService | None = None
     """One product's description and reviews, for product details."""
+    visualizer: RoomVisualizer | None = None
+    """Stages one product in a room of its own, for visualize_product; None
+    when visualisation is not configured."""
     best_sellers: BestSellerService | None = None
     """Which products are best sellers, asked for by the customer only."""
     support: SupportService | None = None

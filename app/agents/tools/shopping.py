@@ -27,6 +27,7 @@ from app.agents.operations.rooms import open_room_options
 from app.agents.payloads import (
     ComparisonShown,
     ProductShown,
+    RenderShown,
     SearchShown,
     SelectionShown,
 )
@@ -1009,6 +1010,47 @@ def details_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
     )
 
 
+def visualize_product_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
+    async def visualize(args: ProductRef, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        services = context.services
+        if services.visualizer is None:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="visualisation_unavailable")
+        product_id = await resolve_product(services, args.which, work, context)
+        if isinstance(product_id, ToolOutcome):
+            return product_id
+        found = await hydrated(services, (product_id,), context)
+        if not found:
+            return UNAVAILABLE
+        try:
+            render = await services.visualizer.render_single(product_id, context.retailer)
+        except IntegrationUnavailableError:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="render_failed")
+        # Focus the staged piece so the "Add to cart" chip adds *it*, and leave
+        # the search on record so "Explore more" still pages it.
+        return ToolOutcome(
+            facts={
+                "staged": product_facts(found[0], None),
+                "offer": "offer to add this piece to the cart, or to explore more options",
+            },
+            state=_focused(work.staged, product_id),
+            payload=RenderShown(render=render),
+        )
+
+    return ZoryTool(
+        name="visualize_product",
+        description=(
+            "Stage one product in a room of its own - for 'show me the second one in a room' "
+            "or the 'See it in a room' button. The product is the real piece, shown "
+            "faithfully; the room and decor around it are invented styling, nothing else for "
+            "sale. After it, offer to add the staged piece to the cart (staged) or to explore "
+            "more options."
+        ),
+        args=ProductRef,
+        owners=SARA,
+        handler=visualize,
+    )
+
+
 class CompareArgs(ToolArgs):
     products: list[ProductReferenceSelector] = Field(min_length=2, max_length=MAX_COMPARED_PRODUCTS)
 
@@ -1400,6 +1442,7 @@ def shopping_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
         exclude_tool(schemas),
         more_like_tool(schemas),
         details_tool(schemas),
+        visualize_product_tool(schemas),
         compare_tool(schemas),
         add_to_cart_tool(schemas),
         remove_from_cart_tool(schemas),
