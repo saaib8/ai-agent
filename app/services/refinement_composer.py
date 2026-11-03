@@ -352,6 +352,7 @@ class SearchRefinementComposer:
             ),
             price=price,
             seating_capacity=capacity,
+            weight=request.weight,
             dimensions=dimensions,
             planar_dimensions=planar,
             colors_any_of=colors,

@@ -166,6 +166,25 @@ class SeatingCapacityConstraint(BaseModel):
         return cls(max_capacity=capacity)
 
 
+class WeightConstraint(BaseModel):
+    """Inclusive bounds on the weight the store lists (`weight_kg`), in
+    kilograms. A product with no listed weight never matches: a missing fact
+    is never read as light enough (CLAUDE.md 31)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    min_kg: Decimal | None = Field(default=None, gt=0)
+    max_kg: Decimal | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _check_bounds(self) -> Self:
+        if self.min_kg is None and self.max_kg is None:
+            raise ValueError("a weight constraint needs at least one bound")
+        if self.min_kg is not None and self.max_kg is not None and self.min_kg > self.max_kg:
+            raise ValueError("weight min_kg cannot exceed max_kg")
+        return self
+
+
 class DimensionConstraintKind(StrEnum):
     MIN = "min"
     MAX = "max"
@@ -312,6 +331,8 @@ class ProductSearchRequest(BaseModel):
 
     price: PriceConstraint | None = None
     seating_capacity: SeatingCapacityConstraint | None = None
+    weight: WeightConstraint | None = Field(default=None, exclude_if=lambda v: v is None)
+    """A limit on the listed weight - always as stated: no relaxation widens it."""
     # Exact, strictly-required catalog attributes only. Ordinary colour and
     # style wording is a semantic preference and does not belong here - it
     # would silently exclude products the customer never ruled out
@@ -402,6 +423,8 @@ class ProductSearchRequest(BaseModel):
             filters.append("price")
         if self.seating_capacity is not None:
             filters.append("seating_capacity")
+        if self.weight is not None:
+            filters.append("weight")
         if self.dimensions:
             filters.append("dimensions")
         if self.planar_dimensions is not None:

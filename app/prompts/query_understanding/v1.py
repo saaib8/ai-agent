@@ -14,7 +14,7 @@ from __future__ import annotations
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 
-VERSION = "query_understanding/v1.5"
+VERSION = "query_understanding/v1.6"
 
 _INSTRUCTIONS = """\
 You interpret a furniture shopper's message into a structured product search.
@@ -159,6 +159,9 @@ than as two separate measurements.
 - Words like compact, small, roomy or low-profile are not measurements. They \
 give you no number to quote, so record nothing and let them guide the product \
 type instead.
+- A standard size name everyone reads alike - a single, double, queen or king \
+bed or mattress - is a measurement: its usual width range on the shorter side, \
+from your own knowledge of the sizes, and approximate.
 - Say how firmly each measurement was expressed, by the same test as every \
 other constraint: locked for a plain requirement, preferred when they called it \
 a preference, approximate when they said the figure itself was loose. Around or \

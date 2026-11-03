@@ -42,6 +42,9 @@ class SearchRun:
     state: AgentStateV1
     grounding: SearchExecutionGrounding | None
     """None when the search could not run now."""
+    continued: bool = False
+    """A search stated again exactly as the one on screen: its next page, so
+    "show me more" never brings back what was just shown."""
 
 
 class SearchRunner:
@@ -103,7 +106,17 @@ class SearchRunner:
                     "candidate": composed.candidate.model_copy(update=words),
                 }
             )
-        return await self.run(_with_avoids(composed, state), state, context, save_sizes=asked)
+        composed = _with_avoids(composed, state)
+        active = state.active_search
+        if active is not None and _same_search(composed.candidate, active):
+            # The same search stated again is its next page, never its first
+            # page again: only a change of criteria starts a fresh set (13.5).
+            again = await self.again_excluding(
+                state.product_interaction.presented_product_ids, state, context
+            )
+            if again is not None:
+                return SearchRun(state=again.state, grounding=again.grounding, continued=True)
+        return await self.run(composed, state, context, save_sizes=asked)
 
     async def again_excluding(
         self, excluded: tuple[int, ...], state: AgentStateV1, context: RetailerContext
@@ -129,6 +142,10 @@ class SearchRunner:
                 customer_words=active.customer_words,
             ),
         )
+        if not active.from_product:
+            # Every page of a sofa search shows sets and sectionals beside the
+            # sofas, as its first did; "more like this" keeps to its card's type.
+            composed = self._with_family(composed)
         return await self.run(_with_avoids(composed, state), state, context)
 
     async def run(
@@ -190,6 +207,22 @@ class SearchRunner:
         return composed.model_copy(
             update={"resolved": composed.resolved.model_copy(update={"request": widened})}
         )
+
+
+def _same_search(candidate: ActiveSearchState, active: ActiveSearchState) -> bool:
+    """The same criteria as the search on screen - what it filters, how firmly,
+    what it leans to and how it is ordered (a designer's direction or size, a
+    liked look, the head count) and its words - whatever has been paged past.
+    A search matched or sized anew is a fresh set, never the old one's page."""
+    return (
+        candidate.request.model_copy(update={"exclude_product_ids": ()})
+        == active.request.model_copy(update={"exclude_product_ids": ()})
+        and candidate.semantics == active.semantics
+        and candidate.semantic_preferences == active.semantic_preferences
+        and candidate.semantic_intent == active.semantic_intent
+        and candidate.lean == active.lean
+        and candidate.seat_preference == active.seat_preference
+    )
 
 
 def _with_avoids(composed: ComposedSearch, state: AgentStateV1) -> ComposedSearch:

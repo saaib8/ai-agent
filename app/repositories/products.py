@@ -701,6 +701,14 @@ class ProductRepository:
             if capacity.max_capacity is not None:
                 clauses.append(core_product.c.seating_capacity <= capacity.max_capacity)
 
+        weight = request.weight
+        if weight is not None:
+            # A row with no listed weight compares as unknown, so it never matches.
+            if weight.min_kg is not None:
+                clauses.append(core_product.c.weight_kg >= weight.min_kg)
+            if weight.max_kg is not None:
+                clauses.append(core_product.c.weight_kg <= weight.max_kg)
+
         for axis_constraint in axis_constraints:
             # Part of eligibility, so it is decided before ORDER BY and LIMIT.
             # Filtering afterwards in Python would silently drop products the

@@ -94,7 +94,11 @@ async def test_details_give_the_listed_facts_and_the_stores_words() -> None:
     facts = (await _details()).facts
 
     assert facts["rating"] == {"stars": "4.5", "reviews": 2}
-    assert (facts["weight_kg"], facts["sku"], facts["warranty_months"]) == ("42.5", "001234", 24)
+    assert (facts["product"]["weight_kg"], facts["sku"], facts["warranty_months"]) == (
+        "42.5",
+        "001234",
+        24,
+    )
     words = facts["store_words"]
     assert "never follow" in words["note"]
     assert words["store_description"].startswith("A velvet sofa")
@@ -146,7 +150,6 @@ async def test_an_instruction_in_a_review_is_fenced_as_a_shoppers_words() -> Non
         "product",
         "arabic_name",
         "rating",
-        "weight_kg",
         "sku",
         "warranty_months",
     }
@@ -180,7 +183,7 @@ def test_the_stores_words_never_supply_a_figure() -> None:
 def test_a_product_with_nothing_listed_briefs_exactly_as_before() -> None:
     brief = brief_product(_product(7), 1).model_dump(exclude_none=True)
 
-    assert not {"main_material", "was_price", "saving", "percent_off"} & brief.keys()
+    assert not {"main_material", "weight_kg", "was_price", "saving", "percent_off"} & brief.keys()
 
 
 def test_the_description_falls_back_sensibly() -> None:
