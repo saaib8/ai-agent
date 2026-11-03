@@ -16,6 +16,7 @@ from app.agents.payloads import (
     KnowledgeShown,
     OptionsShown,
     ProductShown,
+    RenderShown,
     RoomShown,
     SearchShown,
     SeatingShown,
@@ -43,6 +44,7 @@ _SHOWN_AS: dict[str, tuple[type, ...]] = {
     "seating": (SeatingShown,),
     "cart": (SelectionShown,),
     "liked": (SelectionShown,),
+    "render": (RenderShown,),
     "unchanged": (),
 }
 
@@ -110,6 +112,8 @@ def presentation(
             fields.update(room=room, room_in_cart=room_in_cart(state) is not None)
         case SeatingShown(solution=solution):
             fields.update(seating_bundles=present_seating_solution(solution))
+        case RenderShown(render=render):
+            fields.update(render=render)
         case _:
             pass
     if support is not None:

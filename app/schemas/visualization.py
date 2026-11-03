@@ -91,29 +91,6 @@ class VisualizeRequest(BaseModel):
     drawn from, checked before any image model is paid."""
 
 
-class ProductVisualizeRequest(BaseModel):
-    """See one product on screen staged in a room of its own.
-
-    The card is named by its position in the results on screen, exactly as a
-    tick is (CLAUDE.md 17.1, 36): no product id ever arrives from the client,
-    and the position resolves server-side against verified state.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
-    store_id: int = Field(ge=1)
-    ordinal: int = Field(ge=1)
-    """The card's position in a result list on screen - card one is the first
-    product shown."""
-    list_revision: int | None = Field(default=None, ge=1)
-    """The result list the card is on, as the screen was told it. None means
-    the latest list; an earlier one still on screen resolves against itself."""
-    expected_session_revision: int | None = Field(default=None, ge=0)
-    """The revision the client's screen was drawn from, checked before any
-    image model is paid."""
-
-
 class RoomRenderItem(BaseModel):
     """One piece that was sent to be rendered, as the customer knows it."""
 

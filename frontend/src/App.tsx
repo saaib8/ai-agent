@@ -318,7 +318,9 @@ export default function App() {
       const ordinal = product.presented_ordinal
       if (chat.sending || chat.picking || ordinal == null) return
       setSwap(null)
-      void chat.visualizeProduct(ordinal, listRevision, say.visualizeInRoom, config.config)
+      void chat.send(say.visualizeInRoom, config.config, {
+        product: { kind: 'visualize', card: { list_revision: listRevision, ordinal } },
+      })
     },
     [chat, config.config, say],
   )

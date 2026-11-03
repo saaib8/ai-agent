@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -21,7 +21,6 @@ import pytest
 from app.api.dependencies import (
     click_tracking_service,
     db_session,
-    product_visualization_runtime,
     resources,
     retailer_context_provider,
     visualization_turn_runtime,
@@ -31,7 +30,6 @@ from app.api.routes.visualization import router as visualization_router
 from app.core.config import HistorySummarySettings, SessionSettings, VisualizationSettings
 from app.core.exceptions import (
     NothingToVisualizeError,
-    PickUnavailableError,
     RenderUnavailableError,
     SelectionUnavailableError,
     SessionConflictError,
@@ -49,15 +47,12 @@ from app.prompts.visualization.v1 import RenderPiece, RenderRoom, build_prompt
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import (
-    ActiveSearchState,
     AgentStateV1,
     BundleItemState,
     BundleItemStatus,
-    ProductInteractionState,
     RoomProjectState,
 )
 from app.schemas.dimensions import RawDimensions
-from app.schemas.discovery import ProductSearchRequest
 from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
 from app.schemas.product import CommerceClassification, ProductRow
 from app.schemas.query import ConstraintStrength, SemanticPreference
@@ -65,18 +60,15 @@ from app.schemas.retailer import RetailerContext
 from app.schemas.room_photo import RoomPhoto
 from app.schemas.session import SessionEnvelope, new_session
 from app.schemas.visualization import (
-    ProductVisualizeRequest,
     RenderSource,
     RenderView,
     VisualizeRequest,
 )
-from app.services.reference_resolver import ProductReferenceResolver
 from app.services.room_visualization import (
-    ProductVisualizationRuntime,
     RoomVisualizer,
     VisualizationTurnRuntime,
 )
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
+from app.taxonomy.attributes import AttributeFamily
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
@@ -789,136 +781,3 @@ class TestRoute:
                 "/v1/visualizations", json={"session_id": SESSION, "store_id": STORE}
             )
         assert reply.json()["error"]["message"] == "Room visualisation is not configured."
-
-
-# ── a single product staged in a room ═══════════════════════════════════════
-
-
-def a_presented_state(product_id: int = 10) -> AgentStateV1:
-    """One result list on screen, so a card can be named by its position."""
-    return AgentStateV1(
-        active_search=ActiveSearchState(
-            request=ProductSearchRequest(commerce_category="seating"), revision=1
-        ),
-        product_interaction=ProductInteractionState(
-            presented_product_ids=(product_id,), presented_search_revision=1
-        ),
-    )
-
-
-def a_product_runtime(
-    store: FakeSessionStore, rows: Sequence[ProductRow] = ()
-) -> tuple[ProductVisualizationRuntime, dict[str, Any]]:
-    visualizer, parts = a_visualizer(rows=rows or [a_row(10, name="Oak Bed")])
-    resolver = ProductReferenceResolver(
-        cast(Any, parts["catalog"]), load_catalog_attributes()
-    )
-    runtime = ProductVisualizationRuntime(
-        visualizer,
-        resolver,
-        store,  # type: ignore[arg-type]
-        SessionSettings(max_history_messages=6, summary=NO_SUMMARY),
-    )
-    return runtime, parts
-
-
-class TestProductTurn:
-    async def test_a_tapped_card_is_staged_and_focuses_the_piece_without_touching_the_search(
-        self,
-    ) -> None:
-        sessions = FakeSessionStore()
-        state = a_presented_state(10)
-        await a_stored_session(sessions, state)
-        runtime, _ = a_product_runtime(sessions)
-
-        reply = await runtime.visualize(
-            ProductVisualizeRequest(
-                session_id=SESSION, store_id=STORE, ordinal=1, list_revision=1
-            ),
-            CONTEXT,
-        )
-
-        assert reply.session_revision == 2
-        assert reply.agent is AgentPersona.SARA, "product visualisation is Sara's"
-        assert reply.presentation is not None and reply.presentation.render is not None
-        assert reply.presentation.render.source is RenderSource.PRODUCT
-        assert "the piece itself is the only product here" in reply.response.message
-        # The two ways on from the render, as chips the frontend draws.
-        labels = [c.label for c in reply.presentation.choices]
-        assert labels == ["Add to cart", "Explore more"]
-        saved = sessions.saved[(STORE, SESSION)]
-        interaction = saved.state.product_interaction
-        # The staged piece is focused, so "Add to cart" adds it; the search and
-        # its cards are untouched, so "Explore more" still pages them.
-        assert interaction.focused_product_id == 10, "the staged piece is focused"
-        assert interaction.presented_product_ids == (10,), "the search is left on screen"
-        assert interaction.presented_search_revision == 1
-        assert interaction.selected_product_ids == (), "a picture is not a pick"
-        user, _assistant = saved.conversation.messages
-        assert user.content == "[Asked to see this product staged in a room of its own]"
-
-    async def test_a_card_no_longer_on_screen_is_refused(self) -> None:
-        sessions = FakeSessionStore()
-        await a_stored_session(sessions, AgentStateV1())
-        runtime, parts = a_product_runtime(sessions)
-        with pytest.raises(PickUnavailableError):
-            await runtime.visualize(
-                ProductVisualizeRequest(session_id=SESSION, store_id=STORE, ordinal=1), CONTEXT
-            )
-        assert parts["generator"].prompts == [], "nothing is paid for an unresolved card"
-
-    async def test_a_stale_screen_is_refused_before_an_image_is_paid_for(self) -> None:
-        sessions = FakeSessionStore()
-        await a_stored_session(sessions, a_presented_state(10))
-        runtime, parts = a_product_runtime(sessions)
-        with pytest.raises(SessionConflictError):
-            await runtime.visualize(
-                ProductVisualizeRequest(
-                    session_id=SESSION, store_id=STORE, ordinal=1, expected_session_revision=7
-                ),
-                CONTEXT,
-            )
-        assert parts["generator"].prompts == []
-
-
-def a_product_app(runtime: ProductVisualizationRuntime) -> FastAPI:
-    app = FastAPI()
-    register_exception_handlers(app)
-    app.include_router(visualization_router, prefix="/v1")
-    app.dependency_overrides[product_visualization_runtime] = lambda: runtime
-    app.dependency_overrides[retailer_context_provider] = lambda: FakeRetailers()
-    app.dependency_overrides[click_tracking_service] = no_click_ids
-    return app
-
-
-class TestProductRoute:
-    async def test_it_answers_like_a_chat_turn_and_leaks_nothing_internal(self) -> None:
-        sessions = FakeSessionStore()
-        await a_stored_session(sessions, a_presented_state(10))
-        runtime, _ = a_product_runtime(sessions)
-        async with AsyncClient(
-            transport=ASGITransport(app=a_product_app(runtime)), base_url="http://t"
-        ) as client:
-            reply = await client.post(
-                "/v1/products/visualizations",
-                json={"session_id": SESSION, "store_id": STORE, "ordinal": 1, "list_revision": 1},
-            )
-        assert reply.status_code == 200
-        render = reply.json()["presentation"]["render"]
-        assert render["source"] == "product" and render["view"] is None
-        for forbidden in ("provider", "model", "prompt", "product_id"):
-            assert f'"{forbidden}' not in reply.text, forbidden
-
-    async def test_an_off_screen_card_is_a_clean_conflict(self) -> None:
-        sessions = FakeSessionStore()
-        await a_stored_session(sessions, AgentStateV1())
-        runtime, _ = a_product_runtime(sessions)
-        async with AsyncClient(
-            transport=ASGITransport(app=a_product_app(runtime)), base_url="http://t"
-        ) as client:
-            reply = await client.post(
-                "/v1/products/visualizations",
-                json={"session_id": SESSION, "store_id": STORE, "ordinal": 1},
-            )
-        assert reply.status_code == 409
-        assert reply.json()["error"]["code"] == "pick_unavailable"

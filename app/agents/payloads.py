@@ -15,6 +15,7 @@ from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding
 from app.schemas.seating_solution import SeatingSolution
 from app.schemas.store_knowledge import StoreKnowledgeGrounding
 from app.schemas.support import SupportGrounding
+from app.schemas.visualization import RoomRenderPresentation
 
 
 class _Payload(BaseModel):
@@ -48,6 +49,12 @@ class OptionsShown(_Payload):
     products: tuple[GroundedProduct, ...]
 
 
+class RenderShown(_Payload):
+    """One product staged in a room of its own - the picture this turn made."""
+
+    render: RoomRenderPresentation
+
+
 class SeatingShown(_Payload):
     solution: SeatingSolution
 
@@ -68,5 +75,6 @@ ScreenPayload = (
     | RoomShown
     | OptionsShown
     | SeatingShown
+    | RenderShown
 )
 """Payloads that replace what the customer is looking at."""

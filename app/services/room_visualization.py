@@ -39,7 +39,6 @@ from app.core.config import (
 )
 from app.core.exceptions import (
     NothingToVisualizeError,
-    PickUnavailableError,
     RenderUnavailableError,
     SelectionRejectedError,
     SelectionUnavailableError,
@@ -65,7 +64,6 @@ from app.repositories.sessions import SessionStore
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1, RoomProjectState
 from app.schemas.agent_turn import CustomerResponse
-from app.schemas.agent_updates import AgentStateUpdate, ProductInteractionUpdate
 from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
 from app.schemas.chat import ChatPresentation, ChatResponse
 from app.schemas.dimensions import DimensionStatus
@@ -73,11 +71,9 @@ from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.reply_choice import ReplyChoice
-from app.schemas.resolution import ReferenceFailureReason, ReferenceUnresolved
 from app.schemas.retailer import RetailerContext
 from app.schemas.room_photo import RoomPhoto
 from app.schemas.visualization import (
-    ProductVisualizeRequest,
     RenderRoomSpec,
     RenderSource,
     RenderView,
@@ -85,7 +81,6 @@ from app.schemas.visualization import (
     RoomRenderPresentation,
     VisualizeRequest,
 )
-from app.services.agent_state import apply_update
 from app.services.card_labels import card_labels
 from app.services.discovery import to_candidate
 from app.services.media_wording import (
@@ -93,9 +88,7 @@ from app.services.media_wording import (
     VIEW_PHRASES,
     render_reply,
     room_photo_reply,
-    single_render_reply,
 )
-from app.services.reference_resolver import ProductReferenceResolver
 from app.services.reply_language import session_language
 from app.services.room_photo import fit_exactly, load_room_photo
 from app.services.session_turns import commit_exchange, load_for_turn
@@ -645,99 +638,6 @@ class CatalogVisualizationRuntime:
             raise SelectionRejectedError(
                 public_message=f"At most {self._catalog.max_quantity} of any one product."
             )
-
-
-class ProductVisualizationRuntime:
-    """Seeing one product staged in a room, run as one committed turn.
-
-    Like every render it is recorded in the history in words and changes no
-    state (CLAUDE.md 25): the picture lives on the customer's screen, and the
-    product it pictured is still just a card they tapped, not a pick or a room.
-
-    The card is named by its position on screen and resolved server-side, so no
-    product id ever arrives from the client (CLAUDE.md 17.1, 36).
-    """
-
-    def __init__(
-        self,
-        visualizer: RoomVisualizer,
-        references: ProductReferenceResolver,
-        sessions: SessionStore,
-        settings: SessionSettings,
-        *,
-        arabic_replies: bool = False,
-    ) -> None:
-        self._arabic_replies = arabic_replies
-        self._visualizer = visualizer
-        self._references = references
-        self._sessions = sessions
-        self._settings = settings
-
-    async def visualize(
-        self, request: ProductVisualizeRequest, context: RetailerContext
-    ) -> ChatResponse:
-        """Load, resolve the card, render, commit, answer.
-
-        The session must be loaded anyway to resolve the card's position, and
-        the revision is checked there before an image model is paid: a tap on a
-        list that has since been replaced would picture a product the customer
-        is no longer looking at.
-        """
-        loaded = await load_for_turn(
-            self._sessions,
-            store_id=request.store_id,
-            session_id=request.session_id,
-            expected_revision=request.expected_session_revision,
-        )
-        state = loaded.envelope.state
-        outcome = await self._references.resolve_on_list(
-            request.ordinal, request.list_revision, state, context
-        )
-        if isinstance(outcome, ReferenceUnresolved):
-            raise PickUnavailableError(
-                public_message=(
-                    "That product is no longer available, so I can't picture it."
-                    if outcome.reason is ReferenceFailureReason.PRODUCT_UNAVAILABLE
-                    else "That card isn't on screen any more, so I can't picture it from here."
-                ),
-                reason=str(outcome.reason),
-            )
-        render = await self._visualizer.render_single(outcome.product_id, context)
-
-        # Focus the piece just staged so the "Add to cart" chip adds *it*
-        # (resolved as the focused product), which brings in what goes with it.
-        # Only the focus moves: the search and its cards stay on record, so
-        # "Explore more" still pages the same results (CLAUDE.md 10.5, 13.5).
-        focused = apply_update(
-            state,
-            AgentStateUpdate(
-                product_interaction=ProductInteractionUpdate(focused_product_id=outcome.product_id)
-            ),
-        )
-        language = session_language(state.reply_language, enabled=self._arabic_replies)
-        response = single_render_reply(language)
-        customer_said = "[Asked to see this product staged in a room of its own]"
-        revision = await commit_exchange(
-            self._sessions,
-            self._settings,
-            store_id=request.store_id,
-            session_id=request.session_id,
-            loaded=loaded,
-            state=focused,
-            customer_said=customer_said,
-            response=response,
-            # Product visualisation is Sara's, like product discovery (CLAUDE.md 25).
-            agent=AgentPersona.SARA,
-        )
-        return ChatResponse(
-            session_id=request.session_id,
-            session_revision=revision,
-            response=response,
-            presentation=ChatPresentation(render=render, choices=_choices(response)),
-            reply_language=language if self._arabic_replies else None,
-            labels=card_labels(language if self._arabic_replies else None),
-            agent=AgentPersona.SARA,
-        )
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

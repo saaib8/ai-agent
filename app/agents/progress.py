@@ -19,6 +19,7 @@ class Phase(StrEnum):
     DESIGNING = "designing"
     UPDATING_CART = "updating_cart"
     CHECKING_STORE = "checking_store"
+    RENDERING = "rendering"
     WRITING = "writing"
 
 
@@ -30,6 +31,7 @@ _TOOL_PHASES = {
     "what_goes_with": Phase.SEARCHING,
     "compare_products": Phase.SEARCHING,
     "product_details": Phase.SEARCHING,
+    "visualize_product": Phase.RENDERING,
     "store_shelf": Phase.DESIGNING,
     "measure_fit": Phase.DESIGNING,
     "record_design_notes": Phase.DESIGNING,
