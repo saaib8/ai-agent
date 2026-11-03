@@ -35,7 +35,10 @@ class DimensionRelaxationPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    relaxable: frozenset[tuple[str, DimensionRole]]
+    relaxable: frozenset[tuple[str, DimensionRole]] = frozenset()
+    every_kind: bool = False
+    """Every kind and every side may widen: sizes read by their listed sides
+    mean the same in every store (CLAUDE.md 15.2)."""
 
     def is_relaxable(self, subcategory: str | None, role: DimensionRole) -> bool:
         """Fails closed: an absent subcategory, or any pair not listed, is a no.
@@ -45,7 +48,7 @@ class DimensionRelaxationPolicy(BaseModel):
         """
         if subcategory is None:
             return False
-        return (subcategory, role) in self.relaxable
+        return self.every_kind or (subcategory, role) in self.relaxable
 
 
 V1_DIMENSION_RELAXATION_POLICY = DimensionRelaxationPolicy(
@@ -57,3 +60,6 @@ V1_DIMENSION_RELAXATION_POLICY = DimensionRelaxationPolicy(
     )
 )
 """The approved V1 allowlist. Everything absent from it is non-relaxable."""
+
+EVERY_KIND_DIMENSION_RELAXATION_POLICY = DimensionRelaxationPolicy(every_kind=True)
+"""Read by side (`discovery.size_by_side`): a loose size of any kind widens."""

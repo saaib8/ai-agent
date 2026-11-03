@@ -41,6 +41,10 @@ class RelaxableField(StrEnum):
     # There is deliberately no PLANAR_DIMENSION. Carpet pairs are not relaxable
     # in V1, and a member for a widening that cannot happen would suggest it can.
 
+    SIZE = "size"
+    """The customer's sizes, when nothing at all met them: the closest sizes
+    shown instead, nearest first, and said. Carried by `ClosestSizeChange`."""
+
     COLOR = "color"
     STYLE = "style"
     """A strict colour or style requirement lifted as a last resort.
@@ -67,6 +71,8 @@ class RelaxationChange(BaseModel):
             raise ValueError("a dimension change must use DimensionRelaxationChange")
         if self.field in (RelaxableField.COLOR, RelaxableField.STYLE):
             raise ValueError("a colour or style change must use AttributeRelaxationChange")
+        if self.field is RelaxableField.SIZE:
+            raise ValueError("a closest-size change must use ClosestSizeChange")
         return self
 
 
@@ -171,7 +177,30 @@ class DimensionRelaxationChange(BaseModel):
         return self
 
 
-AppliedRelaxation = RelaxationChange | DimensionRelaxationChange | AttributeRelaxationChange
+class ClosestSizeChange(BaseModel):
+    """The customer's sizes, when nothing in the store met them.
+
+    The last resort on a customer's own search, after every permitted widening
+    and the colour or style last resort: their sizes are widened by a share
+    of their own figures, band by band, and finally set aside, so the nearest
+    sizes lead and the screen is never empty. Every other requirement stands.
+    `asked` keeps what they said, so the reply says plainly that none is that
+    size and these are the closest - never that they are.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    field: Literal[RelaxableField.SIZE] = RelaxableField.SIZE
+    asked: str = Field(min_length=1)
+    within_share: Decimal | None = Field(default=None, gt=0, lt=1)
+    """How far either side of their figures this band reached; None is any size."""
+
+    strength: ConstraintStrength = ConstraintStrength.LOCKED
+
+
+AppliedRelaxation = (
+    RelaxationChange | DimensionRelaxationChange | AttributeRelaxationChange | ClosestSizeChange
+)
 """What one attempt recorded. Scalar bounds and measurements record differently
 because they carry different facts; a shared shape would blur both."""
 
@@ -226,6 +255,11 @@ class StopReason(StrEnum):
     POLICY_EXHAUSTED = "policy_exhausted"
     """Every permitted widening was tried and the target was still not met.
     Also a valid outcome: the catalog simply does not hold enough."""
+
+    CLOSEST_SIZES = "closest_sizes"
+    """Nothing in the store met the customer's sizes even after every permitted
+    widening, so the closest sizes were shown instead, nearest first. Always
+    surfaced through the `ClosestSizeChange` it records."""
 
     ATTRIBUTE_FALLBACK = "attribute_fallback"
     """Nothing matched a strict colour or style even after every permitted

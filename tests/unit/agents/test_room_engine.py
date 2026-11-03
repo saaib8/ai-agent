@@ -1195,3 +1195,20 @@ async def test_no_floor_where_the_piece_has_none_or_the_data_cannot_answer() -> 
 
     assert pipeline.executed[-1].request.dimensions == ()
     assert "kept_at_least_cm" not in found.facts
+
+
+async def test_a_rugs_options_keep_both_its_sides_as_the_store_lists_them() -> None:
+    """Every kind is read by its listed size, a flat thing by its two sides:
+    a rug designed at least 250 x 170 is offered no smaller."""
+    engine, pipeline = _sized_engine()
+    room = (
+        _need("seating", "sofa", "main sofa"),
+        _need("decor", "carpet", "rug", longer_min_cm=250, shorter_min_cm=170),
+    )
+    planned = await engine.design(AgentStateV1(), CONTEXT, _inputs("10000", room))
+
+    found = await engine.piece_options(planned.state, CONTEXT, _piece(planned.facts, "carpet"))
+
+    floors = {(c.side, c.min_cm) for c in pipeline.executed[-1].request.dimensions}
+    assert floors == {("longer", Decimal(250)), ("shorter", Decimal(170))}
+    assert found.facts["kept_at_least_cm"] == {"longer_side": 250, "shorter_side": 170}

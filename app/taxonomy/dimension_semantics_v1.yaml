@@ -15,6 +15,21 @@
 # `unsupported_roles` records the ones we deliberately refuse, with a reason.
 version: v1
 
+# Read by side (`discovery.size_by_side`, on in production), a store's listed
+# size is trusted as it is, like its price, and one rule holds for every store
+# and every kind: the longer floor side is a piece's width, the shorter its
+# depth, the height column its height - whichever column the store used. The
+# entries below say how each role is shown; their refusals hold only read by
+# column. A size a store lists wrongly (one arm of a corner sofa, one piece of
+# a set) is the store's to correct.
+#
+# Flat kinds are their two sides - a rug's, a painting's on the wall, a
+# bedspread's: the two largest of the three listed sizes, wherever the store
+# put them (the third is a thickness). Length and height are the longer side,
+# width the shorter; there is no depth.
+flat_kinds:
+  [carpet, art-canvas, mirror, wall-clock, decorative-hanger, bedspread, comforter, mattress-pad, pillow, yoga-mat]
+
 subcategories:
 
   # ── families where the along-wall span is stored in `length` ─────────────

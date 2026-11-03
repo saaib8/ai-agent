@@ -68,9 +68,7 @@ def test_a_sofa_has_no_length_role() -> None:
 
 @pytest.mark.parametrize("subcategory", UNSAFE)
 @pytest.mark.parametrize("role", [LENGTH, WIDTH, DEPTH])
-def test_unreliable_families_support_no_planar_role(
-    subcategory: str, role: DimensionRole
-) -> None:
+def test_unreliable_families_support_no_planar_role(subcategory: str, role: DimensionRole) -> None:
     assert SEMANTICS.source_axis(subcategory, role) is None
     assert SEMANTICS.unsupported_reason(subcategory, role) is not (
         UnsupportedDimensionReason.ROLE_NOT_DEFINED
@@ -200,9 +198,7 @@ MALFORMED = [
 
 
 @pytest.mark.parametrize(("document", "reason"), MALFORMED)
-def test_a_malformed_registry_is_rejected(
-    tmp_path: Path, document: str, reason: str
-) -> None:
+def test_a_malformed_registry_is_rejected(tmp_path: Path, document: str, reason: str) -> None:
     path = tmp_path / "broken.yaml"
     path.write_text(document)
 
@@ -217,6 +213,17 @@ def test_a_mapping_for_an_unapproved_subcategory_is_rejected(tmp_path: Path) -> 
     )
 
     with pytest.raises(TaxonomyConfigurationError, match="approved commerce subcategory"):
+        load_dimension_semantics(path, taxonomy=TAXONOMY)
+
+
+def test_a_flat_kind_outside_the_vocabulary_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        "version: v1\nflat_kinds: [carpet, flying-carpet]\n"
+        "subcategories:\n  sofa:\n    roles: {depth: {source_axis: width}}\n"
+    )
+
+    with pytest.raises(TaxonomyConfigurationError, match="flat_kinds"):
         load_dimension_semantics(path, taxonomy=TAXONOMY)
 
 
@@ -284,8 +291,14 @@ async def test_source_units_are_preserved_as_provenance() -> None:
 
 @pytest.mark.parametrize(
     ("unit", "value", "expected"),
-    [("cm", "220", "220"), ("mm", "2200", "220.0"), ("m", "2.2", "220.0"),
-     ("in", "86", "218.44"), ("inches", "86", "218.44"), ("ft", "7", "213.36")],
+    [
+        ("cm", "220", "220"),
+        ("mm", "2200", "220.0"),
+        ("m", "2.2", "220.0"),
+        ("in", "86", "218.44"),
+        ("inches", "86", "218.44"),
+        ("ft", "7", "213.36"),
+    ],
 )
 async def test_every_supported_unit_converts(unit: str, value: str, expected: str) -> None:
     outcome = await _interpret(_dim(WIDTH, Kind.MAX, unit=unit, max_value=value))
@@ -318,7 +331,7 @@ async def test_several_measurements_are_all_carried() -> None:
 
 
 async def test_a_number_with_no_stated_measurement_asks() -> None:
-    """"a sofa under 200 cm" - ambiguous intent, one question settles it."""
+    """ "a sofa under 200 cm" - ambiguous intent, one question settles it."""
     outcome = await _interpret(_dim(None, Kind.MAX, max_value="200"))
 
     assert isinstance(outcome, ClarificationRequired)
@@ -400,9 +413,7 @@ async def test_a_pair_given_in_the_other_order_is_the_same_request() -> None:
         outcome = await _interpret(
             subcategory="carpet",
             category="decor",
-            planar=PlanarDimensionInterpretation(
-                first_value=first, second_value=second, unit="cm"
-            ),
+            planar=PlanarDimensionInterpretation(first_value=first, second_value=second, unit="cm"),
         )
         assert isinstance(outcome, ResolvedSearch)
         assert outcome.request.planar_dimensions is not None
@@ -424,5 +435,8 @@ def test_there_is_no_three_number_dimension_input() -> None:
     """No family had proven three-number positional semantics."""
     assert "third_value" not in PlanarDimensionInterpretation.model_fields
     assert set(PlanarDimensionInterpretation.model_fields) == {
-        "first_value", "second_value", "unit", "strength"
+        "first_value",
+        "second_value",
+        "unit",
+        "strength",
     }

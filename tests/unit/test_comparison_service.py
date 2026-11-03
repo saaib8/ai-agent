@@ -480,3 +480,37 @@ async def test_a_lone_floor_size_is_shown_as_listed_never_as_a_side() -> None:
     assert (width[0].value, width[0].one_side) == ("240 cm (one side listed)", True)
     assert (width[1].value, width[1].one_side) == ("150 cm", False)
     assert [c.value for c in _row_for(result, ComparisonField.DEPTH).cells] == [None, "75 cm"]
+
+
+async def test_a_sofa_set_shows_its_listed_size_beside_a_sofa() -> None:
+    """A set's listed size is compared as a sofa's is: its longer side is the
+    width and its shorter the depth, whichever column the store used."""
+    sofa = _row(
+        1,
+        dimensions=RawDimensions(
+            length=Decimal("220"), width=Decimal("90"), height=Decimal("85"), unit="cm"
+        ),
+    )
+    sofa_set = _row(
+        2,
+        subcategory="sofa-set",
+        capacity=None,
+        dimensions=RawDimensions(
+            length=Decimal("95"), width=Decimal("300"), height=Decimal("80"), unit="cm"
+        ),
+    )
+    taxonomy = load_taxonomy()
+    service = ProductComparisonService(
+        cast(ProductRepository, FakeRepository([sofa, sofa_set])),
+        load_dimension_semantics(taxonomy=taxonomy, by_side=True),
+        load_seating_semantics(taxonomy=taxonomy),
+        CustomerAgentSettings(),
+    )
+    result = _ok(await service.compare([1, 2], CONTEXT))
+
+    def values(field: ComparisonField) -> list[str | None]:
+        return [c.value for c in _row_for(result, field).cells]
+
+    assert values(ComparisonField.OVERALL_WIDTH) == ["220 cm", "300 cm"]
+    assert values(ComparisonField.DEPTH) == ["90 cm", "95 cm"]
+    assert values(ComparisonField.HEIGHT) == ["85 cm", "80 cm"]

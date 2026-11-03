@@ -653,6 +653,20 @@ class RelaxationSettings(BaseModel):
             raise ValueError("relaxation dimension_steps may not exceed 0.10")
         return self
 
+    closest_size_steps: tuple[Decimal, ...] = (Decimal("0.20"), Decimal("0.35"), Decimal("0.50"))
+    """When a customer's size finds nothing at all, the sizes this far either
+    side of theirs, nearest band first, before any size (CLAUDE.md 13.5). A
+    share of their own figure, never compounded."""
+
+    @model_validator(mode="after")
+    def _check_closest_size_steps(self) -> RelaxationSettings:
+        steps = self.closest_size_steps
+        if not steps or any(not Decimal(0) < step < Decimal(1) for step in steps):
+            raise ValueError("relaxation closest_size_steps must be shares between 0 and 1")
+        if list(steps) != sorted(set(steps)):
+            raise ValueError("relaxation closest_size_steps must be strictly increasing")
+        return self
+
 
 class CustomerAgentSettings(BaseModel):
     """Runtime behaviour of the customer-facing commerce capabilities.

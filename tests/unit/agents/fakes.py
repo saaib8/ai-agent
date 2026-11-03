@@ -154,7 +154,9 @@ class FakePipeline:
         dropped_constraints: Any = (),
         earlier_sizes_applied: bool = False,
         presentation_limit: int | None = None,
+        closest_sizes: bool = False,
     ) -> ProductSearchExecutionResult:
+        self.closest_sizes = closest_sizes
         self.calls.append(resolved)
         self.contexts.append(context)
         if self.error is not None:
