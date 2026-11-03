@@ -113,6 +113,42 @@ def render_reply(
     return CustomerResponse(message=message + _left_out(dropped, language))
 
 
+def single_render_reply(language: ReplyLanguage) -> CustomerResponse:
+    """A single product staged in a room of its own, with the two ways the
+    conversation can go on from it as chips.
+
+    The decor is invented, so the reply says plainly that only the product is
+    real. The chips carry the customer's own words, so tapping one routes
+    exactly as typing it would (CLAUDE.md 17.3): "Add to cart" adds the piece
+    just staged - the turn focuses it - which brings in what goes with it, and
+    "Explore more" asks for more options of the same search.
+    """
+    if language is AR:
+        return CustomerResponse(
+            message=(
+                "إليك هذا المنتج داخل غرفة متكاملة لتتخيّل شكله. كل ما حوله من "
+                "ديكور هو تنسيق توضيحي فقط؛ المنتج وحده هو القطعة المتوفرة."
+            ),
+            follow_up_question="هل تودّ إضافته إلى سلتك، أم استكشاف المزيد من الخيارات؟",
+            choices=(
+                TextReplyChoice(label="أضف إلى السلة", value="أضف هذا المنتج إلى سلتي"),
+                TextReplyChoice(label="استكشف المزيد", value="أرني المزيد من الخيارات"),
+            ),
+        )
+    return CustomerResponse(
+        message=(
+            "Here's this piece staged in a room so you can picture it. Everything "
+            "around it is just styling to set the scene - the piece itself is the "
+            "only product here."
+        ),
+        follow_up_question="Would you like to add it to your cart, or explore more options?",
+        choices=(
+            TextReplyChoice(label="Add to cart", value="Add this product to my cart"),
+            TextReplyChoice(label="Explore more", value="Show me more options"),
+        ),
+    )
+
+
 def room_photo_reply(
     room: str | None, language: ReplyLanguage, *, dropped: int = 0
 ) -> CustomerResponse:

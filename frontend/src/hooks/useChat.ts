@@ -5,6 +5,7 @@ import {
   postFinderPhoto,
   postFinderPick,
   postPicks,
+  postProductVisualize,
   postRoomPhoto,
   postVisualize,
 } from '../api/client'
@@ -125,6 +126,14 @@ export interface UseChat {
     text: string,
     config: ConsoleConfig,
     roomPhotoId?: string,
+  ) => Promise<string | null>
+  /** Stage one product on screen in a room of its own. A committed turn; the
+   *  card is named by its position, resolved server-side. */
+  visualizeProduct: (
+    ordinal: number,
+    listRevision: number | null,
+    text: string,
+    config: ConsoleConfig,
   ) => Promise<string | null>
   /** Render pieces picked from the catalogue. A committed turn, which keeps
    *  the selection so it can be drawn again or edited. */
@@ -440,6 +449,41 @@ export function useChat(): UseChat {
     [],
   )
 
+  const visualizeProduct = useCallback(
+    async (
+      ordinal: number,
+      listRevision: number | null,
+      text: string,
+      config: ConsoleConfig,
+    ) => {
+      setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text }])
+      setSending(true)
+      setActivity('rendering')
+      const controller = new AbortController()
+      abortRef.current = controller
+
+      const result = await postProductVisualize(
+        config.apiBase,
+        {
+          session_id: config.sessionId,
+          store_id: config.storeId,
+          ordinal,
+          ...(listRevision != null ? { list_revision: listRevision } : {}),
+          ...expected(config),
+        },
+        controller.signal,
+      )
+
+      abortRef.current = null
+      if (result.ok) commit(result.data)
+      else if (result.status !== 'aborted') fail(result.status, result.error)
+      setActivity(null)
+      setSending(false)
+      return result.ok ? null : result.error.code
+    },
+    [],
+  )
+
   const visualizeSelection = useCallback(
     async (selection: CatalogSelection, view: RenderView, summary: string, config: ConsoleConfig) => {
       setTurns((prev) => [...prev, { kind: 'user', id: nextId(), text: summary }])
@@ -525,6 +569,7 @@ export function useChat(): UseChat {
     pickObject,
     uploadRoomPhoto,
     visualize,
+    visualizeProduct,
     visualizeSelection,
     reset,
   }

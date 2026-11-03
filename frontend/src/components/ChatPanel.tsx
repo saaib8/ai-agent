@@ -94,6 +94,8 @@ interface ChatPanelProps {
   pendingLikes: Map<string, 'like' | 'unlike'>
   onToggleLike: (product: GroundedProduct, listRevision: number) => void
   onMoreLikeThis: (product: GroundedProduct, listRevision: number) => void
+  /** Stage one card's product in a room of its own. */
+  onVisualizeProduct: (product: GroundedProduct, listRevision: number) => void
   onUnlike: (liked: LikedView) => void
   onSelectLiked: (liked: LikedView) => void
   onMoreLikeThisLiked: (liked: LikedView) => void
@@ -166,6 +168,7 @@ export function ChatPanel({
   pendingLikes,
   onToggleLike,
   onMoreLikeThis,
+  onVisualizeProduct,
   onUnlike,
   onSelectLiked,
   onMoreLikeThisLiked,
@@ -310,6 +313,12 @@ export function ChatPanel({
     liked !== null && listRevision != null && tickable.has(listRevision)
       ? (product: GroundedProduct) => onMoreLikeThis(product, listRevision)
       : undefined
+  // "See it in a room" lives on the result lists still on screen, so the card
+  // it names resolves server-side (an off-screen list cannot be visualised).
+  const visualizeProductFor = (listRevision: number | null | undefined) =>
+    listRevision != null && tickable.has(listRevision)
+      ? (product: GroundedProduct) => onVisualizeProduct(product, listRevision)
+      : undefined
 
   // Their liked list drawn as cards: each card is found in the liked list
   // as the server reports it now, and acts by its place there.
@@ -381,6 +390,9 @@ export function ChatPanel({
         onEditSelection: () => onEditSelection(selection, render.view ?? 'corner'),
       }
     if (render?.source === 'catalog') return {}
+    // A single-product render pictures one tapped card in an imagined room; it
+    // is not the room package, so it offers no re-render or edit controls.
+    if (render?.source === 'product') return {}
     if (render) {
       const outdated = currentRoomKey !== null && renderKey(render) !== currentRoomKey
       const photoId = render.room_photo_id
@@ -451,6 +463,7 @@ export function ChatPanel({
                     compare={compareFor(turn.data.presentation?.list_revision)}
                     likes={likesFor(turn.data.presentation?.list_revision)}
                     onMoreLikeThis={moreLikeThisFor(turn.data.presentation?.list_revision)}
+                    onVisualizeProduct={visualizeProductFor(turn.data.presentation?.list_revision)}
                     {...(turn.data.presentation?.product_source === 'liked'
                       ? likedCards(turn.data.presentation.products)
                       : {})}

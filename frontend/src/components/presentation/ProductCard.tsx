@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import type { CardLabels, GroundedProduct } from '../../api/types'
 import { cardWords } from '../../lib/cardWords'
 import { productText } from '../../lib/productWords'
-import { CheckIcon, HeartIcon, PlusIcon, SparkIcon } from '../icons'
+import { CheckIcon, HeartIcon, ImageIcon, PlusIcon, SparkIcon } from '../icons'
 
 function Chip({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'accent' }) {
   const cls =
@@ -56,6 +56,7 @@ export function ProductCard({
   compare,
   like,
   onMoreLikeThis,
+  onVisualize,
   busy = false,
   labels,
 }: {
@@ -72,6 +73,8 @@ export function ProductCard({
   like?: CardLike
   /** Present when a similarity search can start from this card. */
   onMoreLikeThis?: (product: GroundedProduct) => void
+  /** Present when this card can be staged in a room of its own. */
+  onVisualize?: (product: GroundedProduct) => void
   /** A turn is in flight: actions that start one wait for it. */
   busy?: boolean
   /** The reply's words around a card (`ChatResponse.labels`). The product's
@@ -224,6 +227,16 @@ export function ProductCard({
             >
               <SparkIcon size={13} />
               {words.moreLikeThis}
+            </button>
+          )}
+          {!pick && onVisualize && product.presented_ordinal != null && (
+            <button
+              onClick={() => onVisualize(product)}
+              disabled={busy}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-ink transition hover:border-clay/50 hover:text-clay focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/30 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ImageIcon size={13} />
+              {words.visualizeInEnvironment}
             </button>
           )}
           {!pick && onExclude && product.presented_ordinal != null && (

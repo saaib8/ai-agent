@@ -16,6 +16,7 @@ export const ENGLISH: CardLabels = {
   select: 'Add to cart',
   selected: 'In cart',
   more_like_this: 'More like this',
+  visualize_in_environment: 'See it in a room',
   not_this_one: 'Not this one',
   compare: 'Compare',
   view_product: 'View product →',
@@ -151,6 +152,7 @@ export const ENGLISH: CardLabels = {
   room_in_cart: 'In your cart',
   say_use_option: 'Use option {number} for the {name}',
   say_visualize_room: 'Visualize my room — {view} view',
+  say_visualize_in_room: 'Show me this in a room',
   say_place_room: 'Place my room package in my room',
   say_place_selection: 'Place my selection in my room — {pieces}',
   say_visualize_selection: 'Visualize my selection — {pieces} in a {size} m {style} {room}, {view} view',
@@ -236,6 +238,7 @@ export interface CardWords {
   select: string
   selected: string
   moreLikeThis: string
+  visualizeInEnvironment: string
   notThisOne: string
   compare: string
   viewProduct: string
@@ -369,6 +372,7 @@ export interface CardWords {
     addToRoom: (piece: string) => string
     useOption: (number: number, role: string) => string
     visualizeRoom: (view: string) => string
+    visualizeInRoom: string
     placeRoom: string
     placeSelection: (count: number) => string
     visualizeSelection: (count: number, size: string, style: string, room: string, view: string) => string
@@ -476,6 +480,7 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
     select: l.select,
     selected: l.selected,
     moreLikeThis: l.more_like_this,
+    visualizeInEnvironment: l.visualize_in_environment,
     notThisOne: l.not_this_one,
     compare: l.compare,
     viewProduct: l.view_product,
@@ -617,6 +622,7 @@ export function cardWords(labels: CardLabels | null | undefined): CardWords {
       addToRoom: (piece) => fill(l.say_add_to_room, { name: piece }),
       useOption: (number, role) => fill(l.say_use_option, { number, name: role }),
       visualizeRoom: (view) => fill(l.say_visualize_room, { view }),
+      visualizeInRoom: l.say_visualize_in_room,
       placeRoom: l.say_place_room,
       placeSelection: (count) => fill(l.say_place_selection, { pieces: pieces(count) }),
       visualizeSelection: (count, size, style, room, view) =>

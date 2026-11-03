@@ -25,6 +25,8 @@ interface ProductGridProps {
   likes?: GridLikes
   /** Present when a similarity search can start from any card. */
   onMoreLikeThis?: (product: GroundedProduct) => void
+  /** Present when a card can be staged in a room of its own. */
+  onVisualize?: (product: GroundedProduct) => void
   busy?: boolean
   /** The reply's words around each card (`ChatResponse.labels`). */
   labels?: CardLabels | null
@@ -55,6 +57,7 @@ export function ProductGrid({
   compare,
   likes,
   onMoreLikeThis,
+  onVisualize,
   busy,
   labels,
 }: ProductGridProps) {
@@ -79,6 +82,7 @@ export function ProductGrid({
             compare={compare?.compareFor(p)}
             like={cardLike(p, likes)}
             onMoreLikeThis={onMoreLikeThis}
+            onVisualize={onVisualize}
             busy={busy}
             labels={labels}
           />

@@ -13,6 +13,7 @@ import type {
   HealthResponse,
   PicksRequest,
   PicksResponse,
+  ProductVisualizeRequest,
   RoomPhotoResponse,
   VisualizeRequest,
 } from './types'
@@ -205,6 +206,15 @@ export async function postVisualize(
   signal?: AbortSignal,
 ): Promise<ChatResult> {
   return postJson<ChatResponse>(base, '/v1/visualizations', body, isChatResponse, signal)
+}
+
+/** Stage one product on screen in a room of its own. A chat turn with a render. */
+export async function postProductVisualize(
+  base: string,
+  body: ProductVisualizeRequest,
+  signal?: AbortSignal,
+): Promise<ChatResult> {
+  return postJson<ChatResponse>(base, '/v1/products/visualizations', body, isChatResponse, signal)
 }
 
 // ── Browse Catalogue ─────────────────────────────────────────────────────────
