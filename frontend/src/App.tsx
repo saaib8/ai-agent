@@ -313,6 +313,16 @@ export default function App() {
     [chat, config.config, say],
   )
 
+  const handleVisualizeProduct = useCallback(
+    (product: GroundedProduct, listRevision: number) => {
+      const ordinal = product.presented_ordinal
+      if (chat.sending || chat.picking || ordinal == null) return
+      setSwap(null)
+      void chat.visualizeProduct(ordinal, listRevision, say.visualizeInRoom, config.config)
+    },
+    [chat, config.config, say],
+  )
+
   const handleMoreLikeThisLiked = useCallback(
     (item: LikedView) => {
       if (chat.sending || chat.picking) return
@@ -717,6 +727,7 @@ export default function App() {
           pendingLikes={chat.pendingLikes}
           onToggleLike={handleToggleLike}
           onMoreLikeThis={handleMoreLikeThis}
+          onVisualizeProduct={handleVisualizeProduct}
           onUnlike={handleUnlike}
           onSelectLiked={handleSelectLiked}
           onMoreLikeThisLiked={handleMoreLikeThisLiked}

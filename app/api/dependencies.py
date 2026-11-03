@@ -75,6 +75,7 @@ from app.services.retailer_context import RetailerContextProvider
 from app.services.room_photo import RoomPhotoService
 from app.services.room_visualization import (
     CatalogVisualizationRuntime,
+    ProductVisualizationRuntime,
     RoomVisualizer,
     VisualizationTurnRuntime,
 )
@@ -717,6 +718,19 @@ def catalog_visualization_runtime(
     )
 
 
+def product_visualization_runtime(
+    session: SessionDep, app_resources: ResourcesDep
+) -> ProductVisualizationRuntime:
+    """A render of one product the customer tapped, staged in a room."""
+    return ProductVisualizationRuntime(
+        _room_visualizer(session, app_resources),
+        ProductReferenceResolver(ProductRepository(session), app_resources.attributes),
+        session_store(app_resources),
+        app_resources.settings.session,
+        arabic_replies=app_resources.settings.customer_agent.arabic_replies,
+    )
+
+
 def _room_photo_store(app_resources: AppResources) -> RoomPhotoStore:
     return RoomPhotoStore(app_resources.redis.client, app_resources.settings.session)
 
@@ -759,5 +773,8 @@ VisualizationTurnRuntimeDep = Annotated[
 ]
 CatalogVisualizationRuntimeDep = Annotated[
     CatalogVisualizationRuntime, Depends(catalog_visualization_runtime)
+]
+ProductVisualizationRuntimeDep = Annotated[
+    ProductVisualizationRuntime, Depends(product_visualization_runtime)
 ]
 CatalogServiceDep = Annotated[CatalogService, Depends(catalog_service)]

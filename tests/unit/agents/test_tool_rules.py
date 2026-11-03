@@ -33,15 +33,19 @@ from app.schemas.card_comparison import CardRef
 from app.schemas.conversation import ConversationContext
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.discovery import DesignerQuestion
+from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome
 from app.schemas.query import ClarificationReason, ClarificationRequired
+from app.schemas.relaxation import StopReason
 from app.schemas.resolution import (
     ComparisonFailureReason,
     ComparisonUnavailable,
+    ProductSearchExecutionResult,
     ResolvedProductReference,
 )
 from app.schemas.seating_solution import SeatingShape
 from app.schemas.support import SupportContacts
 from app.services.cross_sell import CompanionSearchBuilder
+from app.services.grounding_builder import to_grounded_product
 from app.services.support import SupportService
 from app.taxonomy.subcategory_questions import load_subcategory_questions
 from langchain_core.messages import HumanMessage
@@ -409,14 +413,127 @@ async def test_what_goes_with_lists_kinds_until_one_is_chosen() -> None:
         "what_goes_with", {**which, "show_kind": "chandelier"}, _state(), services=services
     )
 
-    # The reviewed pairings the store stocks, marked; never the piece's own kind.
-    assert listed.payload is None and not pipeline.calls[:-1]
+    # Without a kind: a grid of one product per complementary kind (just carpet
+    # here, the only reviewed pairing in stock) with the kinds as chips; the
+    # kind drill-down still gives that kind's full page.
+    assert listed.payload is not None, "the no-kind call now shows a one-per-kind grid"
     assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
+    assert [s["kind"] for s in listed.facts["suggestions"]] == ["carpet"]
     assert "store_shelf" in listed.facts["other_kinds"]
     assert shown.payload is not None and shown.facts["shown_kind"] == "carpet"
     assert same.code == "same_kind_as_the_piece"
     assert same.facts["use_instead"] == "more_like_this"
     assert refused.code == "kind_not_stocked"
+
+
+class _PerKindPipeline:
+    """A distinct product per complementary subcategory, so the cross-sell grid
+    gets one card of each; a subcategory mapped to None is out of stock."""
+
+    def __init__(self, by_subcat: dict[str, int | None]) -> None:
+        self.by_subcat = by_subcat
+        self.calls: list[Any] = []
+
+    async def execute(
+        self,
+        resolved: Any,
+        context: Any,
+        *,
+        dropped_constraints: Any = (),
+        earlier_sizes_applied: bool = False,
+        presentation_limit: int | None = None,
+        closest_sizes: bool = False,
+    ) -> ProductSearchExecutionResult:
+        self.calls.append(resolved)
+        product_id = self.by_subcat.get(resolved.request.commerce_subcategory)
+        ids = (product_id,) if product_id is not None else ()
+        return ProductSearchExecutionResult(
+            presented_product_ids=ids,
+            grounding=SearchExecutionGrounding(
+                outcome=SearchOutcome.RESULTS if ids else SearchOutcome.ZERO_RESULTS,
+                products=tuple(
+                    to_grounded_product(
+                        _product(pid), grounding_ref=n, presented_ordinal=n, relaxation_depth=0
+                    )
+                    for n, pid in enumerate(ids, start=1)
+                ),
+                eligible_count=len(ids),
+                ranked_count=len(ids),
+                selected_count=len(ids),
+                presented_count=len(ids),
+                exact_candidate_count=len(ids),
+                stop_reason=StopReason.EXACT_SUFFICIENT,
+            ),
+        )
+
+
+async def test_cross_sell_shows_one_product_per_complementary_kind() -> None:
+    """Without a kind, the grid samples one product from each stocked
+    complementary kind - a nightstand, a lamp, a rug - so the cards match the
+    chips' variety, with out-of-stock kinds skipped."""
+    from app.taxonomy.complements import load_complements
+
+    from tests.unit.agents.fakes import FakeCapabilities
+
+    # A sofa's reviewed complements: a distinct product for a table and a rug,
+    # nothing for a floor lamp (out of stock), so the grid skips it.
+    pipeline = _PerKindPipeline({"center-table": 20, "carpet": 21, "floor-lamp": None})
+    services = agent_services(
+        pipeline=pipeline,
+        hydration=FakeHydration(available=(OFF_SCREEN, 20, 21)),
+        capabilities=FakeCapabilities(
+            pairs=(
+                ("seating", "sofa"),
+                ("tables", "center-table"),
+                ("decor", "carpet"),
+                ("lighting", "floor-lamp"),
+            )
+        ),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
+    )
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, _state(), services=services)
+
+    assert listed.payload is not None, "the no-kind call shows a one-per-kind grid"
+    grounding = listed.payload.grounding
+    # One card per in-stock complementary kind, the out-of-stock one left out.
+    assert [s["kind"] for s in listed.facts["suggestions"]] == ["center-table", "carpet"]
+    assert len(grounding.products) == 2
+    assert [p.grounding_ref for p in grounding.products] == [1, 2]
+    # A curated set, never a search with a story: nothing to claim as widened,
+    # set aside, or truncated, so no reply can over-promise.
+    assert grounding.was_relaxed is False and grounding.relaxations == ()
+    assert grounding.set_aside == () and grounding.truncated_for_presentation is False
+    assert all(product.relaxation_depth == 0 for product in grounding.products)
+    # The grid is the presented list, so each card is selectable / visualisable.
+    assert listed.state is not None
+    assert listed.state.product_interaction.presented_product_ids == (20, 21)
+
+
+async def test_cross_sell_falls_back_to_chips_when_nothing_is_in_stock() -> None:
+    """When no complementary kind yields a product, there is no grid - just the
+    chips, exactly as before - so the offer never shows an empty page."""
+    from app.taxonomy.complements import load_complements
+
+    from tests.unit.agents.fakes import FakeCapabilities
+
+    pipeline = _PerKindPipeline({})  # every kind out of stock
+    services = agent_services(
+        pipeline=pipeline,
+        hydration=FakeHydration(available=(OFF_SCREEN,)),
+        capabilities=FakeCapabilities(pairs=(("seating", "sofa"), ("decor", "carpet"))),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
+    )
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, _state(), services=services)
+
+    assert listed.payload is None, "no product anywhere -> chips only, no empty grid"
+    assert "suggestions" not in listed.facts
+    assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
 
 
 async def test_what_goes_with_offers_another_sofa_beside_the_pairings() -> None:

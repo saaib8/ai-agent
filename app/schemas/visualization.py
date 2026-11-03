@@ -35,12 +35,17 @@ class RenderView(StrEnum):
 
 
 class RenderSource(StrEnum):
-    """What a render pictured: the conversation's room package, or pieces the
-    customer picked from the catalogue. Only a package render can go out of
-    date, because only the package changes under it."""
+    """What a render pictured: the conversation's room package, pieces the
+    customer picked from the catalogue, or one product staged in a room of its
+    own. Only a package render can go out of date, because only the package
+    changes under it; a catalogue or product render pictures a fixed choice."""
 
     PACKAGE = "package"
     CATALOG = "catalog"
+    PRODUCT = "product"
+    """One product the customer tapped, shown in an inviting room: the product
+    is faithful to the catalog, the room and its decor are invented, and
+    nothing else in the picture is a product the customer can buy."""
 
 
 class RoomType(StrEnum):
@@ -84,6 +89,29 @@ class VisualizeRequest(BaseModel):
     expected_session_revision: int | None = Field(default=None, ge=0)
     """Same meaning as on a chat message: the revision the client's screen was
     drawn from, checked before any image model is paid."""
+
+
+class ProductVisualizeRequest(BaseModel):
+    """See one product on screen staged in a room of its own.
+
+    The card is named by its position in the results on screen, exactly as a
+    tick is (CLAUDE.md 17.1, 36): no product id ever arrives from the client,
+    and the position resolves server-side against verified state.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
+    store_id: int = Field(ge=1)
+    ordinal: int = Field(ge=1)
+    """The card's position in a result list on screen - card one is the first
+    product shown."""
+    list_revision: int | None = Field(default=None, ge=1)
+    """The result list the card is on, as the screen was told it. None means
+    the latest list; an earlier one still on screen resolves against itself."""
+    expected_session_revision: int | None = Field(default=None, ge=0)
+    """The revision the client's screen was drawn from, checked before any
+    image model is paid."""
 
 
 class RoomRenderItem(BaseModel):

@@ -38,8 +38,11 @@ export function RoomRender({
   const views = all.room.views
   // In their own room the photo is the camera: no other view to try.
   const inRoom = !!render.room_photo_id
+  // One product staged in a room of its own: no camera view, and its own label
+  // ("In a room") reads as a caption, not as "{X} view".
+  const singleProduct = render.source === 'product'
   const viewName = render.view ? views[render.view] : render.view_label
-  const alt = inRoom ? words.altFurnished : words.altView(viewName)
+  const alt = inRoom ? words.altFurnished : singleProduct ? render.view_label : words.altView(viewName)
   const firstOther = RENDER_VIEWS.find((v) => v.value !== render.view)?.value ?? 'corner'
   const [nextView, setNextView] = useState<RenderView>(firstOther)
   const nextLabel = views[nextView]
@@ -49,7 +52,7 @@ export function RoomRender({
       <div className="flex items-center justify-between border-b border-line bg-canvas/60 px-4 py-3">
         <span className="text-sm font-semibold text-ink">{words.title}</span>
         <span className="rounded-full bg-canvas px-2.5 py-0.5 text-[11px] font-medium text-muted">
-          {inRoom ? words.title : words.view(viewName)}
+          {inRoom ? words.title : singleProduct ? viewName : words.view(viewName)}
         </span>
       </div>
 
@@ -204,7 +207,7 @@ async function download(render: RoomRenderPresentation): Promise<void> {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `zory-room-${render.view ?? 'in-my-room'}.jpg`
+  link.download = `zory-room-${render.view ?? (render.source === 'product' ? 'in-a-room' : 'in-my-room')}.jpg`
   document.body.appendChild(link)
   link.click()
   link.remove()

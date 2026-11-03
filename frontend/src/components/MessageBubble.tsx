@@ -130,6 +130,8 @@ interface AssistantBubbleProps {
   likes?: GridLikes
   /** Present on the search results on screen: a similarity search from a card. */
   onMoreLikeThis?: (product: GroundedProduct) => void
+  /** Present on the search results on screen: stage a card in a room of its own. */
+  onVisualizeProduct?: (product: GroundedProduct) => void
   /** Tappable answers for the follow-up question, on the latest turn only. */
   quickReplies?: ReplyChoice[]
   onQuickReply?: (value: string, action?: ProductAction | null, bundle?: BundleAction | null, search?: SearchAction | null) => void
@@ -176,6 +178,7 @@ export function AssistantBubble({
   selection,
   likes,
   onMoreLikeThis,
+  onVisualizeProduct,
   compare,
   quickReplies,
   onQuickReply,
@@ -300,6 +303,7 @@ export function AssistantBubble({
             selection={actsOnCards ? selection : undefined}
             likes={actsOnCards ? likes : undefined}
             onMoreLikeThis={actsOnCards ? onMoreLikeThis : undefined}
+            onVisualize={actsOnCards ? onVisualizeProduct : undefined}
             compare={isResultList ? compare : undefined}
             busy={busy}
             labels={data.labels}

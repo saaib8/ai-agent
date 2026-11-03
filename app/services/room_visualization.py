@@ -39,6 +39,7 @@ from app.core.config import (
 )
 from app.core.exceptions import (
     NothingToVisualizeError,
+    PickUnavailableError,
     RenderUnavailableError,
     SelectionRejectedError,
     SelectionUnavailableError,
@@ -52,6 +53,7 @@ from app.prompts.visualization.v1 import (
     RenderPiece,
     RenderRoom,
     build_prompt,
+    build_single_prompt,
     reference_caption,
     room_type_label,
     room_type_words,
@@ -63,6 +65,7 @@ from app.repositories.sessions import SessionStore
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1, RoomProjectState
 from app.schemas.agent_turn import CustomerResponse
+from app.schemas.agent_updates import AgentStateUpdate, ProductInteractionUpdate
 from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
 from app.schemas.chat import ChatPresentation, ChatResponse
 from app.schemas.dimensions import DimensionStatus
@@ -70,9 +73,11 @@ from app.schemas.geometry import RoomMeasurementRole
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.reply_choice import ReplyChoice
+from app.schemas.resolution import ReferenceFailureReason, ReferenceUnresolved
 from app.schemas.retailer import RetailerContext
 from app.schemas.room_photo import RoomPhoto
 from app.schemas.visualization import (
+    ProductVisualizeRequest,
     RenderRoomSpec,
     RenderSource,
     RenderView,
@@ -80,6 +85,7 @@ from app.schemas.visualization import (
     RoomRenderPresentation,
     VisualizeRequest,
 )
+from app.services.agent_state import apply_update
 from app.services.card_labels import card_labels
 from app.services.discovery import to_candidate
 from app.services.media_wording import (
@@ -87,7 +93,9 @@ from app.services.media_wording import (
     VIEW_PHRASES,
     render_reply,
     room_photo_reply,
+    single_render_reply,
 )
+from app.services.reference_resolver import ProductReferenceResolver
 from app.services.reply_language import session_language
 from app.services.room_photo import fit_exactly, load_room_photo
 from app.services.session_turns import commit_exchange, load_for_turn
@@ -102,6 +110,10 @@ _VIEW_PHRASES = VIEW_PHRASES[ReplyLanguage.EN]
 
 _PHOTO_VIEW_LABEL = "Your room"
 """What a render in the customer's own photo is called where a view would be."""
+
+_SINGLE_VIEW_LABEL = "In a room"
+"""What a single-product render is called where a camera view would be: it has
+no chosen view - the prompt fixes an eye-level framing."""
 
 
 class PhotoFetcher(Protocol):
@@ -181,6 +193,66 @@ class RoomVisualizer:
             width_m=spec.width_m,
         )
         return await self._draw(items, room, view, context, RenderSource.CATALOG, spec)
+
+    async def render_single(
+        self, product_id: int, context: RetailerContext
+    ) -> RoomRenderPresentation:
+        """One product staged in an inviting room of its own.
+
+        The product is read back through the store-scoped repository, so a
+        foreign or inactive id is simply not there. The product is faithful to
+        its photo; the room and everything decorating it are invented, and no
+        other sellable furniture is drawn (CLAUDE.md 3.3 - the catalog, not an
+        image model, decides what exists).
+        """
+        rows = await self._repository.get_by_ids([product_id], context)
+        if not rows:
+            raise SelectionUnavailableError(store_id=context.store_id, requested=1)
+        product = to_candidate(rows[0], discount_max_share=self._discount_max_share)
+        return await self._draw_single(product, context)
+
+    async def _draw_single(
+        self, product: ProductCandidate, context: RetailerContext
+    ) -> RoomRenderPresentation:
+        started = time.perf_counter()
+        photo = (await self._photos_for([(product, 1)]))[0]
+        piece = RenderPiece(
+            reference=1 if photo is not None else None,
+            name=product.name_english,
+            kind=_kind(product),
+            size_cm=_size(product),
+            quantity=1,
+        )
+        references = (
+            [ImageReference(data=photo, caption=reference_caption(piece))]
+            if photo is not None
+            else []
+        )
+        image = await self._generator.generate(build_single_prompt(piece), references)
+        jpeg, width, height = _as_jpeg(image.data, self._settings.jpeg_quality)
+
+        logger.info(
+            "room_rendered",
+            store_id=context.store_id,
+            source=RenderSource.PRODUCT.value,
+            view="single",
+            piece_count=1,
+            reference_count=len(references),
+            provider=image.provider,
+            image_bytes=len(jpeg),
+            prompt_version=VERSION,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+        return RoomRenderPresentation(
+            image_url="data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
+            width=width,
+            height=height,
+            view=None,
+            view_label=_SINGLE_VIEW_LABEL,
+            items=_render_items([(product, 1)]),
+            source=RenderSource.PRODUCT,
+            room=None,
+        )
 
     async def _draw(
         self,
@@ -573,6 +645,99 @@ class CatalogVisualizationRuntime:
             raise SelectionRejectedError(
                 public_message=f"At most {self._catalog.max_quantity} of any one product."
             )
+
+
+class ProductVisualizationRuntime:
+    """Seeing one product staged in a room, run as one committed turn.
+
+    Like every render it is recorded in the history in words and changes no
+    state (CLAUDE.md 25): the picture lives on the customer's screen, and the
+    product it pictured is still just a card they tapped, not a pick or a room.
+
+    The card is named by its position on screen and resolved server-side, so no
+    product id ever arrives from the client (CLAUDE.md 17.1, 36).
+    """
+
+    def __init__(
+        self,
+        visualizer: RoomVisualizer,
+        references: ProductReferenceResolver,
+        sessions: SessionStore,
+        settings: SessionSettings,
+        *,
+        arabic_replies: bool = False,
+    ) -> None:
+        self._arabic_replies = arabic_replies
+        self._visualizer = visualizer
+        self._references = references
+        self._sessions = sessions
+        self._settings = settings
+
+    async def visualize(
+        self, request: ProductVisualizeRequest, context: RetailerContext
+    ) -> ChatResponse:
+        """Load, resolve the card, render, commit, answer.
+
+        The session must be loaded anyway to resolve the card's position, and
+        the revision is checked there before an image model is paid: a tap on a
+        list that has since been replaced would picture a product the customer
+        is no longer looking at.
+        """
+        loaded = await load_for_turn(
+            self._sessions,
+            store_id=request.store_id,
+            session_id=request.session_id,
+            expected_revision=request.expected_session_revision,
+        )
+        state = loaded.envelope.state
+        outcome = await self._references.resolve_on_list(
+            request.ordinal, request.list_revision, state, context
+        )
+        if isinstance(outcome, ReferenceUnresolved):
+            raise PickUnavailableError(
+                public_message=(
+                    "That product is no longer available, so I can't picture it."
+                    if outcome.reason is ReferenceFailureReason.PRODUCT_UNAVAILABLE
+                    else "That card isn't on screen any more, so I can't picture it from here."
+                ),
+                reason=str(outcome.reason),
+            )
+        render = await self._visualizer.render_single(outcome.product_id, context)
+
+        # Focus the piece just staged so the "Add to cart" chip adds *it*
+        # (resolved as the focused product), which brings in what goes with it.
+        # Only the focus moves: the search and its cards stay on record, so
+        # "Explore more" still pages the same results (CLAUDE.md 10.5, 13.5).
+        focused = apply_update(
+            state,
+            AgentStateUpdate(
+                product_interaction=ProductInteractionUpdate(focused_product_id=outcome.product_id)
+            ),
+        )
+        language = session_language(state.reply_language, enabled=self._arabic_replies)
+        response = single_render_reply(language)
+        customer_said = "[Asked to see this product staged in a room of its own]"
+        revision = await commit_exchange(
+            self._sessions,
+            self._settings,
+            store_id=request.store_id,
+            session_id=request.session_id,
+            loaded=loaded,
+            state=focused,
+            customer_said=customer_said,
+            response=response,
+            # Product visualisation is Sara's, like product discovery (CLAUDE.md 25).
+            agent=AgentPersona.SARA,
+        )
+        return ChatResponse(
+            session_id=request.session_id,
+            session_revision=revision,
+            response=response,
+            presentation=ChatPresentation(render=render, choices=_choices(response)),
+            reply_language=language if self._arabic_replies else None,
+            labels=card_labels(language if self._arabic_replies else None),
+            agent=AgentPersona.SARA,
+        )
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

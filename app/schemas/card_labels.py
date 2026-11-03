@@ -33,6 +33,8 @@ class CardLabels(BaseModel):
     select: str
     selected: str
     more_like_this: str
+    visualize_in_environment: str
+    """The card button that stages this product in an imagined room."""
     not_this_one: str
     compare: str
     view_product: str
@@ -229,6 +231,8 @@ class CardLabels(BaseModel):
     it was designed, no longer edited."""
     say_use_option: str
     say_visualize_room: str
+    say_visualize_in_room: str
+    """The customer's side of tapping "Visualize in environment" on a card."""
     say_place_room: str
     say_place_selection: str
     say_visualize_selection: str

@@ -15,6 +15,7 @@ from pydantic import Field
 from app.agents.context import ToolContext
 from app.agents.facts import product_facts
 from app.agents.operations.cart import as_room_in_cart, room_pieces_to_buy
+from app.agents.payloads import SearchShown
 from app.agents.services import AgentServices
 from app.agents.tools.base import ToolOutcome, ZoryTool
 from app.agents.tools.schemas import ToolSchemas
@@ -30,9 +31,12 @@ from app.agents.tools.shopping import (
 from app.agents.work import ToolStatus, TurnWork
 from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import MAX_FINISHED_ROOMS
-from app.schemas.product import CommerceClassification
-from app.schemas.retailer import RetailerCatalogCapabilities
+from app.schemas.agent_state import MAX_FINISHED_ROOMS, AgentStateV1
+from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding, SearchOutcome
+from app.schemas.product import CommerceClassification, ProductCandidate
+from app.schemas.relaxation import StopReason
+from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
+from app.services.agent_state import commit_search_results
 from app.services.design_checks import not_the_anchors_kind
 from app.services.room_cart import finished
 from app.taxonomy.complements import Companion
@@ -103,19 +107,47 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                 }
                 for _, kind in stocked
             ]
+            # The complementary kinds the grid samples - the chips' kinds, before
+            # the anchor's own kind (another_of_its_kind) is listed for seating,
+            # which is a similar-product chip, not a grid card.
+            companions = [kind for _, kind in stocked]
             facts: dict[str, Any] = {"goes_with": product_facts(anchor, None)}
             if not kinds:
                 # No reviewed pairing the store stocks: the stocked kinds
                 # themselves, so the choice never ends empty-handed - which
                 # suit it is the agent's call.
                 kinds = _stocked_kinds(services, capabilities, anchor_kinds)
+                companions = [
+                    companion
+                    for entry in kinds
+                    if (companion := _stocked_kind(services, capabilities, entry["kind"]))
+                    is not None
+                ]
                 facts["none_reviewed"] = "choose the kinds that would suit it from these"
             else:
                 facts["other_kinds"] = "store_shelf lists every other kind the store stocks"
+            grid = await _cross_sell_grid(
+                anchor, companions, services, work.staged, context.retailer
+            )
             kinds = [*_another_of_its_kind(services, capabilities, anchor.commerce), *kinds]
+            if grid is None:
+                return ToolOutcome(
+                    code=None if kinds else "nothing_to_suggest",
+                    facts={**facts, "kinds": kinds},
+                )
+            grounding, committed, suggestions = grid
             return ToolOutcome(
-                code=None if kinds else "nothing_to_suggest",
-                facts={**facts, "kinds": kinds},
+                facts={
+                    **facts,
+                    "kinds": kinds,
+                    "suggestions": suggestions,
+                    "one_per_kind": (
+                        "one product from each kind, so they see the variety; offer the "
+                        "chips to see more of any one kind, not a generic 'show more'"
+                    ),
+                },
+                state=committed,
+                payload=SearchShown(grounding=grounding),
             )
         if not not_the_anchors_kind(args.show_kind, anchor_kinds):
             # Another of its own kind is a similar-product search, not a pairing.
@@ -140,17 +172,107 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
     return ZoryTool(
         name="what_goes_with",
         description=(
-            "What goes with a piece they chose. Without show_kind: the reviewed pairings the "
-            "store stocks, the most stocked first - you choose which suits it best, or "
-            "another kind store_shelf lists; with none reviewed (none_reviewed), the kinds "
-            "the store stocks, to choose the ones that suit it. With show_kind: products "
-            "of that kind, leaning to the piece's look. Its own kind is listed only for a "
-            "piece that seats several (another_of_its_kind), shown with more_like_this."
+            "What goes with a piece they chose. Without show_kind: a grid of one product "
+            "from each of the first few complementary kinds (suggestions) plus the kinds "
+            "as chips (kinds), the most stocked first - present the variety and offer a "
+            "chip to see more of one kind; with none reviewed (none_reviewed), the stocked "
+            "kinds to choose from. With show_kind: a full page of that one kind, leaning to "
+            "the piece's look. Its own kind is listed only for a piece that seats several "
+            "(another_of_its_kind), shown with more_like_this."
         ),
         args=GoesWithArgs,
         owners=SALMAN,
         handler=goes_with,
     )
+
+
+CROSS_SELL_GRID_KINDS = 4
+"""How many complementary kinds the cross-sell grid samples - one product from
+each, so the customer sees the variety the chips name instead of a page of one
+kind. Each kind is one real companion search run in turn, so this is kept small
+to bound the turn's latency; a fresh-session fan-out would let it grow."""
+
+
+async def _cross_sell_grid(
+    anchor: ProductCandidate,
+    companions: Sequence[Companion],
+    services: AgentServices,
+    state: AgentStateV1,
+    context: RetailerContext,
+) -> tuple[SearchExecutionGrounding, AgentStateV1, list[dict[str, Any]]] | None:
+    """One product per complementary kind, assembled into a single grid.
+
+    A product beside a pick is a few teasers, not a page: the top match of each
+    of the first few complementary kinds (a nightstand, a lamp, a rug), so the
+    customer sees the variety the chips name instead of a page of one kind. Each
+    kind is a real companion search (CLAUDE.md 27), leaning to the pick's look;
+    tapping a chip drills into one kind's full page through the show_kind path.
+
+    The grid is recorded as the presented list, so each card is selectable and
+    can be staged "in a room" like any search card; the first kind's search
+    becomes the active one, so a typed "show me more" pages that kind rather
+    than the customer's last, unrelated search.
+
+    None when nothing could be assembled (no kinds, or none in stock), so the
+    caller falls back to the chips alone.
+    """
+    builder = services.companion_search
+    if builder is None:
+        return None
+    chosen = list(companions)[:CROSS_SELL_GRID_KINDS]
+    if not chosen:
+        return None
+    # Sequential, not concurrent: the request holds one database session, which
+    # serves one query at a time (a fresh-session fan-out, as a room's pieces
+    # use, is the way to parallelise this later).
+    picks: list[tuple[Companion, int, GroundedProduct, AgentStateV1]] = []
+    seen: set[int] = set()
+    for companion in chosen:
+        run = await services.search.new(
+            builder.build(anchor, companion), state, context, alongside=False, asked=False
+        )
+        if run.grounding is None or not run.grounding.products:
+            continue
+        product_id = run.state.product_interaction.presented_product_ids[0]
+        if product_id in seen:
+            continue
+        seen.add(product_id)
+        picks.append((companion, product_id, run.grounding.products[0], run.state))
+    if not picks:
+        return None
+    products = tuple(
+        grounded.model_copy(
+            update={"grounding_ref": ordinal, "presented_ordinal": ordinal, "relaxation_depth": 0}
+        )
+        for ordinal, (_, _, grounded, _) in enumerate(picks, 1)
+    )
+    count = len(products)
+    # A curated suggestion set, not a search result: every customer-facing field
+    # is benign by construction - not relaxed, nothing set aside, no truncation -
+    # so no reply can claim "I widened" or "these are all" of a search that was
+    # never one. The counts equal `count`, so `truncated_for_presentation` is
+    # false and no "show more" is implied.
+    grounding = SearchExecutionGrounding(
+        outcome=SearchOutcome.RESULTS,
+        products=products,
+        eligible_count=count,
+        ranked_count=count,
+        selected_count=count,
+        presented_count=count,
+        exact_candidate_count=count,
+        stop_reason=StopReason.EXACT_SUFFICIENT,
+    )
+    committed = commit_search_results(picks[0][3], tuple(pid for _, pid, _, _ in picks))
+    suggestions = [
+        {
+            "kind": companion.commerce_subcategory,
+            "label": companion.label,
+            "card": ordinal,
+            "name": grounded.name_english,
+        }
+        for ordinal, (companion, _, grounded, _) in enumerate(picks, 1)
+    ]
+    return grounding, committed, suggestions
 
 
 MAX_STOCKED_KINDS = 20

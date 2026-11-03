@@ -153,3 +153,59 @@ def piece_line(piece: RenderPiece) -> str:
     if piece.reference is None:
         return f"- (no photo) {described}: draw it faithfully from this description."
     return f"- image {piece.reference}: {described}"
+
+
+def build_single_prompt(piece: RenderPiece) -> str:
+    """One product staged in an inviting, lived-in room - the opposite of
+    `build_prompt`'s bare shell. The product is the hero, reproduced faithfully
+    from its photo; the room around it is fully furnished and decorated with
+    *invented* pieces so it reads as a real home. The room kind is left to the
+    product's kind, so nothing is hardcoded (a sofa a living room, a bed a
+    bedroom, a makeup chair a dressing nook...).
+
+    What keeps it honest is focus, not a bare room. A piece only looks real in a
+    furnished room - a coffee table needs a sofa behind it, a lamp a surface, a
+    bed its nightstands - so the staging may hold complementary furniture. The
+    guards the model can actually keep are: the hero is the one unmistakable
+    subject, faithful to its photo; nothing in the background rivals it or
+    repeats its exact kind; and the reply (not the picture) tells the customer
+    only the hero is for sale.
+    """
+    details = [piece.kind]
+    if piece.size_cm:
+        details.append(" x ".join(f"{v:.0f}" for v in piece.size_cm) + " cm")
+    described = f"{piece.name} ({', '.join(details)})"
+    faithfully = (
+        f"Reproduce it faithfully from reference image {piece.reference} - the exact shape, "
+        "proportions, material and colour. The image is the authority on how it looks; the "
+        "text only names it and gives its approximate size."
+        if piece.reference is not None
+        else "Draw it faithfully from this description."
+    )
+    lines = [
+        "Create a single photorealistic interior render: an inviting, well-styled, "
+        f"fully furnished, lived-in room of the kind a {piece.kind} naturally belongs in. "
+        "Let the product's kind decide the room - do not force a particular room type.",
+        "",
+        f"The hero of the scene is one {described}. {faithfully} Make it the clear focal "
+        "point - prominent, well lit and fully in view - and place it naturally, where an "
+        "interior designer would, at realistic scale with sensible clearances and walkways.",
+        "",
+        "Furnish and decorate the rest of the room with tasteful, *invented* pieces so it "
+        "reads as a real home: complementary furniture where the setting calls for it, plus "
+        "wall art, framed canvases, indoor plants, a rug, soft cushions, warm lamps and a few "
+        "small ornaments, in gentle natural daylight. Choose colours and a look that flatter "
+        "the hero.",
+        "",
+        "Keep the focus honest: the hero is the one piece the customer is shopping for, so "
+        "nothing else may rival it for attention or repeat its exact kind - no second "
+        f"{piece.kind}. Everything around it is generic background styling, visibly secondary "
+        "to the hero.",
+        "",
+        "Photography: natural eye-level view, soft natural daylight, realistic scale, no "
+        "people, no text, no watermarks, no brand logos.",
+        "",
+        f"Before finishing, check the {piece.kind} matches its reference image and stands out "
+        "as the clear subject of the picture.",
+    ]
+    return "\n".join(lines)

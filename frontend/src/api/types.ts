@@ -67,6 +67,8 @@ export interface CardLabels {
   select: string
   selected: string
   more_like_this: string
+  /** The card button that stages this product in an imagined room. */
+  visualize_in_environment: string
   not_this_one: string
   compare: string
   view_product: string
@@ -202,6 +204,8 @@ export interface CardLabels {
   room_in_cart: string
   say_use_option: string
   say_visualize_room: string
+  /** The customer's side of tapping "See it in a room" on a card. */
+  say_visualize_in_room: string
   say_place_room: string
   say_place_selection: string
   say_visualize_selection: string
@@ -547,8 +551,9 @@ export interface RoomRenderItem {
 }
 
 /** A package render pictures the conversation's room; a catalogue render,
- *  pieces the customer picked. Only a package render can go out of date. */
-export type RenderSource = 'package' | 'catalog'
+ *  pieces the customer picked; a product render, one tapped product staged in
+ *  a room of its own. Only a package render can go out of date. */
+export type RenderSource = 'package' | 'catalog' | 'product'
 
 export type RoomType =
   | 'living_room'
@@ -591,6 +596,17 @@ export interface VisualizeRequest {
   view: RenderView
   /** Draw it in the customer's own room photo instead; `view` is then unused. */
   room_photo_id?: string
+  expected_session_revision?: number
+}
+
+/** Stage one product on screen in a room of its own. The card is named by its
+ *  position (`ordinal` + `list_revision`), resolved server-side; no product id
+ *  is ever sent. */
+export interface ProductVisualizeRequest {
+  session_id: string
+  store_id: number
+  ordinal: number
+  list_revision?: number
   expected_session_revision?: number
 }
 
