@@ -56,6 +56,10 @@ from app.services.controlled_search import ControlledRelaxationService
 from app.services.conversation_adoption import ConversationAdoptionService
 from app.services.cross_sell import CompanionSearchBuilder
 from app.services.design_discovery import DesignDiscoveryService
+from app.services.dimension_policy import (
+    EVERY_KIND_DIMENSION_RELAXATION_POLICY,
+    V1_DIMENSION_RELAXATION_POLICY,
+)
 from app.services.discovery import ProductDiscoveryService
 from app.services.furniture_finder import FinderTurnRuntime, FurnitureFinderService
 from app.services.health import HealthService
@@ -195,7 +199,14 @@ def controlled_relaxation_service(
             rating_prior_reviews=app_resources.settings.products.rating_prior_reviews,
             best_sellers_enabled=app_resources.settings.products.best_sellers_enabled,
         ),
-        RelaxationPlanner(settings.relaxation),
+        RelaxationPlanner(
+            settings.relaxation,
+            dimension_policy=(
+                EVERY_KIND_DIMENSION_RELAXATION_POLICY
+                if settings.discovery.size_by_side
+                else V1_DIMENSION_RELAXATION_POLICY
+            ),
+        ),
         settings.relaxation,
     )
 
@@ -365,7 +376,9 @@ def conversation_adoption_service(
     if not settings.guest_handover:
         return None
     return ConversationAdoptionService(
-        sessions, ConversationMoves(app_resources.redis.client, settings)
+        sessions,
+        ConversationMoves(app_resources.redis.client, settings),
+        max_likes=app_resources.settings.customer_agent.max_likes,
     )
 
 

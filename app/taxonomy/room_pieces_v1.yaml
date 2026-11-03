@@ -17,6 +17,12 @@
 # people the customer gives (CLAUDE.md 27.1): the chip reads "Sofa".
 version: v1
 
+# Kinds a room never buys as identical copies (known issue 38): two pieces of
+# art on a wall are two different works that go together, or a set sold as
+# one - never one print hung twice. A piece of these kinds is bought once;
+# side tables, lamps and dining chairs may still be identical pairs or sets.
+bought_once: [art-canvas, mirror, flower-pot-and-plant, vase, statue-and-antique, wall-clock]
+
 rooms:
   living_room:
     asks_seats: true

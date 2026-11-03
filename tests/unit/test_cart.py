@@ -10,6 +10,7 @@ the same place (CLAUDE.md 36).
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any, cast
 
@@ -18,7 +19,7 @@ from app.api.dependencies import picks_runtime, retailer_context_provider
 from app.api.errors import register_exception_handlers
 from app.api.routes.cart import router as cart_router
 from app.core.config import CustomerAgentSettings
-from app.core.exceptions import CartQuantityError, PickUnavailableError
+from app.core.exceptions import CartQuantityError, CatalogUnavailableError, PickUnavailableError
 from app.repositories.products import ProductRepository, StoreProductIdentity
 from app.schemas.agent_state import (
     AgentStateV1,
@@ -39,10 +40,12 @@ from app.schemas.picks import (
     PickView,
     SetQuantityAction,
 )
+from app.schemas.product import ProductListing
 from app.schemas.retailer import RetailerContext
 from app.services.agent_state import apply_update, commit_search_results
 from app.services.cart import CartService
 from app.services.picks import PicksRuntime
+from app.services.picks_words import WORDS
 from app.services.reference_resolver import ProductReferenceResolver
 from app.taxonomy.attributes import load_catalog_attributes
 from fastapi import FastAPI
@@ -254,11 +257,13 @@ async def test_changes_say_what_to_copy_into_the_stores_cart() -> None:
 # ── the tray: quantities by tap ─────────────────────────────────────────────
 
 
-def _runtime(sessions: FakeSessionStore, **settings: Any) -> PicksRuntime:
+def _runtime(
+    sessions: FakeSessionStore, hydration: Hydration | None = None, **settings: Any
+) -> PicksRuntime:
     repository = FakeRepository([_row(p) for p in (101, 102, 103, 104)])
     return PicksRuntime(
         ProductReferenceResolver(cast(ProductRepository, repository), load_catalog_attributes()),
-        Hydration(),  # type: ignore[arg-type]
+        hydration or Hydration(),  # type: ignore[arg-type]
         sessions,  # type: ignore[arg-type]
         CustomerAgentSettings(**settings),
         cart=_cart(),
@@ -304,6 +309,83 @@ async def test_more_than_the_cart_takes_is_refused() -> None:
         await _runtime(sessions, cart_max_quantity=5).apply(_quantity(1, 6), CONTEXT)
 
     assert "up to 5" in raised.value.public_message
+
+
+class Stocked(Hydration):
+    """The catalog with how many the store has of some products."""
+
+    def __init__(self, stock: dict[int, int]) -> None:
+        super().__init__()
+        self.stock = stock
+
+    async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
+        found = await super().hydrate_ids(product_ids, context)
+        return tuple(
+            p.model_copy(
+                update={"listing": ProductListing(stock_quantity=self.stock.get(p.product_id))}
+            )
+            for p in found
+        )
+
+
+async def test_more_than_the_store_has_is_refused_with_how_many_are_left() -> None:
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state(picks=(101,)))
+
+    with pytest.raises(PickUnavailableError) as raised:
+        await _runtime(sessions, Stocked({101: 1})).apply(_quantity(1, 2), CONTEXT)
+
+    assert raised.value.public_message == "Only 1 of this product left in the store."
+
+
+async def test_up_to_what_the_store_has_is_taken() -> None:
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state(picks=(101,)))
+
+    response = await _runtime(sessions, Stocked({101: 3})).apply(_quantity(1, 3), CONTEXT)
+
+    assert response.cart is not None and response.cart.lines[0].quantity == 3
+
+
+class FirstReadFails(Hydration):
+    """The catalog out for the stock read, back for the cart's own."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads = 0
+
+    async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
+        self.reads += 1
+        if self.reads == 1:
+            raise CatalogUnavailableError()
+        return await super().hydrate_ids(product_ids, context)
+
+
+async def test_stock_that_cannot_be_read_is_no_limit_on_a_tap() -> None:
+    sessions = FakeSessionStore()
+    await _stored(sessions, _state(picks=(101,)))
+
+    response = await _runtime(sessions, FirstReadFails()).apply(_quantity(1, 2), CONTEXT)
+
+    assert response.cart is not None and response.cart.lines[0].quantity == 2
+
+
+async def test_a_refused_tap_speaks_the_conversations_language() -> None:
+    sessions = FakeSessionStore()
+    arabic = _state(picks=(101,)).model_copy(update={"reply_language": ReplyLanguage.AR})
+    await _stored(sessions, arabic)
+
+    with pytest.raises(PickUnavailableError) as stock:
+        await _runtime(sessions, Stocked({101: 1}), arabic_replies=True).apply(
+            _quantity(1, 2), CONTEXT
+        )
+    with pytest.raises(CartQuantityError) as limit:
+        await _runtime(sessions, arabic_replies=True, cart_max_quantity=5).apply(
+            _quantity(1, 6), CONTEXT
+        )
+
+    assert stock.value.public_message == "المتبقي من هذا المنتج في المتجر: 1 فقط."
+    assert limit.value.public_message == "يمكنك إضافة حتى 5 من المنتج الواحد."
 
 
 async def test_a_quantity_for_a_line_not_in_the_cart_is_refused() -> None:
@@ -366,14 +448,20 @@ async def test_the_route_reads_the_cart_and_changes_nothing() -> None:
 # ── what the reply may say ──────────────────────────────────────────────────
 
 
-
-
 # ── "the first sofa" after the screen moved on ──────────────────────────────
 
 
 # ── several at once, a kind alone, and asking before adding ─────────────────
 
 
-
-
 # ── the cart's limit, however a product is added ────────────────────────────
+
+
+def test_every_tap_message_has_both_languages_and_the_same_figures() -> None:
+    english, arabic = WORDS[ReplyLanguage.EN], WORDS[ReplyLanguage.AR]
+
+    assert set(english) == set(arabic)
+    for key in english:
+        assert set(re.findall(r"\{\w+\}", english[key])) == set(
+            re.findall(r"\{\w+\}", arabic[key])
+        ), key

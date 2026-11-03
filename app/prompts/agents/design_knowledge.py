@@ -12,7 +12,7 @@ for this room and this customer.
 
 from __future__ import annotations
 
-VERSION = "design_knowledge/v6"
+VERSION = "design_knowledge/v7"
 
 DESIGN_KNOWLEDGE = """\
 # What you know as a designer
@@ -116,12 +116,12 @@ A finished room has layers, not only its main pieces: what it is for (where they
 sit, sleep, eat or work); the surfaces beside them (a low table, a table at each end \
 of the seating or each side of where they sleep, a narrow table along an empty \
 wall); light at more than one height (a floor lamp, a table lamp, a pendant); the \
-walls (art in proportion - a long wall often takes two or three pieces, or one large \
-one); the floor (a rug that holds the main group together); and a few accents (a \
-small holder for cut blooms on a table or shelf - never a planter - a plant in its pot, a \
-looking glass). Pairs suit symmetry - matching side tables or lamps either side. A \
-bigger budget buys more of those layers and better pieces, never clutter: a room \
-with space to walk through is part of the design.
+walls (art in proportion - a long wall often takes two or three different pieces that go \
+together, or one large one, never one print repeated); the floor (a rug that holds the \
+main group together); and a few accents (a small holder for cut blooms on a table or \
+shelf - never a planter - a plant in its pot, a looking glass). Pairs suit symmetry - \
+matching side tables or lamps either side. A bigger budget buys more of those layers and \
+better pieces, never clutter: a room with space to walk through is part of the design.
 
 Between two pieces the room would benefit from about equally, prefer the one the shop \
 can show a range of: stocking a kind and being able to offer a choice are different \

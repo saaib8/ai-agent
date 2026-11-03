@@ -243,7 +243,7 @@ Before implementing repositories/models, inspect the real database/model definit
 `material` is provided by Django on `core_product` (see section 6), with the other
 product data its Salla import fills: `description`, `description_english`,
 `regular_price`, `rating`, `review_count`, `reviews_json`, `sold_quantity`,
-`weight_kg`, `sku`, `warranty_months` (`PRODUCT_DATA_COLUMNS`, checked at
+`weight_kg`, `sku`, `warranty_months`, `stock_quantity` (`PRODUCT_DATA_COLUMNS`, checked at
 startup - Django's migrations go first). Most stores have none of it yet; each
 field is simply absent where the store left it empty. How each is used is
 section 37.
@@ -464,8 +464,9 @@ a list of search cards while it is built.
   brief does not hold: the budget (only when unknown; saved with `note_room` the
   moment it is said), what the room is mostly for (`note_room` `purpose` -
   hosting guests, family TV, reading, children), the room's size once and why
-  ("I can design your room better if I know its size" - declined is `note_room`
-  `declined_size`, never asked again), how many sit there, the colours (several
+  ("I can design your room better if I know its size" - one plain question,
+  never its doors, windows or TV; declined is `note_room` `declined_size`, never
+  asked again), how many sit there, the colours (several
   may be given) and look, what they must have, would rather not have, or already
   own. The budget, purpose, head count and colours or look are known before it is
   built; "just design it" builds now. An amount said without a currency is in the
@@ -494,7 +495,21 @@ a list of search cards while it is built.
   small vase, a plant) are nice - included when the budget allows, given up
   first when it is short; pairs and sets are a quantity, bought whole or not
   at all. No second build: budget still left is said, with what could finish
-  it offered for the next message. `app/services/room_design.py` checks it: approved types
+  it offered for the next message. **Stock never chooses a product**: a piece
+  wanted in more than one goes to the same product first; where the store has
+  fewer (`stock_quantity`), code splits it into two pieces of that kind - the
+  chosen product for what is in stock, the closest look from the same search
+  for the rest (`app/services/room_stock.py`) - and the room is presented as
+  designed, with no word of stock. The same holds after every change - a
+  swap, a revision, a change of pieces - and no two pieces use more of a
+  product than the store has; each half keeps its part of the budget share. A
+  piece that is the last of its product carries `no_more_in_store` for Nora
+  alone, so she never offers "the same one again". Art, mirrors, plants,
+  vases, statues and wall clocks are never one product bought twice
+  (`room_pieces_v1.yaml` `bought_once`): a quantity above one on them is
+  refused (`never_the_same_one_twice`), and two pieces of them in a room are
+  two different products - the second takes the next-closest look (known
+  issue 38). `app/services/room_design.py` checks it: approved types
   only (a refusal names the family), unstocked types and looks left out and
   said, `seats_each` only on multi-seat types, shares at most the whole budget,
   no figure in prose, and a seat count no piece of its types has in this store
@@ -645,6 +660,14 @@ most one follow-up a turn, or none**: the same questions ride on a
 - **Taste** they say - likes and what they would rather avoid - is kept with
   `remember_taste` (`customer_preferences`): likes lean every new search, what
   they avoid is pushed down in every search and its pages. Nothing is hidden.
+  What they **liked** (♡) leans a search they ask for and its pages too, read
+  from the liked products' stored values (`app/services/liked_look.py`): the
+  colours of liked pieces of that kind or one reviewed to be shown with it
+  (a sofa set for sofas, `seating_v1.yaml` `shown_with`), the styles of any - after what they
+  said and what they avoid, before a designer's direction (`leaning_to_liked`
+  in the facts), never to what they said to avoid, and never a sort they
+  asked for ("cheapest" stays cheapest). A matched search, more like this and
+  what goes with a pick follow their own look instead.
 - **Head count orders, seats filter.** How many usually sit there is
   `head_count`: pieces that seat them first, unknown seat counts next, fewer
   last. A seat count they require ("a 3-seater") is the search's seats.
@@ -722,8 +745,10 @@ The screen is built from what this turn's tools produced
 (`app/agents/screen.py`), never from the reply's words. The reply's `show`
 chooses among them - never something shown before the turn's last list, which
 is the list "the second one" means - and the last thing shown is the default.
-Chips (`choices`) must answer the question the reply asks; a reply that offers
-them without a question is sent back as broken arguments. The store's support
+Chips (`choices`) must answer the question the reply asks, each an answer in
+itself - never a promise to answer ("I'll enter my budget"), so a figure they
+type, like the budget, has none; a reply that offers them without a question is
+sent back as broken arguments. The store's support
 channels are drawn from its contacts when `contact_store` ran.
 
 ### 10.5 Goals: what they are working toward
@@ -761,6 +786,11 @@ kept on `room_project` (`geometry`, `layout`), merged wall by wall - a wall said
 again keeps what it does not restate - and builds nothing. It is asked once,
 after something has been shown, when sizes start to decide: a second sofa, a
 rug, a whole room.
+
+**Asked as one plain question** - "What's your room size?" - answered in words,
+with no choices: never the doors, windows, the TV or the walls. The designer
+works with the size; walls the customer mentions on their own are still
+recorded (known issue 35).
 
 **Code measures; Nora judges** (`app/services/fit.py`):
 
@@ -1171,20 +1201,30 @@ What may widen, and by how much:
   Replacing one subcategory with another needs an approved alternative policy,
   and none exists. Its recorded strength is preserved for that future decision.
 
-- **A measurement widens only where the approved allowlist permits it** (15.2),
-  by 5% then 10% of the original, and a target widens symmetrically about its
-  figure rather than becoming a ceiling.
+- **A measurement widens only where the policy permits it** (15.2) - read by
+  side, a loose size of any kind - by 5% then 10% of the original, and a
+  target widens symmetrically about its figure rather than becoming a ceiling.
 - **A strict colour or style is the one exception to "locked never relaxes",
   and only as a last resort** (12.4): when the pool is still empty after every
   permitted widening, that filter alone is lifted, everything else is kept, and
   the lift is always recorded and disclosed. A requirement some product meets
   is never lifted. A strict value no approved value expresses cannot match at
   all, so its exact attempt is recorded as zero and the lift runs at once.
+- **Sizes nothing meets are answered with the closest, on a customer's own
+  search** - the other exception, and only as a last resort, after the colour
+  or style one: their sizes widen by a share of their own figures, band by band
+  (`relaxation.closest_size_steps`, 20%, 35%, 50% - a pair as its shorter and
+  longer side), nearest band first, until enough are found, and to any size
+  only if even the widest band finds none. Everything else they asked is kept.
+  Each band is recorded (`ClosestSizeChange`: what they asked, how far) and the
+  reply says there is none at exactly their size and these are the closest -
+  never that they are their size, and never a question first. A room piece's
+  options never do it: their size is the designer's floor (10.1).
 
 Within one strength, price is offered before seating, and measurements come
 last. With two price steps, one seating step and two dimension steps per
 strength, at most ten widened attempts can follow the exact search, plus the
-single colour/style last resort.
+single colour/style last resort and the closest-size bands.
 
 Only a fully resolved search may be relaxed. A request carrying an unsupported
 requirement (material, an unreliable measurement), or one awaiting
@@ -1223,7 +1263,9 @@ empty, the relaxation layer also counts what each of the customer's own
 requirements, set aside alone, would find (`set_aside`: price, seats, each
 measurement, a size pair, strict colour, strict style - never the product
 type), and for a budget nothing meets, the nearest real price in their
-currency. Only on a customer search, never for room optimisation. The reply
+currency. Only on a customer search, never for room optimisation. Sizes are
+answered with the closest instead (above), so a search held back only by its
+sizes is never empty. The reply
 offers the most useful one as a question they can say yes to ("sofas here start
 at 990 SAR - shall I show you the most affordable ones?"). Nothing is set aside
 for them: that stays their decision.
@@ -1442,10 +1484,11 @@ and not width. **Absence of a role means unsupported, never "guess"**, and the
 registry records a machine-readable reason for the refusals it states
 deliberately.
 
-**Not every product type qualifies.** Where the audit found the stored axes
-unreliable - beds, whose two planar axes both sit in 190-230 cm with some rows
-transposed; sectionals, which record one span or the other - planar filtering is
-refused rather than offered approximately.
+**Read by column (`discovery.size_by_side` off), not every product type
+qualifies.** Where the store-50 audit found the stored axes unreliable - beds,
+whose two planar axes both sit in 190-230 cm with some rows transposed;
+sectionals, which record one span or the other - planar filtering is refused.
+Read by side, the sides answer it.
 
 **Read by side (`discovery.size_by_side`, on by default).** Merchants put a
 piece's floor measurements in either column, so a floor measurement is read as
@@ -1453,19 +1496,22 @@ the piece's **longer or shorter floor side** - the larger or smaller of its two
 floor columns - never as a named column. The model says which side the customer
 meant (a sofa's width is its long side, a bed's width its short side; depth is
 always the short side, enforced in code by `side_of`); it never names a column.
-A store that keeps a sofa's width in `width` gets exactly the answers store 50
-does. Refusals about which column holds which side (beds, chairs) are answered
-this way; what the shape or the data cannot answer - a corner set's width, a
-rug's single side, an unreliable height column - is still refused. Off, each
-role reads the column reviewed for store 50. On store 50's data the two agree
-for every kind except rows whose columns contradict each other, where the side
-is the true reading.
+A store's listed size is trusted as it is, like its price: every kind is
+searched and compared by its sides, with no list of kinds whose columns are
+"unreliable" and no rule per store. A flat thing (`flat_kinds` in
+`dimension_semantics_v1.yaml`: a rug, art, a mirror, bedding) is its two
+sides - the two largest of its three listed sizes, wherever the store put
+them, since the smallest is its thickness (a canvas listed 120 x 2 x 90 is
+120 x 90); "tall" or "long" is its longer side, and it has no depth.
+A set, a corner sofa or a hanging light is searched by the size the store lists,
+and the reply says it is the listed size, never that the whole set or the L is
+that size. Off, each role reads the column reviewed for store 50, with the old
+refusals.
 
 A **pair of sides** - "a desk 120 x 60", "a sofa 220 by 90" - works the same way
-for any recorded piece with one footprint: the smaller figure is the shorter
-side, the larger the longer, each matched within `discovery.pair_tolerance_share`
-(5%). Rugs keep their exact unordered match; a corner set has no single
-footprint and is refused. A pair nothing meets offers what setting it aside
+for any kind: the smaller figure is the shorter side, the larger the longer,
+each matched within `discovery.pair_tolerance_share` (5%). Rugs keep their exact
+unordered match. A pair nothing meets offers what setting it aside
 finds - store 50 lists beds by frame size, so "a bed 160 x 200" finds none.
 A pair given with no unit is centimetres (`PAIR_UNIT_WHEN_UNSAID`); a single
 bare number is still asked about.
@@ -1517,7 +1563,14 @@ too little - not a routine broadening. Measured on the reviewed store-50 data,
 86% of bounds already return enough without it, so the policy is deliberately
 small and fails closed.
 
-**Only two pairs relax in V1**: `sofa` and `service-table`, role
+**Read by side (`discovery.size_by_side`), a loose size of any kind widens**
+(`EVERY_KIND_DIMENSION_RELAXATION_POLICY`): every role and either side, only
+when the customer said it loosely (`approximate` or `preferred`), never a
+locked one, and a pair still never step by step - the closest sizes (13.5)
+answer a pair nothing meets. Sizes read by side mean the same in every store,
+so the store-50 allowlist below no longer decides.
+
+**Read by column, only two pairs relax**: `sofa` and `service-table`, role
 `OVERALL_WIDTH`. `LENGTH`, `DEPTH` and `HEIGHT` do not relax for any
 subcategory, `OVERALL_WIDTH` does not relax for any other subcategory, and a
 carpet's planar pair does not relax at all. A pair absent from the allowlist is
@@ -2564,6 +2617,17 @@ keeps a cart of its own.
   (`finished_rooms`), the room is no longer the one on record, and the reply
   asks in the agent's own words which room they would like next - never one
   in `rooms_finished`. Only a room in the cart is closed.
+- **Stock is a limit, never a choice.** A line never asks for more than the
+  store has (`stock_quantity`, where it says; unknown is no limit), and the
+  live store check stays the final word. A cut is never silent:
+  `refused_by_store` carries `asked` and `kept` (`only_left`, or the store's
+  own limit), and the reply says how many went in and offers the closest match
+  for the rest - for a whole room too; one note per product. A tap on the
+  cart's + is refused past the stock too (`only_left`), and every refused tap
+  is worded in the conversation's language (`app/services/picks_words.py`).
+  Stock is otherwise said only when they
+  ask how many there are (`in_stock` in a product's details) - never on cards,
+  never as urgency (known issue 37).
 - **Liking is not adding.** "I like the fifth one" is not an add: the agent says
   what it costs and offers to add it; ♡ keeps it in the liked list. An
   explicit "add it", "I'll take it", a tap, or their yes is an add.
@@ -2584,7 +2648,7 @@ keeps a cart of its own.
   `salla.check_cart` switches the check off.
 - **The cart is the shopper's, not one chat's.** The platform names the
   shopper at the front of every conversation id (`<16 hex>.<the widget's id>`).
-  Every saved turn keeps that shopper's cart beside their conversations
+  Every saved turn keeps that shopper's cart and liked list beside their conversations
   (`session.shopper_cart_ttl_s`, seven days), and every conversation they load
   - a new chat, or one they come back to - holds it (`app/services/shopper_cart.py`),
   so "what's in my cart?" answers the same in every chat. An id naming no
@@ -2601,7 +2665,8 @@ keeps a cart of its own.
   local sign-in stays behind. An account chat under that name is never
   overwritten, and asked twice the chat is already moved. The guest's cart
   joins the account's after its own lines, a product in both keeping the larger
-  quantity, so every account chat loads it.
+  quantity, so every account chat loads it; their likes follow the
+  account's, each once.
 - **The agents read it** in the session brief (10.4): each line by its place
   in the cart (`picked_ordinal`), with name, kind, quantity, line total and the
   room it was bought for, and the totals per currency - summed by the

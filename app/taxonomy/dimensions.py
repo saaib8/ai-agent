@@ -59,6 +59,27 @@ class FloorSide(StrEnum):
     SHORTER = "shorter"
 
 
+class FaceSide(StrEnum):
+    """Which side of a flat thing - a rug, art, a mirror - a measurement is.
+
+    A flat thing is its two sides; its third listed size is its thickness,
+    wherever the store put it (a canvas listed 120 x 2 x 90 is 120 x 90). So
+    its sides are the two largest of its three listed sizes, never two named
+    columns."""
+
+    LONGER = "longer_face"
+    SHORTER = "shorter_face"
+
+
+Measure = SourceAxis | FloorSide | FaceSide
+"""What a search compares: a stored column, a floor side or a flat thing's side."""
+
+_FACE_OF: Final[Mapping[FloorSide, FaceSide]] = {
+    FloorSide.LONGER: FaceSide.LONGER,
+    FloorSide.SHORTER: FaceSide.SHORTER,
+}
+
+
 def side_of(role: DimensionRole, side: FloorSide | None) -> FloorSide | None:
     """The side a measurement is read on, as far as its role alone decides:
     depth is always the shorter side, length always the longer, and height no
@@ -114,15 +135,6 @@ _SIDE_OF_COLUMN: Final[Mapping[SourceAxis, FloorSide]] = {
 """The side each reviewed column stood for: in the catalog it was reviewed on,
 `length` held the long side and `width` the short."""
 
-_ANSWERED_BY_SIDES: Final = frozenset(
-    {
-        UnsupportedDimensionReason.UNRELIABLE_AXIS_MAPPING,
-        UnsupportedDimensionReason.ROLE_NOT_DEFINED,
-    }
-)
-"""Refusals about which column holds which side - answered once a floor
-measurement is read as the longer or shorter side instead."""
-
 
 class DimensionSemantics:
     """Immutable view of the approved role-to-axis mappings.
@@ -137,10 +149,13 @@ class DimensionSemantics:
         subcategories: Mapping[str, SubcategoryDimensions],
         *,
         by_side: bool = False,
+        flat: frozenset[str] = frozenset(),
     ) -> None:
         self._version = version
         self._subcategories: Mapping[str, SubcategoryDimensions] = dict(subcategories)
         self._by_side = by_side
+        self._flat = flat
+        """Kinds that are their two sides: no height or depth to read."""
 
     @property
     def by_side(self) -> bool:
@@ -151,35 +166,37 @@ class DimensionSemantics:
     ) -> UnsupportedDimensionReason | None:
         """Why this role cannot be searched for this kind, or None when it can.
 
-        Read by side, a floor measurement is refused only where the piece's
-        shape or the data's coverage cannot answer it (a rug's single side, a
-        corner set); height still reads its column, refused where unreliable."""
+        Read by side, the store's listed size is trusted for every kind; only
+        a flat thing's depth is refused - it has none beyond its thickness.
+        Off, the role must be reviewed for the kind."""
         if subcategory is None:
             return UnsupportedDimensionReason.ROLE_NOT_DEFINED
-        if (
-            self._by_side
-            and role is not DimensionRole.HEIGHT
-            and subcategory in self._subcategories
-        ):
-            # Only furniture the registry records: a mirror or a canvas has no
-            # floor sides, and a type nobody has looked at is not opened by
-            # default.
-            reason = self.unsupported_reason(subcategory, role)
-            if self.source_axis(subcategory, role) is not None or reason in _ANSWERED_BY_SIDES:
-                return None
-            return reason
+        if self._by_side:
+            # The store's listed size is trusted, for every kind and every
+            # store: only a flat thing's thickness is not its depth.
+            if subcategory in self._flat and role is DimensionRole.DEPTH:
+                return UnsupportedDimensionReason.UNSUPPORTED_PRODUCT_GEOMETRY
+            return None
         if self.source_axis(subcategory, role) is not None:
             return None
         return self.unsupported_reason(subcategory, role)
 
     def measured_by(
         self, subcategory: str | None, role: DimensionRole, side: FloorSide | None
-    ) -> SourceAxis | FloorSide | None:
+    ) -> Measure | None:
         """What a search compares for this role: the piece's longer or shorter
-        floor side, or a stored column - None when the role is refused."""
+        floor side, a flat thing's side, or a stored column - None when the
+        role is refused. A flat thing's height or length is its longer side,
+        its width the side the customer meant (the shorter when unsaid)."""
         if self.refusal(subcategory, role) is not None:
             return None
-        if self._by_side and role is not DimensionRole.HEIGHT:
+        if self._by_side and subcategory in self._flat:
+            if role in (DimensionRole.HEIGHT, DimensionRole.LENGTH):
+                return FaceSide.LONGER
+            return _FACE_OF[side_of(role, side) or FloorSide.SHORTER]
+        if self._by_side and role is DimensionRole.HEIGHT:
+            return SourceAxis.HEIGHT
+        if self._by_side:
             return side_of(role, side) or self._width_side(subcategory)
         return self.source_axis(subcategory, role)
 
@@ -190,28 +207,48 @@ class DimensionSemantics:
         side = self.shown_by(subcategory).get(DimensionRole.OVERALL_WIDTH)
         return side if isinstance(side, FloorSide) else FloorSide.LONGER
 
-    def shown_by(self, subcategory: str | None) -> Mapping[DimensionRole, SourceAxis | FloorSide]:
+    def shown_by(self, subcategory: str | None) -> Mapping[DimensionRole, Measure]:
         """How each measurement of this kind is read when a piece's sizes are
         stated - a comparison row, what the designer is told.
 
-        By side, the reviewed column becomes the side it stands for (`length`
+        By side, a flat thing is its two sides (length the longer, width the
+        shorter); a reviewed column becomes the side it stands for (`length`
         the long side, `width` the short one), and a kind refused only because
         its columns were unreliable is read as length on the long side and
-        width on the short. Off, the reviewed columns, as before."""
+        width on the short; any other kind is width on the long side, depth on
+        the short, and height. Off, the reviewed columns, as before."""
         entry = self._subcategories.get(subcategory) if subcategory else None
-        if entry is None:
-            return {}
         if not self._by_side:
-            return dict(entry.roles)
-        shown: dict[DimensionRole, SourceAxis | FloorSide] = {
-            role: _SIDE_OF_COLUMN.get(column, column) for role, column in entry.roles.items()
-        }
-        for role, side in (
-            (DimensionRole.LENGTH, FloorSide.LONGER),
-            (DimensionRole.OVERALL_WIDTH, FloorSide.SHORTER),
-        ):
-            if entry.unsupported.get(role) is UnsupportedDimensionReason.UNRELIABLE_AXIS_MAPPING:
-                shown[role] = side
+            return dict(entry.roles) if entry is not None else {}
+        if subcategory is None:
+            return {}
+        if subcategory in self._flat:
+            return {
+                DimensionRole.LENGTH: FaceSide.LONGER,
+                DimensionRole.OVERALL_WIDTH: FaceSide.SHORTER,
+            }
+        shown: dict[DimensionRole, Measure] = {}
+        if entry is not None:
+            shown = {
+                role: _SIDE_OF_COLUMN.get(column, column) for role, column in entry.roles.items()
+            }
+            for role, side in (
+                (DimensionRole.LENGTH, FloorSide.LONGER),
+                (DimensionRole.OVERALL_WIDTH, FloorSide.SHORTER),
+            ):
+                if (
+                    entry.unsupported.get(role)
+                    is UnsupportedDimensionReason.UNRELIABLE_AXIS_MAPPING
+                ):
+                    shown[role] = side
+        if not shown:
+            # Every other kind, as its store lists it: width the longer side,
+            # depth the shorter.
+            shown = {
+                DimensionRole.OVERALL_WIDTH: FloorSide.LONGER,
+                DimensionRole.DEPTH: FloorSide.SHORTER,
+            }
+        shown.setdefault(DimensionRole.HEIGHT, SourceAxis.HEIGHT)
         return shown
 
     @property
@@ -246,15 +283,14 @@ class DimensionSemantics:
 
     def reads_pair(self, subcategory: str | None) -> bool:
         """Whether two sides given together - "160 x 200" - can be searched
-        for this kind: a rug's reviewed pair, or, read by side, any recorded
-        piece whose shape has a single footprint (not a corner set)."""
+        for this kind: a rug's reviewed pair, or, read by side, any kind."""
         if self.planar_pair(subcategory) is not None:
             return True
-        return (
-            self._by_side
-            and subcategory in self._subcategories
-            and self.refusal(subcategory, DimensionRole.OVERALL_WIDTH) is None
-        )
+        return self._by_side and self.refusal(subcategory, DimensionRole.OVERALL_WIDTH) is None
+
+    def is_flat(self, subcategory: str | None) -> bool:
+        """Whether this kind is read as a flat thing's two sides (by side)."""
+        return self._by_side and subcategory in self._flat
 
     def planar_pair(self, subcategory: str | None) -> PlanarPair | None:
         if subcategory is None:
@@ -383,4 +419,15 @@ def load_dimension_semantics(
             )
         subcategories[name] = _parse_subcategory(name, raw, source=source_path.name)
 
-    return DimensionSemantics(version=version, subcategories=subcategories, by_side=by_side)
+    raw_flat = document.get("flat_kinds", [])
+    if not isinstance(raw_flat, list) or not all(isinstance(k, str) and k for k in raw_flat):
+        raise TaxonomyConfigurationError(
+            detail=f"{source_path.name}: 'flat_kinds' must be a list of product types"
+        )
+    if known is not None and (unknown := sorted(set(raw_flat) - known)):
+        raise TaxonomyConfigurationError(
+            detail=f"{source_path.name}: 'flat_kinds' names unapproved types {unknown}"
+        )
+    return DimensionSemantics(
+        version=version, subcategories=subcategories, by_side=by_side, flat=frozenset(raw_flat)
+    )

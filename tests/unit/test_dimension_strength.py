@@ -417,8 +417,9 @@ def test_m8_can_read_a_dimension_strength() -> None:
 def test_the_relaxable_fields_are_the_v1_set() -> None:
     """One generic DIMENSION member; the role travels on the provenance.
 
-    No PLANAR_DIMENSION: carpet pairs are not relaxable in V1, and a member for
-    a widening that cannot happen would suggest it can.
+    No PLANAR_DIMENSION: carpet pairs are not widened step by step, and a
+    member for a widening that cannot happen would suggest it can. `size` is
+    the closest-sizes last resort, which covers a pair too.
     """
     assert {f.value for f in RelaxableField} == {
         "price_min",
@@ -426,6 +427,7 @@ def test_the_relaxable_fields_are_the_v1_set() -> None:
         "seating_min",
         "seating_max",
         "dimension",
+        "size",
         "color",
         "style",
     }

@@ -18,7 +18,7 @@ from decimal import Decimal
 
 from app.core.config import SizeSettings
 from app.schemas.dimensions import NormalisedDimensions
-from app.taxonomy.dimensions import FloorSide, SourceAxis
+from app.taxonomy.dimensions import FaceSide, FloorSide, Measure, SourceAxis
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,12 +80,23 @@ _COLUMN_VALUES: dict[SourceAxis, str] = {
 }
 
 
-def measurement(dimensions: NormalisedDimensions, by: SourceAxis | FloorSide) -> Decimal | None:
-    """One stated size of a piece, read the way search reads it: a column, or
-    its longer or shorter floor side whatever column holds it. None when the
-    sizes are unusable or a floor side is missing."""
+def measurement(dimensions: NormalisedDimensions, by: Measure) -> Decimal | None:
+    """One stated size of a piece, read the way search reads it: a column, its
+    longer or shorter floor side whatever column holds it, or a flat thing's
+    side - the two largest of its listed sizes. None when the sizes are
+    unusable or a side is missing."""
     if not dimensions.is_usable:
         return None
+    if isinstance(by, FaceSide):
+        listed = [
+            size
+            for size in (dimensions.length_cm, dimensions.width_cm, dimensions.height_cm)
+            if size is not None
+        ]
+        if len(listed) < 2:
+            return None
+        faces = sorted(listed, reverse=True)[:2]
+        return faces[0] if by is FaceSide.LONGER else faces[1]
     if isinstance(by, FloorSide):
         first, second = dimensions.length_cm, dimensions.width_cm
         if first is None or second is None:

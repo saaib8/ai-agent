@@ -7,6 +7,7 @@ Store scope and product identity never pass through a model.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal, cast
@@ -21,6 +22,7 @@ from app.agents.facts import (
     search_facts,
     searched_for,
 )
+from app.agents.operations.cart import CartRefused
 from app.agents.operations.rooms import open_room_options
 from app.agents.payloads import (
     ComparisonShown,
@@ -75,6 +77,7 @@ from app.services.agent_state import (
 from app.services.design_checks import figure_free, stocked_direction
 from app.services.fit import room_fit
 from app.services.grounding_builder import to_grounded_product
+from app.services.liked_look import with_liked_look
 from app.services.product_details import description_for
 from app.services.query_document import ranking_words
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
@@ -441,6 +444,51 @@ def search_outcome(run: Any, extra: dict[str, Any]) -> ToolOutcome:
     )
 
 
+def _matching(args: Any) -> bool:
+    """Whether the search is matched with what they have - Nora's direction
+    orders it, not their likes."""
+    return bool(args.match_with or args.match_goal is not None or args.match_room)
+
+
+async def _leaning_to_liked(
+    services: AgentServices,
+    state: AgentStateV1,
+    context: ToolContext,
+    resolved: ResolvedSearch,
+    lean: RankingLean | None,
+) -> tuple[RankingLean | None, dict[str, Any]]:
+    """The lean with the look of their liked products, and what it leaned to.
+
+    A sort they asked for is never leaned - "cheapest" means cheapest
+    (CLAUDE.md 16.1) - and what they said to avoid is left out of it.
+    Unreadable likes lean nothing: the search runs as it would have."""
+    liked = state.product_interaction.liked_product_ids
+    if not liked or resolved.request.sort is not ProductSort.DEFAULT:
+        return lean, {}
+    products = await hydrated(services, liked, context)
+    if products is None:
+        return lean, {}
+    request = resolved.request
+    # Kinds reviewed to be shown together are one look: a grey sofa set they
+    # liked says as much about a grey sofa, whether or not this search shows sets.
+    related = services.seating.shown_with(request.commerce_subcategory) if services.seating else ()
+    said = state.customer_preferences
+    leaning = with_liked_look(
+        lean,
+        products,
+        request,
+        related,
+        avoid_colours=said.avoid_colours,
+        avoid_styles=said.avoid_styles,
+    )
+    looks = {
+        "colours": list(leaning.learned_colours),
+        "styles": list(leaning.learned_styles),
+    }
+    told = {key: value for key, value in looks.items() if value}
+    return leaning, ({"leaning_to_liked": told} if told else {})
+
+
 async def _design_direction(
     services: AgentServices,
     args: Any,
@@ -734,6 +782,11 @@ def search_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                     "ordered_near_longer_side_cm": size.longer_target_cm(),
                     "size_reason": size.reason,
                 }
+        if not _matching(args):
+            # A search they asked for leans to the look of what they liked;
+            # a matched one follows the designer's direction instead.
+            lean, leaned = await _leaning_to_liked(services, state, context, resolved, lean)
+            matched = {**matched, **leaned}
         if lean is not None:
             resolved = resolved.model_copy(update={"lean": lean})
         extra = {**extra, **matched}
@@ -863,7 +916,7 @@ def more_like_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
 
 def _listed_extras(product: ProductCandidate) -> dict[str, Any]:
     """What the store lists beyond the card: the rating always with how many
-    reviews it rests on, weight, SKU, warranty."""
+    reviews it rests on, weight, SKU, warranty, and how many it has in stock."""
     listing = product.listing
     extras: dict[str, Any] = {}
     if listing.rating is not None and listing.review_count:
@@ -874,6 +927,8 @@ def _listed_extras(product: ProductCandidate) -> dict[str, Any]:
         extras["sku"] = listing.sku
     if listing.warranty_months:
         extras["warranty_months"] = listing.warranty_months
+    if listing.stock_quantity is not None:
+        extras["in_stock"] = listing.stock_quantity
     return extras
 
 
@@ -1067,17 +1122,17 @@ def add_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[AddToCartArgs]:
                 code="option_is_for_the_room",
                 facts={"piece": piece, "use_instead": "swap_room_piece"},
             )
-        change = await services.cart_operations.add(work.staged, context.retailer, wanted)
+        products = await hydrated(services, tuple(p for p, _ in wanted), context) or ()
+        change = await services.cart_operations.add(
+            work.staged, context.retailer, wanted, stock=in_stock(products)
+        )
         if args.for_goal is not None and change.added:
             change.state = add_to_goal(change.state, args.for_goal, change.added)
-        names = await _names(services, tuple(p for p, _ in wanted), context)
+        names = {p.product_id: p.name_english for p in products}
         facts = {
             "added": [names.get(p) for p in change.added],
             "already_in_cart": [names.get(p) for p in change.already],
-            "refused_by_store": [
-                {"name": names.get(r.product_id), "reason": r.reason, "kept": r.kept}
-                for r in change.refused
-            ],
+            "refused_by_store": refusal_facts(change.refused, names),
             "cart_full": change.full,
             "cart": cart_facts(
                 await hydrated(
@@ -1185,6 +1240,29 @@ def show_chosen_tool(schemas: ToolSchemas) -> ZoryTool[ShowChosenArgs]:
         owners=SARA,
         handler=show,
     )
+
+
+def in_stock(products: Sequence[ProductCandidate]) -> dict[int, int]:
+    """How many the store has of each product, where it said."""
+    return {
+        p.product_id: p.listing.stock_quantity
+        for p in products
+        if p.listing.stock_quantity is not None
+    }
+
+
+def refusal_facts(refused: Sequence[CartRefused], names: Mapping[int, str]) -> list[dict[str, Any]]:
+    """What the store would not take: none of it, or fewer than asked
+    (`asked`, `kept`) - said plainly, never cut in silence."""
+    return [
+        {
+            "name": names.get(r.product_id),
+            "reason": r.reason,
+            "kept": r.kept,
+            **({"asked": r.asked} if r.asked is not None else {}),
+        }
+        for r in refused
+    ]
 
 
 async def _names(

@@ -2074,3 +2074,371 @@ disabled, or the action queued and sent after); a refused save is logged as a
 warning. The widget needs the same.
 
 **Reported:** by the user (2026-10-23).
+
+## 34. A liked product is bookmarked, but its look never shapes later searches
+
+**Seen:** in the console (store 21, 2026-11-02). Liking several beige sofas
+keeps them in the liked list, but the next sofa search is ordered exactly as if
+nothing had been liked.
+
+**Cause:**
+- `like_product` and the ♡ tap only add the product to
+  `liked_product_ids`. Every agent sees the liked list in its brief (colour,
+  styles, size), so "the one I liked" and Nora's matching work.
+- The ranking already has a tier for taste learned from likes
+  (`RankingLean.learned_colours` / `learned_styles`,
+  `app/services/semantic_ranking.py`), but nothing sets it any more - left
+  over from the scripted flow.
+- The prompt tells agents to call `remember_taste` when the customer says a
+  taste or taps "More like this", not when they like a product.
+- The liked list lives in one chat; unlike the cart it does not follow the
+  shopper into their other chats.
+
+**Proposed fix (one of):**
+1. Prompt: Sara keeps the look with `remember_taste` when they like several
+   products of the same colour or style.
+2. Code: fill the learned tier from the liked products' colours (same kind
+   only) and styles - it only orders, never hides, and ranks below what they
+   said.
+
+**Fixed (2026-11-02):** both parts, the code way.
+- A search the customer asks for (and its pages) leans to the liked
+  products' look - colours from liked pieces of that kind, styles from any -
+  in the existing learned tier: after what they said and what they avoid,
+  before a designer's direction; it orders and never hides
+  (`app/services/liked_look.py`, `search_products`, `leaning_to_liked` in the
+  facts). Matched searches, more like this and what goes with a pick are
+  unchanged; a sort they asked for ("cheapest") is never leaned, and a colour
+  or style they said to avoid is never leaned to. The lean is worked out when
+  a search starts and kept by its pages.
+- The liked list follows the shopper into their other chats beside the cart
+  (`ShopperCart.liked_product_ids`; a record kept before has none and leaves
+  the chat's own), and joins the account's when a guest signs in (newest
+  `customer_agent.max_likes` kept).
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-02).
+
+## 35. Nora's room questions offer chips that only promise an answer
+
+**Seen:** reproduced on store 21 (2026-11-02), four new rooms (three living
+rooms, one bedroom):
+- The size question offered "I'll share the measurements" (or "I'll provide
+  the measurements") in 4 of 4.
+- The budget question offered "I'll enter my budget" / "Help me set a budget"
+  (or "I'll give my budget" / "Help me set it") in 2 of 5 openers.
+
+Tapping one answers nothing: Nora must ask again and the customer types the
+figure anyway - one wasted turn of 15-60 s. "Design without measurements" and
+"I don't know the size" are fine; they are complete answers.
+
+**Cause:** the prompt (`app/prompts/agents/v2.py`, Finishing) says choices are
+"tappable answers to the question your reply asks", but not that a chip must
+be the answer itself. For a question whose answer is a number, the model makes
+a chip that promises one. The reply check only requires a question beside
+chips.
+
+**Decided (2026-11-02, after review):** the room is asked as **one plain
+question in words** - "What's your room size?" - with no form and no choices,
+and never about doors, windows, the TV or the walls: the designer works with
+the size. A two-step form (size, then what is on each wall, with TV for TV
+rooms) was built and tested, then dropped on review as too many questions.
+Kept from that work: a chip must be an answer in itself, never a promise to
+answer, so the budget and the size are asked with no chips
+(`app/prompts/agents/v2.py`, `RespondArgs.choices`). Walls the customer
+mentions on their own are still recorded with `note_room`. The form code was
+not kept.
+
+**Status:** Fixed (prompt only).
+
+**Reported:** by the user (2026-11-02).
+
+## 36. Nora steps into a single-product search to ask the room's size, and never its kind
+
+**Seen:** reproduced on store 21 (2026-11-02), three single-product journeys:
+- "I need sofas to seat 8 people" -> added the first sofa -> Nora answered the
+  add: "What are the room's length and width, and where are the door, window
+  and TV?" (chips "Share room details" / "I don't know yet"). The customer
+  said "next one", Sara took it, and the room question was dropped.
+- Added a sofa -> "show me a rug that goes with it" -> Nora showed rugs, then
+  asked the same question.
+- Added a sofa -> "I want another sofa for the same room" -> Nora asked the
+  same question and showed nothing.
+
+In all three, the session's `room_project.room_kind` stayed empty: she asked
+the size but never which room it is.
+
+**Cause:** three prompt rules (`app/prompts/agents/v2.py`):
+- "Their room" (shared by Sara, Nora and Salman): ask "when sizes start to
+  decide (a second sofa in one room, a rug) and the room is unknown ... its
+  length and width, and where the door, window and TV are, as one question".
+- Nora's matching: "Before the next seat in a seating goal, if their room is
+  unknown, ask its size and where the TV and window are".
+- Nora's room section: "When the context has no room size and it would
+  decide, ask its length and width and where the door, window and TV are".
+
+Nora gets these turns for good reasons - the next piece of a seating goal is
+handed to her for matching, as is "something that goes with it" and "another
+sofa for the same room" - but once she has the turn the rules make her ask.
+Nothing tells any agent to work out or ask the room's kind outside a whole
+room.
+
+**Why the kind matters:** a size recorded with no room cannot
+be matched to a later "design my living room"; and what goes with a piece
+differs by room (the room guide is by room kind).
+
+**Direction (revised 2026-11-02 after the senior's review - ask less, let the
+designer work):**
+- **The room's kind is never asked.** Nora works it out from what is already
+  said or bought (a bed: bedroom; a dining table: dining room; "for my
+  majlis") and records it with `note_room` when it is plain; otherwise it
+  stays unknown and she designs without it.
+- **The size is asked only when it decides the next piece** - the next seat
+  of a seating goal, a rug, a coffee table for their sofa, another sofa for
+  the same room, "will it fit?". Never for a first piece, a lamp or a vase.
+  One plain question, as 35 decided ("What's your room size?"), nothing
+  about the walls.
+- **Asked once, at most.** Answered, it is kept for the whole chat
+  (`note_room`). Declined, or the customer carries on without answering,
+  it is never asked again in that chat (`declined_size`): the next pieces
+  are shown unsized, and the customer can still give the size any time.
+- Dropped from the earlier proposal: the room-kind chips (Living room /
+  Majlis / Bedroom / Other) and a separate "question waiting" record - an
+  extra question and extra machinery the review asked to avoid; whoever
+  takes the next turn reads the question in the conversation.
+
+**Rechecked live without changes (2026-11-02, store 21, 10 conversations):**
+- Right already: only the size is asked, in plain words - never doors,
+  windows, TV or which room; no promise chips; no size question for a first
+  piece (a coffee table) or a lamp; the rug for a sofa shows rugs **and**
+  asks the size once, and is not asked again when the customer carries on.
+- Still wrong: "another sofa for the same room" asks the size with no sofas
+  shown, and asks it again when the customer answers "something in grey"
+  (2/2); a seating goal's next piece ("3 seats") asks the size with no
+  sofas shown (2/2).
+
+**Agreed behaviour (2026-11-02), as the rug already does:**
+1. Always show something: a customer who asked for products gets them in the
+   same reply.
+2. Ask the size once, beside the products, never instead of them, with why
+   in a few words.
+3. Ignored or declined, never asked again in that chat; the next pieces are
+   matched by look only.
+4. Given later, used at once (the pieces that fit lead, and why).
+
+Example - "I want another sofa for the same room": Nora shows sofas that go
+with the beige one and asks "What's your room size? Then I can make sure the
+two fit together"; the customer says "something in grey"; she shows grey
+ones with no size question.
+
+**Status:** Open.
+
+**Reported:** by the user (2026-11-02).
+
+## 37. Stock: the agents never know how many are left, and a room's pairs go into the cart as one
+
+**Seen:** testing store 151 (2026-11-02). A room Nora designed held two art
+canvases and two floor lamps; "add to cart" put in one of each, and nothing
+said so. A typed "add two of these" is cut to one the same way.
+
+**Cause:**
+- `core_product.stock_quantity` exists (filled by the Salla import) but the
+  agent service never reads it: not in `ProductListing`, not in any facts.
+- The live store check before the cart (`StoreCartCheck`, Salla storefront
+  `max_quantity`) already limits each line to what the store will sell - so
+  the cart is right - but the shortfall is not reported in the reply.
+- Store 151's figures look like placeholder data: 12,724 of 12,764 active
+  products have exactly 1 in stock (highest 6), on Salla's demo store - the
+  same pattern as its "1 review, no rating" on every product. Store 21:
+  5,201 filled, 212 at 1, up to 999. To confirm on the storefront first.
+
+**Agreed rules (2026-11-02):**
+- Stock never chooses a product. Nora designs by colour, style, size and
+  budget exactly as today; Sara searches as today. No filter, no ranking.
+- A piece the room needs more than one of - an identical pair or set of
+  lamps, side tables, nightstands, dining chairs - is **the same product
+  first**. Only when the store has fewer than needed does Nora fall back to
+  **the closest-matching product** for the rest (e.g. one lamp of the chosen
+  one, one of the closest match) - and **never mentions it**: the room is
+  presented as designed, with no word of stock or a fallback (as CLAUDE.md
+  10.1: never the work behind the room).
+- Unknown stock counts as available (store 50, store 21's empty rows, any
+  store that does not send it). The live store check at the cart stays the
+  final word, since the database can be stale.
+- Nothing is cut silently: when the cart takes fewer than asked, the reply
+  says which pieces and how many went in, and offers the closest match for
+  the rest.
+- Sara: asked for more than one when fewer are left, she says so before
+  adding ("only 1 of these is left - shall I add it and find a similar
+  second one?"). A last piece may be said when it helps a decision, never as
+  invented urgency (as discounts, CLAUDE.md 37).
+
+**Plan:**
+1. Read `stock_quantity` into `ProductListing` (an optional field, absent
+   when the store left it empty; add it to `PRODUCT_DATA_COLUMNS` and the
+   startup check). Agents get `stock_left` only where it matters: when a
+   quantity above it is asked or planned, or when it is 1.
+2. Room engine (`app/agents/operations/rooms.py` / optimiser): after a piece
+   with quantity > 1 is chosen by look as today, if its known stock is below
+   the quantity, keep that product for what is in stock and fill the rest
+   with the next-closest look of the same piece (a second line, within the
+   share-upgrade similarity margin; else the next by look) - costed in the
+   same budget. Nora is not told to explain it; the room is shown as
+   designed.
+3. `add_room_to_cart` and `add_to_cart` return what the store refused or cut
+   (`refused_by_store` with the kept quantity, as `add_to_cart` partly does
+   today) and the prompt says to report it and offer the closest match.
+4. Prompt (Sara, Nora, Salman): the stock rules above, in a few lines.
+5. Tests: unit tests for the listing field, the engine's same-product-first
+   fallback (enough stock / short / unknown), cart reporting; live store 151
+   and 21 cases - a room with a pair, "add two of these".
+
+**Built (2026-11-02):** as planned, plus what the QA review found:
+- stock read into listings (never sent to a client); a room's pairs are the
+  same product first and the closest look for the rest, at build time and
+  after every swap, revision or change; no two pieces use more of a product
+  than the store has; each half keeps its part of the budget share;
+  `no_more_in_store` tells Nora alone, so she never offers "the same one"
+  (`app/services/room_stock.py`, `app/agents/operations/rooms.py`);
+- the cart: a line never asks for more than the store has, one note per
+  product with how many were asked and kept; the cart's + refuses past the
+  stock too, and every refused tap is in the conversation's language
+  (`app/services/picks_words.py`).
+- Verified live on store 151 (Salla confirms one per order there): rooms with
+  pairs go into the cart whole; "add two" says only one was left and offers
+  the closest match; "+" in an Arabic chat answers in Arabic.
+- "Make both nightstands the same" once left one nightstand: `change_room`
+  put the one product in at quantity 1. Now one product in place of several
+  pieces of its kind takes all of them (and their budget share), so the
+  stock rule keeps a pair; Nora answers a "make them the same" on a last one
+  by keeping the coordinated pair, with no question.
+- Second QA review (2026-11-02), fixed: the step after a swap or change is
+  part of its price - the total quoted is the total saved, and nothing is
+  dropped to make room; it repeats until every piece fits the stock (sets of
+  three); turned-down products are kept through it and preferred against
+  (used only when no other look would complete a pair); two products for two
+  pieces keep each piece's design; an unreadable stock on the cart's + is no
+  limit. Big sets on a store with one of everything keep the current flow
+  (closest matches), by decision.
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-02).
+
+## 38. Nora puts the same art canvas in a room twice
+
+**Seen:** in rooms Nora designs (store 151, 2026-11-02, and before): wall
+art comes as two copies of one print.
+
+**Cause:** no code rule - two lines of Nora's design knowledge
+(`app/prompts/agents/design_knowledge.py`) combine:
+- "art in proportion - a long wall often takes two or three pieces, or one
+  large one", and
+- "Say more than one of a piece only when the room needs that many of the
+  same piece - a matching pair either side of something".
+She wants two artworks and the only way to say two is a quantity on one
+piece, so the engine fills "wall art x 2" with the same canvas twice.
+
+**Agreed direction:** identical pairs are for symmetry pieces - lamps either
+side, side tables, nightstands, dining chairs. Art (and mirrors, plants,
+vases, statues) in more than one is either **a set sold as one** (one piece,
+quantity 1) or **different pieces that go together** (two pieces in the plan,
+each found by its own look), never the same print repeated.
+
+**Plan:**
+1. Design knowledge: say the above plainly where pairs and art are described.
+2. Optionally a reviewed list of kinds never bought as identical multiples
+   (art-canvas, mirror, plant, vase, statue) checked in
+   `app/services/room_design.py`: a quantity above 1 on those is refused with
+   "plan two pieces, or a set" - so the rule holds whatever the model writes.
+3. Live check: rooms with a long wall (living room, majlis, bedroom) on
+   stores 21 and 151 - art comes as a set or as different pieces.
+
+**Cause, confirmed (2026-11-02):** two layers. Nora's instructions gave "art x 3
+for a long wall" as an example of a quantity, so she planned one art piece x 2
+in every saved room; and once she planned two separate art pieces, each was
+searched on its own and both took the same best print - nothing stopped two
+pieces of a room using one product.
+
+**Fixed (2026-11-02):**
+- Reviewed list `bought_once` in `room_pieces_v1.yaml` (art canvas, mirror,
+  plant, vase, statue, wall clock), validated at startup.
+- `room_design.py` refuses a quantity above one on those kinds
+  (`never_the_same_one_twice`), telling Nora to plan separate pieces or a set.
+- The room's product limit (`app/services/room_stock.py` `allowed`) is one for
+  those kinds, so a second piece takes the next-closest look - at build time
+  and after every swap, revision or change.
+- Prompt (v2.51) and design knowledge (v7): identical pairs are for symmetry
+  pieces; art is different works that go together, or a set.
+- Live, store 21: 6 of 6 rooms with no print repeated (two or three
+  different prints where a room had several).
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-02).
+
+
+## 39. Sizes are missing from the comparison, and size searches refuse many kinds
+
+**What the customer sees:** comparing a sofa with a sofa set, the sofa has
+Overall width / Depth / Height rows and the set has none. Asking for
+"nightstands under 50 cm wide" or "chairs under 90 cm tall" returns cards that
+were never filtered by size.
+
+**Cause:** the size rules (`dimension_semantics_v1.yaml`) were reviewed on
+store 50 alone and listed only the kinds whose columns looked reliable there.
+Every other kind - sets, sectionals, nightstands, lights, most decor - had no
+roles, so search refused its sizes and the comparison, which reads the same
+rules, showed no size rows. Stores 21 and 151 list sizes for most kinds.
+
+**Fixed (2026-11-03):** a store's listed size is trusted like its price.
+- With `discovery.size_by_side` (on), every kind is searched and compared by
+  its sides: the longer side is the width, the shorter the depth, height is
+  height. No per-store rule.
+- `flat_kinds` (rug, art, mirror, wall clock, hanger, bedding, yoga mat): two
+  sides - the two largest of the three listed sizes, wherever the store put
+  them (the smallest is the thickness). "Tall" or "long" is the longer side;
+  no depth. Store 151 lists many hangers as -/66/55 and store 50 some art as
+  120/2/90; both now read as their real two sides.
+- A pair of sides reads for every kind.
+- Prompt (v2.52, v2.53): a set, corner sofa or hanging light is the listed
+  size, never "the whole set is that size"; art's "tall" is its longer side.
+- The comparison needed no change: its rows follow the same rules.
+
+- Live, stores 21 and 151: nightstands under 50 cm wide, chairs under 90 cm
+  tall, sofa sets under 300 cm and a 200 x 300 rug all filtered by size; a
+  comparison of sofa sets shows Overall width / Depth / Height, said as the
+  listed size. A product the store lists no size for still shows none.
+- Live after the flat-thing fix (stores 151 and 21): "wall hangers under 80 cm
+  wide" now includes store 151's hangers listed -/66/55; "art under 100 cm
+  tall" and "wall art 90 x 60" are filtered on both stores, the 90 x 60 set
+  store 151 lists as 90/-/60 included.
+- Live across stores 21, 151, 50, 145 and 101 (2026-11-03): floor lamps by
+  width and height, sofa sets, corner sofas, chandeliers, vases, Arabic art,
+  comparisons of corner sofas, sofa sets and chandeliers, and a room's rug and
+  sofa options (none offered under the designed size) all behave as above.
+- Store data the rule now trusts as listed (the stores' to correct):
+  store 50 lists 28 of 31 sofa sets by one piece (about 100 x 100), so they
+  pass "sofa sets under 200 cm wide"; about 50 floor lamps (stores 21, 151,
+  101) carry their height in `length` and no height, so they drop out of
+  height searches and fail narrow width limits; some vases list their height
+  in `length` too.
+- Found on the way (not from the size rule): on "a console 120 x 40" with
+  nothing within 5% (store 145), Sara said the unit was missing instead of
+  offering the closest - the search summary only said "sizes: yes" and the
+  tool gave no nearer size. Fixed (2026-11-03): the summary names the size
+  that ran ("120 x 40 cm"), and a size nothing meets on a customer's own
+  search shows the closest sizes, nearest first, said as such
+  (`ClosestSizeChange`, `relaxation.closest_size_steps`); a loose size of any
+  kind widens 5% then 10% first. Prompt v2.54.
+  Live: "a console 120 x 40" (store 145, twice) - "there isn't one at exactly
+  120 x 40 cm; the closest is 120 x 35", no unit question; "a rug 170 x 260"
+  (store 21) - the closest, 170 x 240, first; "a sofa about 205 cm wide" -
+  widened, said, and its next page; "a mattress 160 x 200" (store 151, listed
+  with no sizes) - the mattresses shown and said to be the closest; an exact
+  match still shows alone.
+
+**Status:** Fixed.
+
+**Reported:** by the user (2026-11-03).

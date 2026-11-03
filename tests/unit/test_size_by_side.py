@@ -12,11 +12,16 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from app.repositories.products import _LONG_SIDE, _SHORT_SIDE, _measured
+from app.repositories.products import _LONG_FACE, _LONG_SIDE, _SHORT_FACE, _SHORT_SIDE, _measured
+from app.schemas.dimensions import RawDimensions
 from app.schemas.discovery import DimensionConstraint, DimensionConstraintKind
+from app.services.dimensions import normalise_dimensions
+from app.services.product_size import measurement
 from app.taxonomy.dimensions import (
     DimensionRole,
+    FaceSide,
     FloorSide,
+    Measure,
     SourceAxis,
     UnsupportedDimensionReason,
     load_dimension_semantics,
@@ -73,21 +78,91 @@ def test_a_refusal_about_which_column_holds_which_side_is_answered() -> None:
     assert BY_SIDE.refusal("bed", DimensionRole.LENGTH) is None
 
 
+@pytest.mark.parametrize("subcategory", ["carpet", "art-canvas", "mirror"])
+def test_a_flat_thing_has_no_depth(subcategory: str) -> None:
+    """A rug, a painting, a mirror: two sides and a thickness - never a depth."""
+    assert BY_SIDE.refusal(subcategory, DimensionRole.DEPTH) is not None
+    assert BY_SIDE.measured_by(subcategory, DimensionRole.DEPTH, None) is None
+
+
 @pytest.mark.parametrize(
-    ("subcategory", "role"),
+    ("role", "side", "read"),
     [
-        ("sectional-sofa", DimensionRole.OVERALL_WIDTH),
-        ("carpet", DimensionRole.OVERALL_WIDTH),
-        ("bed", DimensionRole.HEIGHT),
+        (DimensionRole.HEIGHT, None, FaceSide.LONGER),
+        (DimensionRole.LENGTH, None, FaceSide.LONGER),
+        (DimensionRole.OVERALL_WIDTH, None, FaceSide.SHORTER),
+        (DimensionRole.OVERALL_WIDTH, FloorSide.LONGER, FaceSide.LONGER),
     ],
 )
-def test_what_the_shape_or_the_data_cannot_answer_is_still_refused(
-    subcategory: str, role: DimensionRole
+def test_a_flat_thing_is_read_by_its_two_largest_sizes(
+    role: DimensionRole, side: FloorSide | None, read: FaceSide
 ) -> None:
-    """A corner piece has no single width, a rug's sides are a pair, and an
-    unreliable height column is no better read by side."""
-    assert BY_SIDE.refusal(subcategory, role) is not None
-    assert BY_SIDE.measured_by(subcategory, role, None) is None
+    """ "Art 100 cm tall" is its longer side, its width the shorter unless the
+    customer meant the longer - whichever columns the store used."""
+    assert BY_SIDE.measured_by("art-canvas", role, side) is read
+    assert BY_SIDE.shown_by("mirror") == {
+        DimensionRole.LENGTH: FaceSide.LONGER,
+        DimensionRole.OVERALL_WIDTH: FaceSide.SHORTER,
+    }
+    assert BY_COLUMN.measured_by("art-canvas", role, side) is None
+
+
+@pytest.mark.parametrize(
+    ("length", "width", "height", "longer", "shorter"),
+    [
+        ("120", "2", "90", "120", "90"),  # the thickness in width, the height listed
+        (None, "66", "55", "66", "55"),  # one floor column empty
+        ("300", "200", None, "300", "200"),  # a rug as most stores list it
+        ("300", "200", "1", "300", "200"),
+        ("60", None, None, None, None),  # one size: no sides
+    ],
+)
+def test_a_flat_things_sides_are_its_two_largest_listed_sizes(
+    length: str | None,
+    width: str | None,
+    height: str | None,
+    longer: str | None,
+    shorter: str | None,
+) -> None:
+    sizes = normalise_dimensions(
+        RawDimensions(
+            length=None if length is None else Decimal(length),
+            width=None if width is None else Decimal(width),
+            height=None if height is None else Decimal(height),
+            unit="cm",
+        )
+    )
+
+    def expected(figure: str | None) -> Decimal | None:
+        return None if figure is None else Decimal(figure)
+
+    assert measurement(sizes, FaceSide.LONGER) == expected(longer)
+    assert measurement(sizes, FaceSide.SHORTER) == expected(shorter)
+
+
+def test_search_reads_a_flat_thing_by_its_face_sides() -> None:
+    assert _measured(FaceSide.LONGER) is _LONG_FACE
+    assert _measured(FaceSide.SHORTER) is _SHORT_FACE
+    assert _measured(FloorSide.LONGER) is _LONG_SIDE
+
+
+@pytest.mark.parametrize(
+    ("subcategory", "role", "read"),
+    [
+        ("sectional-sofa", DimensionRole.OVERALL_WIDTH, FloorSide.LONGER),
+        ("sofa-set", DimensionRole.DEPTH, FloorSide.SHORTER),
+        ("carpet", DimensionRole.OVERALL_WIDTH, FaceSide.SHORTER),
+        ("bed", DimensionRole.HEIGHT, SourceAxis.HEIGHT),
+        ("nightstand", DimensionRole.HEIGHT, SourceAxis.HEIGHT),
+    ],
+)
+def test_every_kind_is_searched_by_its_listed_size(
+    subcategory: str, role: DimensionRole, read: Measure
+) -> None:
+    """The store's listed size is trusted like its price, in every store: a
+    corner sofa's or a set's longer side is its width as listed."""
+    assert BY_SIDE.refusal(subcategory, role) is None
+    assert BY_SIDE.measured_by(subcategory, role, None) is read
 
 
 def test_the_sides_are_the_larger_and_smaller_of_the_two_floor_columns() -> None:
@@ -166,10 +241,18 @@ def test_a_width_nobody_placed_reads_the_side_the_registry_reads_it_on(
     assert BY_SIDE.measured_by(subcategory, DimensionRole.OVERALL_WIDTH, None) is read
 
 
-def test_a_kind_the_registry_does_not_record_is_not_opened_by_side() -> None:
-    """A dining set, a mirror or a canvas has no floor sides to read."""
-    assert BY_SIDE.refusal("dining-set", DimensionRole.OVERALL_WIDTH) is not None
-    assert BY_SIDE.measured_by("dining-set", DimensionRole.OVERALL_WIDTH, None) is None
+def test_a_kind_the_registry_does_not_record_is_read_by_side_too() -> None:
+    """A dining set or a floor lamp: width its longer side, depth its shorter,
+    height its height - one rule for every kind and every store."""
+    assert BY_SIDE.shown_by("floor-lamp") == {
+        DimensionRole.OVERALL_WIDTH: FloorSide.LONGER,
+        DimensionRole.DEPTH: FloorSide.SHORTER,
+        DimensionRole.HEIGHT: SourceAxis.HEIGHT,
+    }
+    assert BY_SIDE.measured_by("dining-set", DimensionRole.OVERALL_WIDTH, None) is FloorSide.LONGER
+    assert BY_COLUMN.refusal("dining-set", DimensionRole.OVERALL_WIDTH) is not None, (
+        "off: as before"
+    )
 
 
 def test_stated_sizes_are_read_the_way_search_reads_them() -> None:
@@ -196,16 +279,13 @@ def test_stated_sizes_are_read_the_way_search_reads_them() -> None:
 
 @pytest.mark.parametrize(
     ("subcategory", "reads"),
-    [("bed", True), ("office-table", True), ("carpet", True), ("sectional-sofa", False)],
+    [("bed", True), ("office-table", True), ("carpet", True), ("sectional-sofa", True)],
 )
-def test_a_pair_of_sides_reads_for_any_piece_with_one_footprint(
-    subcategory: str, reads: bool
-) -> None:
-    """ "A bed 160 x 200", "a desk 120 x 60": the smaller figure is the short
-    side, the larger the long one - not for a corner set, which has no single
-    footprint."""
+def test_a_pair_of_sides_reads_for_every_kind(subcategory: str, reads: bool) -> None:
+    """ "A bed 160 x 200", "a desk 120 x 60", "a corner sofa 300 x 160": the
+    smaller figure is the short side, the larger the long one, as listed."""
     assert BY_SIDE.reads_pair(subcategory) is reads
-    assert not BY_SIDE.reads_pair("dining-set")
+    assert BY_SIDE.reads_pair("dining-set")
     assert not BY_COLUMN.reads_pair("bed")
 
 

@@ -442,6 +442,7 @@ class _PerKindPipeline:
         dropped_constraints: Any = (),
         earlier_sizes_applied: bool = False,
         presentation_limit: int | None = None,
+        closest_sizes: bool = False,
     ) -> ProductSearchExecutionResult:
         self.calls.append(resolved)
         product_id = self.by_subcat.get(resolved.request.commerce_subcategory)

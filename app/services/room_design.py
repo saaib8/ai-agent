@@ -91,10 +91,13 @@ class RoomDesignChecker:
         taxonomy: CommerceTaxonomy,
         attributes: CatalogAttributes,
         seating: SeatingSemantics | None,
+        bought_once: frozenset[str] = frozenset(),
     ) -> None:
         self._taxonomy = taxonomy
         self._attributes = attributes
         self._seating = seating
+        self._bought_once = bought_once
+        """Kinds never bought as identical copies (`room_pieces_v1.yaml`)."""
 
     def check(
         self,
@@ -227,6 +230,19 @@ class RoomDesignChecker:
     ) -> RoomDesignProblem | None:
         if not piece.types:
             return RoomDesignProblem(code="piece_needs_a_type", piece=number)
+        repeated = [t for t in piece.types if t in self._bought_once]
+        if piece.quantity > 1 and repeated:
+            # Two pieces of art are two works that go together, or a set sold
+            # as one - never one print hung twice (known issue 38).
+            return RoomDesignProblem(
+                code="never_the_same_one_twice",
+                piece=number,
+                detail={
+                    "type": customer_words(repeated[0]),
+                    "instead": "plan each one as its own piece - different works that go "
+                    "together - or one set sold as one",
+                },
+            )
         if (
             piece.longer_min_cm is not None
             and piece.longer_max_cm is not None

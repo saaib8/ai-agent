@@ -28,7 +28,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.product import ProductCandidate
-from app.taxonomy.dimensions import DimensionRole, FloorSide, SourceAxis
+from app.taxonomy.dimensions import DimensionRole, FaceSide, FloorSide, Measure, SourceAxis
 
 MAX_EXCLUDED_PRODUCT_IDS = 100
 """Upper bound on one request's exclusion list.
@@ -250,13 +250,14 @@ class PlanarDimensionConstraint(BaseModel):
 
 class PairMatch(BaseModel):
     """A pair of sides resolved for search: two stored columns matched exactly
-    in either order (a rug), or the piece's shorter and longer floor side, each
-    within `tolerance` of the figure (anything else, read by side)."""
+    in either order (a rug), or the piece's shorter and longer side - a flat
+    thing's two largest sizes, else its floor sides - each within `tolerance`
+    of the figure (anything else, read by side)."""
 
     model_config = ConfigDict(frozen=True)
 
     constraint: PlanarDimensionConstraint
-    axes: tuple[SourceAxis, SourceAxis] | tuple[FloorSide, FloorSide]
+    axes: tuple[SourceAxis, SourceAxis] | tuple[FloorSide, FloorSide] | tuple[FaceSide, FaceSide]
     tolerance: Decimal = Field(default=Decimal("0"), ge=0, lt=1)
     """A share of each figure either way: "160 x 200" finds a 158 x 203 bed."""
 
@@ -270,8 +271,9 @@ class AxisConstraint(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    axis: SourceAxis | FloorSide
-    """A stored column, or the piece's longer or shorter floor side."""
+    axis: Measure
+    """A stored column, the piece's longer or shorter floor side, or a flat
+    thing's side."""
     kind: DimensionConstraintKind
     min_cm: Decimal | None = None
     max_cm: Decimal | None = None
@@ -455,3 +457,35 @@ class ProductSearchResult(BaseModel):
 
     truncated: bool
     """True when more eligible products existed than the limit allowed."""
+
+
+_ROLE_WORDS = {
+    DimensionRole.LENGTH: "length",
+    DimensionRole.OVERALL_WIDTH: "width",
+    DimensionRole.DEPTH: "depth",
+    DimensionRole.HEIGHT: "height",
+}
+
+
+def _figure(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def size_words(request: ProductSearchRequest) -> str:
+    """A search's sizes in plain words and centimetres - "120 x 40 cm",
+    "width at most 50 cm" - for the agent reading what ran."""
+    said: list[str] = []
+    for c in request.dimensions:
+        role = _ROLE_WORDS[c.role]
+        if c.kind is DimensionConstraintKind.MAX:
+            said.append(f"{role} at most {_figure(c.max_cm)} cm")  # type: ignore[arg-type]
+        elif c.kind is DimensionConstraintKind.MIN:
+            said.append(f"{role} at least {_figure(c.min_cm)} cm")  # type: ignore[arg-type]
+        elif c.kind is DimensionConstraintKind.RANGE:
+            said.append(f"{role} {_figure(c.min_cm)}-{_figure(c.max_cm)} cm")  # type: ignore[arg-type]
+        else:
+            said.append(f"{role} about {_figure(c.target_cm)} cm")  # type: ignore[arg-type]
+    if request.planar_dimensions is not None:
+        shorter, longer = request.planar_dimensions.sides
+        said.append(f"{_figure(longer)} x {_figure(shorter)} cm")
+    return "; ".join(said)

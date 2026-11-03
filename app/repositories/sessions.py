@@ -217,6 +217,7 @@ class SessionStore:
         cart = ShopperCart(
             selected_product_ids=interaction.selected_product_ids,
             cart_quantities=interaction.cart_quantities,
+            liked_product_ids=interaction.liked_product_ids,
         )
         key = SHOPPER_CART_KEY_TEMPLATE.format(store_id=store_id, shopper=shopper)
         try:
