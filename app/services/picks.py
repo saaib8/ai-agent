@@ -28,6 +28,7 @@ from app.core.exceptions import (
     IntegrationUnavailableError,
     PickLimitError,
     PickUnavailableError,
+    SessionConflictError,
 )
 from app.core.logging import get_logger
 from app.repositories.sessions import SessionStore
@@ -41,7 +42,13 @@ from app.schemas.agent_updates import (
     ReplaceItems,
     SetCartQuantity,
 )
-from app.schemas.cart import CartQuery, CartRefusalReason, CartResponse, CartView
+from app.schemas.cart import (
+    CartQuery,
+    CartRefusalReason,
+    CartResponse,
+    CartSyncRequest,
+    CartView,
+)
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import (
     DeselectPickAction,
@@ -70,8 +77,13 @@ from app.services.product_interaction import build_liked, build_picks, interacti
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.session_turns import commit_state, load_for_turn, with_the_shoppers_cart
 from app.services.store_cart_check import StoreCartCheck
+from app.services.store_cart_mirror import StoreCartMirror
 
 logger = get_logger(__name__)
+
+_SYNC_ATTEMPTS = 3
+"""How many times a cart sync is tried when a chat turn saved the conversation
+first: each try mirrors the store's cart onto what that turn saved."""
 
 
 def _liked_card(
@@ -103,7 +115,11 @@ class PicksRuntime:
         display: ProductDisplayWords | None = None,
         cart: CartService | None = None,
         store_check: StoreCartCheck | None = None,
+        store_cart_mirror: StoreCartMirror | None = None,
     ) -> None:
+        self._store_cart_mirror = store_cart_mirror
+        """Makes our cart match the store's own for `sync_cart`; None where
+        that is switched off (`salla.mirror_store_cart`)."""
         self._store_check = store_check
         """Asks the store's own cart before a tap puts more in ours; None
         where it is not asked (CLAUDE.md 36)."""
@@ -225,6 +241,78 @@ class PicksRuntime:
             session_revision=envelope.session_revision,
             cart=cart,
         )
+
+    async def sync_cart(self, request: CartSyncRequest, context: RetailerContext) -> CartResponse:
+        """Our cart made to match the store's own cart, with no turn of the
+        conversation (CLAUDE.md 36).
+
+        The widget sends it whenever the shopper's cart changes on the store's
+        own page - a product removed, a quantity changed, one added there. No
+        agent runs and nothing is said: only the cart changes, so the next reply
+        answers from what is really in it.
+
+        Steps:
+        1. load the conversation (a new one when there is none yet);
+        2. rebuild its cart from the store's (`StoreCartMirror`);
+        3. save it - only when something changed - as a change of state, leaving
+           the conversation's words as they were;
+        4. answer the cart as it now stands, with no `changes`: they came from
+           the store, so there is nothing for the widget to copy back.
+
+        A chat turn that saves the conversation while this runs wins the race;
+        this is then tried again on top of what it saved, so neither is lost.
+        """
+        for attempt in range(1, _SYNC_ATTEMPTS + 1):
+            loaded = await load_for_turn(
+                self._sessions,
+                store_id=request.store_id,
+                session_id=request.session_id,
+                expected_revision=None,
+            )
+            state = loaded.envelope.state
+            revision = loaded.envelope.session_revision
+            mirrored = (
+                await self._store_cart_mirror.mirrored(state, request.store_cart, context)
+                if self._store_cart_mirror is not None
+                else state
+            )
+            if mirrored is not state:
+                try:
+                    revision = await commit_state(
+                        self._sessions,
+                        store_id=request.store_id,
+                        session_id=request.session_id,
+                        loaded=loaded,
+                        state=mirrored,
+                    )
+                except SessionConflictError:
+                    if attempt == _SYNC_ATTEMPTS:
+                        raise
+                    logger.info("cart_sync_retried", store_id=context.store_id, attempt=attempt)
+                    continue
+            logger.info(
+                "cart_synced",
+                store_id=context.store_id,
+                changed=mirrored is not state,
+                lines=len(mirrored.product_interaction.selected_product_ids),
+            )
+            return await self._cart_of(request.session_id, revision, mirrored, context)
+        raise AssertionError("unreachable: the last attempt returns or raises")
+
+    async def _cart_of(
+        self, session_id: str, revision: int, state: AgentStateV1, context: RetailerContext
+    ) -> CartResponse:
+        """The cart `state` holds, priced fresh, with nothing reported as changed."""
+        picked = state.product_interaction.selected_product_ids
+        products = await self._hydration.hydrate_ids(picked, context) if picked else []
+        language = self._language(state)
+        picks = build_picks(state, products, self._display, language)
+        cart = (
+            await self._cart.view(state, picks, context, language)
+            if self._cart is not None
+            else CartView()
+        )
+        return CartResponse(session_id=session_id, session_revision=revision, cart=cart)
 
     @staticmethod
     def _goes_with(picked: tuple[int, ...], products: Sequence[ProductCandidate]) -> int | None:

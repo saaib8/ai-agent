@@ -2663,8 +2663,20 @@ keeps a cart of its own.
   (`session.shopper_cart_ttl_s`, seven days), and every conversation they load
   - a new chat, or one they come back to - holds it (`app/services/shopper_cart.py`),
   so "what's in my cart?" answers the same in every chat. An id naming no
-  shopper (the console, direct calls) keeps its own cart. A change made only on
-  the store's own cart page never reaches us; that needs the widget.
+  shopper (the console, direct calls) keeps its own cart.
+- **The store's own cart is the truth** (`salla.mirror_store_cart`, on by
+  default). The shopper can change Salla's cart on Salla's own page - remove a
+  piece, change a quantity, add something - and only the storefront page can
+  read it. So the widget sends it whenever it changes - the platform turns its
+  `__CART_UPDATE__[...]` message into `POST /v1/cart/sync` (`CartSyncRequest`,
+  no turn: no agent, nothing said) - or beside a message (`ChatRequest.store_cart`),
+  each line's Salla id and quantity; and our cart is made to match it exactly
+  (`app/services/store_cart_mirror.py`): what left it
+  leaves ours, quantities are the store's, and what they added there joins ours
+  after our own lines - where our catalog knows it by its Salla id. Only on a
+  Salla store; omitted, our cart stays as it is; an empty list empties it. It is
+  applied before the turn's "before", so `cart.changes` never asks the widget
+  to copy back what came from the store.
 - **A guest who signs in keeps their chat** (`session.guest_handover`, on by
   default). Signing in changes the shopper, so the chat would be looked for
   under a new name and found empty. Once the platform has checked the guest's

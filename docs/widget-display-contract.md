@@ -319,6 +319,37 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
   A store that is not on Salla answers `cart_supported: false`: keep our cart as the
   shopper's list and link each line to `product.url`. `go_to_cart` labels a link to
   the store's own cart page (Salla: `/cart`), where checkout happens.
+- **Tell us when Salla's cart changes: `__CART_UPDATE__` (Salla).** The shopper can
+  remove a product, change a quantity or add one on Salla's own cart page, and only
+  the page can see that. So **whenever Salla's cart changes** (Twilight's cart
+  events), send the whole Salla cart as an ordinary chat message
+  (`/api/widgets/ai-agent/chat/`):
+  ```
+  __CART_UPDATE__[{"salla_id":1660240108,"quantity":2},{"salla_id":1660240109,"quantity":1}]
+  ```
+  One entry per Salla cart item: `salla_id` = the item's `product_id`, `quantity` =
+  its quantity (the same product twice with different options is fine - they add
+  up). `__CART_UPDATE__[]` = the Salla cart is empty. It is **not a chat turn**:
+  Zory sees the prefix and only syncs the cart - no AI, no session charged, nothing
+  archived, nothing to draw in the chat. The answer is the cart:
+  ```json
+  {"cart_update": true, "session_id": "...", "session_revision": 7, "cart": {...}}
+  ```
+  Use `cart` for the cart icon / tray, and draw no message bubble. On the stream
+  route the same answer comes as one `reply` event. A broken update is `400
+  invalid_cart_update` (not a JSON list) or `400 invalid_request` (a line without
+  a whole `salla_id` / `quantity` ≥ 1); nothing changes. Rules:
+  1. **Don't send it for your own copies.** Your `salla.cart.addItem` / update calls
+     also fire Salla's cart events; wait until all of them from one reply have
+     settled, then send one update (or skip it - our cart already has them).
+  2. **Never while a message is waiting for its reply.** Queue it and send it after:
+     both save the same conversation, and the update is safe to repeat.
+  3. Could not read Salla's cart → send nothing (never `[]` for "unknown").
+  4. After the answer, refresh your record of what is in Salla (`product.uuid` →
+     quantity) from `cart.lines`; it has no `changes`, so nothing is copied back.
+  Optionally, a chat turn may also carry the Salla cart as its own field
+  (`"store_cart": [{"salla_id": ..., "quantity": ...}]`): it is synced the same way
+  just before the agent answers. Only on Salla stores; elsewhere don't send either.
 - The cart lives as long as the conversation (`ZORY_SESSION__TTL_S`); the store's
   own cart outlives it.
 

@@ -25,6 +25,7 @@ from app.services.query_understanding import QueryUnderstandingService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.stocked_looks import StockedLooks
+from app.services.store_cart_mirror import StoreCartMirror
 from app.services.store_knowledge import StoreKnowledgeService
 from app.services.support import SupportService
 from app.taxonomy.attributes import CatalogAttributes
@@ -78,6 +79,10 @@ class AgentServices:
     can be cancelled mid-query, leaving the session unusable; it is reset
     before anything reads the catalog again. The agent service only reads the
     catalog, so a rollback loses nothing."""
+    store_cart_mirror: StoreCartMirror | None = None
+    """Makes our cart match the store's own cart (Salla) when the widget sends
+    it with a message, before the turn starts. None where switched off
+    (`salla.mirror_store_cart`)."""
     shelf_depth: tuple[int, int] = (3, 15)
     """Where a kind's range stops being "few" and "some" on the store shelf -
     the depth of a choice as a word, never a count (`catalog.shelf_few_max`,
