@@ -1,7 +1,7 @@
 """Products and results as an agent reads them: verified, id-free, short.
 
 The model sees only what a card shows - name, kind, colour, styles, seats,
-price, size - numbered as the customer sees it. Nothing here names a product
+price, size, weight - numbered as the customer sees it. Nothing here names a product
 id, a URL or the store; the screen is built from the same records by code.
 """
 
@@ -38,6 +38,7 @@ def brief_product(
         seats=product.commerce.seating_capacity or None,
         size_cm=_size(product) or None,
         main_material=product.listing.material,
+        weight_kg=plain(product.listing.weight_kg) if product.listing.weight_kg else None,
         was_price=plain(product.discount.old_price) if product.discount else None,
         saving=plain(product.discount.saving) if product.discount else None,
         percent_off=product.discount.percent if product.discount else None,
@@ -208,6 +209,8 @@ def searched_for(search: ActiveSearchState | None) -> dict[str, Any]:
         asked["price"] = request.price.model_dump(mode="json", exclude_none=True)
     if request.seating_capacity is not None:
         asked["seats"] = request.seating_capacity.model_dump(mode="json", exclude_none=True)
+    if request.weight is not None:
+        asked["weight"] = request.weight.model_dump(mode="json", exclude_none=True)
     if request.dimensions or request.planar_dimensions is not None:
         asked["sizes"] = size_words(request)
     if search.semantic_intent:

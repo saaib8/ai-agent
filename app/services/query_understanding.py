@@ -40,8 +40,10 @@ from app.schemas.discovery import (
     ProductSearchRequest,
     ProductSort,
     SeatingCapacityConstraint,
+    WeightConstraint,
 )
 from app.schemas.query import (
+    KILOGRAMS_PER,
     AttributeInterpretation,
     ClarificationReason,
     ClarificationRequired,
@@ -248,6 +250,7 @@ class QueryUnderstandingService:
             return price
 
         capacity = self._capacity(interpretation)
+        weight = self._weight(interpretation)
         strict, preferences, unresolved = self._sort_attributes(interpretation.attributes)
 
         # Their own width for the piece decides; the space then adds nothing.
@@ -261,6 +264,7 @@ class QueryUnderstandingService:
                 commerce_subcategory=subcategory,
                 price=price,
                 seating_capacity=capacity,
+                weight=weight,
                 dimensions=dimensions.supported,
                 planar_dimensions=dimensions.planar,
                 colors_any_of=strict[AttributeFamily.COLOR],
@@ -560,6 +564,20 @@ class QueryUnderstandingService:
             return SeatingCapacityConstraint(min_capacity=low, max_capacity=high)
         except ValidationError as exc:
             raise LLMResponseInvalidError(reason="capacity constraint invalid") from exc
+
+    def _weight(self, interpretation: CommerceInterpretation) -> WeightConstraint | None:
+        """The weight limit in kilograms, the unit the store lists."""
+        raw_min, raw_max = interpretation.weight_min, interpretation.weight_max
+        if raw_min is None and raw_max is None:
+            return None
+        factor = KILOGRAMS_PER[interpretation.weight_unit or "kg"]
+        try:
+            return WeightConstraint(
+                min_kg=_to_decimal(raw_min, field="weight_min") * factor if raw_min else None,
+                max_kg=_to_decimal(raw_max, field="weight_max") * factor if raw_max else None,
+            )
+        except ValidationError as exc:
+            raise LLMResponseInvalidError(reason="weight constraint invalid") from exc
 
 
 def _states_own_width(interpretation: CommerceInterpretation) -> bool:

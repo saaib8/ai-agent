@@ -45,6 +45,9 @@ class BriefProduct(_Brief):
     main_material: str | None = None
     """The one material the store records - many pieces have more than one, so
     it is said as the main material, never as all it is made of."""
+    weight_kg: str | None = None
+    """The weight the store lists, as the card shows it - so "under 3 kg" is
+    read from the cards, never from a closer look at each."""
     was_price: str | None = None
     saving: str | None = None
     percent_off: int | None = None

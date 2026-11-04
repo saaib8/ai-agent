@@ -28,6 +28,15 @@ from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.dimensions import DimensionRole, FloorSide, UnsupportedDimensionReason
 from app.taxonomy.registry import CommerceTaxonomy
 
+WeightUnit = Literal["kg", "g", "lb"]
+
+KILOGRAMS_PER: dict[str, Decimal] = {
+    "kg": Decimal(1),
+    "g": Decimal("0.001"),
+    "lb": Decimal("0.45359237"),
+}
+"""A weight in the customer's unit, in kilograms - the unit the store lists."""
+
 
 class ConstraintStrength(StrEnum):
     """How firmly the customer expressed a constraint.
@@ -373,6 +382,25 @@ class CommerceInterpretation(BaseModel):
     seating_capacity_max: int | None = Field(
         default=None, description="Maximum number of seats the customer asked for."
     )
+    weight_min: str | None = Field(
+        default=None,
+        description=(
+            "The least the piece may weigh, as a plain decimal string in weight_unit, "
+            "e.g. '10'. Null unless they gave a weight."
+        ),
+    )
+    weight_max: str | None = Field(
+        default=None,
+        description=(
+            "The most the piece may weigh, as a plain decimal string in weight_unit - "
+            "'under 3 kg', 'below 3kg weight', 'lighter than 3 kg' is '3'. Null unless "
+            "they gave a weight."
+        ),
+    )
+    weight_unit: WeightUnit | None = Field(
+        default=None,
+        description="The unit of weight_min and weight_max as they said it. Null is kg.",
+    )
     sort: ProductSort | None = Field(
         default=None,
         description=(
@@ -416,8 +444,11 @@ class CommerceInterpretation(BaseModel):
         default_factory=list,
         description=(
             "Every explicit measurement they stated, with a number they could "
-            "be quoted on. Empty when they gave none. A vague word such as "
-            "compact, small or low-profile is not a measurement."
+            "be quoted on. Empty when they gave none. A standard size name "
+            "everyone reads alike - a single, double, queen or king bed or "
+            "mattress - is its usual width range on the shorter side, "
+            "approximate. A vague word such as compact, small or low-profile "
+            "is not a measurement."
         ),
     )
     planar_dimensions: PlanarDimensionInterpretation | None = Field(

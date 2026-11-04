@@ -800,6 +800,9 @@ def search_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
         )
         if run.state is not None:
             extra = {"searched_for": searched_for(run.state.active_search), **extra}
+        if run.continued:
+            # The same search as the one on screen: these are its next cards.
+            extra = {**extra, "next_page_of_the_search_on_screen": True}
         room = run.state.room_project if run.state is not None else None
         if run.grounding is not None and room is not None:
             extra = {**extra, **room_fit(run.grounding.products, room.geometry, chosen)}
@@ -917,13 +920,12 @@ def more_like_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
 
 def _listed_extras(product: ProductCandidate) -> dict[str, Any]:
     """What the store lists beyond the card: the rating always with how many
-    reviews it rests on, weight, SKU, warranty, and how many it has in stock."""
+    reviews it rests on, SKU, warranty, and how many it has in stock. Weight
+    is the card's (`brief_product`)."""
     listing = product.listing
     extras: dict[str, Any] = {}
     if listing.rating is not None and listing.review_count:
         extras["rating"] = {"stars": plain(listing.rating), "reviews": listing.review_count}
-    if listing.weight_kg is not None:
-        extras["weight_kg"] = plain(listing.weight_kg)
     if listing.sku:
         extras["sku"] = listing.sku
     if listing.warranty_months:

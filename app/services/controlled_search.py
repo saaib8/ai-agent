@@ -315,6 +315,10 @@ class ControlledRelaxationService:
             variants.append(
                 (SetAsideField.SEATS, None, request.model_copy(update={"seating_capacity": None}))
             )
+        if request.weight is not None:
+            variants.append(
+                (SetAsideField.WEIGHT, None, request.model_copy(update={"weight": None}))
+            )
         for constraint in request.dimensions:
             others = tuple(c for c in request.dimensions if c.role is not constraint.role)
             variants.append(

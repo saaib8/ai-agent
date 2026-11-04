@@ -903,6 +903,10 @@ retrieval needs. It carries:
   when the customer asked for the type alone (10.2)
 - an optional price constraint, with an explicit currency
 - an optional seating-capacity constraint
+- an optional weight limit (`WeightConstraint`, kilograms, against the store's
+  listed `weight_kg`): "art under 3 kg" is answered by the database, a product
+  with no listed weight never matches, nothing widens it, and when nothing meets
+  it `set_aside` says what dropping it would find
 - exact colour and style requirements (see 12.4)
 - a bounded `limit`, defaulted and capped from configuration
 - a `sort` drawn from a closed set of deterministic orderings
@@ -1231,8 +1235,10 @@ requirement (material, an unreliable measurement), or one awaiting
 clarification, must be settled conversationally first.
 
 Paging ("show me more") excludes products already seen from the same request.
-Any change to the request's criteria starts a fresh set: exclusions from paging
-do not carry into a refined search.
+The same search stated again - criteria, firmness, leanings and words alike -
+is its next page, whichever tool ran it (`next_page_of_the_search_on_screen`),
+so the cards just shown never come back. Any change to the request's criteria
+starts a fresh set: exclusions from paging do not carry into a refined search.
 
 **A size belongs to the product type it was given for.** 60 cm for a side table
 says nothing about a coffee table, so a measurement never follows the customer
@@ -1543,7 +1549,12 @@ separate facts: the request records `TARGET 220`, the semantics record
 
 **Vague size words are not measurements.** Compact, small, low-profile give no
 number to quote, so they produce no constraint and invent no threshold. They
-guide the product type, and may later serve semantic ranking.
+guide the product type, and may later serve semantic ranking. **A standard size
+name is one** - a single, double, queen or king bed or mattress: everyone reads
+it alike, so the model searches its usual width range on the shorter side, from
+its own knowledge (no size table in code), approximate, and the reply says how it
+read it ("single beds are usually up to 120 cm wide"). A product with no listed
+size is never called that size.
 
 Some products have sides with no agreed order: a rug described as 200 x 300 is
 the same rug as 300 x 200. The registry marks those subcategories, and their
@@ -2702,7 +2713,9 @@ Plan and decisions: `docs/product-data-plan.md`.
 
 - **Read where needed.** The small fields ride with every product
   (`ProductListing`); the long text (description, reviews) is read only for one
-  product's details. `sold_quantity` never leaves ranking: it orders a
+  product's details. Each card's facts carry its listed weight (`weight_kg`),
+  and a weight the customer gives is a search filter (12.1). `sold_quantity`
+  never leaves ranking: it orders a
   best-selling search and decides the best-seller label, and is never a fact,
   a figure, a field a client receives or a log.
 - **Descriptions and reviews are the store's and shoppers' words**, fenced in

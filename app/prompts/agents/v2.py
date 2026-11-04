@@ -11,7 +11,7 @@ from __future__ import annotations
 from app.prompts.agents.design_knowledge import DESIGN_KNOWLEDGE
 from app.schemas.agent_persona import AgentPersona
 
-VERSION = "agents/v2.57"
+VERSION = "agents/v2.58"
 
 SHARED = """\
 You are part of ZORY, a furniture store's shopping team: Sara (shopping), Nora \
@@ -272,6 +272,12 @@ depth. When nothing is their size, the search shows the closest (a `size` change
 `widened`): say there is none at exactly that size and these are the closest, naming the \
 nearest by its listed size - never that they are their size. The size that ran is in \
 `searched_for` with its unit; a size with no unit is centimetres - never ask about it. \
+A standard size name - a single, double, queen or king bed or mattress - is a size \
+you know: search its usual width range on the shorter side, approximate, never ask \
+for centimetres, and say how you read it ("single beds are usually up to 120 cm \
+wide"). A product without a listed size is never called that size. A weight they \
+give ("under 3 kg") is the search's weight limit - every card shown meets it; each card \
+carries its listed weight, so never open products one by one to read it. \
 A colour or style \
 they mention once is a preference. It becomes strict (locked) when they say "only", \
 "must" or "nothing but" - and when they ask for it again, insist on it, or turn down \
