@@ -102,13 +102,34 @@ class ChatRuntime:
         self._arabic = arabic_replies
         self._summarizer = summarizer
 
-    async def load_session(self, request: ChatRequest) -> LoadedSession:
-        return await load_for_turn(
+    async def load_session(
+        self, request: ChatRequest, context: RetailerContext | None = None
+    ) -> LoadedSession:
+        loaded = await load_for_turn(
             self._sessions,
             store_id=request.store_id,
             session_id=request.session_id,
             expected_revision=request.expected_session_revision,
         )
+        return await self._with_store_cart(request, context, loaded)
+
+    async def _with_store_cart(
+        self, request: ChatRequest, context: RetailerContext | None, loaded: LoadedSession
+    ) -> LoadedSession:
+        """The loaded session with our cart made to match the store's own cart,
+        when the widget sent it (`ChatRequest.store_cart`).
+
+        Done here, before the turn starts, so the agents read the real cart and
+        the reply's `cart.changes` (measured from this state) never tells the
+        widget to copy back into the store what came from the store.
+        """
+        mirror = self._services.store_cart_mirror  # None where switched off
+        if request.store_cart is None or context is None or mirror is None:
+            return loaded
+        state = await mirror.mirrored(loaded.envelope.state, request.store_cart, context)
+        if state is loaded.envelope.state:
+            return loaded
+        return replace(loaded, envelope=loaded.envelope.model_copy(update={"state": state}))
 
     async def run_agents(
         self, request: ChatRequest, context: RetailerContext, loaded: LoadedSession
@@ -386,7 +407,7 @@ class ChatRuntime:
     async def run(self, request: ChatRequest, context: RetailerContext) -> ChatResponse:
         """Every phase, in order - the sequence the graph walks."""
         started = time.perf_counter()
-        loaded = await self.load_session(request)
+        loaded = await self.load_session(request, context)
         turn = await self.run_agents(request, context, loaded)
         revision = await self.persist(request, loaded, turn)
         logger.info(

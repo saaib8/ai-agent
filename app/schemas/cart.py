@@ -211,3 +211,42 @@ class CartQuery(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
     store_id: int = Field(ge=1)
+
+
+MAX_STORE_CART_LINES = 200
+"""The most lines a client may report from the store's cart - far more than a
+shopper's cart holds, small enough to bound one request."""
+
+
+class StoreCartLine(BaseModel):
+    """One line of the store's own cart, as the widget read it.
+
+    Named by the store's own product id (on Salla, the product's Salla id),
+    never ours: the storefront page only knows the store's. The same product
+    may come as several lines (one per chosen option); their quantities add up.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    salla_id: int = Field(ge=1)
+    """The product's id on Salla - `product_id` in Twilight's cart items."""
+
+    quantity: int = Field(ge=1)
+    """How many the store's cart holds. Not capped here: the store's cart is
+    the truth, and the mirror keeps it within what our cart can hold."""
+
+
+class CartSyncRequest(BaseModel):
+    """`POST /v1/cart/sync`: the store's own cart, to make ours match it.
+
+    Sent when the shopper's cart changed on the store's own page (the widget's
+    `__CART_UPDATE__` message, turned into this by the platform). No turn of the
+    conversation: no agent runs, nothing is said, only the cart changes.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str = Field(min_length=1, max_length=128, pattern=SESSION_ID_PATTERN)
+    store_id: int = Field(ge=1)
+    store_cart: tuple[StoreCartLine, ...] = Field(max_length=MAX_STORE_CART_LINES)
+    """Everything in the store's cart now; an empty list is an empty cart."""

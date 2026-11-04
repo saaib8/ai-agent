@@ -942,6 +942,12 @@ class SallaSettings(BaseModel):
     """How long one product's answer is reused. Stock moves slowly; a turn
     adding a room asks once per piece."""
 
+    mirror_store_cart: bool = True
+    """When the widget sends the store's own cart with a message
+    (`ChatRequest.store_cart`), our cart is made to match it before the turn:
+    what the shopper removed or changed on Salla's own cart page is seen.
+    Off, what the widget sends is ignored and our cart stays our own record."""
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

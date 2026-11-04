@@ -640,6 +640,30 @@ class ProductRepository:
             for row in result
         ]
 
+    async def ids_for_salla_products(
+        self, salla_product_ids: Sequence[str], context: RetailerContext
+    ) -> dict[str, int]:
+        """Our product id for each Salla product id the active store lists.
+
+        The reverse of `store_identities`, for reading the store's own cart
+        back into ours. A Salla id the store does not list (or lists only on an
+        inactive product) is absent from the answer. Where a store lists one
+        Salla product twice, the oldest row answers, so the choice never moves.
+        """
+        wanted = sorted({salla_id for salla_id in salla_product_ids if salla_id})
+        if not wanted:
+            return {}
+        statement = (
+            select(core_product.c.id, core_product.c.salla_product_id)
+            .where(*self._scope_clauses(context), core_product.c.salla_product_id.in_(wanted))
+            .order_by(core_product.c.id)
+        )
+        result = await self._session.execute(statement)
+        ours: dict[str, int] = {}
+        for row in result:
+            ours.setdefault(str(row.salla_product_id).strip(), int(row.id))
+        return ours
+
     def _eligibility_clauses(
         self,
         request: ProductSearchRequest,

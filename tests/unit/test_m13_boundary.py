@@ -276,6 +276,9 @@ def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
         # The storefront's language, for a turn nothing in the conversation
         # decided. Per turn and never stored (docs/arabic-replies-plan.md).
         "locale",
+        # The store's own cart as the widget read it: the store's product ids
+        # and quantities, looked up within the scoped store only (CLAUDE.md 36).
+        "store_cart",
     }
 
 

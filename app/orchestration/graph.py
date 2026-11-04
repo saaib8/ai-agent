@@ -126,7 +126,7 @@ class ChatGraphRunner:
 async def _load_session(
     state: ChatGraphState, runtime: Runtime[ChatGraphContext]
 ) -> dict[str, object]:
-    return {"session": await runtime.context.chat.load_session(state["request"])}
+    return {"session": await runtime.context.chat.load_session(state["request"], state["context"])}
 
 
 async def _run_agents(
