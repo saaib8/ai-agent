@@ -28,7 +28,7 @@ from app.schemas.agent_turn import CustomerResponse, RoomSwapContext
 from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.card_labels import CardLabels
-from app.schemas.cart import CartView
+from app.schemas.cart import MAX_STORE_CART_LINES, CartView, StoreCartLine
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
@@ -108,6 +108,21 @@ class ChatRequest(BaseModel):
     nothing in the conversation decided - a first message such as "3000" - and
     is never stored: the customer's own words decide the session's language
     (docs/arabic-replies-plan.md). Ignored where Arabic replies are off."""
+
+    store_cart: tuple[StoreCartLine, ...] | None = Field(
+        default=None, max_length=MAX_STORE_CART_LINES
+    )
+    """What is in the store's own cart right now, as the widget just read it
+    from the storefront page (on Salla, Twilight's cart).
+
+    The shopper can change that cart on the store's own page - remove a rug,
+    change a quantity, add something themselves - and only the page can see
+    it. Sent, our cart is made to match it before the agents start
+    (`app/services/store_cart_mirror.py`), so "what's in my cart?" answers
+    what is really there.
+
+    Omitted (None) means the client did not read it: our cart stays as it is.
+    An empty list means the store's cart is empty: ours is emptied too."""
 
     expected_session_revision: int | None = Field(default=None, ge=0)
     """The session revision the client's screen was rendered from.

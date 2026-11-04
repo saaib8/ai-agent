@@ -87,6 +87,7 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
         CONTEXT, BestSellerRule(min_sold=5, top_share=0.1, max_per_kind=10), product_ids=[1, 2]
     ),
     "store_identities": lambda repo: repo.store_identities([1, 2], CONTEXT),
+    "ids_for_salla_products": lambda repo: repo.ids_for_salla_products(["9001", "9002"], CONTEXT),
     "count_active": lambda repo: repo.count_active(CONTEXT),
     "search": lambda repo: repo.search(
         ProductSearchRequest(commerce_category="seating"), CONTEXT, limit=10

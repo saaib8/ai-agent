@@ -83,6 +83,7 @@ from app.services.semantic_ranking import SemanticRankingService
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.stocked_looks import StockedLooks
 from app.services.store_cart_check import StoreCartCheck
+from app.services.store_cart_mirror import StoreCartMirror
 from app.services.support import SupportService
 from app.services.support_handover import SupportHandoverService
 from app.taxonomy.attributes import CatalogAttributes
@@ -417,6 +418,9 @@ def picks_runtime(session: SessionDep, app_resources: ResourcesDep) -> PicksRunt
         display=product_display_words(app_resources),
         cart=CartService(repository),
         store_check=store_cart_check(session, app_resources),
+        store_cart_mirror=StoreCartMirror(StoreRepository(session), repository)
+        if app_resources.settings.salla.mirror_store_cart
+        else None,
     )
 
 
@@ -527,6 +531,9 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         looks=StockedLooks(capability, app_resources.attributes),
         shelf_depth=(settings.catalog.shelf_few_max, settings.catalog.shelf_some_max),
         catalog_reset=session.rollback,
+        store_cart_mirror=StoreCartMirror(StoreRepository(session), repository)
+        if settings.salla.mirror_store_cart
+        else None,
     )
 
 
