@@ -1,34 +1,32 @@
 name: Main Deploy ECS CICD
+
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      target_job:
-        description: "Which Job to Run"
-        required: false
-        default: "Build"
+
 permissions:
   id-token: write
-  contents: read  
-    
+  contents: read
+
 env:
   REGION: ap-south-1
-  OIDC_ROLE_ARN:  arn:aws:iam::047719637331:role/ai-chat-agent-zory
+  OIDC_ROLE_ARN: arn:aws:iam::047719637331:role/ai-chat-agent-oidc-role
   ECR_REPOSITORY: zory/ai-chat-agent
-  AI_CHAT_AGENT_TASK_DEFINATION: "prod-zory-ai-chat-agent-tg"
-  AI_CHAT_AGENT_CONTAINER_NAME: "prod-zory-ai-chat-agent-container"
-  AI_CHAT_AGENT_SERVICE_NAME: "prod-zory-ai-chat-agent"
-  AI_CHAT_AGENT_CLUSTER_NAME: "prod-zory-cluster"
-  ECR_REGISTRY_URI: 047719637331.dkr.ecr.ap-south-1.amazonaws.com/zory/ai-chat-agent
+  AI_CHAT_AGENT_TASK_DEFINITION: prod-zory-ai-chat-agent-tg
+  AI_CHAT_AGENT_CONTAINER_NAME: prod-zory-ai-chat-agent-container
+  AI_CHAT_AGENT_SERVICE_NAME: prod-zory-ai-chat-agent
+  AI_CHAT_AGENT_CLUSTER_NAME: prod-zory-cluster
 
 jobs:
   build-and-push:
+    name: Build and push to ECR
     runs-on: ubuntu-latest
-    name: Build and Deploy to ecs
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v6
 
       - name: Configure AWS creds (OIDC)
@@ -36,59 +34,56 @@ jobs:
         with:
           aws-region: ${{ env.REGION }}
           role-to-assume: ${{ env.OIDC_ROLE_ARN }}
-      - name: Verfiy AWS Indentity
+
+      - name: Verify AWS identity
         run: aws sts get-caller-identity
-      
-      - name: LOGIN TO ECR
-        id: ecr-login
+
+      - name: Login to ECR
+        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-        with: 
-          RepositoryName: ${{ env.ECR_AI_AGENT_REPO }}
-      
-      - name: Build, Tag and Push Image to ECR
+
+      - name: Build, tag and push image to ECR
         id: build-image
         env:
-          IMAGE_TAG: ${{ github.sha }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Building and pushing $IMAGE"
           docker build -t "$IMAGE" .
-          docker push "$IMAGE" 
-          echo "Image=${{ env.ECR_AI_AGENT_REPO }}/${{ env.ECR_AI_AGENT_REPO }}:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
-        
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
   deploy-ai-agent:
+    name: Deploy to ECS
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
     steps:
       - name: Configure AWS creds (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ env.REGION }}
           role-to-assume: ${{ env.OIDC_ROLE_ARN }}
-      - name: Download Current Ai-Agent Image
-        id: ai-chat-agent-task-def-get
+
+      - name: Download current task definition
         run: |
-          aws ecs describe-task-defination \
-            --task-defination ${{ env.AI_CHAT_AGENT_TASK_DEFINATION }} \
-            --query taskDefination \
-            --output json > ai-agent-task-defination.json
-      - name: Fill in the new image for ai-chat-agent
-        id: ai-chat-agent-task-def
+          aws ecs describe-task-definition \
+            --task-definition "$AI_CHAT_AGENT_TASK_DEFINITION" \
+            --query taskDefinition \
+            --output json > task-definition.json
+
+      - name: Fill in the new image
+        id: render-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-defination: ai-agent-task-defination.json
+          task-definition: task-definition.json
           container-name: ${{ env.AI_CHAT_AGENT_CONTAINER_NAME }}
-          image: ${{ needs.build-and-push.output.image }}
-      - name: Deploy AI-AGENT-Service
+          image: ${{ needs.build-and-push.outputs.image }}
+
+      - name: Deploy AI agent service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          task-defination: ${{ steps.ai-chat-agent-task-def.outputs.task-defination }}
-          serivce: ${{ env.AI_CHAT_AGENT_SERVICE_NAME }}
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ env.AI_CHAT_AGENT_SERVICE_NAME }}
           cluster: ${{ env.AI_CHAT_AGENT_CLUSTER_NAME }}
           wait-for-service-stability: true
-
-        
-
-        
-        
