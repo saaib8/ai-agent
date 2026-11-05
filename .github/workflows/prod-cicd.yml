@@ -78,7 +78,7 @@ jobs:
         id: ai-chat-agent-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-defination: ai-agent-task-defination.json
+          task-defination: ai-agent-task-definition.json
           container-name: ${{ env.AI_CHAT_AGENT_CONTAINER_NAME }}
           image: ${{ needs.build-and-push.output.image }}
       - name: Deploy AI-AGENT-Service
