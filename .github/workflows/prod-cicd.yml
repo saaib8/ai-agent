@@ -9,6 +9,7 @@ on:
         description: "Which Job to Run"
         required: false
         default: "Build"
+  
     
 env:
   REGION: ap-south-1
@@ -20,6 +21,9 @@ env:
   AI_CHAT_AGENT_CLUSTER_NAME: ""
 jobs:
   build-and-push:
+    permissions:
+      id-token: write
+      contents: read
     runs-on: ubuntu-latest
     name: Build and Deploy to ecs
     steps:
