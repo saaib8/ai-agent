@@ -33,7 +33,7 @@ jobs:
           role-to-assume: ${{ env.OIDC_ROLE_ARN }}
       
       - name: LOGIN TO ECR
-        id: Login to ECR
+        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
         with: 
           RepositoryName: ${{ env.ECR_AI_AGENT_REPO }}
