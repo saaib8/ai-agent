@@ -67,7 +67,7 @@ jobs:
         with:
           aws-region: ${{ env.REGION }}
           role-to-assume: ${{ env.OIDC_ROLE_ARN }}
-      - name: Download Current Ai-Agent Image
+      - name: Download Current Ai-Agent TD
         id: ai-chat-agent-task-def-get
         run: |
           aws ecs describe-task-definition \
