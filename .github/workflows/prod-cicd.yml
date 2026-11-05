@@ -70,10 +70,10 @@ jobs:
       - name: Download Current Ai-Agent Image
         id: ai-chat-agent-task-def-get
         run: |
-          aws ecs describe-task-defination \
-            --task-defination ${{ env.AI_CHAT_AGENT_TASK_DEFINATION }} \
-            --query taskDefination \
-            --output json > ai-agent-task-defination.json
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.AI_CHAT_AGENT_TASK_DEFINATION }} \
+            --query taskDefinition \
+            --output json > ai-agent-task-definition.json
       - name: Fill in the new image for ai-chat-agent
         id: ai-chat-agent-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
