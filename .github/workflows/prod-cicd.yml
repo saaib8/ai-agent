@@ -84,7 +84,7 @@ jobs:
       - name: Deploy AI-AGENT-Service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          task-defination: ${{ steps.ai-chat-agent-task-def.outputs.task-defination }}
+          task-defination: ${{ steps.ai-chat-agent-task-def.outputs.task-definition }}
           serivce: ${{ env.AI_CHAT_AGENT_SERVICE_NAME }}
           cluster: ${{ env.AI_CHAT_AGENT_CLUSTER_NAME }}
           wait-for-service-stability: true
