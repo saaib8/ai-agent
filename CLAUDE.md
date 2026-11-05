@@ -907,6 +907,10 @@ retrieval needs. It carries:
   listed `weight_kg`): "art under 3 kg" is answered by the database, a product
   with no listed weight never matches, nothing widens it, and when nothing meets
   it `set_aside` says what dropping it would find
+- `on_discount` and `rating_at_least`, only when the customer asks (section 37):
+  a discount is the same checked reduction the cards show, in SQL; a rating
+  counts where the store gives one, never from a count of 0. Neither is widened,
+  and nothing met is offered set aside (`set_aside`)
 - exact colour and style requirements (see 12.4)
 - a bounded `limit`, defaulted and capped from configuration
 - a `sort` drawn from a closed set of deterministic orderings
@@ -1683,9 +1687,10 @@ whatever an embedding prefers. There is no combined score and no `final_score`.
 
 **An explicit sort is an instruction, not a hint.** "Cheapest" means cheapest;
 similarity only orders products the sort leaves tied. The sorts are a closed
-list: price either way, `best_rated` (the weighted rating, unreviewed last) and
-`best_selling` (sales, unsold last), the last two chosen only when the customer
-asks (section 37). Exact matches still come before widened ones whatever the
+list: price either way, `best_rated` (the weighted rating, unreviewed last),
+`best_selling` (sales, unsold last) and `biggest_discount` (the checked share
+off, undiscounted last), the last three chosen only when the customer asks
+(section 37). Exact matches still come before widened ones whatever the
 sort: "the most expensive under 2000" never leads with a sofa a widened budget
 let in. A semantic shortlist
 followed by a price sort is forbidden - measured on store 50, it returned a
@@ -2723,11 +2728,15 @@ Plan and decisions: `docs/product-data-plan.md`.
   never a source of figures (`FREE_TEXT_KEYS`), and a listed fact wins where they
   disagree. Reviews are cleaned of contact details and links, verified buyers
   first, and **quoted exactly as written - never translated**.
-- **A rating is never said without its review count** ("4.5 from 2 reviews").
-  `rating` and `review_count` are the store's totals; an unreviewed product
-  (stored as a count of 0) has neither. "Best rated" orders by the weighted
-  rating (R·v + C·m) / (v + m): C the store's own average, m =
-  `products.rating_prior_reviews` (3), so one 5-star review never outranks many.
+- **A rating is said with its review count wherever the store gives one**
+  ("4.5 from 2 reviews"), and as "rated 4.5" where it gives none - never with a
+  count made up. `rating` and `review_count` are the store's totals, trusted as
+  sent; a rating from a count of 0 is from nobody and is not shown, and a count
+  with no rating rates nothing. "Best rated" orders by the weighted rating
+  (R·v + C·m) / (v + m): C the store's own average, m =
+  `products.rating_prior_reviews` (3), a rating with no count weighing as one
+  review, so one 5-star review never outranks many. "Rated 4 and up" is
+  `rating_at_least`, a filter.
 - **Best sellers only when the customer asks, and only ever positively.** A
   product is one when it sold at least `best_sellers_min_sold`, is within the top
   `best_sellers_top_share` of its kind's sellers in its store and within
@@ -2740,4 +2749,7 @@ Plan and decisions: `docs/product-data-plan.md`.
   least 1% and at most `discount_max_share` off. The stored old price is never
   sent; agents get `was_price` / `saving` / `percent_off` (and a cart line's
   `line_saving`), cards `display.old_price` and `display.discount`. A saving is
-  mentioned when it helps a decision, never with invented urgency.
+  mentioned when it helps a decision, never with invented urgency. "On sale" is
+  `on_discount` and "the biggest discounts" the sort `biggest_discount`, the
+  same check in SQL (`_discount_share`) - only when the customer asks; no agent
+  asks about rating or discounts.

@@ -62,6 +62,7 @@ _SORT_KEYS: dict[ProductSort, Callable[[RelaxedCandidate], Any]] = {
     ProductSort.PRICE_DESC: lambda c: -c.product.price_amount,
     ProductSort.BEST_RATED: lambda c: _by_score(c.product.weighted_rating),
     ProductSort.BEST_SELLING: lambda c: _by_score(c.product.sold),
+    ProductSort.BIGGEST_DISCOUNT: lambda c: _by_score(c.product.discount_share),
 }
 """The customer's own sort, as a key: it decides the order after their stated
 preferences, before similarity - "the best rated beige sofas" are the beige ones

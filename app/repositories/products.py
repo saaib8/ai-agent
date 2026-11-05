@@ -34,7 +34,11 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import DEFAULT_RATING_PRIOR_REVIEWS, SizeSettings
+from app.core.config import (
+    DEFAULT_DISCOUNT_MAX_SHARE,
+    DEFAULT_RATING_PRIOR_REVIEWS,
+    SizeSettings,
+)
 from app.db.tables import core_product
 from app.schemas.catalog import CatalogFilter
 from app.schemas.dimensions import CENTIMETRES_PER_UNIT, UNIT_ALIASES, RawDimensions
@@ -109,6 +113,15 @@ _POOL_COLUMNS = (
 reading the COMPLETE eligible pool affordable (CLAUDE.md 16.1)."""
 
 
+_REVIEWS = func.coalesce(core_product.c.review_count, 1)
+"""The reviews behind a rating: the store's count, or one where it gave none -
+a rating with no count weighs as a single review, so it never outranks many."""
+
+_RATED = core_product.c.rating.isnot(None) & (_REVIEWS > 0)
+"""The store rates it: a rating, from at least one review where a count is
+given - a rating from a count of 0 is from nobody."""
+
+
 def _store_average_rating(context: RetailerContext) -> ColumnElement[Any]:
     """C in the weighted rating: the average rating of the store's own rated
     products, worked out in the same query so it is never stale."""
@@ -117,8 +130,7 @@ def _store_average_rating(context: RetailerContext) -> ColumnElement[Any]:
         .where(
             core_product.c.store_id == context.store_id,
             core_product.c.is_active.is_(True),
-            core_product.c.review_count > 0,
-            core_product.c.rating.isnot(None),
+            _RATED,
         )
         .scalar_subquery()
     )
@@ -129,12 +141,30 @@ def _weighted_rating(context: RetailerContext, prior_reviews: int) -> ColumnElem
 
     NULL for a product nobody has reviewed - it follows every rated one, never
     mixed in as if it were. Internal: it orders, and is never shown."""
-    reviews = core_product.c.review_count
     return case(
         (
-            (reviews > 0) & core_product.c.rating.isnot(None),
-            (core_product.c.rating * reviews + _store_average_rating(context) * prior_reviews)
-            / (reviews + prior_reviews),
+            _RATED,
+            (core_product.c.rating * _REVIEWS + _store_average_rating(context) * prior_reviews)
+            / (_REVIEWS + prior_reviews),
+        ),
+        else_=None,
+    )
+
+
+def _discount_share(max_share: float) -> ColumnElement[Any]:
+    """The share off the old price, where the store lists a discount worth
+    believing - the check `discount_of` makes for every card, in SQL: the old
+    price above a positive current one, at least 1% and at most `max_share`
+    off. NULL otherwise. Internal: it filters and orders, never shown."""
+    old, price = core_product.c.regular_price, core_product.c.price_amount
+    saving = old - price
+    return case(
+        (
+            (price > 0)
+            & (old > price)
+            & (saving <= old * Decimal(str(max_share)))
+            & (saving * 100 >= old),
+            saving / old,
         ),
         else_=None,
     )
@@ -146,7 +176,10 @@ The number never leaves this module except as an order or a best-seller label.""
 
 
 def _order_by(
-    sort: ProductSort, context: RetailerContext, prior_reviews: int
+    sort: ProductSort,
+    context: RetailerContext,
+    prior_reviews: int,
+    discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
 ) -> tuple[ColumnElement[Any], ...]:
     """Sort key -> ORDER BY. An enum, not a caller-supplied column name, so no
     request can order by an arbitrary database column. Product id is the stable
@@ -161,6 +194,9 @@ def _order_by(
             return (score.desc().nulls_last(), core_product.c.id.asc())
         case ProductSort.BEST_SELLING:
             return (_SOLD.desc().nulls_last(), core_product.c.id.asc())
+        case ProductSort.BIGGEST_DISCOUNT:
+            share = _discount_share(discount_max_share)
+            return (share.desc().nulls_last(), core_product.c.id.asc())
         case _:
             return (core_product.c.id.asc(),)
 
@@ -393,11 +429,11 @@ def _in_stock(quantity: int | None) -> int | None:
 
 
 def _rating(rating: Decimal | None, count: int | None) -> dict[str, Any]:
-    """The rating with the reviews it rests on, or neither: the import stores
-    an unreviewed product as a count of 0, which is no reviews, not a rating."""
-    if rating is None or not count or count < 1:
+    """The rating with the reviews it rests on - alone where the store gave no
+    count - or nothing: a rating from a count of 0 is from nobody."""
+    if rating is None or (count is not None and count < 1):
         return {}
-    return {"rating": rating, "review_count": count}
+    return {"rating": rating, **({"review_count": count} if count is not None else {})}
 
 
 def _text(value: str | None) -> str | None:
@@ -670,6 +706,7 @@ class ProductRepository:
         context: RetailerContext,
         axis_constraints: Sequence[AxisConstraint],
         planar: PairMatch | None,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
     ) -> list[ColumnElement[bool]]:
         """Every predicate that decides eligibility, and nothing that decides
         presentation.
@@ -733,6 +770,11 @@ class ProductRepository:
             if weight.max_kg is not None:
                 clauses.append(core_product.c.weight_kg <= weight.max_kg)
 
+        if request.on_discount:
+            clauses.append(_discount_share(discount_max_share).isnot(None))
+        if request.rating_at_least is not None:
+            clauses.append(_RATED & (core_product.c.rating >= request.rating_at_least))
+
         for axis_constraint in axis_constraints:
             # Part of eligibility, so it is decided before ORDER BY and LIMIT.
             # Filtering afterwards in Python would silently drop products the
@@ -766,6 +808,7 @@ class ProductRepository:
         context: RetailerContext,
         axis_constraints: Sequence[AxisConstraint],
         planar: PairMatch | None,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
     ) -> Select[Any]:
         """The eligible rows, projected to `columns`, with no ordering or bound.
 
@@ -774,7 +817,9 @@ class ProductRepository:
         one beside it.
         """
         return select(*columns).where(
-            *self._eligibility_clauses(request, context, axis_constraints, planar)
+            *self._eligibility_clauses(
+                request, context, axis_constraints, planar, discount_max_share
+            )
         )
 
     async def search(
@@ -786,6 +831,7 @@ class ProductRepository:
         axis_constraints: Sequence[AxisConstraint] = (),
         planar: PairMatch | None = None,
         prior_reviews: int = DEFAULT_RATING_PRIOR_REVIEWS,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
     ) -> list[ProductRow]:
         """Products matching an already-validated structured request.
 
@@ -794,11 +840,11 @@ class ProductRepository:
         and the bound a caller asked to display.
         """
         statement = self._eligible_select(
-            _SELECTED_COLUMNS, request, context, axis_constraints, planar
+            _SELECTED_COLUMNS, request, context, axis_constraints, planar, discount_max_share
         )
-        statement = statement.order_by(*_order_by(request.sort, context, prior_reviews)).limit(
-            limit
-        )
+        statement = statement.order_by(
+            *_order_by(request.sort, context, prior_reviews, discount_max_share)
+        ).limit(limit)
         result = await self._session.execute(statement)
         return [_to_product_row(row) for row in result]
 
@@ -809,6 +855,7 @@ class ProductRepository:
         *,
         axis_constraints: Sequence[AxisConstraint] = (),
         planar: PairMatch | None = None,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
     ) -> list[int]:
         """Every eligible product id, with no presentation limit.
 
@@ -822,7 +869,7 @@ class ProductRepository:
         different set from the searchable one.
         """
         statement = self._eligible_select(
-            (core_product.c.id,), request, context, axis_constraints, planar
+            (core_product.c.id,), request, context, axis_constraints, planar, discount_max_share
         ).order_by(core_product.c.id)
         result = await self._session.execute(statement)
         return [int(row.id) for row in result]
@@ -835,6 +882,7 @@ class ProductRepository:
         axis_constraints: Sequence[AxisConstraint] = (),
         planar: PairMatch | None = None,
         prior_reviews: int = DEFAULT_RATING_PRIOR_REVIEWS,
+        discount_max_share: float = DEFAULT_DISCOUNT_MAX_SHARE,
     ) -> list[EligibleProduct]:
         """Every eligible product with the one fact ranking orders on.
 
@@ -856,12 +904,14 @@ class ProductRepository:
                 _SHORT_SIDE.label("short_side_cm"),
                 _weighted_rating(context, prior_reviews).label("weighted_rating"),
                 _SOLD.label("sold"),
+                _discount_share(discount_max_share).label("discount_share"),
             ),
             request,
             context,
             axis_constraints,
             planar,
-        ).order_by(*_order_by(request.sort, context, prior_reviews))
+            discount_max_share,
+        ).order_by(*_order_by(request.sort, context, prior_reviews, discount_max_share))
         result = await self._session.execute(statement)
         return [
             EligibleProduct(
@@ -875,6 +925,7 @@ class ProductRepository:
                 short_side_cm=row.short_side_cm,
                 weighted_rating=row.weighted_rating,
                 sold=row.sold,
+                discount_share=row.discount_share,
             )
             for row in result
         ]

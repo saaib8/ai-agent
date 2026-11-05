@@ -12,6 +12,7 @@ export interface ProductText {
   size: string | null
   old_price?: string
   discount?: string
+  rating?: string
   weight?: string
   sku?: string
 }

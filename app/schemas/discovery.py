@@ -53,6 +53,9 @@ class ProductSort(StrEnum):
     BEST_SELLING = "best_selling"
     """By sales in the store; unsold products follow. The sales number itself
     is never shown."""
+    BIGGEST_DISCOUNT = "biggest_discount"
+    """By the checked reduction, the largest share off first; products with no
+    discount follow. Chosen only when the customer asks for it."""
 
 
 class PriceConstraint(BaseModel):
@@ -333,6 +336,16 @@ class ProductSearchRequest(BaseModel):
     seating_capacity: SeatingCapacityConstraint | None = None
     weight: WeightConstraint | None = Field(default=None, exclude_if=lambda v: v is None)
     """A limit on the listed weight - always as stated: no relaxation widens it."""
+    on_discount: bool = Field(default=False, exclude_if=lambda v: not v)
+    """Only products with a checked discount - the same check every card's
+    discount passes (`app/services/product_value.py`). Only when the customer
+    asks; never widened."""
+    rating_at_least: Decimal | None = Field(
+        default=None, gt=0, le=5, exclude_if=lambda v: v is None
+    )
+    """Only products the store rates at least this - an unrated product, or one
+    rated by nobody (a count of 0), never matches. Only when the customer asks;
+    never widened."""
     # Exact, strictly-required catalog attributes only. Ordinary colour and
     # style wording is a semantic preference and does not belong here - it
     # would silently exclude products the customer never ruled out
@@ -425,6 +438,10 @@ class ProductSearchRequest(BaseModel):
             filters.append("seating_capacity")
         if self.weight is not None:
             filters.append("weight")
+        if self.on_discount:
+            filters.append("on_discount")
+        if self.rating_at_least is not None:
+            filters.append("rating_at_least")
         if self.dimensions:
             filters.append("dimensions")
         if self.planar_dimensions is not None:

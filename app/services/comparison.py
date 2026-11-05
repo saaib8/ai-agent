@@ -223,8 +223,10 @@ def _catalog_value(field: ComparisonField, product: ProductCandidate) -> Compari
             return _optional(product.listing.material)
         case ComparisonField.RATING:
             listing = product.listing
-            if listing.rating is None or not listing.review_count:
+            if listing.rating is None:
                 return _UNKNOWN
+            if listing.review_count is None:
+                return _known(f"rated {plain(listing.rating)}")
             reviews = "review" if listing.review_count == 1 else "reviews"
             return _known(f"{plain(listing.rating)} from {listing.review_count} {reviews}")
         case ComparisonField.WEIGHT:

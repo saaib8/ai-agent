@@ -319,6 +319,14 @@ class ControlledRelaxationService:
             variants.append(
                 (SetAsideField.WEIGHT, None, request.model_copy(update={"weight": None}))
             )
+        if request.on_discount:
+            variants.append(
+                (SetAsideField.DISCOUNT, None, request.model_copy(update={"on_discount": False}))
+            )
+        if request.rating_at_least is not None:
+            variants.append(
+                (SetAsideField.RATING, None, request.model_copy(update={"rating_at_least": None}))
+            )
         for constraint in request.dimensions:
             others = tuple(c for c in request.dimensions if c.role is not constraint.role)
             variants.append(

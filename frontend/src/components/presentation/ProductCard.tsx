@@ -170,9 +170,11 @@ export function ProductCard({
         </div>
 
         {dims && <div className="text-[11.5px] text-muted">{dims}</div>}
-        {(text.weight || text.sku) && (
+        {(text.rating || text.weight || text.sku) && (
           <div className="text-[11.5px] text-muted" dir="auto">
-            {[text.weight, text.sku ? words.sku(text.sku) : null].filter(Boolean).join(' · ')}
+            {[text.rating, text.weight, text.sku ? words.sku(text.sku) : null]
+              .filter(Boolean)
+              .join(' · ')}
           </div>
         )}
 

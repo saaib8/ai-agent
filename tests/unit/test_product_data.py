@@ -264,9 +264,12 @@ def test_the_old_price_is_kept_but_never_sent() -> None:
     assert listing.model_dump() == {"material": "Velvet"}
 
 
-def test_a_rating_never_comes_without_its_count() -> None:
+def test_a_rating_may_come_without_a_count_but_never_a_count_without_a_rating() -> None:
+    """A store may rate without saying how many rated it: shown "rated 5",
+    never with a made-up count. A count alone rates nothing."""
+    assert ProductListing(rating=Decimal("5")).review_count is None
     with pytest.raises(ValidationError):
-        ProductListing(rating=Decimal("5"))
+        ProductListing(review_count=3)
 
 
 def test_the_sales_count_is_never_read_into_a_shown_shape() -> None:

@@ -137,6 +137,8 @@ def test_eligible_product_carries_only_what_ranking_orders_on() -> None:
         # "Best rated" and "best selling" order on these; neither is shown.
         "weighted_rating",
         "sold",
+        # "Biggest discount first" orders on this; never shown.
+        "discount_share",
     }
 
 

@@ -127,6 +127,7 @@ class ProductDiscoveryService:
             axis_constraints=axis_constraints,
             planar=planar,
             prior_reviews=self._rating_prior_reviews,
+            discount_max_share=self._discount_max_share,
         )
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
 
@@ -178,6 +179,7 @@ class ProductDiscoveryService:
             axis_constraints=axis_constraints,
             planar=planar,
             prior_reviews=self._rating_prior_reviews,
+            discount_max_share=self._discount_max_share,
         )
         if not self._best_sellers_enabled:
             # Sales never order anything for a store that switched them off -

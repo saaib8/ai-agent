@@ -51,7 +51,7 @@ from app.schemas.design import DesignDirection, NextSize
 from app.schemas.discovery import DesignerQuestion, ProductSearchRequest, ProductSort
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
-from app.schemas.product import ProductCandidate
+from app.schemas.product import ProductCandidate, ProductListing
 from app.schemas.product_reference import PresentedOrdinal, ProductReferenceSelector
 from app.schemas.query import (
     ClarificationReason,
@@ -924,8 +924,8 @@ def _listed_extras(product: ProductCandidate) -> dict[str, Any]:
     is the card's (`brief_product`)."""
     listing = product.listing
     extras: dict[str, Any] = {}
-    if listing.rating is not None and listing.review_count:
-        extras["rating"] = {"stars": plain(listing.rating), "reviews": listing.review_count}
+    if listing.rating is not None:
+        extras["rating"] = rating_facts(listing)
     if listing.sku:
         extras["sku"] = listing.sku
     if listing.warranty_months:
@@ -933,6 +933,16 @@ def _listed_extras(product: ProductCandidate) -> dict[str, Any]:
     if listing.stock_quantity is not None:
         extras["in_stock"] = listing.stock_quantity
     return extras
+
+
+def rating_facts(listing: ProductListing) -> dict[str, Any]:
+    """A rating as an agent says it: with its reviews wherever the store gives
+    a count, alone where it gives none - never a count made up."""
+    assert listing.rating is not None
+    return {
+        "stars": plain(listing.rating),
+        **({"reviews": listing.review_count} if listing.review_count is not None else {}),
+    }
 
 
 async def _store_words(
@@ -1407,12 +1417,10 @@ async def sorted_card_facts(
     if active is None or not isinstance(cards, list) or run.grounding is None:
         return outcome
     sort = active.request.sort
-    if sort is ProductSort.BEST_RATED:
+    if sort is ProductSort.BEST_RATED or active.request.rating_at_least is not None:
         listings = [p.listing for p in run.grounding.products]
         rated = [
-            {**card, "rating": {"stars": plain(lst.rating), "reviews": lst.review_count}}
-            if lst.rating is not None and lst.review_count
-            else card
+            {**card, "rating": rating_facts(lst)} if lst.rating is not None else card
             for card, lst in zip(cards, listings, strict=False)
         ]
         facts["products"] = rated
