@@ -31,6 +31,7 @@ jobs:
         with:
           aws-region: ${{ env.REGION }}
           role-to-assume: ${{ env.OIDC_ROLE_ARN }}
+          audience: sts.amazonaws.com
       
       - name: LOGIN TO ECR
         id: ecr-login
