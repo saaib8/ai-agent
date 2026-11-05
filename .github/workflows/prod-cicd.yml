@@ -9,19 +9,19 @@ on:
         description: "Which Job to Run"
         required: false
         default: "Build"
-  
+permissions:
+  id-token: write
+  contents: read  
     
 env:
   REGION: ap-south-1
   OIDC_ROLE_ARN:  arn:aws:iam::047719637331:role/github-mesaky-prod-pipeline-OICD
   ECR_AI_AGENT_REPO: zory/ai-chat-agent
-  AI_CHAT_AGENT_TASK_DEFINATION: ""
-  AI_CHAT_AGENT_CONTAINER_NAME: ""
-  AI_CHAT_AGENT_SERVICE_NAME: ""
-  AI_CHAT_AGENT_CLUSTER_NAME: ""
-permissions:
-  id-token: write
-  contents: read
+  AI_CHAT_AGENT_TASK_DEFINATION: "prod-zory-ai-chat-agent-tg"
+  AI_CHAT_AGENT_CONTAINER_NAME: "prod-zory-ai-chat-agent-container"
+  AI_CHAT_AGENT_SERVICE_NAME: "prod-zory-ai-chat-agent"
+  AI_CHAT_AGENT_CLUSTER_NAME: "prod-zory-cluster"
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
