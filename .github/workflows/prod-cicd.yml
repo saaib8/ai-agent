@@ -71,20 +71,20 @@ jobs:
         id: ai-chat-agent-task-def-get
         run: |
           aws ecs describe-task-definition \
-            --task-definition ${{ env.AI_CHAT_AGENT_TASK_DEFINATION }} \
+            --task-definition "${{ env.AI_CHAT_AGENT_TASK_DEFINATION }}" \
             --query taskDefinition \
             --output json > ai-agent-task-definition.json
       - name: Fill in the new image for ai-chat-agent
         id: ai-chat-agent-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-defination: ai-agent-task-definition.json
+          task-definition: ai-agent-task-definition.json
           container-name: ${{ env.AI_CHAT_AGENT_CONTAINER_NAME }}
           image: ${{ env.ECR_IMAGE_URI }}:latest
       - name: Deploy AI-AGENT-Service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          task-defination: ${{ steps.ai-chat-agent-task-def.outputs.task-definition }}
+          task-definaition: ${{ steps.ai-chat-agent-task-def.outputs.task-definition }}
           serivce: ${{ env.AI_CHAT_AGENT_SERVICE_NAME }}
           cluster: ${{ env.AI_CHAT_AGENT_CLUSTER_NAME }}
           wait-for-service-stability: true
