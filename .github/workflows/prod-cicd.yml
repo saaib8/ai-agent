@@ -19,11 +19,11 @@ env:
   AI_CHAT_AGENT_CONTAINER_NAME: ""
   AI_CHAT_AGENT_SERVICE_NAME: ""
   AI_CHAT_AGENT_CLUSTER_NAME: ""
+permissions:
+  id-token: write
+  contents: read
 jobs:
   build-and-push:
-    permissions:
-      id-token: write
-      contents: read
     runs-on: ubuntu-latest
     name: Build and Deploy to ecs
     steps:
@@ -35,6 +35,8 @@ jobs:
         with:
           aws-region: ${{ env.REGION }}
           role-to-assume: ${{ env.OIDC_ROLE_ARN }}
+      - name: Verfiy AWS Indentity
+        run: aws sts get-caller-identity
       
       - name: LOGIN TO ECR
         id: ecr-login
