@@ -32,8 +32,10 @@ from app.agents.work import ToolStatus, TurnWork
 from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import MAX_FINISHED_ROOMS, AgentStateV1
+from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS
 from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding, SearchOutcome
 from app.schemas.product import CommerceClassification, ProductCandidate
+from app.schemas.query import ResolvedSearch
 from app.schemas.relaxation import StopReason
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.services.agent_state import commit_search_results
@@ -72,6 +74,12 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
             return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
         anchor = products[0]
         anchor_kinds = (anchor.commerce.subcategory,)
+        # What they already have is never shown back to them, and a kind the
+        # cart already holds gets no picture: a second bed beside the bed in
+        # their cart is not a suggestion. A second seat stays a chip
+        # (another_of_its_kind).
+        cart = tuple(picks)
+        cart_kinds = {p.commerce.subcategory for p in products if p.product_id in cart}
         try:
             capabilities = await services.capabilities.capabilities(context.retailer)
         except IntegrationUnavailableError:
@@ -127,7 +135,12 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
             else:
                 facts["other_kinds"] = "store_shelf lists every other kind the store stocks"
             grid = await _cross_sell_grid(
-                anchor, companions, services, work.staged, context.retailer
+                anchor,
+                [c for c in companions if c.commerce_subcategory not in cart_kinds],
+                services,
+                work.staged,
+                context.retailer,
+                cart=cart,
             )
             kinds = [*_another_of_its_kind(services, capabilities, anchor.commerce), *kinds]
             if grid is None:
@@ -159,7 +172,7 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
         kind = _stocked_kind(services, capabilities, args.show_kind)
         if kind is None:
             return ToolOutcome(status=ToolStatus.REFUSED, code="kind_not_stocked")
-        resolved = services.companion_search.build(anchor, kind)
+        resolved = _without(cart, services.companion_search.build(anchor, kind))
         run = await services.search.new(
             resolved, work.staged, context.retailer, alongside=False, asked=False
         )
@@ -199,6 +212,8 @@ async def _cross_sell_grid(
     services: AgentServices,
     state: AgentStateV1,
     context: RetailerContext,
+    *,
+    cart: tuple[int, ...] = (),
 ) -> tuple[SearchExecutionGrounding, AgentStateV1, list[dict[str, Any]]] | None:
     """One product per complementary kind, assembled into a single grid.
 
@@ -214,7 +229,7 @@ async def _cross_sell_grid(
     than the customer's last, unrelated search.
 
     None when nothing could be assembled (no kinds, or none in stock), so the
-    caller falls back to the chips alone.
+    caller falls back to the chips alone. Nothing in the `cart` is shown.
     """
     builder = services.companion_search
     if builder is None:
@@ -229,7 +244,11 @@ async def _cross_sell_grid(
     seen: set[int] = set()
     for companion in chosen:
         run = await services.search.new(
-            builder.build(anchor, companion), state, context, alongside=False, asked=False
+            _without(cart, builder.build(anchor, companion)),
+            state,
+            context,
+            alongside=False,
+            asked=False,
         )
         if run.grounding is None or not run.grounding.products:
             continue
@@ -273,6 +292,16 @@ async def _cross_sell_grid(
         for ordinal, (companion, _, grounded, _) in enumerate(picks, 1)
     ]
     return grounding, committed, suggestions
+
+
+def _without(cart: tuple[int, ...], resolved: ResolvedSearch) -> ResolvedSearch:
+    """A companion search that never shows back what is already in the cart."""
+    if not cart:
+        return resolved
+    request = resolved.request.model_copy(
+        update={"exclude_product_ids": cart[-MAX_EXCLUDED_PRODUCT_IDS:]}
+    )
+    return resolved.model_copy(update={"request": request})
 
 
 MAX_STOCKED_KINDS = 20

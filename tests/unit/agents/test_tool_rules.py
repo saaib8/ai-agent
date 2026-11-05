@@ -539,6 +539,65 @@ async def test_cross_sell_falls_back_to_chips_when_nothing_is_in_stock() -> None
     assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
 
 
+class _KindsHydration:
+    """Products of the kinds named, so a cart can hold a sofa and a rug."""
+
+    def __init__(self, kinds: dict[int, str]) -> None:
+        self.kinds = kinds
+
+    async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
+        return tuple(_product(p, subcategory=self.kinds[p]) for p in product_ids if p in self.kinds)
+
+
+def _cross_sell_with_a_rug_in_the_cart() -> tuple[Any, _PerKindPipeline]:
+    from app.taxonomy.complements import load_complements
+
+    from tests.unit.agents.fakes import FakeCapabilities
+
+    pipeline = _PerKindPipeline({"center-table": 20, "carpet": 21})
+    services = agent_services(
+        pipeline=pipeline,
+        hydration=_KindsHydration({OFF_SCREEN: "sofa", RUG_IN_CART: "carpet", 20: "center-table"}),
+        capabilities=FakeCapabilities(
+            pairs=(("seating", "sofa"), ("tables", "center-table"), ("decor", "carpet"))
+        ),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
+    )
+    return services, pipeline
+
+
+RUG_IN_CART = 40
+
+
+async def test_cross_sell_shows_no_picture_of_a_kind_already_in_the_cart() -> None:
+    """A sofa with a rug already in the cart: the grid shows a coffee table,
+    never another rug - the chips still offer rugs, for a second one."""
+    services, _ = _cross_sell_with_a_rug_in_the_cart()
+    state = _state(selected=(OFF_SCREEN, RUG_IN_CART))
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, state, services=services)
+
+    assert [s["kind"] for s in listed.facts["suggestions"]] == ["center-table"]
+    assert "carpet" in [k["kind"] for k in listed.facts["kinds"]]
+
+
+async def test_cross_sell_never_shows_back_what_is_in_the_cart() -> None:
+    """Every search behind the grid, and a kind's full page, leaves the cart's
+    products out - the nightstand they just added never comes back as a card."""
+    services, pipeline = _cross_sell_with_a_rug_in_the_cart()
+    state = _state(selected=(OFF_SCREEN, RUG_IN_CART))
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    await _call("what_goes_with", which, state, services=services)
+    await _call("what_goes_with", {**which, "show_kind": "carpet"}, state, services=services)
+
+    assert pipeline.calls, "the grid and the kind's page searched"
+    for resolved in pipeline.calls:
+        assert {OFF_SCREEN, RUG_IN_CART} <= set(resolved.request.exclude_product_ids)
+
+
 async def test_what_goes_with_offers_another_sofa_beside_the_pairings() -> None:
     """A piece that seats several lists another of its kind with the pairings -
     a second sofa for two facing or an L - shown with more_like_this."""
