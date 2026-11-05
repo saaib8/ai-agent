@@ -80,7 +80,7 @@ jobs:
         with:
           task-defination: ai-agent-task-definition.json
           container-name: ${{ env.AI_CHAT_AGENT_CONTAINER_NAME }}
-          image: ${{ needs.build-and-push.output.image }}
+          image: ${{ env.ECR_IMAGE_URI }}:latest
       - name: Deploy AI-AGENT-Service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
