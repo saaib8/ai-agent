@@ -51,8 +51,9 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          docker build -t ${{ env.ECR_AI_AGENT_REPO }}:$IMAGE_TAG .
-          docker push ${{ env.ECR_REGISTRY_URI }}:$IMAGE_TAG 
+          IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE" 
           echo "Image=${{ env.ECR_AI_AGENT_REPO }}/${{ env.ECR_AI_AGENT_REPO }}:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
         
   deploy-ai-agent:
