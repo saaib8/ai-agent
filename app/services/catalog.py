@@ -160,10 +160,14 @@ class CatalogService:
                     )
                     for room_type, (label, _) in ROOM_TYPES.items()
                 ),
-                styles=tuple(sorted(self._attributes.styles)),
+                # The reviewed styles, each named in Arabic - never every
+                # store's own (CLAUDE.md 12.4).
+                styles=tuple(sorted(self._attributes.reviewed(AttributeFamily.STYLE))),
                 style_labels=(
                     self._display.labels(
-                        AttributeFamily.STYLE, sorted(self._attributes.styles), shown
+                        AttributeFamily.STYLE,
+                        sorted(self._attributes.reviewed(AttributeFamily.STYLE)),
+                        shown,
                     )
                     if self._display is not None
                     else None

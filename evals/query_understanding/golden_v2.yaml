@@ -92,7 +92,8 @@ cases:
   # Colour is no longer an unsupported requirement: it is a semantic leaning.
   - {message: "show me a beige sofa", outcome: resolved, commerce_category: seating, commerce_subcategory: sofa, preferences: ["color:Beige:preferred"]}
   - {message: "show me modern sofas", outcome: resolved, commerce_category: seating, commerce_subcategory: sofa, preferences: ["style:Modern:preferred"]}
-  - {message: "show me a wooden coffee table", outcome: unsupported, commerce_category: tables, commerce_subcategory: center-table, unsupported: [material]}
+  # A material is never unsupported: it orders the results (CLAUDE.md 5, 12.3).
+  - {message: "show me a wooden coffee table", outcome: resolved, commerce_category: tables, commerce_subcategory: center-table}
   # ── P. supported measurements become deterministic filters ───────────────
   # dimensions: "role:kind:min|-:max|-:target|-" in centimetres
   - {message: "a sofa less than 220 cm wide", outcome: resolved, commerce_category: seating, commerce_subcategory: sofa, dimensions: ["overall_width:max:-:220:-"]}

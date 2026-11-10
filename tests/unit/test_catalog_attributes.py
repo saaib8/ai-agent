@@ -36,17 +36,60 @@ PREFERRED = ConstraintStrength.PREFERRED
 APPROXIMATE = ConstraintStrength.APPROXIMATE
 
 APPROVED_COLORS = {
-    "Ivory", "Beige", "Taupe", "Sand", "Greige", "Light Grey", "Grey", "White",
-    "Charcoal", "Black", "Oak", "Walnut", "Espresso", "Clay", "Terracotta",
-    "Olive", "Mustard", "Burnt Orange", "Gold", "Brass", "Bronze", "Sage",
-    "Forest Green", "Powder Blue", "Denim Blue", "Navy", "Teal", "Emerald",
-    "Sapphire", "Ruby", "Plum", "Blush", "Lavender",
+    "Ivory",
+    "Beige",
+    "Taupe",
+    "Sand",
+    "Greige",
+    "Light Grey",
+    "Grey",
+    "White",
+    "Charcoal",
+    "Black",
+    "Oak",
+    "Walnut",
+    "Espresso",
+    "Clay",
+    "Terracotta",
+    "Olive",
+    "Mustard",
+    "Burnt Orange",
+    "Gold",
+    "Brass",
+    "Bronze",
+    "Sage",
+    "Forest Green",
+    "Powder Blue",
+    "Denim Blue",
+    "Navy",
+    "Teal",
+    "Emerald",
+    "Sapphire",
+    "Ruby",
+    "Plum",
+    "Blush",
+    "Lavender",
 }
 APPROVED_STYLES = {
-    "Modern", "Contemporary", "Minimalist", "Boho", "Industrial", "Classy",
-    "Modern_Classic", "Rustic_Modern", "Eclectic", "Zen", "Shabby_Chic",
-    "Islamic", "Tropical", "Scandinavian", "Mid_Century", "Japandi", "Coastal",
-    "Traditional", "Moroccan",
+    "Modern",
+    "Contemporary",
+    "Minimalist",
+    "Boho",
+    "Industrial",
+    "Classy",
+    "Modern_Classic",
+    "Rustic_Modern",
+    "Eclectic",
+    "Zen",
+    "Shabby_Chic",
+    "Islamic",
+    "Tropical",
+    "Scandinavian",
+    "Mid_Century",
+    "Japandi",
+    "Coastal",
+    "Traditional",
+    "Moroccan",
 }
 
 
@@ -91,9 +134,7 @@ def test_colliding_styles_are_distinct_values() -> None:
         ("::: not yaml :::\n", "YAML"),
     ],
 )
-def test_a_malformed_registry_is_rejected(
-    tmp_path: Path, document: str, reason: str
-) -> None:
+def test_a_malformed_registry_is_rejected(tmp_path: Path, document: str, reason: str) -> None:
     path = tmp_path / "broken.yaml"
     path.write_text(document)
 
@@ -166,7 +207,7 @@ def _attr(
 
 
 async def test_ordinary_canonical_wording_becomes_a_preference_not_a_filter() -> None:
-    """"I want a Beige sofa" must not exclude every sofa that is not Beige."""
+    """ "I want a Beige sofa" must not exclude every sofa that is not Beige."""
     outcome = await _interpret(_attr(COLOR, "Beige", "Beige", PREFERRED))
 
     assert isinstance(outcome, ResolvedSearch)
@@ -215,7 +256,7 @@ async def test_several_strict_styles_are_all_required() -> None:
 
 
 async def test_a_non_canonical_preference_stays_semantic() -> None:
-    """"I want a red sofa": red is preserved, never mapped onto Ruby."""
+    """ "I want a red sofa": red is preserved, never mapped onto Ruby."""
     outcome = await _interpret(_attr(COLOR, "red", None, PREFERRED))
 
     assert isinstance(outcome, ResolvedSearch)
@@ -235,7 +276,7 @@ async def test_broad_language_is_preserved_rather_than_forced() -> None:
 
 
 async def test_a_strict_non_canonical_value_is_surfaced_not_downgraded() -> None:
-    """"It must be red" is neither a filter we can run nor a mere leaning."""
+    """ "It must be red" is neither a filter we can run nor a mere leaning."""
     outcome = await _interpret(_attr(COLOR, "red", None, LOCKED))
 
     assert isinstance(outcome, UnresolvedStrictRequirement)
@@ -271,13 +312,17 @@ async def test_colour_is_no_longer_an_unsupported_requirement() -> None:
     assert not isinstance(outcome, UnsupportedRequirement)
 
 
-async def test_material_and_dimensions_remain_unsupported() -> None:
+async def test_dimensions_remain_unsupported_and_a_material_never_is() -> None:
+    """A material ranks through the wording and each card's main material is
+    said; it never makes a search unenforceable."""
     from app.schemas.query import RequirementFamily
 
-    for family in (RequirementFamily.MATERIAL, RequirementFamily.DIMENSIONS):
-        outcome = await _interpret(unsupported_requirements=[family])
-        assert isinstance(outcome, UnsupportedRequirement)
-        assert outcome.unsupported == (family,)
+    outcome = await _interpret(unsupported_requirements=[RequirementFamily.DIMENSIONS])
+    assert isinstance(outcome, UnsupportedRequirement)
+    assert outcome.unsupported == (RequirementFamily.DIMENSIONS,)
+
+    outcome = await _interpret(unsupported_requirements=[RequirementFamily.MATERIAL])
+    assert isinstance(outcome, ResolvedSearch)
 
 
 async def test_a_duplicate_strict_colour_is_recorded_once() -> None:

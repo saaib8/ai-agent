@@ -18,6 +18,7 @@ from app.services.cart import CartService
 from app.services.catalog_capability import CatalogCapabilityService
 from app.services.comparison import ProductComparisonService
 from app.services.cross_sell import CompanionSearchBuilder
+from app.services.discovery import ProductDiscoveryService
 from app.services.hydration import ProductHydrationService
 from app.services.product_details import ProductDetailsService
 from app.services.product_display import ProductDisplayWords
@@ -35,7 +36,6 @@ from app.taxonomy.dimensions import DimensionSemantics
 from app.taxonomy.registry import CommerceTaxonomy
 from app.taxonomy.rooms import RoomPieces
 from app.taxonomy.seating import SeatingSemantics
-from app.taxonomy.subcategory_questions import SubcategoryQuestions
 
 if TYPE_CHECKING:
     from app.services.room_visualization import RoomVisualizer
@@ -71,6 +71,9 @@ class AgentServices:
     support: SupportService | None = None
     display: ProductDisplayWords | None = None
     looks: StockedLooks | None = None
+    discovery: ProductDiscoveryService | None = None
+    """Every product a request so far admits, for what the store carries of what
+    the customer already decided (`app/agents/decided_stock.py`)."""
     """What each kind comes in at this store - for a design direction."""
     seating: SeatingSemantics | None = None
     """How many each seating type seats - reviewed data."""
@@ -87,6 +90,3 @@ class AgentServices:
     """Where a kind's range stops being "few" and "some" on the store shelf -
     the depth of a choice as a word, never a count (`catalog.shelf_few_max`,
     `catalog.shelf_some_max`)."""
-    subcategory_questions: SubcategoryQuestions | None = None
-    """The questions the store's designers ask for each kind - knowledge an
-    agent chooses from, never a script."""

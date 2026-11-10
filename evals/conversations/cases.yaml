@@ -802,9 +802,9 @@ cases:
     checks: {not_fallback: true, min_products: 1, not_mentions: ["made of velvet", "filtering by material", "without filtering"]}
 
   - id: material_insisted_is_said
-    issue: "discovery: 'only leather' is a requirement the catalog cannot guarantee - said plainly"
+    issue: "discovery: 'only leather' puts leather sofas first and never filters - the reply says which cards are leather (CLAUDE.md 5)"
     turns: [{search: "only leather sofas, nothing else"}]
-    checks: {not_fallback: true, engages: true, mentions: ["material", "leather"]}
+    checks: {not_fallback: true, engages: true, mentions: ["leather"]}
 
   # ── picks and what goes with them ───────────────────────────────────────────
   - id: pick_first_cross_sells

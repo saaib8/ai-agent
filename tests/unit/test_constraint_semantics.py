@@ -51,16 +51,14 @@ async def _interpret(interpretation: CommerceInterpretation) -> Any:
 
 
 def _sofa(**extra: Any) -> CommerceInterpretation:
-    return CommerceInterpretation(
-        commerce_category="seating", commerce_subcategory="sofa", **extra
-    )
+    return CommerceInterpretation(commerce_category="seating", commerce_subcategory="sofa", **extra)
 
 
 # ── default strength ────────────────────────────────────────────────────────
 
 
 async def test_an_unqualified_constraint_defaults_to_locked() -> None:
-    """"under 5000 SAR" is a requirement until the customer softens it."""
+    """ "under 5000 SAR" is a requirement until the customer softens it."""
     outcome = await _interpret(_sofa(price_max="5000", price_currency="SAR"))
 
     assert isinstance(outcome, ResolvedSearch)
@@ -149,9 +147,7 @@ async def test_an_approximate_capacity_keeps_the_exact_executable_value() -> Non
 
 def test_the_executable_request_carries_no_strength() -> None:
     """Discovery executes exactly what was asked; strength is not its business."""
-    assert not any(
-        "strength" in field for field in ProductSearchRequest.model_fields
-    )
+    assert not any("strength" in field for field in ProductSearchRequest.model_fields)
     assert "semantics" not in ProductSearchRequest.model_fields
 
 
@@ -205,7 +201,9 @@ async def test_the_single_seater_rule_is_unchanged() -> None:
 # ── unsupported requirements ────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("family", list(RequirementFamily))
+@pytest.mark.parametrize(
+    "family", [f for f in RequirementFamily if f is not RequirementFamily.MATERIAL]
+)
 async def test_an_unsupported_requirement_is_not_silently_dropped(
     family: RequirementFamily,
 ) -> None:
@@ -217,9 +215,7 @@ async def test_an_unsupported_requirement_is_not_silently_dropped(
 
 async def test_an_unsupported_requirement_is_a_distinct_type() -> None:
     """A caller checking only for ResolvedSearch cannot mistake it for success."""
-    outcome = await _interpret(
-        _sofa(unsupported_requirements=[RequirementFamily.COLOR])
-    )
+    outcome = await _interpret(_sofa(unsupported_requirements=[RequirementFamily.COLOR]))
 
     assert not isinstance(outcome, ResolvedSearch)
 
@@ -265,9 +261,7 @@ async def test_no_unsupported_requirement_resolves_normally() -> None:
 
 
 async def test_several_product_types_ask_rather_than_choosing_one() -> None:
-    outcome = await _interpret(
-        _sofa(multiple_product_types=True)
-    )
+    outcome = await _interpret(_sofa(multiple_product_types=True))
 
     assert isinstance(outcome, ClarificationRequired)
     assert outcome.reason is ClarificationReason.MULTIPLE_PRODUCT_TYPES
@@ -287,7 +281,7 @@ async def test_multiple_product_types_wins_over_a_guessed_category() -> None:
 
 
 async def test_a_reference_to_missing_context_does_not_invent_one() -> None:
-    """"show me cheaper ones" with no prior message has no product type."""
+    """ "show me cheaper ones" with no prior message has no product type."""
     outcome = await _interpret(CommerceInterpretation(sort=None))
 
     assert isinstance(outcome, ClarificationRequired)

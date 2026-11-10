@@ -1,17 +1,19 @@
-"""The approved controlled catalog-attribute vocabularies: colours and styles.
+"""The catalog-attribute vocabularies: colours, styles and materials.
 
-``catalog_attributes_v1.yaml`` is the single source of truth. Nothing else
-enumerates a colour or a style - not a prompt, not an enum, not a validator.
-Adding a value is a one-file change, exactly as it is for the commerce taxonomy
-(CLAUDE.md 14.1).
+``catalog_attributes_v1.yaml`` holds the reviewed colours and styles and their
+Arabic names. At startup the values the stores actually hold are added
+(`CatalogAttributes.with_stored`): the catalog's own colours, styles and
+materials are trusted data, so a colour a store sells is a value the agent can
+offer and search even before the file names it. Nothing else enumerates a
+value - not a prompt, not an enum, not a validator.
 
-The registry defines vocabulary only. It knows nothing about which products
-carry which colour, or how many of anything a retailer stocks.
+The vocabulary knows nothing about which products carry which value, or how
+many of anything a retailer stocks: that is the store's shelf, read per store.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
@@ -29,19 +31,29 @@ class AttributeFamily(StrEnum):
 
     COLOR = "color"
     STYLE = "style"
+    MATERIAL = "material"
+    """The product's one main material (CLAUDE.md 5): a leaning that orders,
+    never a filter. The file names none; every value is the catalog's own."""
 
 
 class CatalogAttributes:
-    """Immutable view of the approved colour and style vocabularies."""
+    """Immutable view of the colour, style and material vocabularies."""
 
     def __init__(
         self,
         version: str,
         values: Mapping[AttributeFamily, frozenset[str]],
         arabic: Mapping[AttributeFamily, Mapping[str, str]] | None = None,
+        reviewed: Mapping[AttributeFamily, frozenset[str]] | None = None,
     ) -> None:
         self._version = version
-        self._values: Mapping[AttributeFamily, frozenset[str]] = dict(values)
+        self._values: Mapping[AttributeFamily, frozenset[str]] = {
+            family: frozenset(values.get(family, ())) for family in AttributeFamily
+        }
+        source = values if reviewed is None else reviewed
+        self._reviewed: Mapping[AttributeFamily, frozenset[str]] = {
+            family: frozenset(source.get(family, ())) for family in AttributeFamily
+        }
         self._arabic: Mapping[AttributeFamily, Mapping[str, str]] = dict(arabic or {})
         self._by_spelling: Mapping[AttributeFamily, Mapping[str, str]] = {
             family: _spelling_index(family, members) for family, members in self._values.items()
@@ -58,6 +70,34 @@ class CatalogAttributes:
     @property
     def styles(self) -> frozenset[str]:
         return self._values[AttributeFamily.STYLE]
+
+    @property
+    def materials(self) -> frozenset[str]:
+        return self._values[AttributeFamily.MATERIAL]
+
+    def with_stored(self, stored: Mapping[AttributeFamily, Iterable[str]]) -> CatalogAttributes:
+        """This vocabulary with the values the catalog holds added.
+
+        A stored value that reads like one already known (case, spacing,
+        separators) is not added again: the known spelling stays, so a value is
+        never two. Blank values are skipped. Arabic names stay the file's; a
+        value it does not name is shown in English.
+        """
+        merged: dict[AttributeFamily, frozenset[str]] = {}
+        for family in AttributeFamily:
+            known = {spelling_key(v): v for v in self._values[family]}
+            for value in sorted(stored.get(family, ())):
+                value = value.strip()
+                if value and spelling_key(value) not in known:
+                    known[spelling_key(value)] = value
+            merged[family] = frozenset(known.values())
+        return CatalogAttributes(self._version, merged, self._arabic, self._reviewed)
+
+    def reviewed(self, family: AttributeFamily) -> frozenset[str]:
+        """The file's own values for a family - reviewed and named in Arabic -
+        for the places that offer a fixed list of their own, such as a room
+        style picker, rather than what one store carries."""
+        return self._reviewed[family]
 
     def values(self, family: AttributeFamily) -> frozenset[str]:
         return self._values[family]
@@ -81,7 +121,7 @@ class CatalogAttributes:
         one - "dark grey" finds nothing here, because choosing which approved
         colours it means is interpretation, not spelling (CLAUDE.md 14.2).
         """
-        return self._by_spelling[family].get(_spelling_key(value))
+        return self._by_spelling[family].get(spelling_key(value))
 
     def arabic(self, family: AttributeFamily, value: str) -> str | None:
         """How an approved value reads to a customer answered in Arabic.
@@ -95,11 +135,12 @@ class CatalogAttributes:
     def __repr__(self) -> str:
         return (
             f"CatalogAttributes(version={self._version!r}, "
-            f"colors={len(self.colors)}, styles={len(self.styles)})"
+            f"colors={len(self.colors)}, styles={len(self.styles)}, "
+            f"materials={len(self.materials)})"
         )
 
 
-def _spelling_key(value: str) -> str:
+def spelling_key(value: str) -> str:
     """One value's spelling with case, spacing and separators set aside."""
     return " ".join(value.replace("_", " ").replace("-", " ").casefold().split())
 
@@ -112,7 +153,7 @@ def _spelling_index(family: AttributeFamily, members: frozenset[str]) -> dict[st
     """
     index: dict[str, str] = {}
     for member in members:
-        key = _spelling_key(member)
+        key = spelling_key(member)
         if key in index:
             raise TaxonomyConfigurationError(
                 detail=f"{family} values {index[key]!r} and {member!r} differ only in spelling"

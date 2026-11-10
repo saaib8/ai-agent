@@ -250,9 +250,11 @@ section 37.
 
 `material` is the enrichment's **one main material** per product: many pieces are
 made of more than one (a metal frame, a marble top), so it is said as the main
-material and never filters or orders anything. Ranking by meaning reads it
-(`ai-agent-v2` embeds it beside the name, tags and English description), and
-"what is it made of?" is answered from the description too.
+material and never filters. A material the customer wants (`materials_wanted`)
+puts the pieces whose main material it is first, like a colour preference (12.4),
+and hides nothing. Ranking by meaning reads it too (`ai-agent-v2` embeds it beside
+the name, tags and English description), and "what is it made of?" is answered
+from the description too.
 
 ---
 
@@ -449,7 +451,6 @@ Reviewed domain data, loaded and validated at startup:
 | `app/taxonomy/seating_v1.yaml` | how many each seating type seats; which never count as seats (chaise lounge, recliner); which types stand beside a sofa | seat filters, a room's seats (27.1), `store_shelf`, mixed sofa searches |
 | `app/taxonomy/complements_v1.yaml` | the kinds reviewed to go with each kind | `what_goes_with`, `room_could_add` (`usually_paired`) |
 | `app/taxonomy/compare_groups_v1.yaml` | which kinds compare with which | `compare_products` |
-| `app/taxonomy/subcategory_questions_v1.yaml` | the questions the store's designers ask about for each kind (the subjects; the answer options are the agent's to decide) | `ask_about` and `search_products` facts (`a_designer_might_ask`) - a baseline the agent rephrases in its own words, choosing the options itself, never a script |
 
 `app/taxonomy/briefs_v1.yaml` is kept but no longer loaded; only its question
 kinds (`BriefQuestionKind`) are still imported.
@@ -615,26 +616,41 @@ Sara leans to asking first - a few questions up front make the journey feel
 personal. A vague kind ("a table", "a light") is a question - which kind - never
 a guess (14.5). For a new kind, whether they state a need ("I want a recliner")
 or ask to see it ("show me sofas"), she `ask_about`s it first - a cheap tool that
-resolves the kind and returns the store's reviewed designer questions for it
-(`a_designer_might_ask`: the subjects only, no answer options) and what this
-store carries of it (`this_store_has`: its colours, styles and seats from the cached
-catalog overview, never its prices; `kinds_stocked` before the kind is chosen), with
-nothing searched - then asks **two or three** before showing anything, **one a
-reply**, one after another, in her own words: two when that is all the kind
-needs, three when more would change what she shows. She chooses the answer
-options herself, never a fixed list: colour, style, seat and kind options only
-from what the store carries; a feature the data does not hold (power, massage) is
-asked as a wish that leans the search, never promised. Each answer moves to the
+resolves the kind and returns what this store carries of it (`this_store_has`: its
+colours, styles, main materials where recorded and seats, as the store stores them,
+from the cached catalog overview, never its prices; with `shown_beside_it`, what the
+kinds a search shows beside it come in - red sofa sets for a sofa - said as theirs;
+`kinds_stocked` before the kind is chosen). Once the customer has decided something
+of it - seats, a budget, a size - these are the colours, styles and materials of the
+products meeting it (`for_what_they_chose`, `app/agents/decided_stock.py`): a 4-seat
+corner sofa's colours, not every corner sofa's; when nothing meets it, it says so
+(`nothing_meets_what_they_chose`) and she searches and says so at once, asking
+nothing about the look and offering only next steps that find real products (the
+closest, or another kind she has checked has some - never "keep it under 3,000"), with the kind's values standing in, with nothing searched - then asks **two or three** before showing
+anything, **one a reply**, one after another, in her own words: two when that is all
+the kind needs, three when more would change what she shows. She chooses the
+questions herself - there is no fixed list - and asks only about what the store's
+data holds for the kind: its colours, styles, main materials, seats, the kind itself
+and its size. A shape, theme or feature the data does not hold is not asked; said
+by the customer, it goes in `semantic_text` and she says which cards show it. Her
+answer options come only from what the store carries, named as the store lists them,
+and **code checks it**: a chip of Sara's naming a colour, style or material that the
+store does not carry for what is being talked about - the kind she last asked about
+(`kind_asked`, kept in the session with what was decided of it) or the one being
+searched, narrowed alike to what the customer decided - is sent back once (`chips_not_in_stock`, `app/agents/chip_check.py`). What the customer likes
+is never counted as stock. Each answer moves to the
 next question still open, never one already answered; what they said counts, so
 "a beige sofa" leaves fewer to ask, and when they already named enough ("a
 3-seater beige sofa under 4000") she shows at once. A kind chosen from her own
 question (which kind of table, an alternative she offered) counts as an answer.
 Once those questions are answered she searches with everything they said and
-shows; "just show me", a decline or impatience shows at once.
+shows; "just show me", a decline or impatience shows at once - even when part of
+what they asked (a shape, a material) cannot be confirmed: the closest, saying which
+cards have it.
 Never the budget as an opener - budget comes once they are engaged (comparing,
 choosing, talking price). Once products are on screen the rhythm drops to **at
-most one follow-up a turn, or none**: the same questions ride on a
-`search_products` result, for the one that narrows the results already shown.
+most one follow-up a turn, or none**, the one that narrows the results already
+shown.
 
 - **Their words, as the search.** `search_products` takes the whole search each
   time, in approved values only (14). Colours and styles are preferences unless
@@ -969,19 +985,24 @@ share. Do not create the abstraction ahead of that evidence.
 
 ### 12.3 Unsupported requirements are never silently dropped
 
-The catalog carries material and dimension data that structured search cannot
-yet filter on.
+The catalog carries dimension data that structured search cannot always
+filter on. When a customer asks for a measurement the stored data cannot
+answer, the result must say so. It is a distinct outcome type, not a flag, so
+that a caller which only handles the resolved case cannot mistakenly present
+the results as satisfying the whole request. It still carries the agent's
+description and the colour and style preferences (`semantic_text`,
+`semantic_preferences`), so the search ranks by them; only what could not be
+applied is left out, and said.
 
-When a customer insists on one of these - only leather, it must be wool - the
-result must say so. It is a distinct outcome type, not a flag, so that a caller
-which only handles the resolved case cannot mistakenly present the results as
-satisfying the whole request.
+A material is never unenforceable and never a filter - "a wool rug", "something
+velvet", even "only solid wood": it is descriptive wording that ranks by
+meaning, and the reply says which cards are made of it from each card's main
+material (section 5) or the store's words, quoted as the store's - never that a
+piece is made of it otherwise. A material named as unsupported is ignored.
 
-A material they simply want ("a wool rug", "something velvet") is a leaning,
-exactly as a colour is (12.4): it is kept as descriptive wording that ranks by
-meaning, nothing is filtered on it, and the reply never says a piece is made of
-it unless the product's own listing or description says so - its main material
-(section 5) or the store's words, quoted as the store's.
+The customer's answers to the agent's questions are part of the search: what
+fits a field goes there, and the rest (shape, material, theme, feel, use) goes
+in `semantic_text`, which is kept with the search so its pages rank by it.
 
 Colour and style are no longer among these: they are handled by 12.4.
 
@@ -992,9 +1013,15 @@ Colour and style are controlled vocabularies, stored per product:
 - colour in `core_product.main_color`, one approved value per product
 - style in `core_product.styles`, approved values comma-separated
 
-Both are defined in a versioned catalog-attribute registry, on the same
-principle as the commerce taxonomy: one source of truth, loaded and validated
-at startup, and never restated in a prompt, an enum, a validator or a test.
+The vocabulary is the reviewed catalog-attribute registry (with each value's
+Arabic name) **plus the values the stores actually hold**, read once at startup
+(`CatalogAttributes.with_stored`, `app/repositories/vocabulary.py`): the
+catalog's colours, styles and main materials are trusted data, so a colour a
+store sells is offered and searched though the file does not name it yet. A
+value is never restated in a prompt, an enum, a validator or a test; a stored
+value that reads like a reviewed one keeps the reviewed spelling, and one with
+no reviewed Arabic name is shown in English. Which values a store carries for a
+kind is its shelf, read per store.
 Style values contain no spaces, which is what allows a stored string to be
 split into exact tokens whatever spacing a merchant used.
 

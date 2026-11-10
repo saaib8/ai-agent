@@ -34,6 +34,7 @@ from app.schemas.agent_state import (
     GoalKind,
     GoalState,
     GoalStatus,
+    KindAsked,
     PresentedList,
     ProductInteractionState,
     RoomDesignNeedState,
@@ -63,6 +64,7 @@ from app.schemas.agent_updates import (
     apply_items,
 )
 from app.schemas.design import MAX_NEXT_SIZES, MAX_PLACEMENTS, NextSize, Placement
+from app.schemas.discovery import ProductSearchRequest
 from app.schemas.geometry import MAX_WALL_NOTES, REPEATABLE_ROLES, RoomGeometry, WallNote
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, SemanticPreference
 from app.taxonomy.attributes import AttributeFamily
@@ -88,6 +90,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         finished_rooms=state.finished_rooms,
         goals=state.goals,
         room_swap=state.room_swap,
+        kind_asked=state.kind_asked,
         reply_language=state.reply_language,
     )
 
@@ -163,6 +166,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         finished_rooms=state.finished_rooms,
         goals=state.goals,
         room_swap=state.room_swap,
+        kind_asked=state.kind_asked,
         reply_language=state.reply_language,
     )
 
@@ -228,6 +232,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         finished_rooms=state.finished_rooms,
         goals=state.goals,
         room_swap=state.room_swap,
+        kind_asked=state.kind_asked,
         reply_language=state.reply_language,
     )
 
@@ -902,6 +907,22 @@ def _edited(item: BundleItemState, operation: BundleOperation) -> BundleItemStat
             return item.model_copy(update={"status": operation.status})
         case _:
             return item
+
+
+def note_kind_asked(
+    state: AgentStateV1,
+    category: str,
+    subcategory: str | None,
+    decided: ProductSearchRequest | None = None,
+) -> AgentStateV1:
+    """The kind Sara is asking about, and what of it is already decided,
+    replacing the last one."""
+    asked = KindAsked(
+        commerce_category=category, commerce_subcategory=subcategory, decided=decided
+    )
+    if state.kind_asked == asked:
+        return state
+    return state.model_copy(update={"kind_asked": asked})
 
 
 def remember_next_sizes(state: AgentStateV1, sizes: Sequence[NextSize]) -> AgentStateV1:

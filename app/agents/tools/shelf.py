@@ -174,6 +174,9 @@ def _close_look(
     look = _entry(shelf, hints, bounds)
     look["colours"] = _canonical(attributes, AttributeFamily.COLOR, shelf.colours)
     look["styles"] = _canonical(attributes, AttributeFamily.STYLE, shelf.styles)
+    if materials := _canonical(attributes, AttributeFamily.MATERIAL, shelf.materials):
+        # Main materials, where the store records them: what may be offered.
+        look["materials"] = materials
     if seating is not None and not seating.counts_as_seats(shelf.commerce_subcategory):
         # A room may hold one, but it never fills a seat of the head count.
         look["seats_counted"] = False
@@ -187,8 +190,6 @@ def _close_look(
     if shelf.long_and_shallow:
         look["long_and_shallow"] = True
     return look
-
-
 
 
 async def stocked_kinds(services: AgentServices, retailer: RetailerContext) -> dict[str, Any]:
@@ -235,7 +236,24 @@ async def kind_on_shelf(
     if shelf is None:
         return {"not_stocked": customer_words(subcategory)}
     look = _close_look(shelf, frozenset(), bounds, services.attributes, services.seating)
+    # A search for this kind shows these beside it (a sofa search shows sets and
+    # corner sofas), so what they come in is on offer too - each said as its own
+    # kind, never as this one's.
+    beside = services.seating.shown_with(subcategory) if services.seating else ()
+    shown = [
+        _looks_only(_close_look(s, frozenset(), bounds, services.attributes, None))
+        for kind in beside
+        for s in shelves
+        if s.commerce_subcategory == kind
+    ]
+    if shown:
+        look["shown_beside_it"] = shown
     return {"this_store_has": _unpriced(look)}
+
+
+def _looks_only(look: dict[str, Any]) -> dict[str, Any]:
+    """A kind shown beside the one asked about: its name and what it comes in."""
+    return {k: v for k, v in look.items() if k in ("label", "colours", "styles", "materials")}
 
 
 def _unpriced(entry: dict[str, Any]) -> dict[str, Any]:

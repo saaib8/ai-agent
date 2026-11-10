@@ -15,6 +15,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, Field, create_model
 
 from app.agents.context import ToolContext
+from app.agents.decided_stock import decided, decided_pool, looks_of, with_kinds_beside
 from app.agents.facts import (
     cart_facts,
     plain,
@@ -48,10 +49,10 @@ from app.schemas.agent_state import (
 from app.schemas.agent_updates import AgentStateUpdate, ProductInteractionUpdate
 from app.schemas.comparison import MAX_COMPARED_PRODUCTS
 from app.schemas.design import DesignDirection, NextSize
-from app.schemas.discovery import DesignerQuestion, ProductSearchRequest, ProductSort
+from app.schemas.discovery import ProductSearchRequest, ProductSort
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
-from app.schemas.product import ProductCandidate, ProductListing
+from app.schemas.product import EligibleProduct, ProductCandidate, ProductListing
 from app.schemas.product_reference import PresentedOrdinal, ProductReferenceSelector
 from app.schemas.query import (
     ClarificationReason,
@@ -69,10 +70,12 @@ from app.schemas.resolution import (
     ResolvedProductReference,
     SimilarSearchSeed,
 )
+from app.schemas.retailer import RetailerContext
 from app.services.agent_state import (
     add_to_goal,
     apply_update,
     designer_size,
+    note_kind_asked,
     remember_next_sizes,
 )
 from app.services.design_checks import figure_free, stocked_direction
@@ -82,7 +85,6 @@ from app.services.liked_look import with_liked_look
 from app.services.product_details import description_for
 from app.services.query_document import ranking_words
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
-from app.taxonomy.subcategory_questions import SheetRow
 from app.taxonomy.words import customer_words
 
 SARA = frozenset({AgentPersona.SARA})
@@ -210,6 +212,18 @@ def agent_search(
             ),
         ),
     )
+    if attributes.materials:
+        materials: Any = list[Literal[tuple(sorted(attributes.materials))]]  # type: ignore[misc]
+        fields["materials_wanted"] = (
+            materials,
+            Field(
+                default_factory=list,
+                description=(
+                    "Main materials they want, as the store lists them: first in "
+                    "the order, never a filter, nothing hidden - however firmly said."
+                ),
+            ),
+        )
     return cast(type[ToolArgs], create_model("Search", __base__=ToolArgs, **fields))
 
 
@@ -223,6 +237,7 @@ def as_interpretation(
         for family, required, wanted in (
             (AttributeFamily.COLOR, search.colours_required, search.colours_wanted),
             (AttributeFamily.STYLE, search.styles_required, search.styles_wanted),
+            (AttributeFamily.MATERIAL, [], getattr(search, "materials_wanted", [])),
         )
         for values, strength in (
             (required, ConstraintStrength.LOCKED),
@@ -231,7 +246,13 @@ def as_interpretation(
         for value in values
     ]
     plain = search.model_dump(
-        exclude={"colours_required", "colours_wanted", "styles_required", "styles_wanted"}
+        exclude={
+            "colours_required",
+            "colours_wanted",
+            "styles_required",
+            "styles_wanted",
+            "materials_wanted",
+        }
     )
     return interpretation.model_validate(
         {
@@ -424,11 +445,11 @@ def _executable(outcome: Any) -> tuple[ResolvedSearch | None, dict[str, Any]]:
         text = outcome.semantic_text
     elif isinstance(outcome, UnsupportedDimensionRequirement):
         not_enforced = [f"{d.role} ({d.reason})" for d in outcome.unsupported_dimensions]
-        prefs, text = (), None
+        prefs, text = outcome.semantic_preferences, outcome.semantic_text
     else:
         assert isinstance(outcome, UnsupportedRequirement)
         not_enforced = [str(f) for f in outcome.unsupported]
-        prefs, text = (), None
+        prefs, text = outcome.semantic_preferences, outcome.semantic_text
     resolved = ResolvedSearch(
         request=request, semantics=semantics, semantic_preferences=prefs, semantic_text=text
     )
@@ -607,61 +628,11 @@ def _seat_facts(services: AgentServices, request: ProductSearchRequest) -> dict[
     }
 
 
-def _designer_questions(services: AgentServices, search: Any) -> dict[str, Any]:
-    """The questions the store's designers ask about this kind - the subjects
-    only, with no answer options: the agent asks one in its own words and
-    decides the options itself, from the catalog and what the customer has said
-    (CLAUDE.md 10.2). A kind the sheet does not cover yields nothing, and the
-    agent asks from its own judgement."""
-    row = _sheet_row(services, search)
-    if row is None:
-        return {}
-    questions = tuple(DesignerQuestion(topic=q.ask.topic, question=q.text) for q in row.questions)
-    return {"a_designer_might_ask": [q.model_dump(exclude_defaults=True) for q in questions]}
-
-
-def _sheet_row(services: AgentServices, search: Any) -> SheetRow | None:
-    sheet = services.subcategory_questions
-    category = getattr(search, "commerce_category", None)
-    if sheet is None or not category:
-        return None
-    return sheet.for_search(category, getattr(search, "commerce_subcategory", None))
-
-
-async def _designer_questions_in_stock(
-    services: AgentServices, context: ToolContext, search: Any
-) -> dict[str, Any]:
-    """The designers' questions, each with the reviewed answers this store's
-    product names carry (`this_store_carries`), so the options offered are
-    what the store sells - Arabic coffee and dallahs where it stocks them, not
-    a guess (CLAUDE.md 10.2). A question names cannot answer, or a catalog that
-    cannot be read now, keeps the subject alone."""
-    row = _sheet_row(services, search)
-    if row is None:
-        return {}
-    subcategory = getattr(search, "commerce_subcategory", None)
-    questions = []
-    for q in row.questions:
-        answers = {o.label: o.names for o in q.options if o.names is not None}
-        carried: tuple[str, ...] = ()
-        if subcategory and answers:
-            try:
-                carried = await services.capabilities.answers_named(
-                    subcategory, answers, context.retailer
-                )
-            except IntegrationUnavailableError:
-                carried = ()
-        questions.append(
-            DesignerQuestion(topic=q.ask.topic, question=q.text, this_store_carries=carried)
-        )
-    return {"a_designer_might_ask": [q.model_dump(exclude_defaults=True) for q in questions]}
-
-
 def ask_about_args(
     interpretation: type[CommerceInterpretation], attributes: CatalogAttributes
 ) -> type[ToolArgs]:
     """The kind the customer named, in approved values - enough to look up what
-    the store's designers ask about it, with nothing searched."""
+    the store carries of it, with nothing searched."""
     return cast(
         type[ToolArgs],
         create_model(
@@ -675,11 +646,67 @@ def ask_about_args(
     )
 
 
+async def _kinds_that_meet_it(
+    services: AgentServices, chosen: ProductSearchRequest, retailer: RetailerContext
+) -> dict[str, Any]:
+    """The other kinds of its family with products meeting what they decided -
+    regular sofas under a budget no corner sofa meets - most stocked first."""
+    family = chosen.model_copy(
+        update={"commerce_subcategory": None, "alongside_subcategories": ()}
+    )
+    pool = await decided_pool(services, family, retailer)
+    counts: dict[str, int] = {}
+    for product in pool:
+        if product.subcategory and product.subcategory != chosen.commerce_subcategory:
+            counts[product.subcategory] = counts.get(product.subcategory, 0) + 1
+    kinds = sorted(counts, key=lambda kind: -counts[kind])[:4]
+    return {"kinds_that_meet_it": [customer_words(k) for k in kinds]} if kinds else {}
+
+
+def _what_they_chose_comes_in(
+    services: AgentServices,
+    facts: dict[str, Any],
+    chosen: ProductSearchRequest,
+    pool: Sequence[EligibleProduct],
+) -> dict[str, Any]:
+    """The kind's colours, styles and materials narrowed to the products meeting
+    what they already decided - a 4-seat corner sofa's colours, not every corner
+    sofa's - and each kind shown beside it alike (CLAUDE.md 10.2)."""
+    has = facts.get("this_store_has")
+    if not isinstance(has, dict):
+        return facts
+    narrowed = dict(has)
+    own = [p for p in pool if p.subcategory == chosen.commerce_subcategory]
+    narrowed.update(_looks(services, own))
+    narrowed["for_what_they_chose"] = True
+    beside = []
+    for kind in chosen.alongside_subcategories:
+        theirs = [p for p in pool if p.subcategory == kind]
+        if theirs:
+            beside.append({"label": customer_words(kind), **_looks(services, theirs)})
+    if beside:
+        narrowed["shown_beside_it"] = beside
+    else:
+        narrowed.pop("shown_beside_it", None)
+    return {**facts, "this_store_has": narrowed}
+
+
+def _looks(services: AgentServices, pool: Sequence[EligibleProduct]) -> dict[str, list[str]]:
+    colours, styles, materials = looks_of(pool)
+    attributes = services.attributes
+    named = {
+        "colours": [attributes.canonical(AttributeFamily.COLOR, c) or c for c in colours],
+        "styles": [attributes.canonical(AttributeFamily.STYLE, s) or s for s in styles],
+        "materials": materials,
+    }
+    return {key: values for key, values in named.items() if values}
+
+
 def ask_about_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
-    """Learn what the store's designers ask about a kind before showing anything,
-    so a bare need ("I want a recliner") is met with one question in the agent's
-    own words, grounded in the sheet (CLAUDE.md 10.2). Nothing is searched, no
-    products shown; the facts are the topics, not a verbatim question to recite."""
+    """Learn what the store carries of a kind before showing anything, so a bare
+    need ("I want a recliner") is met with a question in the agent's own words
+    whose answers the store has (CLAUDE.md 10.2). Nothing is searched, no
+    products shown."""
     args_model = ask_about_args(schemas.interpretation, schemas.attributes)
 
     async def ask_about(args: Any, context: ToolContext, work: TurnWork) -> ToolOutcome:
@@ -689,35 +716,53 @@ def ask_about_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             outcome = services.query_understanding.resolve(interpretation)
         except LLMResponseInvalidError:
             return ToolOutcome(status=ToolStatus.INVALID, code="figure_unreadable")
-        resolved, extra = _executable(outcome)
-        facts = {
-            **extra,
-            **await _designer_questions_in_stock(services, context, interpretation),
-        }
+        resolved, facts = _executable(outcome)
         kind: Any = interpretation
         if resolved is not None:
             facts = {**facts, **_seat_facts(services, resolved.request)}
             kind = resolved.request
-        if kind.commerce_category:
-            facts = {
-                **facts,
-                **await kind_on_shelf(
-                    services, context.retailer, kind.commerce_category, kind.commerce_subcategory
-                ),
-            }
-        return ToolOutcome(facts=facts)
+        if not kind.commerce_category:
+            return ToolOutcome(facts=facts)
+        facts = {
+            **facts,
+            **await kind_on_shelf(
+                services, context.retailer, kind.commerce_category, kind.commerce_subcategory
+            ),
+        }
+        chosen = (
+            decided(with_kinds_beside(services, resolved.request))
+            if resolved is not None and kind.commerce_subcategory
+            else None
+        )
+        if chosen is not None:
+            pool = await decided_pool(services, chosen, context.retailer)
+            if pool:
+                facts = _what_they_chose_comes_in(services, facts, chosen, pool)
+            else:
+                # Nothing meets it: said first, before any question about the
+                # look - the kind's shelf answers the chips meanwhile - with the
+                # kinds of its family that do, so what is offered leads somewhere.
+                facts = {
+                    **facts,
+                    "nothing_meets_what_they_chose": True,
+                    **await _kinds_that_meet_it(services, chosen, context.retailer),
+                }
+                chosen = None
+        # Remembered, so the answers offered about it on later turns are
+        # checked against what the store carries of it.
+        asked = note_kind_asked(
+            work.staged, kind.commerce_category, kind.commerce_subcategory, chosen
+        )
+        return ToolOutcome(facts=facts, state=asked if asked is not work.staged else None)
 
     return ZoryTool(
         name="ask_about",
         description=(
             "Before showing anything for a kind they named but said little about, learn what "
-            "this store's designers ask about it (a_designer_might_ask: the topics and, where "
-            "product names tell, this_store_carries - the answers this store sells, most first) "
-            "and what this store carries of it (this_store_has: its colours, styles and "
-            "seats; kinds_stocked when the kind is not chosen yet). Ask in your own words; "
-            "the answers you offer for colour, style, seats, kind or a question with "
-            "this_store_carries come only from what the store carries. Nothing is searched or "
-            "shown."
+            "this store carries of it (this_store_has: its colours, styles, main materials "
+            "where recorded, and seats; kinds_stocked when the kind is not chosen yet). Ask "
+            "in your own words about those only; the answers you offer come only from what "
+            "it lists. Nothing is searched or shown."
         ),
         args=args_model,
         owners=SARA,
@@ -736,7 +781,6 @@ def search_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
         except LLMResponseInvalidError:
             return ToolOutcome(status=ToolStatus.INVALID, code="figure_unreadable")
         resolved, extra = _executable(outcome)
-        extra = {**extra, **_designer_questions(services, interpretation)}
         if resolved is None:
             return ToolOutcome(status=ToolStatus.REFUSED, code="needs_clarification", facts=extra)
         if not args.with_related_types:

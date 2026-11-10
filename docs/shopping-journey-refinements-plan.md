@@ -1,5 +1,10 @@
 # Shopping‑journey refinements — questions, seating room‑size, Salman's room offer, Nora‑led cross‑sell
 
+> **Superseded 2026-11-10:** the question sheet (`subcategory_questions_v1.yaml`),
+> `a_designer_might_ask` and the name-matched chips were removed. Sara chooses her
+> own questions about what the store's data holds, and her chips are checked against
+> the kind's shelf (CLAUDE.md 10.2, `app/agents/chip_check.py`). Kept as history.
+
 ## Status (2026‑10‑29, staged, not committed)
 - ✅ **Phase 1** — ask 2–3 questions before showing (incl. "show me"); verified live.
 - ✅ **Phase 2** — seating room‑size question → Nora; verified live.

@@ -124,6 +124,10 @@ class SubcategoryShelf(BaseModel):
     """The distinct style tokens this type comes in, sorted - the styles a
     direction for this kind can actually find."""
 
+    materials: tuple[str, ...] = ()
+    """The distinct main materials this type comes in, sorted, as stored - the
+    materials an agent may offer for it. Empty where the store records none."""
+
     long_and_shallow: bool = False
     """The shape rule holds for this kind in this store: its pieces are clearly
     longer than they are deep, so a piece's longer floor side is its width and
