@@ -251,6 +251,11 @@ class QueryUnderstandingService:
 
         capacity = self._capacity(interpretation)
         weight = self._weight(interpretation)
+        rating = (
+            _to_decimal(interpretation.rating_at_least, field="rating_at_least")
+            if interpretation.rating_at_least
+            else None
+        )
         strict, preferences, unresolved = self._sort_attributes(interpretation.attributes)
 
         # Their own width for the piece decides; the space then adds nothing.
@@ -265,6 +270,8 @@ class QueryUnderstandingService:
                 price=price,
                 seating_capacity=capacity,
                 weight=weight,
+                on_discount=bool(interpretation.on_discount),
+                rating_at_least=rating,
                 dimensions=dimensions.supported,
                 planar_dimensions=dimensions.planar,
                 colors_any_of=strict[AttributeFamily.COLOR],

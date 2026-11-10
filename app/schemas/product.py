@@ -70,6 +70,9 @@ class EligibleProduct(BaseModel):
     """What "best rated" and "best selling" order on - the weighted rating and
     the sales count, None where there are none. Internal to ranking: neither
     is ever shown, and the sales count never leaves it."""
+    discount_share: Decimal | None = None
+    """The checked share off the old price, for "biggest discount first" only;
+    None where there is no discount worth believing. Never shown."""
 
     long_side_cm: Decimal | None = None
     short_side_cm: Decimal | None = None
@@ -122,11 +125,11 @@ class ProductListing(BaseModel):
     (`app/services/product_value.py`), never an old price the store may have
     listed wrongly."""
     rating: Decimal | None = Field(default=None, exclude_if=_absent)
-    """Present only together with `review_count`: a rating is never said
-    without how many reviews it rests on."""
+    """The store's rating, said with `review_count` wherever the store gives
+    one - "4.5 from 12 reviews" - and as "rated 4.5" where it gives none."""
     review_count: int | None = Field(default=None, exclude_if=_absent)
     """Reviews behind `rating`: the store's own totals, never recounted. None
-    where nobody has reviewed it - the import stores those as 0."""
+    where the store gave no count; a rating from a count of 0 is no rating."""
     weight_kg: Decimal | None = Field(default=None, exclude_if=_absent)
     sku: str | None = Field(default=None, exclude_if=_absent)
     warranty_months: int | None = Field(default=None, exclude_if=_absent)
@@ -137,8 +140,8 @@ class ProductListing(BaseModel):
 
     @model_validator(mode="after")
     def _rating_with_its_count(self) -> Self:
-        if (self.rating is None) != (self.review_count is None):
-            raise ValueError("a rating and its review count come together or not at all")
+        if self.review_count is not None and self.rating is None:
+            raise ValueError("a review count belongs to a rating")
         return self
 
     @property
@@ -265,6 +268,10 @@ class ProductDisplay(BaseModel):
     """The reduction in words: "20% off" / "خصم 20%"."""
     weight: str | None = Field(default=None, exclude_if=_absent)
     """"42.5 kg" / "42.5 كجم", where the store lists it."""
+    rating: str | None = Field(default=None, exclude_if=_absent)
+    """The store's rating with its reviews: "4.5 from 12 reviews" / "4.5 من 12
+    تقييمًا", or "rated 4.5" / "التقييم 4.5" where it gives no count. Absent
+    where the store rates it not."""
     sku: str | None = Field(default=None, exclude_if=_absent)
     """The store's product code, as stored."""
 

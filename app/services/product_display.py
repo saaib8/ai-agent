@@ -113,7 +113,7 @@ class ProductDisplayWords:
         in that column - never re-read from the English cell text."""
         listing = getattr(product, "listing", None)
         if field is ComparisonField.RATING:
-            if listing is None or listing.rating is None or not listing.review_count:
+            if listing is None or listing.rating is None:
                 return None
             return rating_words(listing.rating, listing.review_count, language)
         if field is ComparisonField.WARRANTY:
@@ -286,13 +286,16 @@ _WAS = {ReplyLanguage.EN: "{off}, was {was}", ReplyLanguage.AR: "{off}، كان 
 
 def listed_words(product: ShownProduct, language: ReplyLanguage) -> dict[str, str]:
     """The card's listed extras, where the product has them: the old price and
-    the reduction (checked in code), its weight and the store's code."""
+    the reduction (checked in code), its rating, its weight and the store's
+    code."""
     words: dict[str, str] = {}
     found = getattr(product, "discount", None)
     if found is not None:
         words["old_price"] = price_words(found.old_price, product.price_unit, language)
         words["discount"] = off_words(found.percent, language)
     listing = getattr(product, "listing", None)
+    if listing is not None and listing.rating is not None:
+        words["rating"] = rating_words(listing.rating, listing.review_count, language)
     if listing is not None and listing.weight_kg is not None:
         words["weight"] = weight_words(listing.weight_kg, language)
     if listing is not None and listing.sku:
@@ -312,9 +315,12 @@ def weight_words(kilograms: Decimal, language: ReplyLanguage) -> str:
     return f"{_figure(kilograms, 3)} {unit}"
 
 
-def rating_words(rating: Decimal, reviews: int, language: ReplyLanguage) -> str:
-    """ "4.5 from 2 reviews" / "4.5 من تقييمين" - the rating never without its count."""
+def rating_words(rating: Decimal, reviews: int | None, language: ReplyLanguage) -> str:
+    """ "4.5 from 2 reviews" / "4.5 من تقييمين" - with its count wherever the
+    store gives one; "rated 4.5" / "التقييم 4.5" where it gives none."""
     stars = _figure(rating, 2)
+    if reviews is None:
+        return f"rated {stars}" if language is ReplyLanguage.EN else f"التقييم {stars}"
     if language is ReplyLanguage.EN:
         return f"{stars} from {reviews} review{'' if reviews == 1 else 's'}"
     forms = ("تقييم واحد", "تقييمين", "تقييمات", "تقييمًا", "تقييم")

@@ -54,6 +54,9 @@ export interface ProductDisplay {
   old_price?: string
   /** The reduction in words: "20% off". */
   discount?: string
+  /** The store's rating: "4.5 from 12 reviews", or "rated 4.5" where it gives
+   *  no count. Absent where the store rates it not. */
+  rating?: string
   weight?: string
   sku?: string
 }
@@ -309,8 +312,8 @@ export interface GroundedProduct {
 }
 
 /** A product's listed extras, as stored. Each field is absent where the store
- *  left it empty; `material` is the main material only; a rating always comes
- *  with its review count. */
+ *  left it empty; `material` is the main material only; a review count always
+ *  comes with its rating (a rating may come without a count). */
 export interface ProductListing {
   material?: string
   rating?: string

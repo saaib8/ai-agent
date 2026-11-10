@@ -273,6 +273,8 @@ class SetAsideField(StrEnum):
     PRICE = "price"
     SEATS = "seats"
     WEIGHT = "weight"
+    DISCOUNT = "discount"
+    RATING = "rating"
     DIMENSION = "dimension"
     SIZE_PAIR = "size_pair"
     COLOR = "color"

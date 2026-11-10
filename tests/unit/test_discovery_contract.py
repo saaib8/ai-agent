@@ -194,4 +194,5 @@ def test_there_are_only_deterministic_sorts() -> None:
         "price_desc",
         "best_rated",
         "best_selling",
+        "biggest_discount",
     }

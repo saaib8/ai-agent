@@ -211,6 +211,10 @@ def searched_for(search: ActiveSearchState | None) -> dict[str, Any]:
         asked["seats"] = request.seating_capacity.model_dump(mode="json", exclude_none=True)
     if request.weight is not None:
         asked["weight"] = request.weight.model_dump(mode="json", exclude_none=True)
+    if request.on_discount:
+        asked["on_discount"] = True
+    if request.rating_at_least is not None:
+        asked["rating_at_least"] = request.rating_at_least
     if request.dimensions or request.planar_dimensions is not None:
         asked["sizes"] = size_words(request)
     if search.semantic_intent:

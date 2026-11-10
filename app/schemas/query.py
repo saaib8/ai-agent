@@ -401,12 +401,29 @@ class CommerceInterpretation(BaseModel):
         default=None,
         description="The unit of weight_min and weight_max as they said it. Null is kg.",
     )
+    on_discount: bool | None = Field(
+        default=None,
+        description=(
+            "True only when they asked for products on discount or sale ('sofas on "
+            "sale', 'anything discounted'). Never set it otherwise, and never ask about it."
+        ),
+    )
+    rating_at_least: str | None = Field(
+        default=None,
+        description=(
+            "The lowest rating they will accept, in stars out of 5, as a plain decimal "
+            "string - '4 stars and up' is '4', 'rated 90% or more' is '4.5'. Only when "
+            "they asked for it; "
+            "never ask about it. 'Best rated' is a sort, not this."
+        ),
+    )
     sort: ProductSort | None = Field(
         default=None,
         description=(
             "Only when the customer explicitly asked for an order: cheapest or most "
-            "expensive (price), best rated (best_rated), or best selling / most popular "
-            "(best_selling). Null otherwise."
+            "expensive (price), best rated (best_rated), best selling / most popular "
+            "(best_selling), or the biggest discount first (biggest_discount). Null "
+            "otherwise."
         ),
     )
     commerce_subcategory_strength: ConstraintStrength | None = Field(
