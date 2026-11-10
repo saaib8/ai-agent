@@ -14,7 +14,7 @@ from __future__ import annotations
 from app.taxonomy.attributes import CatalogAttributes
 from app.taxonomy.registry import CommerceTaxonomy
 
-VERSION = "query_understanding/v1.6"
+VERSION = "query_understanding/v1.7"
 
 _INSTRUCTIONS = """\
 You interpret a furniture shopper's message into a structured product search.
@@ -99,14 +99,10 @@ words like around, about, roughly or approximately.
 what they said, not the tone.
 
 Requirements this search cannot apply:
-- List a requirement here only when it is a material they insisted on - only \
-this, must be this, nothing else. Colours, styles and measurements have their \
-own fields below and must never be listed here.
-- A material, fabric or texture they simply want - "in wool", "a velvet \
-one", "something soft like boucle" - is not a requirement: keep it in the \
-descriptive wording below, where it orders the results without ruling any out.
-- Only list one when you could quote the exact material from their own words. \
-If you cannot point to a specific value they gave, list nothing.
+- Leave this empty. Colours, styles and measurements have their own fields \
+below. A material, fabric or texture - "in wool", "a velvet one", even "only \
+leather" - is never listed here: keep it in the descriptive wording below, \
+where it orders the results without ruling any out.
 
 Several products at once:
 - Say so only when they asked for two or more genuinely different kinds of \

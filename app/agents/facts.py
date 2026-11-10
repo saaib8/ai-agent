@@ -204,6 +204,9 @@ def searched_for(search: ActiveSearchState | None) -> dict[str, Any]:
         "styles_required": list(request.styles_all_of),
         "colours_wanted": [p.canonical_value for p in wanted if p.family is AttributeFamily.COLOR],
         "styles_wanted": [p.canonical_value for p in wanted if p.family is AttributeFamily.STYLE],
+        "materials_wanted": [
+            p.canonical_value for p in wanted if p.family is AttributeFamily.MATERIAL
+        ],
     }
     if request.price is not None:
         asked["price"] = request.price.model_dump(mode="json", exclude_none=True)

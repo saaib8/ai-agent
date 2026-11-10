@@ -1,5 +1,10 @@
 # Agentic discovery questions — sheet as a knowledge base, not a script
 
+> **Superseded 2026-11-10:** the question sheet (`subcategory_questions_v1.yaml`),
+> `a_designer_might_ask` and the name-matched chips were removed. Sara chooses her
+> own questions about what the store's data holds, and her chips are checked against
+> the kind's shelf (CLAUDE.md 10.2, `app/agents/chip_check.py`). Kept as history.
+
 ## Status — built & verified (2026‑10‑29)
 
 **Done, green, staged (not committed):**

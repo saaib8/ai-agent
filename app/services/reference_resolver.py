@@ -345,4 +345,6 @@ def _presented(state: AgentStateV1) -> tuple[int, ...] | None:
 def _has_attribute(row: ProductRow, selector: PresentedAttributeMatch) -> bool:
     if selector.family is AttributeFamily.COLOR:
         return row.main_color == selector.value
+    if selector.family is AttributeFamily.MATERIAL:
+        return row.listing.material == selector.value
     return selector.value in row.styles

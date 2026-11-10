@@ -25,13 +25,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.query import ResolvedSearch
 from app.taxonomy.briefs import ALWAYS_ASKED, BriefQuestionKind
-from app.taxonomy.subcategory_questions import (
-    MAX_OPTION_CHARS,
-    MAX_QUESTION_CHARS,
-    MAX_SHEET_QUESTIONS,
-    MAX_SHEET_TICKS,
-    MAX_WORDS_CHARS,
-)
+
+# Bounds of the old per-kind question cards, kept so sessions that still hold
+# one are read as they were written.
+MAX_SHEET_TICKS: Final[int] = 3
+MAX_SHEET_QUESTIONS: Final[int] = 3
+MAX_QUESTION_CHARS: Final[int] = 120
+MAX_OPTION_CHARS: Final[int] = 60
+MAX_WORDS_CHARS: Final[int] = 60
 
 MAX_BRIEF_COLOURS: Final[int] = 3
 """Colours they may tick together. Alternatives, so a few is plenty."""
@@ -272,7 +273,7 @@ class PendingBrief(BaseModel):
     search its answers run does not bring those sizes back."""
     sheet: bool = Field(default=False, exclude_if=lambda v: not v)
     """The card asks a sub-category's own questions
-    (`subcategory_questions_v1.yaml`), and `name` is its row."""
+    (the old per-kind question sheet), and `name` is its row."""
 
     @property
     def always_asked(self) -> tuple[BriefQuestionKind, ...]:

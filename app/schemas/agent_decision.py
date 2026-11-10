@@ -1368,7 +1368,7 @@ def build_constrained_decision(attributes: CatalogAttributes) -> type[CustomerAg
     as well as content, and a constrained preference would never equal the
     plain one stored in state - removing it later would silently do nothing.
     """
-    approved = tuple(sorted(attributes.colors | attributes.styles))
+    approved = tuple(sorted(attributes.colors | attributes.styles | attributes.materials))
     canonical = (Literal[approved] | None, None)
 
     value = create_model(

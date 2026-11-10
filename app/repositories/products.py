@@ -12,7 +12,7 @@ immutable :class:`RetailerContext` resolved by application code
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -26,7 +26,6 @@ from sqlalchemy import (
     case,
     func,
     literal,
-    or_,
     select,
     type_coerce,
 )
@@ -61,13 +60,6 @@ from app.schemas.product import (
 )
 from app.schemas.retailer import RetailerContext
 from app.taxonomy.dimensions import FaceSide, FloorSide, Measure, SourceAxis
-from app.taxonomy.name_match import (
-    ARABIC_FOLD_FROM,
-    ARABIC_FOLD_TO,
-    ENGLISH_FOLD_FROM,
-    ENGLISH_FOLD_TO,
-    NameMatch,
-)
 
 _SELECTED_COLUMNS = (
     core_product.c.id,
@@ -107,6 +99,7 @@ _POOL_COLUMNS = (
     core_product.c.price_amount,
     core_product.c.main_color,
     core_product.c.styles,
+    core_product.c.material,
     core_product.c.seating_capacity,
 )
 """What ranking and seating combinations need, and nothing else. A narrow projection is what makes
@@ -318,7 +311,7 @@ def _planar_clause(match: PairMatch) -> ColumnElement[bool]:
     return ((first == low) & (second == high)) | ((first == high) & (second == low))
 
 
-def _style_tokens() -> ColumnElement[Any]:
+def style_tokens() -> ColumnElement[Any]:
     """`core_product.styles` as exact tokens.
 
     Stored as comma-separated canonical values with merchant-inconsistent
@@ -474,6 +467,7 @@ class CatalogOverviewRow:
     colours: tuple[str, ...]
     price_units: tuple[str, ...]
     styles: tuple[str, ...] = ()
+    materials: tuple[str, ...] = ()
     planar_measured: int = 0
     planar_elongated: int = 0
     seat_counts: tuple[int, ...] = ()
@@ -500,6 +494,7 @@ def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
         styles=tuple(
             sorted({token for raw in (row.styles or ()) for token in parse_style_tokens(raw)})
         ),
+        materials=tuple(sorted(row.materials)) if row.materials else (),
         planar_measured=row.planar_measured,
         seat_counts=tuple(sorted(row.seat_counts)) if row.seat_counts else (),
         planar_elongated=row.planar_elongated,
@@ -792,7 +787,7 @@ class ProductRepository:
             # `@>` on the parsed tokens: every required style must be present.
             # A NULL or empty styles column yields no tokens and so matches
             # nothing.
-            clauses.append(_style_tokens().contains(list(request.styles_all_of)))
+            clauses.append(style_tokens().contains(list(request.styles_all_of)))
 
         if request.exclude_product_ids:
             # Part of eligibility, so an excluded product is gone before
@@ -920,6 +915,7 @@ class ProductRepository:
                 price_amount=row.price_amount,
                 main_color=row.main_color,
                 styles=parse_style_tokens(row.styles),
+                material=row.material,
                 seating_capacity=row.seating_capacity,
                 long_side_cm=row.long_side_cm,
                 short_side_cm=row.short_side_cm,
@@ -1006,6 +1002,9 @@ class ProductRepository:
         styles = func.array_agg(core_product.c.styles.distinct()).filter(
             core_product.c.styles.isnot(None)
         )
+        materials = func.array_agg(core_product.c.material.distinct()).filter(
+            core_product.c.material.isnot(None)
+        )
         statement = (
             select(
                 core_product.c.commerce_category,
@@ -1027,6 +1026,7 @@ class ProductRepository:
                     func.array_agg(core_product.c.price_unit.distinct()), ARRAY(Text)
                 ).label("price_units"),
                 type_coerce(styles, ARRAY(Text)).label("styles"),
+                type_coerce(materials, ARRAY(Text)).label("materials"),
                 func.count(_LONG_SIDE).filter(plausible).label("planar_measured"),
                 func.count(_LONG_SIDE)
                 .filter(plausible & (_SHORT_SIDE * size.elongation_ratio <= _LONG_SIDE))
@@ -1149,7 +1149,7 @@ class ProductRepository:
         if filters.color is not None:
             clauses.append(core_product.c.main_color == filters.color)
         if filters.style is not None:
-            clauses.append(_style_tokens().contains([filters.style]))
+            clauses.append(style_tokens().contains([filters.style]))
         if filters.currency is not None:
             clauses.append(core_product.c.price_unit == filters.currency)
             if filters.min_price is not None:
@@ -1207,7 +1207,7 @@ class ProductRepository:
             .group_by(core_product.c.main_color)
             .order_by(func.count().desc(), core_product.c.main_color)
         )
-        tokens = select(func.unnest(_style_tokens()).label("token")).where(*scope).subquery()
+        tokens = select(func.unnest(style_tokens()).label("token")).where(*scope).subquery()
         styles = await self._session.execute(
             select(tokens.c.token, func.count())
             .group_by(tokens.c.token)
@@ -1278,7 +1278,7 @@ class ProductRepository:
             .group_by(core_product.c.main_color)
             .order_by(func.count().desc(), core_product.c.main_color)
         )
-        tokens = select(func.unnest(_style_tokens()).label("token")).where(*scope).subquery()
+        tokens = select(func.unnest(style_tokens()).label("token")).where(*scope).subquery()
         styles = await self._session.execute(
             select(tokens.c.token, func.count())
             .group_by(tokens.c.token)
@@ -1291,43 +1291,6 @@ class ProductRepository:
             colors=tuple((row[0], int(row[1])) for row in colors.all()),
             styles=tuple((row[0], int(row[1])) for row in styles.all() if row[0]),
         )
-
-    async def name_match_counts(
-        self,
-        subcategories: Sequence[str],
-        matches: Mapping[str, NameMatch],
-        context: RetailerContext,
-    ) -> dict[str, int]:
-        """How many of these types' products are named with each chip's words.
-
-        One read under the store scope, a count per chip. Names are folded
-        exactly as `app/taxonomy/name_match.py` folds them, and each pattern
-        is a bound parameter built from reviewed terms, never from a
-        customer's or a model's words.
-        """
-        if not matches:
-            return {}
-        types = tuple(dict.fromkeys(subcategories))
-        english = func.translate(
-            func.lower(core_product.c.name_english), ENGLISH_FOLD_FROM, ENGLISH_FOLD_TO
-        )
-        arabic = func.translate(core_product.c.name_arabic, ARABIC_FOLD_FROM, ARABIC_FOLD_TO)
-        keys = list(matches)
-        counts = []
-        for index, key in enumerate(keys):
-            match = matches[key]
-            found = [
-                *((english.regexp_match(match.english),) if match.english else ()),
-                *((arabic.regexp_match(match.arabic),) if match.arabic else ()),
-            ]
-            counts.append(func.count().filter(or_(*found)).label(f"m{index}"))
-        result = await self._session.execute(
-            select(*counts).where(
-                *self._scope_clauses(context), core_product.c.commerce_subcategory.in_(types)
-            )
-        )
-        row = result.first()
-        return {key: int(row[index]) if row is not None else 0 for index, key in enumerate(keys)}
 
     async def count_active(self, context: RetailerContext) -> int:
         """How many active products the store has. Backs health and capability checks."""

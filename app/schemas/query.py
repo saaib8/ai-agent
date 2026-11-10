@@ -486,18 +486,23 @@ class CommerceInterpretation(BaseModel):
     unsupported_requirements: list[RequirementFamily] = Field(
         default_factory=list,
         description=(
-            "Requirements the customer stated explicitly that are none of the "
-            "fields above: a colour, a decor style, a material, or a size or "
-            "dimension. List each kind they named. Empty when they named none."
+            "Requirements the customer stated explicitly that no field of this "
+            "search can hold: a size or dimension the measurement fields cannot "
+            "express. Never a colour or a style - those go in the colour and style "
+            "lists. Never a material: a material they want goes in semantic_text "
+            "and ranks the results. Empty in almost every search."
         ),
     )
     semantic_text: str | None = Field(
         default=None,
         description=(
-            "The customer's own wording for what they are drawn to, with the "
-            "parts already captured by the fields above left out: no prices, "
-            "no measurements, no seat counts. 'a warm neutral sofa under 5000' "
-            "gives 'warm neutral sofa'. Null when nothing descriptive remains."
+            "What the customer wants of this kind, in a few words, from the "
+            "whole conversation - their answers to your questions included "
+            "(shape, material, theme, feel, use) - with the parts already "
+            "captured by the fields above left out: no prices, no measurements, "
+            "no seat counts. 'a warm neutral sofa under 5000' gives 'warm neutral "
+            "sofa'; 'a round one', then 'wood', then 'modern' gives 'round wooden "
+            "modern center table'. Null when nothing descriptive was said."
         ),
     )
     multiple_product_types: bool = Field(
@@ -514,12 +519,12 @@ def build_constrained_attribute(
 ) -> type[AttributeInterpretation]:
     """`AttributeInterpretation` with `canonical_value` restricted to the registry.
 
-    Both families share one enumeration because the response schema cannot
+    Every family shares one enumeration because the response schema cannot
     express "a colour when family is colour". Deterministic validation checks
     the value belongs to the family that was claimed, so a style can never be
     accepted as a colour.
     """
-    approved = tuple(sorted(attributes.colors | attributes.styles))
+    approved = tuple(sorted(attributes.colors | attributes.styles | attributes.materials))
     return create_model(
         "ConstrainedAttributeInterpretation",
         __base__=AttributeInterpretation,
@@ -752,6 +757,10 @@ class UnsupportedDimensionRequirement(BaseModel):
     request: ProductSearchRequest
     semantics: ConstraintSemantics = ConstraintSemantics()
     unsupported_dimensions: tuple[UnsupportedDimension, ...]
+    semantic_preferences: tuple[SemanticPreference, ...] = ()
+    semantic_text: str | None = None
+    """What the customer wants beyond what was not applied - their colours and
+    styles, and the agent's description - so the search still ranks by it."""
 
     @model_validator(mode="after")
     def _check_dimensions(self) -> Self:
@@ -774,6 +783,10 @@ class UnsupportedRequirement(BaseModel):
     request: ProductSearchRequest
     semantics: ConstraintSemantics = ConstraintSemantics()
     unsupported: tuple[RequirementFamily, ...]
+    semantic_preferences: tuple[SemanticPreference, ...] = ()
+    semantic_text: str | None = None
+    """What the customer wants beyond what was not applied - their colours and
+    styles, and the agent's description - so the search still ranks by it."""
 
     @model_validator(mode="after")
     def _check_dimensions(self) -> Self:

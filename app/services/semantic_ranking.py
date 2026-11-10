@@ -262,25 +262,30 @@ def _ordered_by_their_words(resolved: ResolvedSearch) -> bool:
 
 
 def _colour_or_style_match(resolved: ResolvedSearch) -> Callable[[RelaxedCandidate], int]:
-    """0 for a product whose stored colour or style is one the customer is
-    drawn to, 1 otherwise - or 0 for everyone when no preference names an
-    approved value."""
-    colors = {
-        p.canonical_value
-        for p in resolved.semantic_preferences
-        if p.family is AttributeFamily.COLOR and p.canonical_value
-    }
-    styles = {
-        p.canonical_value
-        for p in resolved.semantic_preferences
-        if p.family is AttributeFamily.STYLE and p.canonical_value
-    }
-    if not colors and not styles:
+    """0 for a product whose stored colour, style or main material is one the
+    customer is drawn to, 1 otherwise - or 0 for everyone when no preference
+    names a known value."""
+
+    def wanted(family: AttributeFamily) -> set[str]:
+        return {
+            p.canonical_value
+            for p in resolved.semantic_preferences
+            if p.family is family and p.canonical_value
+        }
+
+    colors = wanted(AttributeFamily.COLOR)
+    styles = wanted(AttributeFamily.STYLE)
+    materials = wanted(AttributeFamily.MATERIAL)
+    if not colors and not styles and not materials:
         return lambda _: 0
 
     def rank(candidate: RelaxedCandidate) -> int:
         product = candidate.product
-        hit = product.main_color in colors or any(s in styles for s in product.styles)
+        hit = (
+            product.main_color in colors
+            or any(s in styles for s in product.styles)
+            or product.material in materials
+        )
         return 0 if hit else 1
 
     return rank

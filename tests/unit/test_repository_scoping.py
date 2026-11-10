@@ -27,7 +27,6 @@ from app.schemas.discovery import (
 )
 from app.schemas.product import BestSellerRule
 from app.schemas.retailer import RetailerContext
-from app.taxonomy.name_match import name_match
 from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine.interfaces import Dialect
@@ -111,9 +110,6 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     "count_browse": lambda repo: repo.count_browse(CatalogFilter(), CONTEXT),
     "facet_counts": lambda repo: repo.facet_counts(CONTEXT),
     "brief_facts": lambda repo: repo.brief_facts(["sofa", "sofa-set"], CONTEXT),
-    "name_match_counts": lambda repo: repo.name_match_counts(
-        ["bed"], {"q2-7": name_match(["gas lift", "مخمل"])}, CONTEXT
-    ),
 }
 
 

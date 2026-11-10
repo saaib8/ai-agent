@@ -60,6 +60,8 @@ class EligibleProduct(BaseModel):
     styles: tuple[str, ...] = ()
     """Colour and style tokens, so ranking can put the products that match what
     the customer is drawn to first. Facts from the row, never inferred."""
+    material: str | None = None
+    """The one main material, so a material they lean to orders the same way."""
 
     seating_capacity: int | None = None
     """The recorded seat count, or ``None`` when the catalog has none - never

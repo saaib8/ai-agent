@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 from decimal import Decimal
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -15,7 +14,7 @@ from app.agents.payloads import RenderShown
 from app.agents.reply import unsupported_figure
 from app.agents.services import AgentServices
 from app.agents.tools.common import RespondArgs
-from app.agents.tools.shopping import _designer_questions, _executable
+from app.agents.tools.shopping import _executable
 from app.agents.trace import TurnTrace
 from app.agents.work import ToolRecord, ToolStatus, TurnWork
 from app.schemas.acquisition import BundleAcquisition
@@ -33,7 +32,6 @@ from app.schemas.agent_state import (
 from app.schemas.card_comparison import CardRef
 from app.schemas.conversation import ConversationContext
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
-from app.schemas.discovery import DesignerQuestion
 from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome
 from app.schemas.query import ClarificationReason, ClarificationRequired
 from app.schemas.relaxation import StopReason
@@ -49,9 +47,7 @@ from app.schemas.visualization import RenderSource, RoomRenderPresentation
 from app.services.cross_sell import CompanionSearchBuilder
 from app.services.grounding_builder import to_grounded_product
 from app.services.support import SupportService
-from app.taxonomy.subcategory_questions import load_subcategory_questions
 from langchain_core.messages import HumanMessage
-from pydantic import ValidationError
 
 from tests.unit.agents.fake_chat_model import ScriptedChatModel, call, step
 from tests.unit.agents.fakes import (
@@ -671,63 +667,24 @@ def test_a_figure_the_shop_wrote_in_words_may_be_said_in_digits() -> None:
     assert unsupported_figure(made_up, work, "returns?", ConversationContext(), [{}])
 
 
-def test_a_search_tells_the_agent_what_designers_ask_for_the_kind() -> None:
-    services = agent_services(subcategory_questions=load_subcategory_questions(taxonomy=TAXONOMY))
-    search = SimpleNamespace(commerce_category="seating", commerce_subcategory="sofa")
-
-    asked = _designer_questions(services, search)["a_designer_might_ask"]
-
-    # The questions as subjects, with no answer options - the agent decides the
-    # options itself, from the catalog and the conversation (CLAUDE.md 10.2).
-    # Each is the typed DesignerQuestion contract, not an arbitrary dict (12.1).
-    assert asked
-    questions = [DesignerQuestion.model_validate(topic) for topic in asked]
-    assert all(q.question for q in questions)
-    assert all("examples" not in topic for topic in asked)
-    assert "sofa" in " ".join(q.question for q in questions).casefold()
-
-
-def test_designer_question_is_a_typed_contract() -> None:
-    q = DesignerQuestion(topic="budget", question="What's your approximate budget?")
-    assert q.model_dump(exclude_defaults=True) == {
-        "topic": "budget",
-        "question": "What's your approximate budget?",
-    }
-    with pytest.raises(ValidationError):
-        DesignerQuestion(topic="", question="x")  # a subject is required
-    with pytest.raises(ValidationError):
-        # No answer options on the contract - the agent decides those (10.2).
-        DesignerQuestion.model_validate({"topic": "t", "question": "q", "options": []})
-
-
-def test_a_kind_the_sheet_does_not_cover_yields_no_designer_topics() -> None:
-    # A kind with no row, and no sheet at all: nothing is offered, and the agent
-    # asks from its own judgement rather than a cheat sheet (CLAUDE.md 10.2).
-    loaded = agent_services(subcategory_questions=load_subcategory_questions(taxonomy=TAXONOMY))
-    uncovered = SimpleNamespace(commerce_category="not-a-real-category", commerce_subcategory=None)
-
-    assert _designer_questions(loaded, uncovered) == {}
-    assert _designer_questions(agent_services(subcategory_questions=None), uncovered) == {}
-
-
-async def test_ask_about_gives_the_kinds_topics_and_shows_nothing() -> None:
-    # A bare need gets the kind's designer topics before any search, so the
-    # agent can ask one in its own words - nothing searched, no products shown.
+async def test_ask_about_gives_what_the_store_carries_and_shows_nothing() -> None:
+    # A bare need is met with what the store carries of the kind, so the agent
+    # asks about that in its own words - nothing searched, no products shown,
+    # and no fixed questions to recite (CLAUDE.md 10.2).
     tool = _tool("ask_about")
     assert tool.owners == frozenset({AgentPersona.SARA})
-    services = agent_services(subcategory_questions=load_subcategory_questions(taxonomy=TAXONOMY))
 
     outcome = await tool.handler(
         tool.args.model_validate(
             {"search": {"commerce_category": "seating", "commerce_subcategory": "recliner"}}
         ),
-        tool_context(services),
+        tool_context(agent_services()),
         TurnWork.starting(AgentStateV1()),
     )
 
-    asked = outcome.facts["a_designer_might_ask"]
-    assert asked and all(q["question"] for q in asked)
-    assert all("examples" not in q for q in asked)  # options are agentic
+    # Remembered, so the answers offered about it later are checked against
+    # what the store carries of it.
+    assert outcome.state is not None and outcome.state.kind_asked is not None
     assert outcome.payload is None
 
 

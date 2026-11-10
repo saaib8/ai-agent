@@ -124,6 +124,8 @@ def test_an_unclassified_colour_stays_absent() -> None:
 def test_eligible_product_carries_only_what_ranking_orders_on() -> None:
     assert set(EligibleProduct.model_fields) == {
         "product_id",
+        # A main material they lean to orders like a colour.
+        "material",
         # A search covering several types takes them in turn.
         "subcategory",
         "price_amount",

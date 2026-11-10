@@ -56,11 +56,15 @@ without the data gets exactly the JSON it got before:
   sends them when the old price is really above the current one (and not an
   implausible "90%+ off"); the stored old price itself is never sent. Never add
   urgency ("ends soon") of your own - the store gives no end date.
+- `rating`: the store's rating with its reviews - "4.5 from 12 reviews" / "4.5 من 12
+  تقييمًا" - or "rated 4.5" / "التقييم 4.5" where the store gives no count; absent
+  where it rates the product not. Draw it on the card as it comes.
 - `weight`: worded with its unit. `sku`: the store's code as stored - draw it
   with `labels.card_sku` ("SKU {sku}" / "رمز المنتج {sku}").
 - A product may also carry `listing` (`material`, `rating`, `review_count`,
   `weight_kg`, `sku`, `warranty_months`) - English values for reading, absent when
-  empty; a `rating` always comes with its `review_count`. Draw the card from
+  empty; a `review_count` always comes with its `rating` (a rating may come without
+  a count). Draw the card from
   `display`, not from `listing`.
 
 The comparison table (`presentation.comparison.rows[]`) gains rows for **main

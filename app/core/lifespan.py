@@ -42,6 +42,7 @@ from app.integrations.salla_storefront import SallaStorefrontClient
 from app.integrations.store_knowledge import PineconeKnowledgeIndex
 from app.integrations.zory_finder import ZoryFinderClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
+from app.repositories.vocabulary import StoredVocabularyRepository
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.query import build_constrained_interpretation
 from app.services.history_summary import HistorySummarizer
@@ -53,10 +54,6 @@ from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
 from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
 from app.taxonomy.rooms import RoomPieces, load_room_pieces
 from app.taxonomy.seating import SeatingSemantics, load_seating_semantics
-from app.taxonomy.subcategory_questions import (
-    SubcategoryQuestions,
-    load_subcategory_questions,
-)
 
 logger = get_logger(__name__)
 
@@ -102,10 +99,6 @@ class AppResources:
     # built without them constructs as before: products open without
     # cross-sell, and nothing else changes.
     complements: Complements | None = None
-    # The questions the store's designers ask for each sub-category, given to
-    # the agents as knowledge with a search's results. Defaulted: without them
-    # an agent asks from its own sense of the piece.
-    subcategory_questions: SubcategoryQuestions | None = None
     # Which types compare with which. Defaulted: without it the comparison
     # pop-up is refused rather than comparing anything with anything.
     compare_groups: CompareGroups | None = None
@@ -166,6 +159,32 @@ def _agent_team(
     )
 
 
+async def _with_stored_values(
+    database: Database, attributes: CatalogAttributes
+) -> CatalogAttributes:
+    """The vocabulary with the colours, styles and materials the stores hold.
+
+    The catalog's own values are trusted data, so an agent can offer and search
+    a colour a store sells though the reviewed file does not name it. A catalog
+    that cannot be read now leaves the file's values alone - colours and styles
+    still work, materials wait for the next start.
+    """
+    try:
+        async with database.session() as session:
+            stored = await StoredVocabularyRepository(session).values()
+    except (SQLAlchemyError, OSError) as exc:
+        logger.warning("stored_vocabulary_unavailable", error_type=type(exc).__name__)
+        return attributes
+    widened = attributes.with_stored(stored)
+    logger.info(
+        "stored_vocabulary_loaded",
+        color_count=len(widened.colors),
+        style_count=len(widened.styles),
+        material_count=len(widened.materials),
+    )
+    return widened
+
+
 async def _check_catalog_schema(database: Database, *, support: bool = False) -> None:
     """Verify the live catalog has the commerce columns this service requires,
     and the store's support columns where the support agent reads them.
@@ -214,7 +233,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     seating = load_seating_semantics(taxonomy=taxonomy)
     rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
     complements = load_complements(taxonomy=taxonomy)
-    subcategory_questions = load_subcategory_questions(taxonomy=taxonomy)
     compare_groups = load_compare_groups(taxonomy=taxonomy)
     logger.info(
         "taxonomy_loaded",
@@ -228,11 +246,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         seating_version=seating.version,
         room_pieces_version=rooms.version,
         complements_version=complements.version,
-        subcategory_questions_version=subcategory_questions.version,
         compare_groups_version=compare_groups.version,
     )
 
     database = Database.create(settings.db)
+    attributes = await _with_stored_values(database, attributes)
     redis_client = RedisClient.create(settings.redis)
     # Compiled once for the process. The per-request runtime travels with each
     # invocation, so one graph serves every customer (CLAUDE.md 24).
@@ -367,7 +385,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_team=agent_team,
         rooms=rooms,
         complements=complements,
-        subcategory_questions=subcategory_questions,
         compare_groups=compare_groups,
         zory_finder=zory_finder,
         salla=salla,

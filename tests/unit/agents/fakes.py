@@ -216,10 +216,6 @@ class FakeCapabilities:
 
         return CatalogOverview(store_id=context.store_id, currency=self.currency)
 
-    async def answers_named(self, subcategory: str, answers: Any, context: Any) -> tuple[str, ...]:
-        if self.error is not None:
-            raise self.error
-        return ()
 
     async def capabilities(self, context: Any) -> Any:
         self.calls.append(context)

@@ -30,7 +30,7 @@ from app.schemas.agent_state import (
 )
 from app.schemas.dimensions import RawDimensions
 from app.schemas.discovery import ProductSearchRequest
-from app.schemas.product import CommerceClassification, ProductRow
+from app.schemas.product import CommerceClassification, ProductListing, ProductRow
 from app.schemas.resolution import (
     ReferenceFailureReason,
     ReferenceUnresolved,
@@ -316,6 +316,23 @@ async def test_a_unique_style_match_resolves() -> None:
         PresentedAttributeMatch(family=AttributeFamily.STYLE, value="Japandi"),
         _state(presented=(11, 22)),
         [_row(11, styles=("Modern",)), _row(22, styles=("Japandi", "Modern"))],
+    )
+
+    assert outcome == ResolvedProductReference(product_id=22)
+
+
+async def test_a_unique_material_match_resolves() -> None:
+    """ "The velvet one" - by the main material the store records."""
+    attributes = load_catalog_attributes().with_stored({AttributeFamily.MATERIAL: ["Velvet"]})
+    velvet = _row(22).model_copy(update={"listing": ProductListing(material="Velvet")})
+    resolver = ProductReferenceResolver(
+        cast(ProductRepository, FakeRepository([_row(11), velvet])), attributes
+    )
+
+    outcome = await resolver.resolve(
+        PresentedAttributeMatch(family=AttributeFamily.MATERIAL, value="velvet"),
+        _state(presented=(11, 22)),
+        CONTEXT,
     )
 
     assert outcome == ResolvedProductReference(product_id=22)

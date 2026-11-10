@@ -305,12 +305,12 @@ sara:
     today: [product_brief.py]
 
   - id: sara.brief.subcategory_questions
-    behaviour: "A sub-category the reviewed sheet covers is asked its own up-to-three questions on one card, chips backed by store names - an office chair asks its sheet questions."
-    source: {claude: ["10.13"], cases: []}
-    owner: code
-    tool: search_products
+    behaviour: "Retired 2026-11-10: the reviewed question sheet and its name matching were removed. Sara chooses her own questions about what the store's data holds (colour, style, main material, seats, kind, size); her chips are checked against the kind's shelf (app/agents/chip_check.py)."
+    source: {claude: ["10.2"], cases: []}
+    owner: sara
+    tool: ask_about
     lives_in: [code]
-    today: [product_brief.py, subcategory_questions_v1.yaml, taxonomy/name_match.py]
+    today: [app/agents/chip_check.py, app/agents/tools/shopping.py]
 
   - id: sara.brief.answer_tapped
     behaviour: "Tapped answers are keys read back through the pending card and searched - kind and budget ceiling locked, colours/styles preferred, feel ranks only."

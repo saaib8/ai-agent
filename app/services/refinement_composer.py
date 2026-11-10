@@ -268,7 +268,9 @@ class SearchRefinementComposer:
         preferences = self._seed_preferences(
             resolved.semantic_preferences, proposal, room_preferences, customer_defaults
         )
-        intent = _apply_intent(None, semantic_intent)
+        # The agent's description of what they want is kept with the search, so
+        # its next pages rank by it as the first did.
+        intent = _apply_intent(resolved.semantic_text, semantic_intent)
         candidate = ActiveSearchState(
             request=resolved.request,
             semantics=resolved.semantics,

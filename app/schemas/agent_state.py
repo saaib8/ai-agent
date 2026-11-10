@@ -1001,6 +1001,20 @@ class FinishedRoom(BaseModel):
 MAX_FINISHED_ROOMS = 10
 
 
+class KindAsked(BaseModel):
+    """The kind Sara last asked the customer about (`ask_about`), so the
+    answers she offers on later turns are checked against what the store
+    carries of it (CLAUDE.md 10.2)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    commerce_category: str = Field(min_length=1, max_length=64)
+    commerce_subcategory: str | None = Field(default=None, min_length=1, max_length=64)
+    decided: ProductSearchRequest | None = Field(default=None, exclude_if=lambda v: v is None)
+    """What they had already decided of it (seats, budget, size), so its answers
+    are checked against the products meeting it, not the whole kind."""
+
+
 class GoalKind(StrEnum):
     """What a customer is working toward (docs/goal-led-agents-plan.md)."""
 
@@ -1083,6 +1097,10 @@ class AgentStateV1(BaseModel):
         default=(), max_length=MAX_FINISHED_ROOMS, exclude_if=lambda v: not v
     )
     """Rooms they have finished, oldest first (CLAUDE.md 36)."""
+
+    kind_asked: KindAsked | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The kind last asked about, for checking the answers offered about it.
+    Left out while unset, so every saved session still reads."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

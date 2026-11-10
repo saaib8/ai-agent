@@ -56,6 +56,7 @@ from app.schemas.query import (
     PlanarDimensionSemantics,
     QueryInterpretation,
     RankingLean,
+    RequirementFamily,
     ResolvedSearch,
     SemanticPreference,
     UnresolvedAttribute,
@@ -309,12 +310,24 @@ class QueryUnderstandingService:
             planar_dimension=dimensions.planar_semantics,
         )
 
-        unsupported = tuple(dict.fromkeys(interpretation.unsupported_requirements))
+        wording = (interpretation.semantic_text or "").strip() or None
+        # A material is never unenforceable: it ranks through the wording.
+        unsupported = tuple(
+            dict.fromkeys(
+                family
+                for family in interpretation.unsupported_requirements
+                if family is not RequirementFamily.MATERIAL
+            )
+        )
         if unsupported:
             # The request is still executable; what it cannot do is honour the
             # material or size the customer named.
             return UnsupportedRequirement(
-                request=request, semantics=semantics, unsupported=unsupported
+                request=request,
+                semantics=semantics,
+                unsupported=unsupported,
+                semantic_preferences=preferences,
+                semantic_text=wording,
             )
         if dimensions.unsupported:
             # The measurement was clear; this catalog's axes cannot answer it.
@@ -323,6 +336,8 @@ class QueryUnderstandingService:
                 request=request,
                 semantics=semantics,
                 unsupported_dimensions=dimensions.unsupported,
+                semantic_preferences=preferences,
+                semantic_text=wording,
             )
         if unresolved:
             # They were strict about something no filter can guarantee. Settle
@@ -512,13 +527,22 @@ class QueryUnderstandingService:
                     reason=f"{attribute.family} value outside the approved vocabulary"
                 )
 
-            if attribute.strength is not ConstraintStrength.LOCKED:
+            # A material is a leaning however firmly it was said: the main
+            # material is one of a piece's materials, so it never filters.
+            if attribute.strength is not ConstraintStrength.LOCKED or (
+                attribute.family is AttributeFamily.MATERIAL
+            ):
                 preferences.append(
                     SemanticPreference(
                         family=attribute.family,
                         raw_value=attribute.raw_value,
                         canonical_value=canonical,
-                        strength=attribute.strength,
+                        strength=(
+                            ConstraintStrength.PREFERRED
+                            if attribute.family is AttributeFamily.MATERIAL
+                            and attribute.strength is ConstraintStrength.LOCKED
+                            else attribute.strength
+                        ),
                     )
                 )
             elif canonical is not None:

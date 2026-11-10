@@ -27,6 +27,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from pydantic import JsonValue, ValidationError
 
+from app.agents.chip_check import chips_not_in_stock
 from app.agents.context import ToolContext
 from app.agents.figures import (
     figure_table,
@@ -283,6 +284,34 @@ class AgentLoop:
                                 {
                                     "rules_broken": list(rules),
                                     # Not to be sent again: they already ran.
+                                    **({"done_already": done_this_step} if done_this_step else {}),
+                                },
+                            )
+                        )
+                        continue
+                    off_the_shelf = (
+                        await chips_not_in_stock(args.choices, work, context)
+                        if agent is AgentPersona.SARA and args.choices
+                        else []
+                    )
+                    if off_the_shelf:
+                        # A chip promises what it names is there to be had:
+                        # sent back once, like a figure no tool gave.
+                        budget.correct(agent=agent.value, reason_detail="chips not in stock")
+                        trace.add(TraceEvent(agent.value, "tool", name, 0, "invalid"))
+                        exchange.append(
+                            _answer(
+                                call_id,
+                                ToolStatus.INVALID,
+                                "chips_not_in_stock",
+                                {
+                                    "not_carried": list[JsonValue](off_the_shelf),
+                                    "rule": (
+                                        "A chip names only a colour, style or material "
+                                        "the store carries for this kind - from "
+                                        "ask_about's this_store_has or the cards. Offer "
+                                        "those, or ask without such chips."
+                                    ),
                                     **({"done_already": done_this_step} if done_this_step else {}),
                                 },
                             )

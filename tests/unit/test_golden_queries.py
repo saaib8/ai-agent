@@ -141,9 +141,10 @@ def test_every_expectation_is_well_formed(case: dict[str, Any]) -> None:
 
 def test_every_evaluation_group_is_represented() -> None:
     outcomes = {case["outcome"] for case in CASES}
+    # No "unsupported": its last case was a material, which now orders the
+    # results instead (CLAUDE.md 5, 12.3).
     assert outcomes == {
-        "resolved", "clarification", "unsupported", "unsupported_dimension",
-        "unresolved", "any",
+        "resolved", "clarification", "unsupported_dimension", "unresolved", "any",
     }
 
     # Every reason the service can return has a live case, so a new one cannot
@@ -151,11 +152,11 @@ def test_every_evaluation_group_is_represented() -> None:
     reasons = {c.get("reason") for c in CASES if c["outcome"] == "clarification"}
     assert reasons == {reason.value for reason in ClarificationReason}
 
-    # Colour and style became structured filters or preferences in M8A, and
-    # dimensions became a deterministic filter in M8B. Material alone remains
-    # under the generic unsupported path.
+    # Colour and style became structured filters or preferences in M8A,
+    # dimensions a deterministic filter in M8B, and a material now orders the
+    # results: nothing is left on the generic unsupported path.
     families = {f for c in CASES for f in c.get("unsupported", [])}
-    assert families == {RequirementFamily.MATERIAL.value}
+    assert families == set()
     assert RequirementFamily.COLOR.value not in families
     assert RequirementFamily.STYLE.value not in families
     assert RequirementFamily.DIMENSIONS.value not in families
