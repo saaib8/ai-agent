@@ -707,6 +707,17 @@ shown.
 - **The card buttons**: Select adds to the cart (36); Like keeps it in the
   liked list (`max_likes`, a quiet taste signal, not a pick); More like this is
   the similarity search.
+- **"Not this one" is remembered** (docs/shopper-memory.md): `leave_out_product`
+  keeps it in `turned_down_product_ids` (30, newest kept), and every later
+  search leaves it out - Sara's and their pages, more like this, what goes with
+  a pick, a room's pieces and a piece's options - until they like it, add it or
+  ask to see it (`product_details` on a `turned_down_product`, which takes it
+  back). Only the search as run leaves it out; the search on record is the one
+  they asked for, so its pages still page. What was shown is kept in
+  `seen_product_ids` (50), never hiding anything, so "the lamp I saw before" is
+  `seen_before`. Both are named in the order they happened in every brief
+  (`turned_down`, the latest 12 of `seen_before`), travel with the shopper's cart from chat to chat
+  (36), and log one `shopper_product_event` per change.
 - **A group no single piece seats** ("sofas for 10") is chosen one piece at a
   time, never as a ready-made combination: Sara opens a seating goal (10.5),
   asks what the first piece should seat, and after each add the goal says how
@@ -2694,7 +2705,8 @@ keeps a cart of its own.
   Every saved turn keeps that shopper's cart and liked list beside their conversations
   (`session.shopper_cart_ttl_s`, seven days), and every conversation they load
   - a new chat, or one they come back to - holds it (`app/services/shopper_cart.py`),
-  so "what's in my cart?" answers the same in every chat. An id naming no
+  so "what's in my cart?" answers the same in every chat. What they turned
+  down and were shown travel with it (10.2). An id naming no
   shopper (the console, direct calls) keeps its own cart.
 - **The store's own cart is the truth** (`salla.mirror_store_cart`, on by
   default). The shopper can change Salla's cart on Salla's own page - remove a

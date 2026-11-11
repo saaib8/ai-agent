@@ -106,6 +106,31 @@ class LikedProduct(BaseModel):
     position: int | None = Field(default=None, ge=1)
 
 
+class TurnedDownProduct(BaseModel):
+    """ "the sofa I passed on", "the one I said no to" - a product they turned
+    down, numbered in the order they turned them down, as the brief's
+    `turned_down` lists them.
+
+    Without a position it means the only one, and is a question when there are
+    several."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["turned_down_product"] = "turned_down_product"
+    position: int | None = Field(default=None, ge=1)
+
+
+class SeenBefore(BaseModel):
+    """ "the lamp I saw before", "the one from yesterday" - a product shown to
+    them earlier, numbered in the order they saw them, as the brief's
+    `seen_before` lists them, in this chat or an earlier one."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["seen_before"] = "seen_before"
+    position: int = Field(ge=1)
+
+
 class PresentedAttributeMatch(BaseModel):
     """ "the beige one" - resolved against freshly hydrated presented products."""
 
@@ -150,6 +175,8 @@ ProductReferenceSelector = Annotated[
     | FocusedProduct
     | SoleSelectedProduct
     | LikedProduct
+    | TurnedDownProduct
+    | SeenBefore
     | PresentedAttributeMatch
     | PresentedExtremum,
     BeforeValidator(_must_declare_its_kind),

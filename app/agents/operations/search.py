@@ -28,6 +28,7 @@ from app.schemas.retailer import RetailerContext
 from app.services.agent_state import apply_update, commit_search_results, remember_measurements
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.search_pipeline import ProductSearchPipeline
+from app.services.shopper_memory import log_shopper_event
 from app.taxonomy.seating import SeatingSemantics
 
 logger = get_logger(__name__)
@@ -158,7 +159,7 @@ class SearchRunner:
     ) -> SearchRun:
         try:
             execution = await self._pipeline.execute(
-                composed.resolved,
+                _leaving_out_turned_down(composed.resolved, state),
                 context,
                 dropped_constraints=composed.dropped_constraints,
                 earlier_sizes_applied=composed.earlier_sizes_applied,
@@ -167,6 +168,7 @@ class SearchRunner:
         except _UNAVAILABLE:
             logger.warning("agent_search_unavailable", store_id=context.store_id)
             return SearchRun(state=state, grounding=None)
+        log_shopper_event("seen", context, execution.presented_product_ids)
         candidate = composed.candidate
         promoted = apply_update(
             state,
@@ -207,6 +209,24 @@ class SearchRunner:
         return composed.model_copy(
             update={"resolved": composed.resolved.model_copy(update={"request": widened})}
         )
+
+
+def _leaving_out_turned_down(resolved: ResolvedSearch, state: AgentStateV1) -> ResolvedSearch:
+    """The search as run, leaving out what they turned down (CLAUDE.md 10.2).
+    Only what runs: the search kept on record stays the one they asked for, so
+    the same search stated again is still its next page."""
+    turned_down = state.product_interaction.turned_down_product_ids
+    if not turned_down:
+        return resolved
+    request = resolved.request
+    left_out = tuple(dict.fromkeys((*request.exclude_product_ids, *turned_down)))
+    return resolved.model_copy(
+        update={
+            "request": request.model_copy(
+                update={"exclude_product_ids": left_out[-MAX_EXCLUDED_PRODUCT_IDS:]}
+            )
+        }
+    )
 
 
 def _same_search(candidate: ActiveSearchState, active: ActiveSearchState) -> bool:

@@ -390,6 +390,8 @@ def test_the_provider_structure_stays_intact_as_the_schema_grows() -> None:
         "FocusedProduct",
         "SoleSelectedProduct",
         "LikedProduct",
+        "TurnedDownProduct",
+        "SeenBefore",
         "PresentedAttributeMatch",
         "PresentedExtremum",
     }

@@ -42,6 +42,7 @@ from app.schemas.agent_brief import (
     WallBrief,
 )
 from app.schemas.agent_state import (
+    SEEN_NAMED,
     AgentStateV1,
     GoalKind,
     OfferedCombination,
@@ -85,6 +86,8 @@ async def session_brief(
                 *interaction.selected_product_ids,
                 *interaction.compared_product_ids,
                 *interaction.liked_product_ids,
+                *interaction.turned_down_product_ids,
+                *interaction.seen_product_ids[-SEEN_NAMED:],
                 *((interaction.focused_product_id,) if interaction.focused_product_id else ()),
                 *_seating_products(seating),
                 *(pid for goal in state.goals for pid in goal.members),
@@ -137,6 +140,8 @@ async def session_brief(
         room=_room(state, room_plan),
         finished_rooms=_finished(state) or None,
         liked=numbered(interaction.liked_product_ids) or None,
+        turned_down=numbered(interaction.turned_down_product_ids) or None,
+        seen_before=numbered(interaction.seen_product_ids[-SEEN_NAMED:]) or None,
         taste=_taste(state),
         saved_sizes=_saved_sizes(state) or None,
         pending=_pending(state, by_id, room_plan),

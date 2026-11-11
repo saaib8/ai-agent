@@ -34,9 +34,15 @@ from app.schemas.agent_decision import (
     ProductReferenceSelector,
     SoleSelectedProduct,
 )
-from app.schemas.agent_state import AgentStateV1
+from app.schemas.agent_state import SEEN_NAMED, AgentStateV1
 from app.schemas.product import ProductRow
-from app.schemas.product_reference import ComparedOrdinal, LikedProduct, PickedOrdinal
+from app.schemas.product_reference import (
+    ComparedOrdinal,
+    LikedProduct,
+    PickedOrdinal,
+    SeenBefore,
+    TurnedDownProduct,
+)
 from app.schemas.resolution import (
     ReferenceFailureReason,
     ReferenceOutcome,
@@ -136,6 +142,10 @@ class ProductReferenceResolver:
                 return await self._sole_selected(state, context)
             case LikedProduct():
                 return await self._liked(selector, state, context)
+            case TurnedDownProduct():
+                return await self._turned_down(selector, state, context)
+            case SeenBefore():
+                return await self._seen(selector, state, context)
             case PresentedAttributeMatch():
                 return await self._by_attribute(selector, state, context)
             case PresentedExtremum():
@@ -239,6 +249,31 @@ class ProductReferenceResolver:
         if selector.position > len(liked):
             return _unresolved(ReferenceFailureReason.LIKED_ORDINAL_OUT_OF_RANGE)
         return await self._verify(liked[selector.position - 1], context)
+
+    async def _turned_down(
+        self, selector: TurnedDownProduct, state: AgentStateV1, context: RetailerContext
+    ) -> ReferenceOutcome:
+        """A product they turned down, in the order they turned them down."""
+        turned = state.product_interaction.turned_down_product_ids
+        if not turned:
+            return _unresolved(ReferenceFailureReason.NO_TURNED_DOWN_PRODUCT)
+        if selector.position is None:
+            if len(turned) > 1:
+                return _unresolved(ReferenceFailureReason.SEVERAL_TURNED_DOWN_PRODUCTS)
+            return await self._verify(turned[0], context)
+        if selector.position > len(turned):
+            return _unresolved(ReferenceFailureReason.TURNED_DOWN_ORDINAL_OUT_OF_RANGE)
+        return await self._verify(turned[selector.position - 1], context)
+
+    async def _seen(
+        self, selector: SeenBefore, state: AgentStateV1, context: RetailerContext
+    ) -> ReferenceOutcome:
+        """A product shown to them before, in the order they saw them - "the
+        second lamp I saw" is the second lamp of the list as it was shown."""
+        seen = state.product_interaction.seen_product_ids[-SEEN_NAMED:]
+        if selector.position > len(seen):
+            return _unresolved(ReferenceFailureReason.SEEN_ORDINAL_OUT_OF_RANGE)
+        return await self._verify(seen[selector.position - 1], context)
 
     # ── what they can see ───────────────────────────────────────────────────
 

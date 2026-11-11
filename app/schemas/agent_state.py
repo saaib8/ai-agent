@@ -288,6 +288,18 @@ MAX_LIKED = 50
 MAX_EXPLORED = 10
 """How many More like this taps are remembered as a taste signal - the newest."""
 
+
+MAX_TURNED_DOWN = 30
+"""Products they turned down that later searches leave out - the newest kept."""
+
+MAX_SEEN = 50
+"""Products shown to them that can be found again - the newest kept."""
+
+SEEN_NAMED = 12
+"""How many of the latest products shown are named in every brief, and so can
+be referred to: enough to find "the one from before", few enough to keep each
+turn small."""
+
 MAX_CART_QUANTITY = 100
 """The schema's ceiling on how many of one product the cart holds;
 configuration may allow fewer (`customer_agent.cart_max_quantity`)."""
@@ -363,6 +375,19 @@ class ProductInteractionState(BaseModel):
     the current list, and nothing but a tick reads these.
     """
 
+    turned_down_product_ids: tuple[int, ...] = Field(
+        default=(), max_length=MAX_TURNED_DOWN, exclude_if=lambda v: not v
+    )
+    """Products they turned down ("not this one"), newest last: every later
+    search leaves them out, until they like one, add it or ask to see it again.
+    Kept with the shopper across chats, like the cart."""
+
+    seen_product_ids: tuple[int, ...] = Field(
+        default=(), max_length=MAX_SEEN, exclude_if=lambda v: not v
+    )
+    """Products shown to them, newest last, so "the sofa I saw before" can be
+    found again. Never leaves anything out. Kept with the shopper across chats."""
+
     compared_product_ids: tuple[int, ...] = ()
     """The products of the comparison currently on screen, in column order.
 
@@ -390,6 +415,8 @@ class ProductInteractionState(BaseModel):
         "selected_product_ids",
         "liked_product_ids",
         "explored_product_ids",
+        "turned_down_product_ids",
+        "seen_product_ids",
         "compared_product_ids",
     )
     @classmethod
@@ -440,6 +467,9 @@ class ProductInteractionState(BaseModel):
             | set(self.selected_product_ids)
             | set(self.compared_product_ids)
             | {product_id for entry in self.earlier_lists for product_id in entry.product_ids}
+            # Found again from what they turned down or saw before.
+            | set(self.turned_down_product_ids)
+            | set(self.seen_product_ids)
         )
         if self.focused_product_id not in known:
             raise ValueError("focused_product_id must be a presented or selected product")

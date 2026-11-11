@@ -53,7 +53,11 @@ from app.schemas.design_discovery import (
     DesignNeedSkipReason,
 )
 from app.schemas.design_override import DesignNeedSearchOverride
-from app.schemas.discovery import ProductSearchRequest, SeatingCapacityConstraint
+from app.schemas.discovery import (
+    MAX_EXCLUDED_PRODUCT_IDS,
+    ProductSearchRequest,
+    SeatingCapacityConstraint,
+)
 from app.schemas.product import ProductCandidate
 from app.schemas.query import (
     ConstraintSemantics,
@@ -128,6 +132,7 @@ class DesignDiscoveryService:
         context: RetailerContext,
         *,
         overrides: Mapping[int, DesignNeedSearchOverride] | None = None,
+        leave_out: tuple[int, ...] = (),
     ) -> DesignDiscoveryResult:
         """One candidate pool per need, in the plan's own order.
 
@@ -162,7 +167,14 @@ class DesignDiscoveryService:
         ) -> tuple[DesignNeedCandidates, float]:
             piece_started = time.perf_counter()
             entry = await self._for_need(
-                pipeline, need, index, capabilities, request, context, (overrides or {}).get(index)
+                pipeline,
+                need,
+                index,
+                capabilities,
+                request,
+                context,
+                (overrides or {}).get(index),
+                leave_out,
             )
             ms = round((time.perf_counter() - piece_started) * 1000, 1)
             logger.info(
@@ -316,6 +328,7 @@ class DesignDiscoveryService:
         request: InteriorDesignRequest,
         context: RetailerContext,
         override: DesignNeedSearchOverride | None = None,
+        leave_out: tuple[int, ...] = (),
     ) -> DesignNeedCandidates:
         """Validate the need, then search for it exactly as stated.
 
@@ -354,7 +367,7 @@ class DesignDiscoveryService:
             return DesignNeedCandidates(need_index=index, need=need, pool=pool)
 
         pool = await pipeline.execute_candidate_pool(
-            self._resolve(need, request, override), context
+            self._resolve(need, request, override, leave_out), context
         )
         if need.design is None:
             return DesignNeedCandidates(need_index=index, need=need, pool=pool)
@@ -466,6 +479,7 @@ class DesignDiscoveryService:
         need: DesignCategoryNeed,
         request: InteriorDesignRequest,
         override: DesignNeedSearchOverride | None = None,
+        leave_out: tuple[int, ...] = (),
     ) -> ResolvedSearch:
         """The need, copied into a search. Nothing added, nothing derived.
 
@@ -521,7 +535,15 @@ class DesignDiscoveryService:
                 # turned down for this role. Neither was authored by a model,
                 # and neither is a design fact (CLAUDE.md 12.1).
                 price=override.price if override else None,
-                exclude_product_ids=(override.exclude_product_ids if override else ()),
+                exclude_product_ids=tuple(
+                    dict.fromkeys(
+                        (
+                            *(override.exclude_product_ids if override else ()),
+                            # What the customer turned down never fills a piece.
+                            *leave_out,
+                        )
+                    )
+                )[-MAX_EXCLUDED_PRODUCT_IDS:],
             ),
             semantics=_semantics_for(need, self._capacity(need)),
             # Colour and style the customer leaned towards, reaching ranking

@@ -37,7 +37,9 @@ from app.schemas.product_reference import (
     PresentedExtremum,
     PresentedOrdinal,
     ProductReferenceSelector,
+    SeenBefore,
     SoleSelectedProduct,
+    TurnedDownProduct,
 )
 from app.schemas.refinement import (
     PriceRefinement,
@@ -59,6 +61,8 @@ SELECTOR_MEMBERS = (
     "FocusedProduct",
     "SoleSelectedProduct",
     "LikedProduct",
+    "TurnedDownProduct",
+    "SeenBefore",
     "PresentedAttributeMatch",
     "PresentedExtremum",
 )
@@ -206,6 +210,9 @@ VALID_SELECTORS = (
     SoleSelectedProduct(),
     LikedProduct(),
     LikedProduct(position=2),
+    TurnedDownProduct(),
+    TurnedDownProduct(position=2),
+    SeenBefore(position=1),
     PresentedAttributeMatch(family=AttributeFamily.COLOR, value="Beige"),
     PresentedExtremum(direction=ExtremumDirection.LOWEST),
 )
