@@ -140,14 +140,29 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
             else:
                 facts["other_kinds"] = "store_shelf lists every other kind the store stocks"
             if args.planned_kinds:
-                order = {kind: position for position, kind in enumerate(args.planned_kinds)}
-                companions = [c for c in companions if c.commerce_subcategory in order]
-                if not companions:
-                    return ToolOutcome(status=ToolStatus.REFUSED, code="planned_kinds_unavailable")
-                companions.sort(key=lambda item: order[item.commerce_subcategory])
-                kinds = [entry for entry in kinds if entry["kind"] in order]
-                kinds.sort(key=lambda entry: order[entry["kind"]])
+                baseline = [
+                    companion
+                    for companion in companions
+                    if companion.commerce_subcategory not in cart_kinds
+                ][:CROSS_SELL_GRID_KINDS]
+                planned = [
+                    companion
+                    for name in args.planned_kinds
+                    if (
+                        companion := _stocked_kind(services, capabilities, name)
+                    ) is not None
+                    and companion.commerce_subcategory not in anchor_kinds
+                    and companion.commerce_subcategory not in cart_kinds
+                ]
+                companions = _unique([*planned, *baseline])[: max(len(baseline), len(planned))]
                 facts["design_plan_applied"] = True
+                unavailable = [
+                    name
+                    for name in args.planned_kinds
+                    if name not in {item.commerce_subcategory for item in planned}
+                ]
+                if unavailable:
+                    facts["planned_kinds_replaced"] = unavailable
             grid = await _cross_sell_grid(
                 anchor,
                 [c for c in companions if c.commerce_subcategory not in cart_kinds],

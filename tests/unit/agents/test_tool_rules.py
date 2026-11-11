@@ -511,6 +511,52 @@ async def test_cross_sell_shows_one_product_per_complementary_kind() -> None:
     assert listed.state.product_interaction.presented_product_ids == (20, 21)
 
 
+async def test_noras_unreviewed_stocked_kind_is_shown_and_reviewed_kinds_fill_the_grid() -> None:
+    from app.taxonomy.complements import load_complements
+
+    from tests.unit.agents.fakes import FakeCapabilities
+
+    pipeline = _PerKindPipeline(
+        {
+            "art-canvas": 24,
+            "center-table": 20,
+            "service-table": 22,
+            "carpet": 21,
+            "floor-lamp": 23,
+        }
+    )
+    services = agent_services(
+        pipeline=pipeline,
+        hydration=FakeHydration(available=(OFF_SCREEN, 20, 21, 22, 23, 24)),
+        capabilities=FakeCapabilities(
+            pairs=(
+                ("seating", "sofa"),
+                ("decor", "art-canvas"),
+                ("tables", "center-table"),
+                ("tables", "service-table"),
+                ("decor", "carpet"),
+                ("lighting", "floor-lamp"),
+            )
+        ),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
+    )
+    args = {
+        "which": {"kind": "picked_ordinal", "position": 1},
+        "planned_kinds": ["art-canvas", "center-table"],
+    }
+
+    listed = await _call("what_goes_with", args, _state(), services=services)
+
+    assert listed.payload is not None
+    assert [item["kind"] for item in listed.facts["suggestions"]] == [
+        "art-canvas",
+        "center-table",
+        "service-table",
+        "carpet",
+    ]
+
+
 async def test_cross_sell_falls_back_to_chips_when_nothing_is_in_stock() -> None:
     """When no complementary kind yields a product, there is no grid - just the
     chips, exactly as before - so the offer never shows an empty page."""

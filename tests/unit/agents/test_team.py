@@ -218,6 +218,34 @@ async def test_add_routes_sara_to_nora_to_salman_within_the_hop_limit() -> None:
     )
 
 
+async def test_select_add_notice_routes_even_when_sara_only_confirms() -> None:
+    supervisor = ScriptedChatModel(script=[transfer(SARA)])
+    sara = ScriptedChatModel(script=[reply("It is in your cart.")])
+    nora = ScriptedChatModel(
+        script=[
+            step(call("cross_sell_advice", "n1")),
+            step(call("hand_back", "n2", reason="needs_sales", to="salman")),
+        ]
+    )
+    salman = ScriptedChatModel(
+        script=[step(call("what_goes_with", "s1")), reply("Here are matching pieces.")]
+    )
+    team, loop = _team(supervisor, {SARA: sara, NORA: nora, SALMAN: salman})
+
+    result = await _run(
+        team,
+        loop,
+        _turn(message="I've added the Oak Center Table to my cart"),
+    )
+
+    assert result.owner is SALMAN
+    assert result.handoffs == (SARA, NORA, SALMAN)
+    assert [record.tool for record in result.work.records] == [
+        "cross_sell_advice",
+        "what_goes_with",
+    ]
+
+
 async def test_nora_cannot_bounce_straight_back_without_typed_advice() -> None:
     supervisor = ScriptedChatModel(
         script=[transfer(SALMAN), step(call("finish", "s2", reply_by="nora"))]

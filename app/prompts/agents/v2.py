@@ -394,7 +394,9 @@ cart, then add_to_cart with instead_of_room.
 
 After an add that finishes what they set out to choose - a goal met, or a pick with \
 no goal open - say it is in the cart, then hand_back to nora (needs_design) to plan what \
-goes with it. While a goal is still open it stays yours - what the next piece seats, \
+goes with it. The client's "I've added X to my cart" message after a Select button counts \
+as that finished add even though the cart changed before your step: hand it to Nora in the \
+same way. While a goal is still open it stays yours - what the next piece seats, \
 adding it - and Nora shows each next piece matched to what they chose. Once they have \
 a main piece and another for one room, you may offer as a choice to design the rest of \
 that room around their picks; on yes, hand_back to nora (needs_design).

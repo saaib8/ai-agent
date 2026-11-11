@@ -16,6 +16,7 @@ from app.schemas.catalog_overview import CatalogOverview, SeatingSpread, Subcate
 from app.services.room_design import PieceSpec, RoomDesignChecker, RoomDesignProblem
 from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
+from pydantic import ValidationError
 
 from tests.unit.agents.fakes import (
     ATTRIBUTES,
@@ -52,7 +53,7 @@ async def test_cross_sell_advice_records_a_pre_search_plan_for_salman() -> None:
     outcome = await tool.handler(
         tool.args.model_validate(
             {
-                "kinds": ["carpet", "coffee_table"],
+                "kinds": ["carpet", "center-table"],
                 "direction": "Warm neutrals with clean modern lines beside the sofa.",
             }
         ),
@@ -62,7 +63,7 @@ async def test_cross_sell_advice_records_a_pre_search_plan_for_salman() -> None:
 
     assert outcome.status == "ok"
     assert outcome.facts["reply_by"] == "salman"
-    assert outcome.facts["kinds"] == ["carpet", "coffee_table"]
+    assert outcome.facts["kinds"] == ["carpet", "center-table"]
     assert outcome.facts["direction"].startswith("Warm neutrals")
 
 
@@ -103,6 +104,16 @@ async def test_cross_sell_advice_deduplicates_kinds() -> None:
     assert outcome.status == "ok"
     assert outcome.facts["kinds"] == ["carpet"]
     assert outcome.facts["reply_by"] == "salman"
+
+
+def test_cross_sell_advice_only_accepts_approved_catalog_kinds() -> None:
+    tool = LOOP._registry.get("cross_sell_advice")
+    assert tool is not None
+
+    with pytest.raises(ValidationError):
+        tool.args.model_validate(
+            {"kinds": ["rug", "coffee-table"], "direction": "Keep it warm and modern."}
+        )
 
 
 def _shelf(category: str, kind: str, **extra: Any) -> SubcategoryShelf:

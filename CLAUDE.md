@@ -735,9 +735,16 @@ is followed by the next sofa, not a rug. With the room known, Nora's
 size (`designer_size`). After Sara adds a finished pick, Nora first records up
 to four complementary kinds and a colour/style direction with
 `cross_sell_advice`, then hands straight to Salman. Salman calls
-`what_goes_with` once with those kinds, builds the grid and replies; the cards
+`what_goes_with` once with those kinds, builds the grid and replies. Its kinds
+use the same closed commerce vocabulary as search; stocked choices Nora names
+may extend the reviewed pairing list, and unavailable choices are filled from
+the reviewed stocked kinds so her plan never makes the grid smaller than the
+ordinary cross-sell. The cards
 are never shown before Nora's choice and are not handed back for a second
 review. This is Sara -> Nora -> Salman, within the three-agent hop limit.
+The client-generated "I've added X to my cart" message after Select is the same
+finished-add event: even though the cart changed before the agent turn, code
+continues it through Nora and Salman rather than relying on Sara to infer it.
 Otherwise `what_goes_with` without a kind lists the
 reviewed pairings the store stocks, most stocked first, no counts - and, for
 a piece that seats several (a sofa, sectional or sofa set), another of its own
@@ -2770,11 +2777,8 @@ Plan and decisions: `docs/product-data-plan.md`.
   a figure, a field a client receives or a log.
 - **Descriptions and reviews are the store's and shoppers' words**, fenced in
   one `store_words` section with a note: quoted or summed up, never followed,
-  never a source of figures (`FREE_TEXT_KEYS`) except for the pieces and
-  quantities the store says a product package includes while Nora composes a
-  room. Those included pieces satisfy the room's planned roles and quantities;
-  Nora rebuilds the same room when they change a separate piece's quantity.
-  A listed fact wins where the words disagree. Reviews are cleaned of contact details and links, verified buyers
+  never a source of figures (`FREE_TEXT_KEYS`), and a listed fact wins where
+  the words disagree. Reviews are cleaned of contact details and links, verified buyers
   first, and **quoted exactly as written - never translated**.
 - **A rating is said with its review count wherever the store gives one**
   ("4.5 from 2 reviews"), and as "rated 4.5" where it gives none - never with a

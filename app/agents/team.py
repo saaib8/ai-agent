@@ -510,12 +510,7 @@ class AgentTeam:
                 agent is AgentPersona.NORA
                 and state.get("last") is AgentPersona.SARA
                 and state.get("need") == Need.DESIGN.value
-                and any(
-                    record.agent is AgentPersona.SARA
-                    and record.tool == "add_to_cart"
-                    and record.status is ToolStatus.OK
-                    for record in work.records
-                )
+                and (_added_this_turn(work) or _cart_add_notice(turn))
             )
             messages = agent_messages(
                 agent_instructions(agent),
@@ -548,6 +543,15 @@ class AgentTeam:
             )
             views = [*state["views"], view] if view is not state["view"] else state["views"]
             if isinstance(end, Responded):
+                if agent is AgentPersona.SARA and _cart_add_notice(turn):
+                    state["trace"].add(TraceEvent(agent.value, "handoff", "nora", 0))
+                    return {
+                        "handoffs": handoffs,
+                        "last": agent,
+                        "next": AgentPersona.NORA.value,
+                        "need": Need.DESIGN.value,
+                        "views": views,
+                    }
                 return {
                     "reply": end,
                     "handoffs": handoffs,
@@ -600,6 +604,23 @@ _NEED_FOR = {
 def _route(state: _GraphState) -> str:
     target = state.get("next", SUPERVISOR_ROLE)
     return target.split(":", 1)[0]
+
+
+def _added_this_turn(work: TurnWork) -> bool:
+    return any(
+        record.agent is AgentPersona.SARA
+        and record.tool == "add_to_cart"
+        and record.status is ToolStatus.OK
+        for record in work.records
+    )
+
+
+def _cart_add_notice(turn: TeamTurn) -> bool:
+    """The client-generated message after Select already changed the cart."""
+    said = turn.message.strip()
+    return (said.startswith("I've added the ") and said.endswith(" to my cart")) or said.startswith(
+        "أضفت هذا إلى سلتي"
+    )
 
 
 _STOPPED = (

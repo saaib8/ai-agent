@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
-from typing import Any, Literal, cast
+from types import UnionType
+from typing import Any, Literal, Union, cast, get_args, get_origin
 
 from pydantic import Field, create_model, model_validator
 
@@ -219,24 +220,53 @@ class DesignNotesArgs(ToolArgs):
     next_sizes: list[NextSize] = Field(default_factory=list, max_length=MAX_NEXT_SIZES)
 
 
-class CrossSellAdviceArgs(ToolArgs):
-    kinds: list[str] = Field(
-        min_length=1,
-        max_length=4,
-        description="Complementary catalog kinds Salman should show, in priority order.",
-    )
-    direction: str = Field(
-        min_length=1,
-        max_length=200,
-        description="The colours, styles and visual relationship Salman should aim for.",
+def _approved_subcategories(schemas: ToolSchemas) -> tuple[str, ...]:
+    """The same closed taxonomy vocabulary used by search_products."""
+    annotation = schemas.interpretation.model_fields["commerce_subcategory"].annotation
+
+    def literals(value: Any) -> tuple[str, ...]:
+        origin = get_origin(value)
+        if origin is Literal:
+            return tuple(item for item in get_args(value) if isinstance(item, str))
+        if origin in (Union, UnionType):
+            return tuple(item for member in get_args(value) for item in literals(member))
+        return ()
+
+    return literals(annotation)
+
+
+def cross_sell_advice_args(schemas: ToolSchemas) -> type[ToolArgs]:
+    kind = one_of(_approved_subcategories(schemas))
+    return cast(
+        type[ToolArgs],
+        create_model(
+            "CrossSellAdviceArgs",
+            __base__=ToolArgs,
+            kinds=(
+                list_of(kind),
+                Field(
+                    min_length=1,
+                    max_length=4,
+                    description="Complementary catalog kinds to show, in priority order.",
+                ),
+            ),
+            direction=(
+                str,
+                Field(
+                    min_length=1,
+                    max_length=200,
+                    description="The colours, styles and visual relationship to aim for.",
+                ),
+            ),
+        ),
     )
 
 
-def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[CrossSellAdviceArgs]:
+def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
     """Record Nora's bounded consultation while Salman remains reply owner."""
 
     async def advise(
-        args: CrossSellAdviceArgs, context: ToolContext, work: TurnWork
+        args: Any, context: ToolContext, work: TurnWork
     ) -> ToolOutcome:
         if not figure_free(args.direction):
             return ToolOutcome(status=ToolStatus.INVALID, code="direction_states_a_figure")
@@ -258,7 +288,7 @@ def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[CrossSellAdviceArgs
             "colour/style direction that should connect them to the customer's chosen piece. "
             "After it, hand_back needs_sales to Salman; he builds the grid and replies."
         ),
-        args=CrossSellAdviceArgs,
+        args=cross_sell_advice_args(schemas),
         owners=NORA,
         handler=advise,
     )
