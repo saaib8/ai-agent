@@ -25,6 +25,8 @@ from app.schemas.agent_state import (
     MAX_EARLIER_LISTS,
     MAX_GOAL_MEMBERS,
     MAX_GOALS,
+    MAX_SEEN,
+    MAX_TURNED_DOWN,
     ActiveSearchState,
     AgentStateV1,
     BundleItemState,
@@ -152,6 +154,8 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
             cart_quantities=interaction.cart_quantities,
             liked_product_ids=interaction.liked_product_ids,
             explored_product_ids=interaction.explored_product_ids,
+            turned_down_product_ids=interaction.turned_down_product_ids,
+            seen_product_ids=_newest((*interaction.seen_product_ids, *product_ids), MAX_SEEN),
             # Carried across the new results deliberately. A comparison stays
             # on screen while fresh results arrive behind it, and "the one from
             # the comparison" has to keep meaning the same product - which is
@@ -436,6 +440,11 @@ def _interaction(
     else:
         focus = current.focused_product_id
     selected = apply_items(current.selected_product_ids, update.selected_product_ids)
+    liked = apply_items(current.liked_product_ids, update.liked_product_ids)
+    # Liking or adding a product they had turned down takes the "no" back.
+    chosen = (set(selected) - set(current.selected_product_ids)) | (
+        set(liked) - set(current.liked_product_ids)
+    )
     return ProductInteractionState(
         presented_product_ids=current.presented_product_ids,
         presented_search_revision=current.presented_search_revision,
@@ -443,8 +452,12 @@ def _interaction(
         focused_product_id=focus,
         selected_product_ids=selected,
         cart_quantities=cart_quantities(current.cart_quantities, update.cart_quantities, selected),
-        liked_product_ids=apply_items(current.liked_product_ids, update.liked_product_ids),
+        liked_product_ids=liked,
         explored_product_ids=apply_items(current.explored_product_ids, update.explored_product_ids),
+        turned_down_product_ids=tuple(
+            p for p in current.turned_down_product_ids if p not in chosen
+        ),
+        seen_product_ids=current.seen_product_ids,
         # Replaced wholesale, never merged: a comparison is one table, and two
         # sets of columns at once would restore the ambiguity it exists to
         # remove. `None` keeps the table already on screen.
@@ -909,6 +922,42 @@ def _edited(item: BundleItemState, operation: BundleOperation) -> BundleItemStat
             return item
 
 
+def turn_down(state: AgentStateV1, product_id: int) -> AgentStateV1:
+    """A product they turned down, newest last: later searches leave it out
+    (CLAUDE.md 10.2). Turned down again, it moves to the end."""
+    interaction = state.product_interaction
+    kept = _newest(
+        (*(p for p in interaction.turned_down_product_ids if p != product_id), product_id),
+        MAX_TURNED_DOWN,
+    )
+    return state.model_copy(
+        update={
+            "product_interaction": interaction.model_copy(update={"turned_down_product_ids": kept})
+        }
+    )
+
+
+def take_back(state: AgentStateV1, product_ids: Sequence[int]) -> AgentStateV1:
+    """Products they turned down and now want to see again: searches may show
+    them once more."""
+    interaction = state.product_interaction
+    kept = tuple(p for p in interaction.turned_down_product_ids if p not in set(product_ids))
+    if kept == interaction.turned_down_product_ids:
+        return state
+    return state.model_copy(
+        update={
+            "product_interaction": interaction.model_copy(update={"turned_down_product_ids": kept})
+        }
+    )
+
+
+def _newest(product_ids: Sequence[int], limit: int) -> tuple[int, ...]:
+    """Each product once, at its newest place, the newest `limit` kept."""
+    last = {product_id: n for n, product_id in enumerate(product_ids)}
+    ordered = sorted(last, key=lambda product_id: last[product_id])
+    return tuple(ordered[-limit:])
+
+
 def note_kind_asked(
     state: AgentStateV1,
     category: str,
@@ -917,9 +966,7 @@ def note_kind_asked(
 ) -> AgentStateV1:
     """The kind Sara is asking about, and what of it is already decided,
     replacing the last one."""
-    asked = KindAsked(
-        commerce_category=category, commerce_subcategory=subcategory, decided=decided
-    )
+    asked = KindAsked(commerce_category=category, commerce_subcategory=subcategory, decided=decided)
     if state.kind_asked == asked:
         return state
     return state.model_copy(update={"kind_asked": asked})

@@ -71,6 +71,11 @@ class ReferenceFailureReason(StrEnum):
     """"The one I liked" when several are liked. Ambiguous, not empty."""
     LIKED_ORDINAL_OUT_OF_RANGE = "liked_ordinal_out_of_range"
 
+    NO_TURNED_DOWN_PRODUCT = "no_turned_down_product"
+    SEVERAL_TURNED_DOWN_PRODUCTS = "several_turned_down_products"
+    TURNED_DOWN_ORDINAL_OUT_OF_RANGE = "turned_down_ordinal_out_of_range"
+    SEEN_ORDINAL_OUT_OF_RANGE = "seen_ordinal_out_of_range"
+
     NO_ATTRIBUTE_MATCH = "no_attribute_match"
     SEVERAL_ATTRIBUTE_MATCHES = "several_attribute_matches"
     UNAPPROVED_ATTRIBUTE_VALUE = "unapproved_attribute_value"

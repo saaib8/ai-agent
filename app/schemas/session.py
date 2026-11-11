@@ -135,3 +135,9 @@ class ShopperCart(BaseModel):
     """Their liked list (♡), which follows them too, oldest first. None in a
     record kept before likes were: the conversation then keeps its own, never
     an empty list read as "nothing liked"."""
+    turned_down_product_ids: tuple[int, ...] | None = None
+    """What they turned down, newest last - left out of their searches in every
+    chat. None in a record kept before it was: the conversation keeps its own."""
+    seen_product_ids: tuple[int, ...] | None = None
+    """What they were shown, newest last - found again from any chat. None in a
+    record kept before it was."""

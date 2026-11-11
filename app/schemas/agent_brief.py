@@ -283,6 +283,13 @@ class SessionBrief(_Brief):
     finished_rooms: tuple[FinishedRoomBrief, ...] | None = None
     liked: tuple[BriefProduct, ...] | None = None
     """Numbered by their place in the liked list - what a `liked` reference names."""
+    turned_down: tuple[BriefProduct, ...] | None = None
+    """What they turned down, in the order they did - what a `turned_down_product`
+    reference names. Every search leaves these out until they like one, add
+    it or ask to see it again."""
+    seen_before: tuple[BriefProduct, ...] | None = None
+    """The latest products shown to them, in the order they saw them, in this
+    chat or an earlier one - what a `seen_before` reference names."""
     taste: TasteBrief | None = None
     saved_sizes: tuple[SavedSizes, ...] | None = None
     pending: PendingBrief | None = None

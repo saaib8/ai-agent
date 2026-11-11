@@ -77,6 +77,8 @@ from app.services.agent_state import (
     designer_size,
     note_kind_asked,
     remember_next_sizes,
+    take_back,
+    turn_down,
 )
 from app.services.design_checks import figure_free, stocked_direction
 from app.services.fit import room_fit
@@ -84,6 +86,7 @@ from app.services.grounding_builder import to_grounded_product
 from app.services.liked_look import with_liked_look
 from app.services.product_details import description_for
 from app.services.query_document import ranking_words
+from app.services.shopper_memory import log_shopper_event
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.words import customer_words
 
@@ -102,8 +105,9 @@ class ProductRef(ToolArgs):
         description=(
             "Which product: a card on screen by position (presented_ordinal), a pick in the "
             "cart (picked_ordinal), a comparison column (compared_ordinal), a liked product "
-            "(liked_product), the one being discussed (focused_product), or a card by its "
-            "colour/style or as the cheapest/dearest on screen."
+            "(liked_product), one they turned down (turned_down_product), one shown to them "
+            "before (seen_before), the one being discussed (focused_product), or a card by "
+            "its colour/style or as the cheapest/dearest on screen."
         )
     )
 
@@ -896,7 +900,10 @@ def exclude_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
         product = await resolve_product(services, args.which, work, context)
         if isinstance(product, ToolOutcome):
             return product
-        run = await services.search.again_excluding((product,), work.staged, context.retailer)
+        # Remembered, so every later search leaves it out too.
+        turned = turn_down(work.staged, product)
+        log_shopper_event("turned_down", context.retailer, (product,))
+        run = await services.search.again_excluding((product,), turned, context.retailer)
         if run is None:
             return ToolOutcome(status=ToolStatus.REFUSED, code="no_search_on_screen")
         return await sorted_card_facts(search_outcome(run, {}), run, services, context)
@@ -1046,11 +1053,13 @@ def details_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
             **_listed_extras(found[0]),
             **await _store_words(services, product_id, context),
         }
-        return ToolOutcome(
-            facts=facts,
-            state=_focused(work.staged, product_id),
-            payload=ProductShown(product=product),
-        )
+        state = _focused(work.staged, product_id)
+        if product_id in state.product_interaction.turned_down_product_ids:
+            # Asking to see one they turned down takes the "no" back.
+            state = take_back(state, (product_id,))
+            log_shopper_event("taken_back", context.retailer, (product_id,))
+            facts = {**facts, "no_longer_turned_down": True}
+        return ToolOutcome(facts=facts, state=state, payload=ProductShown(product=product))
 
     return ZoryTool(
         name="product_details",
