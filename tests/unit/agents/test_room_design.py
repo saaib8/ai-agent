@@ -21,6 +21,7 @@ from tests.unit.agents.fakes import (
     ATTRIBUTES,
     CONTEXT,
     TAXONOMY,
+    FakeReferences,
     agent_services,
     real_loop,
     tool_context,
@@ -29,6 +30,86 @@ from tests.unit.agents.fakes import (
 SEATING = load_seating_semantics(taxonomy=TAXONOMY)
 CHECKER = RoomDesignChecker(TAXONOMY, ATTRIBUTES, SEATING)
 LOOP = real_loop()
+
+
+async def test_cross_sell_advice_is_typed_grounded_and_returns_to_salman() -> None:
+    from app.schemas.resolution import ResolvedProductReference
+
+    references = FakeReferences(default=ResolvedProductReference(product_id=10))
+    services = agent_services(references=references)
+    tool = LOOP._registry.get("cross_sell_advice")
+    assert tool is not None and tool.handler is not None
+    assert tool.owners == frozenset({AgentPersona.NORA})
+    work = TurnWork.starting(AgentStateV1())
+    work.working = AgentPersona.NORA
+
+    outcome = await tool.handler(
+        tool.args.model_validate(
+            {
+                "recommendations": [
+                    {
+                        "which": {"kind": "presented_ordinal", "position": 1},
+                        "verdict": "works",
+                        "why": "Its warm neutral finish connects with the sofa.",
+                    }
+                ]
+            }
+        ),
+        tool_context(services),
+        work,
+    )
+
+    assert outcome.status == "ok"
+    assert outcome.facts["reply_by"] == "salman"
+    assert outcome.facts["recommendations"][0]["product"]["name"] == "Sofa 10"
+    assert outcome.facts["recommendations"][0]["verdict"] == "works"
+
+
+async def test_cross_sell_advice_rejects_an_ungrounded_reason_figure() -> None:
+    tool = LOOP._registry.get("cross_sell_advice")
+    assert tool is not None and tool.handler is not None
+    work = TurnWork.starting(AgentStateV1())
+    work.working = AgentPersona.NORA
+
+    outcome = await tool.handler(
+        tool.args.model_validate(
+            {
+                "recommendations": [
+                    {
+                        "which": {"kind": "presented_ordinal", "position": 1},
+                        "verdict": "works",
+                        "why": "It is exactly 20 cm smaller.",
+                    }
+                ]
+            }
+        ),
+        tool_context(agent_services()),
+        work,
+    )
+
+    assert outcome.status == "invalid" and outcome.code == "why_states_a_figure"
+
+
+async def test_cross_sell_advice_can_reject_the_whole_grid_without_forcing_a_match() -> None:
+    tool = LOOP._registry.get("cross_sell_advice")
+    assert tool is not None and tool.handler is not None
+    work = TurnWork.starting(AgentStateV1())
+    work.working = AgentPersona.NORA
+
+    outcome = await tool.handler(
+        tool.args.model_validate(
+            {"none_reason": "Every card fights the chosen piece's cool, minimal look."}
+        ),
+        tool_context(agent_services()),
+        work,
+    )
+
+    assert outcome.status == "ok"
+    assert outcome.facts == {
+        "recommendations": [],
+        "none_suitable": "Every card fights the chosen piece's cool, minimal look.",
+        "reply_by": "salman",
+    }
 
 
 def _shelf(category: str, kind: str, **extra: Any) -> SubcategoryShelf:

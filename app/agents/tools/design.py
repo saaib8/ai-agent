@@ -44,7 +44,7 @@ from app.schemas.product import ProductCandidate
 from app.schemas.product_reference import ProductReferenceSelector
 from app.services.agent_state import remember_next_sizes, remember_placements
 from app.services.bundle_cards import group_bundle_cards
-from app.services.design_checks import usable_next_sizes
+from app.services.design_checks import figure_free, usable_next_sizes
 from app.services.fit import fit_checks, fit_words, floor_share, knows_room_size, room_spaces
 from app.services.room_design import (
     MAX_PIECE_QUANTITY,
@@ -217,6 +217,81 @@ def measure_fit_tool(schemas: ToolSchemas) -> ZoryTool[FitArgs]:
 class DesignNotesArgs(ToolArgs):
     placements: list[Placement] = Field(default_factory=list, max_length=MAX_PLACEMENTS)
     next_sizes: list[NextSize] = Field(default_factory=list, max_length=MAX_NEXT_SIZES)
+
+
+class CrossSellRecommendation(ToolArgs):
+    """One card Nora approves for Salman's cross-sell reply."""
+
+    which: ProductReferenceSelector
+    verdict: Literal["works", "works_with_a_tweak"]
+    why: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Why it works beside their chosen piece, in words without figures.",
+    )
+
+
+class CrossSellAdviceArgs(ToolArgs):
+    recommendations: list[CrossSellRecommendation] = Field(default_factory=list, max_length=4)
+    none_reason: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Why none of the shown cards works, only when recommendations is empty.",
+    )
+
+    @model_validator(mode="after")
+    def _advice_or_reason(self) -> CrossSellAdviceArgs:
+        if bool(self.recommendations) == bool(self.none_reason):
+            raise ValueError("give recommendations or a none_reason, never both")
+        return self
+
+
+def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[CrossSellAdviceArgs]:
+    """Record Nora's bounded consultation while Salman remains reply owner."""
+
+    async def advise(
+        args: CrossSellAdviceArgs, context: ToolContext, work: TurnWork
+    ) -> ToolOutcome:
+        if not figure_free(args.none_reason, *(item.why for item in args.recommendations)):
+            return ToolOutcome(status=ToolStatus.INVALID, code="why_states_a_figure")
+        products: list[ProductCandidate] = []
+        for item in args.recommendations:
+            product_id = await resolve_product(context.services, item.which, work, context)
+            if isinstance(product_id, ToolOutcome):
+                return product_id
+            found = await hydrated(context.services, (product_id,), context)
+            if not found:
+                return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
+            products.append(found[0])
+        return ToolOutcome(
+            facts={
+                "recommendations": [
+                    {
+                        "product": product_facts(product, None),
+                        "reference": item.which.model_dump(mode="json"),
+                        "verdict": item.verdict,
+                        "why": item.why,
+                    }
+                    for item, product in zip(args.recommendations, products, strict=True)
+                ],
+                **({"none_suitable": args.none_reason} if args.none_reason else {}),
+                "reply_by": "salman",
+            }
+        )
+
+    return ZoryTool(
+        name="cross_sell_advice",
+        description=(
+            "Review Salman's cross-sell cards as a designer. Approve only cards that work "
+            "beside the customer's chosen piece, with a short verdict and reason, or say why "
+            "none is suitable. This is "
+            "internal advice: after it, hand_back needs_sales to Salman; he replies."
+        ),
+        args=CrossSellAdviceArgs,
+        owners=NORA,
+        handler=advise,
+    )
 
 
 def design_notes_tool(schemas: ToolSchemas) -> ZoryTool[DesignNotesArgs]:
@@ -1173,6 +1248,7 @@ def design_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
     return [
         measure_fit_tool(schemas),
         design_notes_tool(schemas),
+        cross_sell_advice_tool(schemas),
         design_room_tool(schemas),
         revise_piece_tool(schemas),
         piece_options_tool(schemas),

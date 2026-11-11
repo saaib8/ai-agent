@@ -64,6 +64,14 @@ NOTE = ZoryTool(
     name="note", description="note", args=NoteArgs, owners=frozenset(AgentPersona), handler=_noted
 )
 
+ADVICE = ZoryTool(
+    name="cross_sell_advice",
+    description="typed design advice",
+    args=NoteArgs,
+    owners=frozenset({NORA}),
+    handler=_noted,
+)
+
 
 def _team(
     supervisor: ScriptedChatModel,
@@ -71,7 +79,7 @@ def _team(
     **settings: Any,
 ) -> tuple[AgentTeam, AgentLoop]:
     models = {a: agents.get(a, ScriptedChatModel(script=[])) for a in AgentPersona}
-    loop = AgentLoop(ToolRegistry([NOTE, RESPOND, HAND_BACK]), max_tool_calls=3)
+    loop = AgentLoop(ToolRegistry([NOTE, ADVICE, RESPOND, HAND_BACK]), max_tool_calls=3)
     team = AgentTeam(supervisor, models, AgentsSettings(**settings), loop)
     return team, loop
 
@@ -149,6 +157,53 @@ async def test_an_agent_who_names_the_colleague_passes_the_turn_straight_on() ->
     assert len(supervisor.seen) == 1
     told = str(nora.seen[0][-1].content)
     assert '"asked_for": "design"' in told and '"tool": "note"' in told
+
+
+async def test_nora_consults_on_cross_sell_and_salman_still_replies() -> None:
+    supervisor = ScriptedChatModel(script=[transfer(SALMAN)])
+    salman = ScriptedChatModel(
+        script=[
+            step(call("note", "s1")),
+            step(call("hand_back", "s2", reason="needs_design", to="nora")),
+            reply("This lamp works with your sofa because it repeats its warm palette."),
+        ]
+    )
+    nora = ScriptedChatModel(
+        script=[
+            step(call("cross_sell_advice", "n1")),
+            step(call("hand_back", "n2", reason="needs_sales", to="salman")),
+        ]
+    )
+    team, loop = _team(supervisor, {SALMAN: salman, NORA: nora})
+
+    result = await _run(team, loop)
+
+    assert result.owner is SALMAN
+    assert result.handoffs == (SALMAN, NORA, SALMAN)
+    assert len(supervisor.seen) == 1, "the typed consultation returns directly"
+    assert [record.tool for record in result.work.records] == ["note", "cross_sell_advice"]
+    assert '"tool": "cross_sell_advice"' in str(salman.seen[-1][-1].content)
+
+
+async def test_nora_cannot_bounce_straight_back_without_typed_advice() -> None:
+    supervisor = ScriptedChatModel(
+        script=[transfer(SALMAN), step(call("finish", "s2", reply_by="nora"))]
+    )
+    salman = ScriptedChatModel(
+        script=[step(call("hand_back", "a1", reason="needs_design", to="nora"))]
+    )
+    nora = ScriptedChatModel(
+        script=[
+            step(call("hand_back", "n1", reason="needs_sales", to="salman")),
+            reply("I couldn't verify a match."),
+        ]
+    )
+    team, loop = _team(supervisor, {SALMAN: salman, NORA: nora})
+
+    result = await _run(team, loop)
+
+    assert result.owner is NORA
+    assert len(supervisor.seen) == 2, "ordinary bounce protection remains in force"
 
 
 async def test_a_named_colleague_still_counts_against_the_handoff_limit() -> None:
