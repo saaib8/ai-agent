@@ -219,32 +219,17 @@ class DesignNotesArgs(ToolArgs):
     next_sizes: list[NextSize] = Field(default_factory=list, max_length=MAX_NEXT_SIZES)
 
 
-class CrossSellRecommendation(ToolArgs):
-    """One card Nora approves for Salman's cross-sell reply."""
-
-    which: ProductReferenceSelector
-    verdict: Literal["works", "works_with_a_tweak"]
-    why: str = Field(
-        min_length=1,
-        max_length=200,
-        description="Why it works beside their chosen piece, in words without figures.",
-    )
-
-
 class CrossSellAdviceArgs(ToolArgs):
-    recommendations: list[CrossSellRecommendation] = Field(default_factory=list, max_length=4)
-    none_reason: str | None = Field(
-        default=None,
+    kinds: list[str] = Field(
+        min_length=1,
+        max_length=4,
+        description="Complementary catalog kinds Salman should show, in priority order.",
+    )
+    direction: str = Field(
         min_length=1,
         max_length=200,
-        description="Why none of the shown cards works, only when recommendations is empty.",
+        description="The colours, styles and visual relationship Salman should aim for.",
     )
-
-    @model_validator(mode="after")
-    def _advice_or_reason(self) -> CrossSellAdviceArgs:
-        if bool(self.recommendations) == bool(self.none_reason):
-            raise ValueError("give recommendations or a none_reason, never both")
-        return self
 
 
 def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[CrossSellAdviceArgs]:
@@ -253,29 +238,15 @@ def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[CrossSellAdviceArgs
     async def advise(
         args: CrossSellAdviceArgs, context: ToolContext, work: TurnWork
     ) -> ToolOutcome:
-        if not figure_free(args.none_reason, *(item.why for item in args.recommendations)):
-            return ToolOutcome(status=ToolStatus.INVALID, code="why_states_a_figure")
-        products: list[ProductCandidate] = []
-        for item in args.recommendations:
-            product_id = await resolve_product(context.services, item.which, work, context)
-            if isinstance(product_id, ToolOutcome):
-                return product_id
-            found = await hydrated(context.services, (product_id,), context)
-            if not found:
-                return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
-            products.append(found[0])
+        if not figure_free(args.direction):
+            return ToolOutcome(status=ToolStatus.INVALID, code="direction_states_a_figure")
+        kinds = list(dict.fromkeys(kind.strip() for kind in args.kinds if kind.strip()))
+        if not kinds:
+            return ToolOutcome(status=ToolStatus.INVALID, code="no_cross_sell_kinds")
         return ToolOutcome(
             facts={
-                "recommendations": [
-                    {
-                        "product": product_facts(product, None),
-                        "reference": item.which.model_dump(mode="json"),
-                        "verdict": item.verdict,
-                        "why": item.why,
-                    }
-                    for item, product in zip(args.recommendations, products, strict=True)
-                ],
-                **({"none_suitable": args.none_reason} if args.none_reason else {}),
+                "kinds": kinds,
+                "direction": args.direction,
                 "reply_by": "salman",
             }
         )
@@ -283,10 +254,9 @@ def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[CrossSellAdviceArgs
     return ZoryTool(
         name="cross_sell_advice",
         description=(
-            "Review Salman's cross-sell cards as a designer. Approve only cards that work "
-            "beside the customer's chosen piece, with a short verdict and reason, or say why "
-            "none is suitable. This is "
-            "internal advice: after it, hand_back needs_sales to Salman; he replies."
+            "Before Salman searches, choose up to four complementary catalog kinds and the "
+            "colour/style direction that should connect them to the customer's chosen piece. "
+            "After it, hand_back needs_sales to Salman; he builds the grid and replies."
         ),
         args=CrossSellAdviceArgs,
         owners=NORA,

@@ -57,6 +57,11 @@ class GoesWithArgs(ProductRef):
             "told the kinds that could go with the piece."
         ),
     )
+    planned_kinds: list[str] = Field(
+        default_factory=list,
+        max_length=4,
+        description="Nora's cross_sell_advice kinds for the initial grid.",
+    )
 
 
 def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
@@ -134,6 +139,15 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                 facts["none_reviewed"] = "choose the kinds that would suit it from these"
             else:
                 facts["other_kinds"] = "store_shelf lists every other kind the store stocks"
+            if args.planned_kinds:
+                order = {kind: position for position, kind in enumerate(args.planned_kinds)}
+                companions = [c for c in companions if c.commerce_subcategory in order]
+                if not companions:
+                    return ToolOutcome(status=ToolStatus.REFUSED, code="planned_kinds_unavailable")
+                companions.sort(key=lambda item: order[item.commerce_subcategory])
+                kinds = [entry for entry in kinds if entry["kind"] in order]
+                kinds.sort(key=lambda entry: order[entry["kind"]])
+                facts["design_plan_applied"] = True
             grid = await _cross_sell_grid(
                 anchor,
                 [c for c in companions if c.commerce_subcategory not in cart_kinds],

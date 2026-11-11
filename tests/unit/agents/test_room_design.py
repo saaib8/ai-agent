@@ -21,7 +21,6 @@ from tests.unit.agents.fakes import (
     ATTRIBUTES,
     CONTEXT,
     TAXONOMY,
-    FakeReferences,
     agent_services,
     real_loop,
     tool_context,
@@ -37,16 +36,13 @@ def test_salman_continues_the_cross_sell_chain_after_a_suggestion_is_picked() ->
 
     instructions = " ".join(agent_instructions(AgentPersona.SALMAN).split())
 
-    assert "Never hand_back needs_design before calling what_goes_with" in instructions
-    assert "call what_goes_with for that newest pick" in instructions
-    assert "Do not hand the two existing picks to Nora merely to judge them again" in instructions
+    assert "Nora first records cross_sell_advice" in instructions
+    assert "passing her kinds as planned_kinds" in instructions
+    assert "Do not hand the resulting cards back for review" in instructions
 
 
-async def test_cross_sell_advice_is_typed_grounded_and_returns_to_salman() -> None:
-    from app.schemas.resolution import ResolvedProductReference
-
-    references = FakeReferences(default=ResolvedProductReference(product_id=10))
-    services = agent_services(references=references)
+async def test_cross_sell_advice_records_a_pre_search_plan_for_salman() -> None:
+    services = agent_services()
     tool = LOOP._registry.get("cross_sell_advice")
     assert tool is not None and tool.handler is not None
     assert tool.owners == frozenset({AgentPersona.NORA})
@@ -56,13 +52,8 @@ async def test_cross_sell_advice_is_typed_grounded_and_returns_to_salman() -> No
     outcome = await tool.handler(
         tool.args.model_validate(
             {
-                "recommendations": [
-                    {
-                        "which": {"kind": "presented_ordinal", "position": 1},
-                        "verdict": "works",
-                        "why": "Its warm neutral finish connects with the sofa.",
-                    }
-                ]
+                "kinds": ["carpet", "coffee_table"],
+                "direction": "Warm neutrals with clean modern lines beside the sofa.",
             }
         ),
         tool_context(services),
@@ -71,8 +62,8 @@ async def test_cross_sell_advice_is_typed_grounded_and_returns_to_salman() -> No
 
     assert outcome.status == "ok"
     assert outcome.facts["reply_by"] == "salman"
-    assert outcome.facts["recommendations"][0]["product"]["name"] == "Sofa 10"
-    assert outcome.facts["recommendations"][0]["verdict"] == "works"
+    assert outcome.facts["kinds"] == ["carpet", "coffee_table"]
+    assert outcome.facts["direction"].startswith("Warm neutrals")
 
 
 async def test_cross_sell_advice_rejects_an_ungrounded_reason_figure() -> None:
@@ -84,23 +75,18 @@ async def test_cross_sell_advice_rejects_an_ungrounded_reason_figure() -> None:
     outcome = await tool.handler(
         tool.args.model_validate(
             {
-                "recommendations": [
-                    {
-                        "which": {"kind": "presented_ordinal", "position": 1},
-                        "verdict": "works",
-                        "why": "It is exactly 20 cm smaller.",
-                    }
-                ]
+                "kinds": ["carpet"],
+                "direction": "Choose one exactly 20 cm smaller.",
             }
         ),
         tool_context(agent_services()),
         work,
     )
 
-    assert outcome.status == "invalid" and outcome.code == "why_states_a_figure"
+    assert outcome.status == "invalid" and outcome.code == "direction_states_a_figure"
 
 
-async def test_cross_sell_advice_can_reject_the_whole_grid_without_forcing_a_match() -> None:
+async def test_cross_sell_advice_deduplicates_kinds() -> None:
     tool = LOOP._registry.get("cross_sell_advice")
     assert tool is not None and tool.handler is not None
     work = TurnWork.starting(AgentStateV1())
@@ -108,18 +94,15 @@ async def test_cross_sell_advice_can_reject_the_whole_grid_without_forcing_a_mat
 
     outcome = await tool.handler(
         tool.args.model_validate(
-            {"none_reason": "Every card fights the chosen piece's cool, minimal look."}
+            {"kinds": ["carpet", "carpet"], "direction": "Keep the look cool and minimal."}
         ),
         tool_context(agent_services()),
         work,
     )
 
     assert outcome.status == "ok"
-    assert outcome.facts == {
-        "recommendations": [],
-        "none_suitable": "Every card fights the chosen piece's cool, minimal look.",
-        "reply_by": "salman",
-    }
+    assert outcome.facts["kinds"] == ["carpet"]
+    assert outcome.facts["reply_by"] == "salman"
 
 
 def _shelf(category: str, kind: str, **extra: Any) -> SubcategoryShelf:

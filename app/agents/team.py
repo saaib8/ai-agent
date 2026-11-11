@@ -508,11 +508,11 @@ class AgentTeam:
             )
             cross_sell_consultation = (
                 agent is AgentPersona.NORA
-                and state.get("last") is AgentPersona.SALMAN
+                and state.get("last") is AgentPersona.SARA
                 and state.get("need") == Need.DESIGN.value
                 and any(
-                    record.agent is AgentPersona.SALMAN
-                    and record.tool == "what_goes_with"
+                    record.agent is AgentPersona.SARA
+                    and record.tool == "add_to_cart"
                     and record.status is ToolStatus.OK
                     for record in work.records
                 )
@@ -564,24 +564,12 @@ class AgentTeam:
             }
             colleague = end.hand_back.to
             need = _NEED_FOR.get(end.hand_back.reason)
-            consultation_return = (
-                agent is AgentPersona.NORA
-                and state.get("last") is AgentPersona.SALMAN
-                and colleague is AgentPersona.SALMAN
-                and end.hand_back.reason is HandBackReason.NEEDS_SALES
-                and any(
-                    record.agent is AgentPersona.NORA and record.tool == "cross_sell_advice"
-                    for record in work.records
-                )
-            )
             if (
                 colleague is not None
                 and need is not None
                 # Never straight back to who just passed it here: that is the
-                # supervisor's to settle, not a loop between two agents. The
-                # sole return path is Nora's typed cross-sell consultation:
-                # Salman owns that reply and her advice is already on record.
-                and (colleague not in (agent, state.get("last")) or consultation_return)
+                # supervisor's to settle, not a loop between two agents.
+                and colleague not in (agent, state.get("last"))
                 and len(handoffs) < self._settings.max_hops
                 and not state["budget"].last_call
             ):
