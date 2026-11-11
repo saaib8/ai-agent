@@ -32,6 +32,16 @@ CHECKER = RoomDesignChecker(TAXONOMY, ATTRIBUTES, SEATING)
 LOOP = real_loop()
 
 
+def test_salman_continues_the_cross_sell_chain_after_a_suggestion_is_picked() -> None:
+    from app.prompts.agents.v2 import agent_instructions
+
+    instructions = " ".join(agent_instructions(AgentPersona.SALMAN).split())
+
+    assert "Never hand_back needs_design before calling what_goes_with" in instructions
+    assert "call what_goes_with for that newest pick" in instructions
+    assert "Do not hand the two existing picks to Nora merely to judge them again" in instructions
+
+
 async def test_cross_sell_advice_is_typed_grounded_and_returns_to_salman() -> None:
     from app.schemas.resolution import ResolvedProductReference
 

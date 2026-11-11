@@ -506,6 +506,17 @@ class AgentTeam:
                 if agent is AgentPersona.NORA and not reply_only and _planning_a_room(work)
                 else None
             )
+            cross_sell_consultation = (
+                agent is AgentPersona.NORA
+                and state.get("last") is AgentPersona.SALMAN
+                and state.get("need") == Need.DESIGN.value
+                and any(
+                    record.agent is AgentPersona.SALMAN
+                    and record.tool == "what_goes_with"
+                    and record.status is ToolStatus.OK
+                    for record in work.records
+                )
+            )
             messages = agent_messages(
                 agent_instructions(agent),
                 turn.conversation,
@@ -524,7 +535,15 @@ class AgentTeam:
                 turn.context,
                 state["budget"],
                 state["trace"],
-                only=frozenset({"respond"}) if reply_only else None,
+                only=(
+                    frozenset({"respond"})
+                    if reply_only
+                    else (
+                        frozenset({"cross_sell_advice", "hand_back"})
+                        if cross_sell_consultation
+                        else None
+                    )
+                ),
                 wording_model=self._wording.get(agent),
             )
             views = [*state["views"], view] if view is not state["view"] else state["views"]

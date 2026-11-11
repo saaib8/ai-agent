@@ -72,6 +72,14 @@ ADVICE = ZoryTool(
     handler=_noted,
 )
 
+GOES_WITH = ZoryTool(
+    name="what_goes_with",
+    description="grounded cross-sell cards",
+    args=NoteArgs,
+    owners=frozenset({SALMAN}),
+    handler=_noted,
+)
+
 
 def _team(
     supervisor: ScriptedChatModel,
@@ -79,7 +87,7 @@ def _team(
     **settings: Any,
 ) -> tuple[AgentTeam, AgentLoop]:
     models = {a: agents.get(a, ScriptedChatModel(script=[])) for a in AgentPersona}
-    loop = AgentLoop(ToolRegistry([NOTE, ADVICE, RESPOND, HAND_BACK]), max_tool_calls=3)
+    loop = AgentLoop(ToolRegistry([NOTE, GOES_WITH, ADVICE, RESPOND, HAND_BACK]), max_tool_calls=3)
     team = AgentTeam(supervisor, models, AgentsSettings(**settings), loop)
     return team, loop
 
@@ -163,7 +171,7 @@ async def test_nora_consults_on_cross_sell_and_salman_still_replies() -> None:
     supervisor = ScriptedChatModel(script=[transfer(SALMAN)])
     salman = ScriptedChatModel(
         script=[
-            step(call("note", "s1")),
+            step(call("what_goes_with", "s1")),
             step(call("hand_back", "s2", reason="needs_design", to="nora")),
             reply("This lamp works with your sofa because it repeats its warm palette."),
         ]
@@ -181,7 +189,11 @@ async def test_nora_consults_on_cross_sell_and_salman_still_replies() -> None:
     assert result.owner is SALMAN
     assert result.handoffs == (SALMAN, NORA, SALMAN)
     assert len(supervisor.seen) == 1, "the typed consultation returns directly"
-    assert [record.tool for record in result.work.records] == ["note", "cross_sell_advice"]
+    assert [record.tool for record in result.work.records] == [
+        "what_goes_with",
+        "cross_sell_advice",
+    ]
+    assert set(nora.offered[0]) == {"cross_sell_advice", "hand_back"}
     assert '"tool": "cross_sell_advice"' in str(salman.seen[-1][-1].content)
 
 
