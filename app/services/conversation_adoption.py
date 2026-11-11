@@ -14,7 +14,7 @@ from app.core.exceptions import InvalidRequestError
 from app.core.logging import get_logger
 from app.repositories.conversation_moves import ConversationMoves
 from app.repositories.sessions import SessionStore, shopper_of
-from app.schemas.agent_state import MAX_LIKED, CartQuantity
+from app.schemas.agent_state import MAX_LIKED, MAX_SEEN, MAX_TURNED_DOWN, CartQuantity
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import ShopperCart
 from app.schemas.session_adoption import ConversationAdoption, ConversationAdoptionRequest
@@ -48,7 +48,10 @@ class ConversationAdoptionService:
         loads. The count is of cart lines only."""
         guest_cart = await self._sessions.shopper_cart(store_id, guest)
         if guest_cart is None or not (
-            guest_cart.selected_product_ids or guest_cart.liked_product_ids
+            guest_cart.selected_product_ids
+            or guest_cart.liked_product_ids
+            or guest_cart.turned_down_product_ids
+            or guest_cart.seen_product_ids
         ):
             return 0
         account_cart = await self._sessions.shopper_cart(store_id, account)
@@ -90,6 +93,12 @@ def merged_cart(
             liked_product_ids=_merged_likes(
                 base.liked_product_ids, guest.liked_product_ids, max_likes
             ),
+            # The guest's newer: what they turned down and saw as a guest stays
+            # theirs once signed in.
+            turned_down_product_ids=_merged_likes(
+                base.turned_down_product_ids, guest.turned_down_product_ids, MAX_TURNED_DOWN
+            ),
+            seen_product_ids=_merged_likes(base.seen_product_ids, guest.seen_product_ids, MAX_SEEN),
         ),
         added,
     )

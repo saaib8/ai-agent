@@ -157,6 +157,7 @@ class _DesignDiscovery(Protocol):
         context: RetailerContext,
         *,
         overrides: Mapping[int, DesignNeedSearchOverride] | None = None,
+        leave_out: tuple[int, ...] = (),
     ) -> DesignDiscoveryResult: ...
 
     def resolve_need(
@@ -439,7 +440,10 @@ class RoomEngine:
         try:
             capabilities = await self._capabilities.capabilities(context)
             discovery = await self._design_discovery.discover(
-                _room_request(room, capabilities), plan, context
+                _room_request(room, capabilities),
+                plan,
+                context,
+                leave_out=staged.product_interaction.turned_down_product_ids,
             )
         except _CATALOG_FAILURES:
             logger.warning("room_engine_discovery_unavailable", store_id=context.store_id)
@@ -692,7 +696,13 @@ class RoomEngine:
                     "single_type": not alternatives,
                     "alongside_subcategories": alternatives,
                     "exclude_product_ids": tuple(
-                        dict.fromkeys((*need.rejected_product_ids, *in_room))
+                        dict.fromkeys(
+                            (
+                                *need.rejected_product_ids,
+                                *in_room,
+                                *state.product_interaction.turned_down_product_ids,
+                            )
+                        )
                     )[-MAX_EXCLUDED_PRODUCT_IDS:],
                     **({"price": price} if price is not None else {}),
                     **({"dimensions": tuple(c for c, _ in floor)} if floor else {}),
@@ -1372,6 +1382,7 @@ class RoomEngine:
                     needs=tuple(searched[room.design_needs[i].need_id] for i in positions)
                 ),
                 context,
+                leave_out=state.product_interaction.turned_down_product_ids,
             )
             found_again = {
                 index: entry.model_copy(update={"need_index": index})

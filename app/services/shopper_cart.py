@@ -26,8 +26,9 @@ logger = get_logger(__name__)
 def with_shopper_cart(state: AgentStateV1, cart: object, *, new_conversation: bool) -> AgentStateV1:
     """`state` holding the shopper's cart in place of its own.
 
-    Only the cart - its products and how many of each - and the liked list are
-    the shopper's; everything else stays. A product in focus that the new cart
+    Only the cart - its products and how many of each - the liked list, and
+    what they turned down and were shown are the shopper's; everything else
+    stays. A product in focus that the new cart
     and the screen no longer hold loses the focus, as removing it would have
     done.
     """
@@ -38,6 +39,8 @@ def with_shopper_cart(state: AgentStateV1, cart: object, *, new_conversation: bo
         cart.selected_product_ids == interaction.selected_product_ids
         and cart.cart_quantities == interaction.cart_quantities
         and cart.liked_product_ids in (None, interaction.liked_product_ids)
+        and cart.turned_down_product_ids in (None, interaction.turned_down_product_ids)
+        and cart.seen_product_ids in (None, interaction.seen_product_ids)
     ):
         return state
     updated = _with_cart(interaction, cart)
@@ -71,6 +74,16 @@ def _with_cart(
             {"liked_product_ids": cart.liked_product_ids}
             if cart.liked_product_ids is not None
             else {}
+        ),
+        # What they turned down and saw follow them too; a record kept before
+        # these were leaves this chat's own.
+        **(
+            {"turned_down_product_ids": cart.turned_down_product_ids}
+            if cart.turned_down_product_ids is not None
+            else {}
+        ),
+        **(
+            {"seen_product_ids": cart.seen_product_ids} if cart.seen_product_ids is not None else {}
         ),
     }
     try:
