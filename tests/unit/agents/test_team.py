@@ -64,6 +64,30 @@ NOTE = ZoryTool(
     name="note", description="note", args=NoteArgs, owners=frozenset(AgentPersona), handler=_noted
 )
 
+ADVICE = ZoryTool(
+    name="cross_sell_advice",
+    description="typed design advice",
+    args=NoteArgs,
+    owners=frozenset({NORA}),
+    handler=_noted,
+)
+
+GOES_WITH = ZoryTool(
+    name="what_goes_with",
+    description="grounded cross-sell cards",
+    args=NoteArgs,
+    owners=frozenset({SALMAN}),
+    handler=_noted,
+)
+
+ADD_TO_CART = ZoryTool(
+    name="add_to_cart",
+    description="add a selected product",
+    args=NoteArgs,
+    owners=frozenset({SARA}),
+    handler=_noted,
+)
+
 
 def _team(
     supervisor: ScriptedChatModel,
@@ -71,7 +95,10 @@ def _team(
     **settings: Any,
 ) -> tuple[AgentTeam, AgentLoop]:
     models = {a: agents.get(a, ScriptedChatModel(script=[])) for a in AgentPersona}
-    loop = AgentLoop(ToolRegistry([NOTE, RESPOND, HAND_BACK]), max_tool_calls=3)
+    loop = AgentLoop(
+        ToolRegistry([NOTE, ADD_TO_CART, GOES_WITH, ADVICE, RESPOND, HAND_BACK]),
+        max_tool_calls=3,
+    )
     team = AgentTeam(supervisor, models, AgentsSettings(**settings), loop)
     return team, loop
 
@@ -149,6 +176,95 @@ async def test_an_agent_who_names_the_colleague_passes_the_turn_straight_on() ->
     assert len(supervisor.seen) == 1
     told = str(nora.seen[0][-1].content)
     assert '"asked_for": "design"' in told and '"tool": "note"' in told
+
+
+async def test_add_routes_sara_to_nora_to_salman_within_the_hop_limit() -> None:
+    supervisor = ScriptedChatModel(script=[transfer(SARA)])
+    sara = ScriptedChatModel(
+        script=[
+            step(call("add_to_cart", "a1")),
+            step(call("hand_back", "a2", reason="needs_design", to="nora")),
+        ]
+    )
+    salman = ScriptedChatModel(
+        script=[
+            step(call("what_goes_with", "s1")),
+            reply("This lamp works with your sofa because it repeats its warm palette."),
+        ]
+    )
+    nora = ScriptedChatModel(
+        script=[
+            step(call("cross_sell_advice", "n1")),
+            step(call("hand_back", "n2", reason="needs_sales", to="salman")),
+        ]
+    )
+    team, loop = _team(supervisor, {SARA: sara, SALMAN: salman, NORA: nora})
+
+    result = await _run(team, loop)
+
+    assert result.owner is SALMAN
+    assert result.handoffs == (SARA, NORA, SALMAN)
+    assert len(supervisor.seen) == 1, "both named handoffs go directly"
+    assert [record.tool for record in result.work.records] == [
+        "add_to_cart",
+        "cross_sell_advice",
+        "what_goes_with",
+    ]
+    assert set(nora.offered[0]) == {"cross_sell_advice", "hand_back"}
+    assert any(
+        '"tool": "cross_sell_advice"' in str(message.content)
+        for exchange in salman.seen
+        for message in exchange
+    )
+
+
+async def test_select_add_notice_routes_even_when_sara_only_confirms() -> None:
+    supervisor = ScriptedChatModel(script=[transfer(SARA)])
+    sara = ScriptedChatModel(script=[reply("It is in your cart.")])
+    nora = ScriptedChatModel(
+        script=[
+            step(call("cross_sell_advice", "n1")),
+            step(call("hand_back", "n2", reason="needs_sales", to="salman")),
+        ]
+    )
+    salman = ScriptedChatModel(
+        script=[step(call("what_goes_with", "s1")), reply("Here are matching pieces.")]
+    )
+    team, loop = _team(supervisor, {SARA: sara, NORA: nora, SALMAN: salman})
+
+    result = await _run(
+        team,
+        loop,
+        _turn(message="I've added the Oak Center Table to my cart"),
+    )
+
+    assert result.owner is SALMAN
+    assert result.handoffs == (SARA, NORA, SALMAN)
+    assert [record.tool for record in result.work.records] == [
+        "cross_sell_advice",
+        "what_goes_with",
+    ]
+
+
+async def test_nora_cannot_bounce_straight_back_without_typed_advice() -> None:
+    supervisor = ScriptedChatModel(
+        script=[transfer(SALMAN), step(call("finish", "s2", reply_by="nora"))]
+    )
+    salman = ScriptedChatModel(
+        script=[step(call("hand_back", "a1", reason="needs_design", to="nora"))]
+    )
+    nora = ScriptedChatModel(
+        script=[
+            step(call("hand_back", "n1", reason="needs_sales", to="salman")),
+            reply("I couldn't verify a match."),
+        ]
+    )
+    team, loop = _team(supervisor, {SALMAN: salman, NORA: nora})
+
+    result = await _run(team, loop)
+
+    assert result.owner is NORA
+    assert len(supervisor.seen) == 2, "ordinary bounce protection remains in force"
 
 
 async def test_a_named_colleague_still_counts_against_the_handoff_limit() -> None:

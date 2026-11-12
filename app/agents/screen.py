@@ -27,6 +27,7 @@ from app.agents.work import ToolStatus, TurnWork
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.chat import ChatPresentation
 from app.schemas.language import ReplyLanguage
+from app.schemas.product_action import CompanionAction
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.text_choice import TextReplyChoice
 from app.services.room_cart import room_in_cart
@@ -47,6 +48,35 @@ _SHOWN_AS: dict[str, tuple[type, ...]] = {
     "render": (RenderShown,),
     "unchanged": (),
 }
+
+
+def _chip_key(label: str) -> str:
+    return " ".join(label.casefold().split())
+
+
+def _kinds_offered(work: TurnWork) -> dict[str, CompanionAction]:
+    """The kinds this turn's what_goes_with offered, by their words: a chip
+    the reply words exactly as one ("Rugs") becomes that kind's button, so a
+    tap opens its page beside the pick (CLAUDE.md 10.3, 17.3) instead of being
+    read as typed words. Any other chip stays words."""
+    offered: dict[str, CompanionAction] = {}
+    for record in work.records:
+        if record.tool != "what_goes_with" or record.status is not ToolStatus.OK:
+            continue
+        entries = record.facts.get("kinds")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            kind, family = entry.get("kind"), entry.get("family")
+            if not isinstance(kind, str) or not isinstance(family, str):
+                continue
+            action = CompanionAction(category=family, subcategory=kind)
+            for words in (entry.get("label"), entry.get("label_ar")):
+                if isinstance(words, str) and words:
+                    offered[_chip_key(words)] = action
+    return offered
 
 
 def presentation(
@@ -119,6 +149,10 @@ def presentation(
     if support is not None:
         offered = support.support
         fields["support"] = channels_for(offered.contacts, language, handover=offered.handover)
-    fields["choices"] = tuple(ReplyChoice(label=c.label, value=c.value) for c in choices)
+    kinds = _kinds_offered(work)
+    fields["choices"] = tuple(
+        ReplyChoice(label=c.label, value=c.value, product_action=kinds.get(_chip_key(c.label)))
+        for c in choices
+    )
     built = ChatPresentation.model_validate(fields)
     return None if built.is_empty() else built

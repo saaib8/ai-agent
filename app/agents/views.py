@@ -23,11 +23,13 @@ from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_brief import (
     BriefProduct,
     Budget,
+    DesignerPlanBrief,
     FinishedRoomBrief,
     GoalBrief,
     GoalMember,
     OverBudgetOffer,
     PendingBrief,
+    PlannedKindBrief,
     RoomBrief,
     RoomSizeBrief,
     SavedSizes,
@@ -57,6 +59,7 @@ from app.schemas.discovery import DimensionConstraint, PlanarDimensionConstraint
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.query import SemanticPreference
+from app.services.cross_sell import live_plan
 from app.services.fit import knows_room_size
 from app.services.room_cart import room_names, room_words
 from app.taxonomy.attributes import AttributeFamily
@@ -143,8 +146,35 @@ async def session_brief(
         turned_down=numbered(interaction.turned_down_product_ids) or None,
         seen_before=numbered(interaction.seen_product_ids[-SEEN_NAMED:]) or None,
         taste=_taste(state),
+        designer_plan=_designer_plan(state, by_id),
         saved_sizes=_saved_sizes(state) or None,
         pending=_pending(state, by_id, room_plan),
+    )
+
+
+def _designer_plan(
+    state: AgentStateV1, by_id: Mapping[int, ProductCandidate]
+) -> DesignerPlanBrief | None:
+    """Nora's plan while the piece it was made for is in the cart and is still
+    their newest choice - when a search of a planned kind leans to it."""
+    plan = live_plan(state)
+    if plan is None or state.product_interaction.last_added_product_id != plan.anchor_product_id:
+        return None
+    anchor = by_id.get(plan.anchor_product_id)
+    if anchor is None:
+        return None
+    return DesignerPlanBrief(
+        beside=anchor.name_english,
+        kinds=tuple(
+            PlannedKindBrief(
+                kind=k.kind,
+                colours=k.colours,
+                styles=k.styles,
+                pushed_down=(*k.avoid_colours, *k.avoid_styles),
+                sized_to_the_piece=True if k.size_ratio is not None else None,
+            )
+            for k in plan.kinds
+        ),
     )
 
 

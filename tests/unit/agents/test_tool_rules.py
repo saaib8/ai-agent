@@ -511,6 +511,152 @@ async def test_cross_sell_shows_one_product_per_complementary_kind() -> None:
     assert listed.state.product_interaction.presented_product_ids == (20, 21)
 
 
+def _plan_services(pipeline: Any) -> Any:
+    from app.taxonomy.complements import load_complements
+
+    from tests.unit.agents.fakes import FakeCapabilities
+
+    return agent_services(
+        pipeline=pipeline,
+        hydration=FakeHydration(available=(OFF_SCREEN, 20, 21, 22, 23, 24)),
+        capabilities=FakeCapabilities(
+            pairs=(
+                ("seating", "sofa"),
+                ("decor", "art-canvas"),
+                ("tables", "center-table"),
+                ("tables", "service-table"),
+                ("decor", "carpet"),
+                ("lighting", "floor-lamp"),
+            )
+        ),
+        companion_search=CompanionSearchBuilder(ATTRIBUTES),
+        complements=load_complements(taxonomy=TAXONOMY),
+    )
+
+
+def _planned(*kinds: Any, anchor: int = OFF_SCREEN) -> AgentStateV1:
+    from app.schemas.agent_state import CrossSellPlan
+
+    return _state().model_copy(
+        update={"cross_sell_plan": CrossSellPlan(anchor_product_id=anchor, kinds=kinds)}
+    )
+
+
+_GRID_STOCK = {
+    "art-canvas": 24,
+    "center-table": 20,
+    "service-table": 22,
+    "carpet": 21,
+    "floor-lamp": 23,
+}
+
+
+async def test_noras_unreviewed_stocked_kind_is_shown_and_reviewed_kinds_fill_the_grid() -> None:
+    from app.schemas.agent_state import CrossSellKindPlan
+
+    pipeline = _PerKindPipeline(_GRID_STOCK)
+    state = _planned(CrossSellKindPlan(kind="art-canvas"), CrossSellKindPlan(kind="center-table"))
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, state, services=_plan_services(pipeline))
+
+    assert listed.payload is not None
+    assert [item["kind"] for item in listed.facts["suggestions"]] == [
+        "art-canvas",
+        "center-table",
+        "service-table",
+        "carpet",
+    ]
+    chips = [k["kind"] for k in listed.facts["kinds"] if k["kind"] != "sofa"]
+    assert chips == ["art-canvas", "center-table", "service-table", "carpet"], (
+        "the chips are the plan's kinds as the grid shows them - wall art included"
+    )
+    labels = {k["kind"]: k["label"] for k in listed.facts["kinds"]}
+    assert labels["art-canvas"] == "wall art", "a planned kind keeps its reviewed words"
+
+
+async def test_each_grid_card_leans_to_noras_plan_for_its_kind() -> None:
+    from app.schemas.agent_state import CrossSellKindPlan
+
+    pipeline = _PerKindPipeline(_GRID_STOCK)
+    state = _planned(
+        CrossSellKindPlan(kind="carpet", colours=("Sand",), styles=("Minimalist",)),
+        CrossSellKindPlan(kind="center-table", colours=("Walnut",), avoid_colours=("Black",)),
+    )
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, state, services=_plan_services(pipeline))
+
+    leans = {c.request.commerce_subcategory: c for c in pipeline.calls}
+    rug, table = leans["carpet"], leans["center-table"]
+    assert (rug.lean.colours, rug.lean.styles) == (("Sand",), ("Minimalist",))
+    assert rug.semantic_preferences == (), "her look replaces the pick's own styles"
+    assert (table.lean.colours, table.lean.avoid_colours) == (("Walnut",), ("Black",))
+    unplanned = leans["service-table"]
+    assert unplanned.lean is None or unplanned.lean.colours == (), (
+        "a kind she left alone leans as before"
+    )
+    cards = {item["kind"]: item for item in listed.facts["suggestions"]}
+    assert cards["carpet"]["leaned_to"] == {"colours": ["Sand"], "styles": ["Minimalist"]}
+    assert cards["carpet"]["colour"] == "Beige", "each card says its own colour beside the lean"
+
+
+async def test_a_chip_page_leans_to_the_plan_for_that_kind() -> None:
+    from app.schemas.agent_state import CrossSellKindPlan
+
+    pipeline = _PerKindPipeline(_GRID_STOCK)
+    state = _planned(CrossSellKindPlan(kind="carpet", colours=("Sand",)))
+    args = {"which": {"kind": "picked_ordinal", "position": 1}, "show_kind": "carpet"}
+
+    shown = await _call("what_goes_with", args, state, services=_plan_services(pipeline))
+
+    assert pipeline.calls[-1].lean.colours == ("Sand",)
+    assert shown.facts["leaned_to"] == {"colours": ["Sand"]}
+
+
+async def test_a_plan_for_another_pick_is_not_used() -> None:
+    from app.schemas.agent_state import CrossSellKindPlan
+
+    pipeline = _PerKindPipeline(_GRID_STOCK)
+    state = _planned(CrossSellKindPlan(kind="carpet", colours=("Sand",)), anchor=OFF_SCREEN + 1)
+    which = {"which": {"kind": "picked_ordinal", "position": 1}}
+
+    listed = await _call("what_goes_with", which, state, services=_plan_services(pipeline))
+
+    assert "design_plan_applied" not in listed.facts
+    assert all(c.lean is None or c.lean.colours == () for c in pipeline.calls)
+
+
+def test_a_planned_size_is_a_share_of_the_picks_longer_side() -> None:
+    from app.agents.tools.sales import _leaning
+    from app.schemas.agent_state import CrossSellKindPlan
+    from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
+    from app.services.cross_sell import CompanionSearchBuilder as Builder
+    from app.taxonomy.complements import Companion
+
+    sofa = _product(OFF_SCREEN).model_copy(
+        update={
+            "dimensions": NormalisedDimensions(
+                status=DimensionStatus.NORMALISED,
+                length_cm=Decimal("90"),
+                width_cm=Decimal("220"),
+            )
+        }
+    )
+    rug = Companion(commerce_category="decor", commerce_subcategory="carpet", label="rugs")
+    base = Builder(ATTRIBUTES).build(sofa, rug)
+
+    sized = _leaning(base, sofa, CrossSellKindPlan(kind="carpet", size_ratio=1.2))
+    unsized = _leaning(base, _product(OFF_SCREEN), CrossSellKindPlan(kind="carpet", size_ratio=1.2))
+
+    assert sized.lean.size_target_cm == Decimal("264")
+    assert sized.semantic_preferences == base.semantic_preferences, (
+        "no styles of hers - the pick's own styles still lead"
+    )
+    assert unsized is base, "no listed size on the pick - nothing to work a size from"
+    assert _leaning(base, sofa, None) is base
+
+
 async def test_cross_sell_falls_back_to_chips_when_nothing_is_in_stock() -> None:
     """When no complementary kind yields a product, there is no grid - just the
     chips, exactly as before - so the offer never shows an empty page."""

@@ -29,6 +29,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.design import (
+    MAX_DIRECTION_AVOID,
+    MAX_DIRECTION_COLOURS,
+    MAX_DIRECTION_STYLES,
     MAX_NEXT_SIZES,
     MAX_PLACEMENTS,
     MAX_REGULAR_SEATING_COUNT,
@@ -387,6 +390,12 @@ class ProductInteractionState(BaseModel):
     )
     """Products shown to them, newest last, so "the sofa I saw before" can be
     found again. Never leaves anything out. Kept with the shopper across chats."""
+
+    last_added_product_id: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The product most recently put in the cart - by a tap or an agent, re-added
+    included - while it is still there: the piece a cross-sell is for when a
+    saved plan is reused (CLAUDE.md 10.3). Left out while unset, so every saved
+    session still reads."""
 
     compared_product_ids: tuple[int, ...] = ()
     """The products of the comparison currently on screen, in column order.
@@ -1031,6 +1040,40 @@ class FinishedRoom(BaseModel):
 MAX_FINISHED_ROOMS = 10
 
 
+MAX_CROSS_SELL_KINDS = 4
+"""The kinds one cross-sell grid samples - one card each."""
+
+
+class CrossSellKindPlan(BaseModel):
+    """One kind Nora chose to show beside a finished pick, and how its card
+    should lean: approved colours and styles, what to push down, and its
+    longer side as a share of the pick's. Ranking only - nothing is hidden
+    (CLAUDE.md 10.3)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str = Field(min_length=1, max_length=64)
+    colours: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_COLOURS)
+    styles: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_STYLES)
+    avoid_colours: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_AVOID)
+    avoid_styles: tuple[str, ...] = Field(default=(), max_length=MAX_DIRECTION_AVOID)
+    size_ratio: float | None = Field(default=None, ge=0.2, le=3)
+
+
+class CrossSellPlan(BaseModel):
+    """Nora's plan for what goes with one pick: the kinds to show and how each
+    leans. Kept for that pick, so its grid and a chip's full page of one kind
+    lean alike; replaced by the next plan."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    anchor_product_id: int = Field(ge=1)
+    kinds: tuple[CrossSellKindPlan, ...] = Field(min_length=1, max_length=MAX_CROSS_SELL_KINDS)
+
+    def for_kind(self, kind: str) -> CrossSellKindPlan | None:
+        return next((plan for plan in self.kinds if plan.kind == kind), None)
+
+
 class KindAsked(BaseModel):
     """The kind Sara last asked the customer about (`ask_about`), so the
     answers she offers on later turns are checked against what the store
@@ -1131,6 +1174,10 @@ class AgentStateV1(BaseModel):
     kind_asked: KindAsked | None = Field(default=None, exclude_if=lambda v: v is None)
     """The kind last asked about, for checking the answers offered about it.
     Left out while unset, so every saved session still reads."""
+
+    cross_sell_plan: CrossSellPlan | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Nora's plan for what goes with the newest finished pick (CLAUDE.md
+    10.3). Left out while unset, so every saved session still reads."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

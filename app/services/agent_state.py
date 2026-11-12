@@ -32,6 +32,7 @@ from app.schemas.agent_state import (
     BundleItemState,
     BundleItemStatus,
     CartQuantity,
+    CrossSellPlan,
     CustomerPreferenceState,
     GoalKind,
     GoalState,
@@ -46,6 +47,7 @@ from app.schemas.agent_state import (
 from app.schemas.agent_updates import (
     ActiveSearchUpdate,
     AddBundleLine,
+    AddItems,
     AgentStateUpdate,
     BundleLineSpec,
     BundleOperation,
@@ -93,6 +95,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         goals=state.goals,
         room_swap=state.room_swap,
         kind_asked=state.kind_asked,
+        cross_sell_plan=state.cross_sell_plan,
         reply_language=state.reply_language,
     )
 
@@ -156,6 +159,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
             explored_product_ids=interaction.explored_product_ids,
             turned_down_product_ids=interaction.turned_down_product_ids,
             seen_product_ids=_newest((*interaction.seen_product_ids, *product_ids), MAX_SEEN),
+            last_added_product_id=interaction.last_added_product_id,
             # Carried across the new results deliberately. A comparison stays
             # on screen while fresh results arrive behind it, and "the one from
             # the comparison" has to keep meaning the same product - which is
@@ -171,6 +175,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         goals=state.goals,
         room_swap=state.room_swap,
         kind_asked=state.kind_asked,
+        cross_sell_plan=state.cross_sell_plan,
         reply_language=state.reply_language,
     )
 
@@ -237,6 +242,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         goals=state.goals,
         room_swap=state.room_swap,
         kind_asked=state.kind_asked,
+        cross_sell_plan=state.cross_sell_plan,
         reply_language=state.reply_language,
     )
 
@@ -440,6 +446,12 @@ def _interaction(
     else:
         focus = current.focused_product_id
     selected = apply_items(current.selected_product_ids, update.selected_product_ids)
+    added = update.selected_product_ids
+    last_added = (
+        added.items[-1]
+        if isinstance(added, AddItems) and added.items
+        else current.last_added_product_id
+    )
     liked = apply_items(current.liked_product_ids, update.liked_product_ids)
     # Liking or adding a product they had turned down takes the "no" back.
     chosen = (set(selected) - set(current.selected_product_ids)) | (
@@ -458,6 +470,7 @@ def _interaction(
             p for p in current.turned_down_product_ids if p not in chosen
         ),
         seen_product_ids=current.seen_product_ids,
+        last_added_product_id=last_added if last_added in selected else None,
         # Replaced wholesale, never merged: a comparison is one table, and two
         # sets of columns at once would restore the ambiguity it exists to
         # remove. `None` keeps the table already on screen.
@@ -970,6 +983,13 @@ def note_kind_asked(
     if state.kind_asked == asked:
         return state
     return state.model_copy(update={"kind_asked": asked})
+
+
+def plan_cross_sell(state: AgentStateV1, plan: CrossSellPlan) -> AgentStateV1:
+    """Nora's plan for what goes with a pick, replacing the last one."""
+    if state.cross_sell_plan == plan:
+        return state
+    return state.model_copy(update={"cross_sell_plan": plan})
 
 
 def remember_next_sizes(state: AgentStateV1, sizes: Sequence[NextSize]) -> AgentStateV1:

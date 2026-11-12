@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
-from typing import Any, Literal, cast
+from types import UnionType
+from typing import Any, Literal, Union, cast, get_args, get_origin
 
 from pydantic import Field, create_model, model_validator
 
@@ -22,16 +23,27 @@ from app.agents.services import AgentServices
 from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool, list_of, one_of
 from app.agents.tools.schemas import ToolSchemas
 from app.agents.tools.shelf import _room_hints
-from app.agents.tools.shopping import NoArgs, hydrated, resolve_product
+from app.agents.tools.shopping import NoArgs, ProductRef, hydrated, resolve_product
 from app.agents.work import ToolStatus, TurnWork
 from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import MAX_ROOM_NOTE_CHARS, RoomProjectState, SwapBudgetOfferState
+from app.schemas.agent_state import (
+    MAX_CROSS_SELL_KINDS,
+    MAX_ROOM_NOTE_CHARS,
+    CrossSellKindPlan,
+    CrossSellPlan,
+    RoomProjectState,
+    SwapBudgetOfferState,
+)
 from app.schemas.catalog_overview import CatalogOverview
 from app.schemas.design import (
+    MAX_DIRECTION_AVOID,
+    MAX_DIRECTION_COLOURS,
+    MAX_DIRECTION_STYLES,
     MAX_NEXT_SIZES,
     MAX_PLACEMENTS,
     MAX_REGULAR_SEATING_COUNT,
+    DesignDirection,
     InteriorDesignResult,
     NextSize,
     PieceDesign,
@@ -42,9 +54,10 @@ from app.schemas.discovery import PriceConstraint
 from app.schemas.geometry import RoomGeometry, RoomMeasurement, RoomMeasurementRole
 from app.schemas.product import ProductCandidate
 from app.schemas.product_reference import ProductReferenceSelector
-from app.services.agent_state import remember_next_sizes, remember_placements
+from app.services.agent_state import plan_cross_sell, remember_next_sizes, remember_placements
 from app.services.bundle_cards import group_bundle_cards
-from app.services.design_checks import usable_next_sizes
+from app.services.cross_sell import plain_shopper
+from app.services.design_checks import figure_free, stocked_direction, usable_next_sizes
 from app.services.fit import fit_checks, fit_words, floor_share, knows_room_size, room_spaces
 from app.services.room_design import (
     MAX_PIECE_QUANTITY,
@@ -217,6 +230,205 @@ def measure_fit_tool(schemas: ToolSchemas) -> ZoryTool[FitArgs]:
 class DesignNotesArgs(ToolArgs):
     placements: list[Placement] = Field(default_factory=list, max_length=MAX_PLACEMENTS)
     next_sizes: list[NextSize] = Field(default_factory=list, max_length=MAX_NEXT_SIZES)
+
+
+def _approved_subcategories(schemas: ToolSchemas) -> tuple[str, ...]:
+    """The same closed taxonomy vocabulary used by search_products."""
+    annotation = schemas.interpretation.model_fields["commerce_subcategory"].annotation
+
+    def literals(value: Any) -> tuple[str, ...]:
+        origin = get_origin(value)
+        if origin is Literal:
+            return tuple(item for item in get_args(value) if isinstance(item, str))
+        if origin in (Union, UnionType):
+            return tuple(item for member in get_args(value) for item in literals(member))
+        return ()
+
+    return literals(annotation)
+
+
+def cross_sell_advice_args(schemas: ToolSchemas) -> type[ToolArgs]:
+    """A kind to show beside the pick and how its card leans, per kind, in
+    approved values only: the kinds search uses, the colours and styles of the
+    attribute registry (CLAUDE.md 17.1)."""
+    kind = one_of(_approved_subcategories(schemas))
+    colour = one_of(tuple(sorted(schemas.attributes.colors)))
+    style = one_of(tuple(sorted(schemas.attributes.styles)))
+    planned = create_model(
+        "CrossSellKind",
+        __base__=ToolArgs,
+        kind=(kind, Field(description="A complementary kind to show.")),
+        colours=(
+            list_of(colour),
+            Field(
+                default_factory=list,
+                max_length=MAX_DIRECTION_COLOURS,
+                description="Colours its card should lean to, beside the chosen piece.",
+            ),
+        ),
+        styles=(
+            list_of(style),
+            Field(default_factory=list, max_length=MAX_DIRECTION_STYLES),
+        ),
+        avoid_colours=(
+            list_of(colour),
+            Field(default_factory=list, max_length=MAX_DIRECTION_AVOID),
+        ),
+        avoid_styles=(
+            list_of(style),
+            Field(default_factory=list, max_length=MAX_DIRECTION_AVOID),
+        ),
+        size_ratio=(
+            float | None,
+            Field(
+                default=None,
+                ge=0.2,
+                le=3.0,
+                description=(
+                    "Its longer side as a share of the chosen piece's: 0.66 for a coffee "
+                    "table two thirds of the sofa, 1.2 for a rug a little wider than it. "
+                    "Leave it out for a piece whose size does not follow the chosen one."
+                ),
+            ),
+        ),
+    )
+    return cast(
+        type[ToolArgs],
+        create_model(
+            "CrossSellAdviceArgs",
+            __base__=ProductRef,
+            kinds=(
+                list_of(planned),
+                Field(
+                    min_length=1,
+                    max_length=MAX_CROSS_SELL_KINDS,
+                    description="Complementary kinds to show, in priority order, with their lean.",
+                ),
+            ),
+            why=(
+                str,
+                Field(
+                    min_length=1,
+                    max_length=200,
+                    description="Why these suit the chosen piece, in words without figures.",
+                ),
+            ),
+        ),
+    )
+
+
+def cross_sell_advice_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
+    """Nora's plan for what goes with the newest finished pick: which kinds,
+    and how each card leans. Kept on the session for that pick, so Salman's grid
+    and a chip's full page of one kind both lean to it (CLAUDE.md 10.3)."""
+
+    async def advise(args: Any, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        if not figure_free(args.why):
+            return ToolOutcome(status=ToolStatus.INVALID, code="why_states_a_figure")
+        services = context.services
+        # The piece the plan is for is named, never taken as the cart's last
+        # line: re-adding a product keeps its old place in the cart, so "the
+        # newest" would be another piece (CLAUDE.md 10.3).
+        anchor = await resolve_product(services, args.which, work, context)
+        if isinstance(anchor, ToolOutcome):
+            return anchor
+        if anchor not in work.staged.product_interaction.selected_product_ids:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="not_a_finished_pick")
+        plans: list[CrossSellKindPlan] = []
+        applied: list[dict[str, Any]] = []
+        for item in args.kinds:
+            if any(plan.kind == item.kind for plan in plans):
+                continue
+            kept, looks_known = await _stocked_lean(services, context, item)
+            plans.append(kept)
+            entry: dict[str, Any] = {"kind": kept.kind}
+            if not looks_known:
+                entry["looks_unknown"] = "its colours and styles could not be checked; size only"
+            for name in ("colours", "styles", "avoid_colours", "avoid_styles"):
+                if values := getattr(kept, name):
+                    entry[name] = list(values)
+            asked = sum(
+                len(getattr(item, name))
+                for name in ("colours", "styles", "avoid_colours", "avoid_styles")
+            )
+            if looks_known and asked > sum(
+                len(getattr(kept, name))
+                for name in ("colours", "styles", "avoid_colours", "avoid_styles")
+            ):
+                entry["not_stocked_left_out"] = True
+            if kept.size_ratio is not None:
+                entry["size_share_of_the_piece"] = kept.size_ratio
+            applied.append(entry)
+        plan = CrossSellPlan(anchor_product_id=anchor, kinds=tuple(plans))
+        picks = work.staged.product_interaction.selected_product_ids
+        if (
+            services.cross_sell_plans is not None
+            and picks == (anchor,)
+            and plain_shopper(work.staged)
+        ):
+            # Planned for the piece on its own: the next shopper who picks it
+            # alone is shown the same plan without asking again.
+            await services.cross_sell_plans.save(context.retailer, anchor, plan.kinds)
+        piece = await hydrated(services, (anchor,), context)
+        return ToolOutcome(
+            facts={
+                **({"goes_with": piece[0].name_english} if piece else {}),
+                "kinds": applied,
+                "why": args.why,
+                "reply_by": "salman",
+            },
+            state=plan_cross_sell(work.staged, plan),
+        )
+
+    return ZoryTool(
+        name="cross_sell_advice",
+        description=(
+            "Before Salman shows what goes with the finished pick named in which (its place "
+            "in the cart, picked_ordinal): up to four "
+            "complementary kinds, each with the colours and styles its card should lean "
+            "to, what to push down, and its size as a share of the chosen piece. Values "
+            "the store does not stock for a kind are left out. After it, hand_back "
+            "needs_sales to Salman; he builds the grid and replies."
+        ),
+        args=cross_sell_advice_args(schemas),
+        owners=NORA,
+        handler=advise,
+    )
+
+
+async def _stocked_lean(
+    services: AgentServices, context: ToolContext, item: Any
+) -> tuple[CrossSellKindPlan, bool]:
+    """One kind's lean kept to what the store stocks for that kind - a value
+    it does not come in is dropped, never matched to something near it - and
+    whether what the kind comes in could be read. When it cannot, no colour or
+    style leans and only the size stands, as a matched search does (CLAUDE.md
+    10.5): an unchecked value could be said of a card that is not it."""
+    asked = DesignDirection(
+        colours=tuple(item.colours),
+        styles=tuple(item.styles),
+        avoid_colours=tuple(item.avoid_colours),
+        avoid_styles=tuple(item.avoid_styles),
+        size_ratio=item.size_ratio,
+    )
+    look = None
+    if services.looks is not None:
+        try:
+            look = await services.looks.of(item.kind, context.retailer)
+        except IntegrationUnavailableError:
+            look = None
+    if look is None:
+        return CrossSellKindPlan(kind=item.kind, size_ratio=item.size_ratio), False
+    kept = stocked_direction(asked, look)[0] or DesignDirection()
+    plan = CrossSellKindPlan(
+        kind=item.kind,
+        colours=kept.colours,
+        styles=kept.styles,
+        avoid_colours=kept.avoid_colours,
+        avoid_styles=kept.avoid_styles,
+        size_ratio=item.size_ratio,
+    )
+    return plan, True
 
 
 def design_notes_tool(schemas: ToolSchemas) -> ZoryTool[DesignNotesArgs]:
@@ -1173,6 +1385,7 @@ def design_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
     return [
         measure_fit_tool(schemas),
         design_notes_tool(schemas),
+        cross_sell_advice_tool(schemas),
         design_room_tool(schemas),
         revise_piece_tool(schemas),
         piece_options_tool(schemas),

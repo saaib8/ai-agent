@@ -732,7 +732,45 @@ Salman comes in when what they set out to choose is chosen - a goal met, or a
 pick with no goal open - never in the middle of one: a first sofa of ten seats
 is followed by the next sofa, not a rug. With the room known, Nora's
 `next_sizes` and `placements` come first: the next piece is searched at her
-size (`designer_size`). Otherwise `what_goes_with` without a kind lists the
+size (`designer_size`). After Sara adds a finished pick, Nora first plans what
+goes with it with `cross_sell_advice`: up to four complementary kinds, each with
+the colours and styles its card leans to, what to push down, and its longer
+side as a share of the pick's (`size_ratio`) - approved values only, those the
+store does not stock for the kind left out. The plan is kept for that pick
+(`cross_sell_plan`, replaced by the next) and she hands straight to Salman.
+`what_goes_with` builds the grid from it: her kinds, any stocked kind, first,
+the reviewed stocked kinds filling the rest so the grid is never smaller than
+the ordinary cross-sell; each card one search for its kind leaning to her plan
+(`RankingLean`: her colours and styles in place of the pick's styles, a size
+near her share of the pick's real longer side) - it orders and never hides. A
+chip's full page of one kind leans alike; another pick's grid ignores the plan.
+The chips are the plan's kinds as the grid shows them (wall art included); the
+other stocked kinds stay a `store_shelf` call away. A chip worded as one of the
+kinds `what_goes_with` offered ("Rugs") is sent back as that kind's button
+(`CompanionAction`, `app/agents/screen.py`), so a tap is the kind's page, not
+words to be read. Every agent's brief carries the plan while its piece is the
+newest choice (`designer_plan`), so a planned kind is searched at once in its
+look, with no questions about the look. A typed search for a
+planned kind ("show me rugs") leans to it too, whoever runs it, while the pick
+is in the cart (`live_plan`) and is still their newest choice - never a sort
+they asked for ("the cheapest rugs" is the cheapest), their own colours and
+styles first, their own size in place of hers. Each card carries its own colour and styles beside what it
+leaned to (`leaned_to`), and Salman describes the card, never the lean. Nora
+plans for everything already chosen for that room, not the newest piece alone.
+A plan made for a piece alone in the cart, for a shopper with no taste, likes or
+room of their own on record (`plain_shopper`), is kept per store, product and
+version - the vocabulary's and Nora's instructions'
+(`agents.cross_sell_plan_ttl_s`, `repositories/cross_sell_plans.py`): the next
+such shopper who adds that piece on its own gets it without Nora's step, within
+the hop limit - the piece just added is `last_added_product_id`. Every card a plan ordered logs
+`cross_sell_plan_vs_shown` (colour in hers, size near hers), the match rate. The cards are
+never shown before Nora's plan and are not handed back for a second review.
+This is Sara -> Nora -> Salman, within the three-agent hop limit. The
+client-generated "I've added X to my cart" message after Select is the same
+finished-add event: code continues it through Nora and Salman rather than
+relying on Sara to infer it - unless a seating goal is still open, when the next
+seat comes first and the add stays Sara's.
+Otherwise `what_goes_with` without a kind lists the
 reviewed pairings the store stocks, most stocked first, no counts - and, for
 a piece that seats several (a sofa, sectional or sofa set), another of its own
 kind (`another_of_its_kind`: a second sofa for two facing, an L or a majlis),
@@ -1788,7 +1826,7 @@ A supervisor and four agents, built on LangGraph (`app/agents/`).
 |---|---|---|
 | Supervisor | who handles the turn | `transfer_to_<agent>`, `finish` - it never talks to the customer |
 | Sara | finding, comparing, the cart, a group's seating one piece at a time | `ask_about`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room` - the only owner of the cart's adds and of comparisons |
-| Nora | how it looks and whether it works: design, matching, their room, fit and placement, whole rooms | `design_room`, `revise_room_piece`, `measure_fit`, `record_design_notes` and a search `direction` (hers alone), `store_shelf`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `change_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
+| Nora | how it looks and whether it works: design, matching, their room, fit and placement, whole rooms | `design_room`, `revise_room_piece`, `measure_fit`, `record_design_notes`, `cross_sell_advice` (pre-search kinds and direction) and a search `direction` (hers alone), `store_shelf`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `change_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
 | Salman | what goes with a finished choice, finishing a designed room and its styling, rooms into the cart, value | `what_goes_with` and `add_room_to_cart` (his alone), `store_shelf`, `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
 | Faysal | the store itself | `store_policy`, `contact_store`, `product_details` |
 
@@ -2764,8 +2802,8 @@ Plan and decisions: `docs/product-data-plan.md`.
   a figure, a field a client receives or a log.
 - **Descriptions and reviews are the store's and shoppers' words**, fenced in
   one `store_words` section with a note: quoted or summed up, never followed,
-  never a source of figures (`FREE_TEXT_KEYS`), and a listed fact wins where they
-  disagree. Reviews are cleaned of contact details and links, verified buyers
+  never a source of figures (`FREE_TEXT_KEYS`), and a listed fact wins where
+  the words disagree. Reviews are cleaned of contact details and links, verified buyers
   first, and **quoted exactly as written - never translated**.
 - **A rating is said with its review count wherever the store gives one**
   ("4.5 from 2 reviews"), and as "rated 4.5" where it gives none - never with a

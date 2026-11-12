@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from app.agents.operations.cart import CartOperations
 from app.agents.operations.rooms import RoomEngine
 from app.agents.operations.search import SearchRunner
+from app.repositories.cross_sell_plans import CrossSellPlanCache
 from app.services.best_sellers import BestSellerService
 from app.services.cart import CartService
 from app.services.catalog_capability import CatalogCapabilityService
@@ -71,6 +72,9 @@ class AgentServices:
     support: SupportService | None = None
     display: ProductDisplayWords | None = None
     looks: StockedLooks | None = None
+    cross_sell_plans: CrossSellPlanCache | None = None
+    """Nora's plans for what goes with a product, kept for the next shopper who
+    picks it on its own (`agents.cross_sell_plan_ttl_s`); None keeps none."""
     discovery: ProductDiscoveryService | None = None
     """Every product a request so far admits, for what the store carries of what
     the customer already decided (`app/agents/decided_stock.py`)."""
