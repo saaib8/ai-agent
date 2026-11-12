@@ -314,6 +314,7 @@ export function AssistantBubble({
             products={presentation!.products}
             pick={pick}
             refine={isResultList ? refine : undefined}
+            moreOptions={presentation!.more_options !== false}
             selection={actsOnCards ? selection : undefined}
             likes={actsOnCards ? likes : undefined}
             onMoreLikeThis={actsOnCards ? onMoreLikeThis : undefined}

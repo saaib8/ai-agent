@@ -17,6 +17,9 @@ interface ProductGridProps {
   /** Present on the latest search grid: a "different options" button and a
    *  per-card "not this one". Absent while picking a room replacement. */
   refine?: SearchRefineControls
+  /** False when the list has nothing more to page through (the grid of what
+   *  goes with a pick): no "different options" button, "not this one" stays. */
+  moreOptions?: boolean
   /** Present on the search results on screen: each card can be ticked. */
   selection?: GridSelection
   /** Present on search results: each card can be checked for comparison. */
@@ -53,6 +56,7 @@ export function ProductGrid({
   products,
   pick,
   refine,
+  moreOptions = true,
   selection,
   compare,
   likes,
@@ -62,7 +66,7 @@ export function ProductGrid({
   labels,
 }: ProductGridProps) {
   if (products.length === 0) return null
-  const showRefine = refine && !pick
+  const showRefine = refine && !pick && moreOptions
   return (
     <div className="flex flex-col gap-2.5">
       {pick && !pick.adds && (

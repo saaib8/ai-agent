@@ -3,7 +3,8 @@
 A tap is not turned into words someone wrote for it, and it belongs to no
 agent and no tool in advance: the supervisor reads it, with who offered the
 button, and sends it to whoever should handle it; that agent decides what to
-do, with the same tools and checks a typed message gets.
+do, with the same tools and checks a typed message gets. A button that runs one
+tool with one owner (`Tap.runs`) starts with that owner instead.
 """
 
 from __future__ import annotations
@@ -47,6 +48,10 @@ class Tap:
     event: TapEvent
     cards: tuple[CardRef, ...] = ()
     """The cards the button named, with the list each was on."""
+    runs: str | None = None
+    """The tool this button runs, when it is a fixed command rather than an
+    answer to read: the turn then starts with that tool's owner, when the
+    allowlist gives it exactly one (CLAUDE.md 17.3)."""
 
     @property
     def said(self) -> str:
@@ -150,7 +155,10 @@ def _product(action: ProductActionRequest) -> Tap:
                 tuple(action.cards),
             )
         case "companion":
-            return Tap(TapEvent(button="show_what_goes_with_it", kind=action.subcategory))
+            return Tap(
+                TapEvent(button="show_what_goes_with_it", kind=action.subcategory),
+                runs="what_goes_with",
+            )
         case "more_like_this":
             if action.liked is not None:
                 return Tap(TapEvent(button="more_like_this", liked=action.liked))
@@ -164,7 +172,5 @@ def _product(action: ProductActionRequest) -> Tap:
                 TapEvent(button="add_card_to_cart", card=action.card.ordinal), (action.card,)
             )
         case "visualize":
-            return Tap(
-                TapEvent(button="visualize_card", card=action.card.ordinal), (action.card,)
-            )
+            return Tap(TapEvent(button="visualize_card", card=action.card.ordinal), (action.card,))
     raise AssertionError(f"unhandled product action {action.kind}")

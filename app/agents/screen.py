@@ -118,10 +118,11 @@ def presentation(
     support = next((p for p in reversed(shown) if isinstance(p, SupportShown)), None)
     fields: dict[str, object] = {}
     match screen:
-        case SearchShown(grounding=grounding) if grounding.products:
+        case SearchShown(grounding=grounding, more_options=more_options) if grounding.products:
             fields.update(
                 products=grounding.products,
                 product_source="search",
+                more_options=more_options,
                 list_revision=state.product_interaction.presented_search_revision,
             )
         case OptionsShown(products=products) if products:
