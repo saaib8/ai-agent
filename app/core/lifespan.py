@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
@@ -46,6 +46,7 @@ from app.repositories.vocabulary import StoredVocabularyRepository
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.query import build_constrained_interpretation
 from app.services.history_summary import HistorySummarizer
+from app.services.service_health import OutsideHealthCache
 from app.services.store_knowledge import StoreKnowledgeService
 from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
 from app.taxonomy.compare_groups import CompareGroups, load_compare_groups
@@ -105,6 +106,9 @@ class AppResources:
     # Folds a conversation's oldest messages into its rolling summary. None
     # when summaries are off: the oldest messages are then dropped.
     history_summarizer: HistorySummarizer | None = None
+    # The public health check's last outside-probe results, kept per process
+    # so a polled URL never becomes a stream of provider calls.
+    outside_health: OutsideHealthCache = field(default_factory=OutsideHealthCache)
 
 
 def get_resources(app: FastAPI) -> AppResources:

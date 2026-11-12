@@ -225,6 +225,19 @@ class OpenAIStructuredClient:
         )
         raise LLMResponseInvalidError(reason="unreadable figure in model output") from exc
 
+    async def check_health(self) -> bool:
+        """Whether the provider serves the configured model with this key: one
+        lookup of that model (a deployment, on Azure), which generates nothing
+        and costs nothing - an unknown model is a 404 and a bad key a 401. Not
+        retried: a probe reports what it sees now, and its caller bounds how
+        long it waits. (Listing every model was tried: seconds, not a tenth.)"""
+        try:
+            await self._client.with_options(max_retries=0).models.retrieve(self._model)
+        except OpenAIError as exc:
+            logger.warning("llm_health_check_failed", error_type=type(exc).__name__)
+            return False
+        return True
+
     async def close(self) -> None:
         await self._client.close()
 
