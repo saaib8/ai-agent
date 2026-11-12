@@ -33,7 +33,17 @@ cp .env.example .env                      # then edit
 uv sync --all-extras
 uvicorn app.main:create_app --factory
 curl localhost:8000/health
+curl localhost:8000/v1/health             # public: adds the model provider, Pinecone, finder
 ```
+
+`/health` is the container's readiness probe (PostgreSQL, Redis; 503 when
+either is down). `/v1/health` is the one reachable through the public host: it
+also reports the model provider, Pinecone and the Zory finder as `up`, `down`
+or `not_configured`, answers 503 only when no chat can be answered (PostgreSQL,
+Redis or the model provider down), and `degraded` with 200 when only Pinecone
+or the finder is. The outside probes cost nothing and are cached for 60 s
+(`ZORY_HEALTH__OUTSIDE_CACHE_S`), or 10 s once one is down
+(`ZORY_HEALTH__OUTSIDE_DOWN_CACHE_S`), so a blip clears quickly.
 
 `ZORY_DB__DSN` must point at a database that already carries the Django catalog
 schema, including `commerce_category`, `commerce_subcategory` and

@@ -901,6 +901,24 @@ class ProductDataSettings(BaseModel):
     """At most this many best sellers per kind, so the label stays special."""
 
 
+class HealthSettings(BaseModel):
+    """How the public health check (`GET /v1/health`) probes outside services.
+
+    Their results are kept for `outside_cache_s`, so a monitor polling a public
+    URL never becomes a stream of provider calls - but only for
+    `outside_down_cache_s` once a service is down, so one slow first connection
+    or a blip clears in seconds rather than reading as an outage for a minute.
+    A probe that has not answered within `outside_timeout_s` counts as down.
+    """
+
+    outside_cache_s: float = Field(default=60.0, gt=0)
+    outside_down_cache_s: float = Field(default=10.0, gt=0)
+    # A fresh connection after idle measured 1-4 s to the model provider and
+    # Pinecone, and above 5 s during a network slowdown (2026-11-12): 5 s
+    # reported healthy services as down.
+    outside_timeout_s: float = Field(default=10.0, gt=0)
+
+
 class ObservabilitySettings(BaseModel):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_format: Literal["json", "console"] = "json"
@@ -990,6 +1008,7 @@ class Settings(BaseSettings):
     products: ProductDataSettings = ProductDataSettings()
     salla: SallaSettings = SallaSettings()
     observability: ObservabilitySettings = ObservabilitySettings()
+    health: HealthSettings = HealthSettings()
     aws: AwsSettings = AwsSettings()
 
     azure_openai_api_key: SecretStr | None = Field(

@@ -123,6 +123,19 @@ class PineconeSemanticIndex:
             scores.update(self._read(response))
         return scores
 
+    async def check_health(self) -> bool:
+        """Whether the index answers: its stats, which read no vectors."""
+        try:
+            await asyncio.to_thread(self._index.describe_index_stats)
+        except Exception as exc:  # the SDK's errors share no base class, as in `score`
+            logger.warning(
+                "semantic_index_health_check_failed",
+                index=self._index_name,
+                error_type=type(exc).__name__,
+            )
+            return False
+        return True
+
     @staticmethod
     def _read(response: Any) -> dict[int, float]:
         matches = response["matches"] if isinstance(response, dict) else response.matches

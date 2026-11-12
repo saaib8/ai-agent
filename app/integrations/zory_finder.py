@@ -44,6 +44,7 @@ UPLOAD_PATH = "/api/widgets/uploads/"
 PROCESS_PATH = "/api/process_furniture_finder/"
 DETECTION_PATH = "/api/object-detection/{scan_id}/"
 RECOMMEND_PATH = "/api/get-recommendations/"
+HEALTH_PATH = "/api/health-check/"
 
 WIDGET_KEY_HEADER = "X-Zory-Widget-Key"
 WIDGET_STORE_HEADER = "X-Zory-Widget-Store-Id"
@@ -107,6 +108,19 @@ class ZoryFinderClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    async def check_health(self) -> bool:
+        """Whether the platform answers: its own open health check, which
+        signs nobody in and scans nothing."""
+        try:
+            response = await self._client.get(HEALTH_PATH)
+        except httpx.HTTPError as exc:
+            logger.warning("zory_finder_health_check_failed", error_type=type(exc).__name__)
+            return False
+        if response.status_code != httpx.codes.OK:
+            logger.warning("zory_finder_health_check_failed", status=response.status_code)
+            return False
+        return True
 
     # ── who the finder runs as ──────────────────────────────────────────────
 

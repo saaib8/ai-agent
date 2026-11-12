@@ -22,6 +22,7 @@ from app.api.routes.furniture_finder import router as furniture_finder_router
 from app.api.routes.health import router as health_router
 from app.api.routes.labels import router as labels_router
 from app.api.routes.picks import router as picks_router
+from app.api.routes.service_health import router as service_health_router
 from app.api.routes.sessions import router as sessions_router
 from app.api.routes.support import router as support_router
 from app.api.routes.visualization import router as visualization_router
@@ -62,6 +63,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Health sits outside the versioned prefix so probes are stable across
     # API versions (CLAUDE.md 25).
     app.include_router(health_router)
+    # The public health check, reachable where the host proxies only the
+    # versioned prefix; it adds the outside services /health does not probe.
+    app.include_router(service_health_router, prefix=settings.api.prefix)
     # Everything a customer touches is versioned, so a later contract change is
     # a new prefix rather than a silent change under the old one.
     app.include_router(chat_router, prefix=settings.api.prefix)

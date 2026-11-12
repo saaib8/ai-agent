@@ -80,6 +80,7 @@ from app.services.room_visualization import (
 )
 from app.services.search_pipeline import ProductSearchPipeline
 from app.services.semantic_ranking import SemanticRankingService
+from app.services.service_health import ServiceHealthService, as_probe
 from app.services.similar_search import SimilarSearchBuilder
 from app.services.stocked_looks import StockedLooks
 from app.services.store_cart_check import StoreCartCheck
@@ -175,6 +176,22 @@ def product_discovery_service(
 ProductRepositoryDep = Annotated[ProductRepository, Depends(product_repository)]
 RetailerContextProviderDep = Annotated[RetailerContextProvider, Depends(retailer_context_provider)]
 HealthServiceDep = Annotated[HealthService, Depends(health_service)]
+
+
+def service_health_service(
+    health: HealthServiceDep, app_resources: ResourcesDep
+) -> ServiceHealthService:
+    return ServiceHealthService(
+        health,
+        llm=app_resources.llm,
+        semantic_index=as_probe(app_resources.semantic_index),
+        zory_finder=app_resources.zory_finder,
+        cache=app_resources.outside_health,
+        settings=app_resources.settings.health,
+    )
+
+
+ServiceHealthServiceDep = Annotated[ServiceHealthService, Depends(service_health_service)]
 
 
 def click_tracking_service(session: SessionDep) -> ClickTrackingService:
