@@ -411,6 +411,8 @@ export interface ChatPresentation {
    *  ticks and "Not this one" count into; picks and a single product are
    *  cards with no position there. */
   product_source?: 'search' | 'selection' | 'liked' | 'detail' | 'room_options' | null
+  /** False: offer no "different options" under these products (the grid of what goes with a pick). */
+  more_options?: boolean
   /** For room options: the room piece they are for (1-based). Their cards'
    *  action is "Use this" - a swap into the room, never Select. */
   options_for_piece?: number | null

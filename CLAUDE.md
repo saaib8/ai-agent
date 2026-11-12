@@ -738,7 +738,8 @@ the colours and styles its card leans to, what to push down, and its longer
 side as a share of the pick's (`size_ratio`) - approved values only, those the
 store does not stock for the kind left out. The plan is kept for that pick
 (`cross_sell_plan`, replaced by the next) and she hands straight to Salman.
-`what_goes_with` builds the grid from it: her kinds, any stocked kind, first,
+`what_goes_with` builds the grid from it (`more_options: false`: one product
+per kind, so no "different options" under it): her kinds, any stocked kind, first,
 the reviewed stocked kinds filling the rest so the grid is never smaller than
 the ordinary cross-sell; each card one search for its kind leaning to her plan
 (`RankingLean`: her colours and styles in place of the pick's styles, a size
@@ -1935,6 +1936,12 @@ id) that the supervisor routes like a message, told who offered the button and
 each agent's tools - a hint, never a rule about which tool must run. The
 console sends a Select as the customer's words ("I've added X to my cart").
 Tapping and typing run the same agents, tools and checks.
+
+A button that is a fixed command names the tool it runs (`Tap.runs`); when the
+allowlist gives that tool exactly one owner, the turn starts with that agent
+and no model guesses - the words a model wrote for the button cannot steer it.
+Today only a kind chip after a pick (`companion`, `what_goes_with`, Salman's)
+does. Every hop after the first, and every typed message, is routed as above.
 
 ---
 

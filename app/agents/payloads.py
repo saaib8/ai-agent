@@ -24,6 +24,9 @@ class _Payload(BaseModel):
 
 class SearchShown(_Payload):
     grounding: SearchExecutionGrounding
+    more_options: bool = True
+    """False for a list with nothing more to page through - Salman's grid of one
+    product per kind, whose kind chips are how to see more of any one."""
 
 
 class ProductShown(_Payload):

@@ -177,6 +177,12 @@ class AgentTeam:
         self._settings = settings
         self._tools = {a.value: sorted(t.name for t in loop.tools_for(a)) for a in AgentPersona}
         """Each agent's tools, so the supervisor sends work to one who can do it."""
+        owners: dict[str, set[AgentPersona]] = {}
+        for agent in AgentPersona:
+            for tool in loop.tools_for(agent):
+                owners.setdefault(tool.name, set()).add(agent)
+        self._owners = {name: frozenset(agents) for name, agents in owners.items()}
+        """Who may run each tool - the allowlist itself, read once."""
         self._graph = self._build().compile()
 
     async def run(self, turn: TeamTurn, trace: TurnTrace) -> TeamResult:
@@ -422,6 +428,11 @@ class AgentTeam:
             return {"next": f"{last.value}:reply"}
         turn = state["turn"]
         work = state["work"]
+        if last is None and (owner := self._button_owner(turn.tap)) is not None:
+            # A fixed command with one owner: no model is asked to guess who
+            # handles it, and words a model wrote for the button cannot steer it.
+            state["trace"].add(TraceEvent(SUPERVISOR_ROLE, "handoff", "button_owner", 0))
+            return {"next": owner.value, "need": None}
         state["budget"].spend()
         started = time.perf_counter()
         context: dict[str, Any] = {"agents_tools": self._tools, "view": state["view"]}
@@ -471,6 +482,14 @@ class AgentTeam:
         if finishing:
             return {"next": f"{agent}:reply", "need": None, "asked_again": True}
         return {"next": agent, "need": need, "asked_again": True}
+
+    def _button_owner(self, tap: Tap | None) -> AgentPersona | None:
+        """The one agent allowed to run the tool a tapped button runs - None
+        for a typed message, an answer to read, or a tool several may run."""
+        if tap is None or tap.runs is None:
+            return None
+        owners = self._owners.get(tap.runs, frozenset())
+        return next(iter(owners)) if len(owners) == 1 else None
 
     def _fallback(self, state: _GraphState) -> dict[str, Any]:
         """No usable choice: a turn nobody has worked on goes to the agent the

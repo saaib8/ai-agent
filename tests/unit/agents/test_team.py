@@ -303,6 +303,56 @@ async def test_a_tap_is_routed_by_the_supervisor_with_who_offered_it() -> None:
     assert "[tapped a button]" in told and 'The button read: "Add all to cart"' in told
 
 
+async def test_a_kind_chip_starts_with_the_one_owner_of_its_tool() -> None:
+    supervisor = ScriptedChatModel(script=[])
+    salman = ScriptedChatModel(script=[reply("Here are rugs for your sofa.")])
+    team, loop = _team(supervisor, {SALMAN: salman})
+    tap = Tap(TapEvent(button="show_what_goes_with_it", kind="carpet"), runs="what_goes_with")
+
+    result = await _run(team, loop, _turn("Show me rugs for the sofa", tap=tap))
+
+    assert result.owner is SALMAN and result.handoffs == (SALMAN,)
+    assert supervisor.seen == [], "no model guesses who handles a one-owner button"
+    told = str(salman.seen[0][-1].content)
+    assert "show_what_goes_with_it" in told, "the owner still reads what was tapped"
+
+
+async def test_a_button_whose_tool_has_several_owners_is_still_routed() -> None:
+    supervisor = ScriptedChatModel(script=[transfer(NORA)])
+    nora = ScriptedChatModel(script=[reply("Noted.")])
+    team, loop = _team(supervisor, {NORA: nora})
+    tap = Tap(TapEvent(button="note_it"), runs="note")
+
+    result = await _run(team, loop, _turn("Note it", tap=tap))
+
+    assert result.owner is NORA and len(supervisor.seen) == 1
+
+
+def test_a_kind_chip_tap_names_the_tool_it_runs() -> None:
+    from app.agents.screen_actions import tap_of
+    from app.schemas.chat import ChatRequest
+
+    from tests.unit.agents.fakes import real_loop
+
+    request = ChatRequest.model_validate(
+        {
+            "session_id": "web-0123456789ab",
+            "store_id": 50,
+            "message": "Show me rugs",
+            "product_action": {"kind": "companion", "category": "decor", "subcategory": "carpet"},
+        }
+    )
+    tap = tap_of(request)
+
+    assert tap is not None and tap.runs == "what_goes_with"
+    owners = {
+        agent
+        for agent in AgentPersona
+        if tap.runs in {t.name for t in real_loop().tools_for(agent)}
+    }
+    assert owners == {SALMAN}, "the chip's tool has exactly one owner"
+
+
 async def test_a_supervisor_that_chooses_nothing_is_asked_once_more() -> None:
     supervisor = ScriptedChatModel(script=[step(text="hmm"), transfer(NORA, "s2")])
     nora = ScriptedChatModel(script=[reply("Tell me about the room.")])

@@ -416,6 +416,10 @@ async def test_what_goes_with_lists_kinds_until_one_is_chosen() -> None:
     # here, the only reviewed pairing in stock) with the kinds as chips; the
     # kind drill-down still gives that kind's full page.
     assert listed.payload is not None, "the no-kind call now shows a one-per-kind grid"
+    assert listed.payload.more_options is False, "a grid of one per kind has no more to page"
+    assert shown.payload is not None and shown.payload.more_options is True, (
+        "a kind's full page still offers different options"
+    )
     assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
     assert [s["kind"] for s in listed.facts["suggestions"]] == ["carpet"]
     assert "store_shelf" in listed.facts["other_kinds"]

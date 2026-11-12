@@ -231,6 +231,10 @@ class ChatPresentation(BaseModel):
     """
 
     product_source: Literal["search", "selection", "liked", "detail", "room_options"] | None = None
+    more_options: bool = True
+    """Whether a client offers "different options" (`search_action` more_options)
+    under these products. False on the grid of what goes with a pick - one
+    product per kind, where the kind chips show more of any one kind."""
     options_for_piece: int | None = Field(default=None, ge=1)
     """For room options: the room piece they are for, by its card's place."""
     """Which of those `products` is.

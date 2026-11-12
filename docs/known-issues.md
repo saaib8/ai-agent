@@ -2442,3 +2442,34 @@ rules, showed no size rows. Stores 21 and 151 list sizes for most kinds.
 **Status:** Fixed.
 
 **Reported:** by the user (2026-11-03).
+
+## 40. A chip page stalled once and came back with no new cards
+
+**What happened:** after a bed and two lamps were in the cart, a tap on the
+"Wall art" chip (session `web-e7f127da1507`, store 151) went straight to Salman
+as intended, but his wall-art search never finished. The turn's work deadline
+stopped it about 20 s in, and Salman replied without new cards, describing card
+4 of the earlier grid as if it were the answer. The turn took 38 s.
+
+**What the logs show:** the search started (`companion_search_seeded`) and its
+database step never reported back; no error was logged, because the deadline
+cut it off before the database's own timeouts (connect, 10 s pool, 15 s
+command) could fail.
+
+**Checked (2026-11-12):** nine replays of the same tap on copies of the
+session - three one after another, six at once - all returned five wall-art
+cards in 10-15 s. With temporary timing logs, the wall-art pool query (5,588
+products) took 0.65-2.3 s, ranking about 17 ms and loading the cards
+60-300 ms. Most likely a one-off delay reaching the remote staging database
+(AWS Mumbai) from a local machine, such as a stale connection being checked
+or reopened.
+
+**If it happens again:** look at the database connection settings for idle
+connections (`db.pool_pre_ping`, `db.pool_recycle_s`, `db.connect_timeout_s`),
+and log which step a deadline cut off. Also worth a fix of its own: when a
+search is cut off, the reply should say the page did not load and offer to
+try again, not describe the earlier cards.
+
+**Status:** Open - not reproduced.
+
+**Reported:** by the user (2026-11-12).

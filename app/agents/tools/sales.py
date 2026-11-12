@@ -196,7 +196,7 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                     ),
                 },
                 state=committed,
-                payload=SearchShown(grounding=grounding),
+                payload=SearchShown(grounding=grounding, more_options=False),
             )
         if not not_the_anchors_kind(args.show_kind, anchor_kinds):
             # Another of its own kind is a similar-product search, not a pairing.

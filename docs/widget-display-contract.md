@@ -193,6 +193,34 @@ cart or Like on these cards: the option replaces the piece in the room, and
 A room just designed is drawn only once the agent has checked it - a reply
 may describe a room before its package appears on a later reply.
 
+### 4.2 What goes with a pick: the kind chips
+
+After a pick, Salman shows a grid of one product per kind (a nightstand, a
+lamp, a rug) and, in `presentation.choices`, a chip for each kind. A kind chip
+carries `product_action`:
+
+```json
+{"label": "Nightstands", "value": "Show me nightstands",
+ "product_action": {"kind": "companion", "category": "tables", "subcategory": "nightstand"}}
+```
+
+- **On a tap, send the chip's `product_action` with its `value` as the
+  message** - never the words alone. The action is what makes it a tap: it goes
+  straight to Salman, whose page of that kind leans to the designer's plan for
+  the pick (her colours, styles and size first). Sent as words only, it is read
+  like a typed message, may reach another agent and need not follow the plan.
+- The `value` is the agent's own wording ("Show me rugs for the sofa") and may
+  differ from reply to reply; it is shown on the customer's side and changes
+  nothing about what the tap does.
+- The same reply may also carry plain chips (no `product_action`, such as
+  "Design the whole room"). Draw them in one row with the kind chips, the kind
+  chips first - they are one set of answers to the reply's question.
+- The grid's presentation carries `more_options: false`: draw no "different
+  options" button (`show_different_options`, `search_action` `more_options`)
+  under it - the kind chips are how to see more of any one kind. Everything else
+  on its cards stays (Select, Like, Compare, Not this one). A kind's own page,
+  and every other list, carries `more_options: true`.
+
 ## 5. Furniture Finder runs as the shopper
 
 `POST /v1/furniture-finder/photos` and `POST /v1/furniture-finder/picks` keep their
