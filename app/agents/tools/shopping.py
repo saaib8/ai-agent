@@ -80,6 +80,7 @@ from app.services.agent_state import (
     take_back,
     turn_down,
 )
+from app.services.cross_sell import live_plan, plan_lean
 from app.services.design_checks import figure_free, stocked_direction
 from app.services.fit import room_fit
 from app.services.grounding_builder import to_grounded_product
@@ -470,6 +471,47 @@ def search_outcome(run: Any, extra: dict[str, Any]) -> ToolOutcome:
     )
 
 
+async def _leaning_to_the_plan(
+    services: AgentServices,
+    state: AgentStateV1,
+    context: ToolContext,
+    resolved: ResolvedSearch,
+) -> tuple[RankingLean | None, dict[str, Any]]:
+    """Nora's plan for this kind beside the pick it was made for, while that
+    pick is in the cart and is still their newest choice (CLAUDE.md 10.3).
+    Never on a sort they asked for; her size only when they gave none of their
+    own; their own colours and styles rank before hers (RankingLean)."""
+    plan = live_plan(state)
+    kind = resolved.request.commerce_subcategory
+    kind_plan = plan.for_kind(kind) if plan is not None and kind else None
+    if plan is None or kind_plan is None:
+        return None, {}
+    if resolved.request.sort is not ProductSort.DEFAULT:
+        # "The cheapest rugs" means the cheapest: a sort they asked for is
+        # never leaned (CLAUDE.md 16.1).
+        return None, {}
+    if state.product_interaction.last_added_product_id != plan.anchor_product_id:
+        # Only while its piece is the newest choice: once they move on to
+        # something else, an old piece's plan no longer speaks for their words.
+        return None, {}
+    try:
+        found = await services.hydration.hydrate_ids((plan.anchor_product_id,), context.retailer)
+    except (IntegrationUnavailableError, InvalidRequestError):
+        return None, {}
+    if not found:
+        return None, {}
+    anchor = found[0]
+    request = resolved.request
+    lean = plan_lean(
+        anchor,
+        kind_plan,
+        with_size=not (request.dimensions or request.planar_dimensions),
+    )
+    if lean is None:
+        return None, {}
+    return lean, {"leaning_to_the_plan_for": anchor.name_english}
+
+
 def _matching(args: Any) -> bool:
     """Whether the search is matched with what they have - Nora's direction
     orders it, not their likes."""
@@ -832,6 +874,12 @@ def search_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                     "size_reason": size.reason,
                 }
         if not _matching(args):
+            if lean is None:
+                # A kind Nora planned beside their newest pick leans to her
+                # plan however it is asked for - a chip or their own words -
+                # their own colours, styles and sizes still first.
+                lean, planned = await _leaning_to_the_plan(services, state, context, resolved)
+                matched = {**matched, **planned}
             # A search they asked for leans to the look of what they liked;
             # a matched one follows the designer's direction instead.
             lean, leaned = await _leaning_to_liked(services, state, context, resolved, lean)

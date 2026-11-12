@@ -23,14 +23,18 @@ search. Executing it belongs to the pipeline.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Final
 
 from app.core.logging import get_logger
+from app.schemas.agent_state import AgentStateV1, CrossSellKindPlan, CrossSellPlan
+from app.schemas.dimensions import NormalisedDimensions
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.product import ProductCandidate
 from app.schemas.query import (
     ConstraintSemantics,
     ConstraintStrength,
+    RankingLean,
     ResolvedSearch,
     SemanticPreference,
 )
@@ -84,3 +88,94 @@ class CompanionSearchBuilder:
             semantic_preferences=preferences,
             semantic_text=None,
         )
+
+
+# ── Nora's plan for what goes with a pick (CLAUDE.md 10.3) ──────────────────
+
+SIZE_CLOSE_SHARE: Final[Decimal] = Decimal("0.25")
+"""How near a card's longer side must be to the planned one to count as
+"near her size" in the plan-vs-shown log. Measurement only - nothing is
+filtered or ranked by it."""
+
+
+def live_plan(state: AgentStateV1) -> CrossSellPlan | None:
+    """Nora's plan while the piece it was made for is still in the cart; once
+    that piece leaves, nothing leans to it."""
+    plan = state.cross_sell_plan
+    if plan is None:
+        return None
+    if plan.anchor_product_id not in state.product_interaction.selected_product_ids:
+        return None
+    return plan
+
+
+def longer_side(dimensions: NormalisedDimensions) -> Decimal | None:
+    return max(
+        (v for v in (dimensions.length_cm, dimensions.width_cm) if v is not None), default=None
+    )
+
+
+def plan_lean(
+    anchor: ProductCandidate, plan: CrossSellKindPlan, *, with_size: bool = True
+) -> RankingLean | None:
+    """One kind's plan as a ranking lean: her colours and styles, what she
+    would push down, and a longer side near her share of the pick's - worked
+    out from the pick's real measurements, only where they exist. It orders
+    and never filters. None when the plan leans nothing."""
+    longer = longer_side(anchor.dimensions) if with_size else None
+    target = (
+        (longer * Decimal(str(plan.size_ratio))).quantize(Decimal(1))
+        if longer is not None and plan.size_ratio is not None
+        else None
+    )
+    lean = RankingLean(
+        colours=plan.colours,
+        styles=plan.styles,
+        avoid_colours=plan.avoid_colours,
+        avoid_styles=plan.avoid_styles,
+        size_target_cm=target,
+    )
+    return None if lean == RankingLean() else lean
+
+
+def log_plan_vs_shown(
+    where: str, kind: str, lean: RankingLean | None, colour: str | None, size: Decimal | None
+) -> None:
+    """One structured line per card a plan ordered: whether it came in one of
+    her colours and near her size. The match rate is read from these lines;
+    no product, price or customer word is logged."""
+    if lean is None:
+        return
+    colour_match = (
+        None
+        if not lean.colours
+        else colour is not None and colour.casefold() in {c.casefold() for c in lean.colours}
+    )
+    target = lean.size_target_cm
+    size_close = (
+        None if target is None or size is None else abs(size - target) <= target * SIZE_CLOSE_SHARE
+    )
+    logger.info(
+        "cross_sell_plan_vs_shown",
+        where=where,
+        kind=kind,
+        colour_planned=bool(lean.colours),
+        colour_match=colour_match,
+        size_planned=target is not None,
+        size_close=size_close,
+    )
+
+
+def plain_shopper(state: AgentStateV1) -> bool:
+    """No taste, likes or room of their own on record: a plan Nora makes for
+    such a shopper is about the product alone, so it may be kept for the next
+    one, and a kept plan may be shown to them. Anyone with taste of their own
+    gets a plan of their own (CLAUDE.md 10.3)."""
+    taste = state.customer_preferences
+    return (
+        not taste.semantic_preferences
+        and not taste.avoid_colours
+        and not taste.avoid_styles
+        and not state.product_interaction.liked_product_ids
+        and state.room_project is None
+    )

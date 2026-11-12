@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from tests.unit.agents.fakes import (
     ATTRIBUTES,
     CONTEXT,
+    OFF_SCREEN,
     TAXONOMY,
     agent_services,
     real_loop,
@@ -38,81 +39,150 @@ def test_salman_continues_the_cross_sell_chain_after_a_suggestion_is_picked() ->
     instructions = " ".join(agent_instructions(AgentPersona.SALMAN).split())
 
     assert "Nora first records cross_sell_advice" in instructions
-    assert "passing her kinds as planned_kinds" in instructions
+    assert "it builds the grid from her plan" in instructions
     assert "Do not hand the resulting cards back for review" in instructions
 
 
-async def test_cross_sell_advice_records_a_pre_search_plan_for_salman() -> None:
-    services = agent_services()
+def _picked(*ids: int) -> AgentStateV1:
+    from app.schemas.agent_state import ProductInteractionState
+
+    return AgentStateV1(product_interaction=ProductInteractionState(selected_product_ids=ids))
+
+
+_FIRST_PICK = {"kind": "picked_ordinal", "position": 1}
+
+
+async def _advise(args: dict[str, Any], state: AgentStateV1, **optional: Any) -> Any:
+    from app.schemas.design import StockedLook
+
+    class _Looks:
+        """Every value stocked, unless a test says otherwise."""
+
+        async def of(self, subcategory: str, context: Any) -> StockedLook:
+            return StockedLook(
+                commerce_subcategory=subcategory,
+                colours=tuple(ATTRIBUTES.colors),
+                styles=tuple(ATTRIBUTES.styles),
+            )
+
+    optional.setdefault("looks", _Looks())
     tool = LOOP._registry.get("cross_sell_advice")
     assert tool is not None and tool.handler is not None
-    assert tool.owners == frozenset({AgentPersona.NORA})
-    work = TurnWork.starting(AgentStateV1())
+    work = TurnWork.starting(state)
     work.working = AgentPersona.NORA
-
-    outcome = await tool.handler(
-        tool.args.model_validate(
-            {
-                "kinds": ["carpet", "center-table"],
-                "direction": "Warm neutrals with clean modern lines beside the sofa.",
-            }
-        ),
-        tool_context(services),
+    return await tool.handler(
+        tool.args.model_validate({"which": _FIRST_PICK, **args}),
+        tool_context(agent_services(**optional)),
         work,
     )
 
-    assert outcome.status == "ok"
-    assert outcome.facts["reply_by"] == "salman"
-    assert outcome.facts["kinds"] == ["carpet", "center-table"]
-    assert outcome.facts["direction"].startswith("Warm neutrals")
 
-
-async def test_cross_sell_advice_rejects_an_ungrounded_reason_figure() -> None:
+async def test_cross_sell_advice_keeps_a_lean_per_kind_for_the_named_pick() -> None:
     tool = LOOP._registry.get("cross_sell_advice")
-    assert tool is not None and tool.handler is not None
-    work = TurnWork.starting(AgentStateV1())
-    work.working = AgentPersona.NORA
+    assert tool is not None and tool.owners == frozenset({AgentPersona.NORA})
 
-    outcome = await tool.handler(
-        tool.args.model_validate(
-            {
-                "kinds": ["carpet"],
-                "direction": "Choose one exactly 20 cm smaller.",
-            }
-        ),
-        tool_context(agent_services()),
-        work,
+    # The piece named is the sofa (OFF_SCREEN), though the rug sits after it in
+    # the cart: a re-added product keeps its old place, so "the last line" would
+    # be the wrong piece.
+    outcome = await _advise(
+        {
+            "kinds": [
+                {
+                    "kind": "carpet",
+                    "colours": ["Sand"],
+                    "styles": ["Minimalist"],
+                    "size_ratio": 1.2,
+                },
+                {"kind": "center-table", "colours": ["Walnut"], "avoid_colours": ["Black"]},
+            ],
+            "why": "Warm neutrals and wood beside the grey sofa.",
+        },
+        _picked(OFF_SCREEN, 9),
     )
 
-    assert outcome.status == "invalid" and outcome.code == "direction_states_a_figure"
+    assert outcome.status == "ok" and outcome.facts["reply_by"] == "salman"
+    plan = outcome.state.cross_sell_plan
+    assert plan.anchor_product_id == OFF_SCREEN
+    rug, table = plan.kinds
+    assert (rug.kind, rug.colours, rug.styles, rug.size_ratio) == (
+        "carpet",
+        ("Sand",),
+        ("Minimalist",),
+        1.2,
+    )
+    assert (table.colours, table.avoid_colours, table.size_ratio) == (("Walnut",), ("Black",), None)
+    assert outcome.facts["kinds"][0]["size_share_of_the_piece"] == 1.2
+
+
+async def test_cross_sell_advice_is_only_for_a_piece_in_the_cart() -> None:
+    outcome = await _advise({"kinds": [{"kind": "carpet"}], "why": "Soft underfoot."}, _picked(9))
+
+    assert outcome.status == "refused" and outcome.code == "not_a_finished_pick"
+
+
+async def test_cross_sell_advice_leaves_out_values_the_kind_is_not_stocked_in() -> None:
+    from app.schemas.design import StockedLook
+
+    class _Looks:
+        async def of(self, subcategory: str, context: Any) -> StockedLook:
+            return StockedLook(commerce_subcategory=subcategory, colours=("Beige",), styles=())
+
+    outcome = await _advise(
+        {"kinds": [{"kind": "carpet", "colours": ["Sand", "Beige"]}], "why": "Soft and light."},
+        _picked(OFF_SCREEN),
+        looks=_Looks(),
+    )
+
+    assert outcome.state.cross_sell_plan.kinds[0].colours == ("Beige",)
+    assert outcome.facts["kinds"][0]["not_stocked_left_out"] is True
+
+
+async def test_cross_sell_advice_keeps_only_the_size_when_looks_cannot_be_read() -> None:
+    outcome = await _advise(
+        {"kinds": [{"kind": "carpet", "colours": ["Sand"], "size_ratio": 1.2}], "why": "Soft."},
+        _picked(OFF_SCREEN),
+        looks=None,
+    )
+
+    rug = outcome.state.cross_sell_plan.kinds[0]
+    assert (rug.colours, rug.size_ratio) == ((), 1.2)
+    assert "looks_unknown" in outcome.facts["kinds"][0]
+    assert "not_stocked_left_out" not in outcome.facts["kinds"][0]
+
+
+async def test_cross_sell_advice_rejects_a_figure_in_its_reason() -> None:
+    outcome = await _advise(
+        {"kinds": [{"kind": "carpet"}], "why": "Choose one exactly 20 cm smaller."},
+        _picked(OFF_SCREEN),
+    )
+
+    assert outcome.status == "invalid" and outcome.code == "why_states_a_figure"
 
 
 async def test_cross_sell_advice_deduplicates_kinds() -> None:
-    tool = LOOP._registry.get("cross_sell_advice")
-    assert tool is not None and tool.handler is not None
-    work = TurnWork.starting(AgentStateV1())
-    work.working = AgentPersona.NORA
-
-    outcome = await tool.handler(
-        tool.args.model_validate(
-            {"kinds": ["carpet", "carpet"], "direction": "Keep the look cool and minimal."}
-        ),
-        tool_context(agent_services()),
-        work,
+    outcome = await _advise(
+        {"kinds": [{"kind": "carpet"}, {"kind": "carpet"}], "why": "Keep it cool and minimal."},
+        _picked(OFF_SCREEN),
     )
 
-    assert outcome.status == "ok"
-    assert outcome.facts["kinds"] == ["carpet"]
-    assert outcome.facts["reply_by"] == "salman"
+    assert [k["kind"] for k in outcome.facts["kinds"]] == ["carpet"]
 
 
-def test_cross_sell_advice_only_accepts_approved_catalog_kinds() -> None:
+def test_cross_sell_advice_only_accepts_approved_kinds_and_values() -> None:
     tool = LOOP._registry.get("cross_sell_advice")
     assert tool is not None
 
     with pytest.raises(ValidationError):
         tool.args.model_validate(
-            {"kinds": ["rug", "coffee-table"], "direction": "Keep it warm and modern."}
+            {"which": _FIRST_PICK, "kinds": [{"kind": "rug"}], "why": "Warm and modern."}
+        )
+    with pytest.raises(ValidationError):
+        tool.args.model_validate(
+            {
+                "which": _FIRST_PICK,
+                "kinds": [{"kind": "carpet", "colours": ["Sunset Glow"]}],
+                "why": "Warm.",
+            }
         )
 
 

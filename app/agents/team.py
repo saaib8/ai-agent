@@ -49,8 +49,10 @@ from app.core.exceptions import AgentTurnIncompleteError, LLMResponseInvalidErro
 from app.integrations.chat_models import call_chat_model
 from app.prompts.agents.v2 import SUPERVISOR, agent_instructions, reply_correction
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import AgentStateV1
+from app.schemas.agent_state import AgentStateV1, CrossSellPlan, GoalKind, GoalStatus
 from app.schemas.conversation import ConversationContext, ConversationMessage, ConversationRole
+from app.services.agent_state import plan_cross_sell
+from app.services.cross_sell import plain_shopper
 
 SUPERVISOR_ROLE = "supervisor"
 FINISH = "finish"
@@ -511,7 +513,31 @@ class AgentTeam:
                 and state.get("last") is AgentPersona.SARA
                 and state.get("need") == Need.DESIGN.value
                 and (_added_this_turn(work) or _cart_add_notice(turn))
+                and not _seating_still_open(work)
             )
+            if (
+                cross_sell_consultation
+                and not reply_only
+                and len(handoffs) < self._settings.max_hops
+                and not state["budget"].last_call
+            ):
+                reused = await _reuse_saved_plan(turn, work)
+                if reused is not None:
+                    record, plan = reused
+                    # Nora planned this product alone before: her plan is
+                    # reused and the turn goes straight to Salman - one model
+                    # step fewer, the same plan (CLAUDE.md 10.3).
+                    work.record(record, plan_cross_sell(work.staged, plan))
+                    state["trace"].add(TraceEvent(agent.value, "tool", "cross_sell_plan_reused", 0))
+                    state["trace"].add(TraceEvent(agent.value, "handoff", "salman", 0))
+                    return {
+                        "handoffs": handoffs,
+                        "last": agent,
+                        "handed_back": HandBackReason.NEEDS_SALES,
+                        "views": state["views"],
+                        "next": AgentPersona.SALMAN.value,
+                        "need": Need.SALES.value,
+                    }
             messages = agent_messages(
                 agent_instructions(agent),
                 turn.conversation,
@@ -543,7 +569,11 @@ class AgentTeam:
             )
             views = [*state["views"], view] if view is not state["view"] else state["views"]
             if isinstance(end, Responded):
-                if agent is AgentPersona.SARA and _cart_add_notice(turn):
+                if (
+                    agent is AgentPersona.SARA
+                    and _cart_add_notice(turn)
+                    and not _seating_still_open(work)
+                ):
                     state["trace"].add(TraceEvent(agent.value, "handoff", "nora", 0))
                     return {
                         "handoffs": handoffs,
@@ -612,6 +642,51 @@ def _added_this_turn(work: TurnWork) -> bool:
         and record.tool == "add_to_cart"
         and record.status is ToolStatus.OK
         for record in work.records
+    )
+
+
+async def _reuse_saved_plan(
+    turn: TeamTurn, work: TurnWork
+) -> tuple[ToolRecord, CrossSellPlan] | None:
+    """A plan Nora made before for the product just added, when it is the only
+    piece in the cart - the same piece on its own, so the same judgement.
+    None when nothing is kept, or the cart holds more she would plan around."""
+    cache = getattr(turn.context.services, "cross_sell_plans", None)
+    interaction = work.staged.product_interaction
+    anchor = interaction.last_added_product_id
+    if (
+        cache is None
+        or anchor is None
+        or interaction.selected_product_ids != (anchor,)
+        or not plain_shopper(work.staged)
+    ):
+        return None
+    kinds = await cache.load(turn.context.retailer, anchor)
+    if kinds is None:
+        return None
+    plan = CrossSellPlan(anchor_product_id=anchor, kinds=kinds)
+    record = ToolRecord(
+        agent=AgentPersona.NORA,
+        tool="cross_sell_advice",
+        status=ToolStatus.OK,
+        facts=json_facts(
+            {
+                "kinds": [k.model_dump(mode="json", exclude_defaults=True) for k in kinds],
+                "reused_plan": "planned for this piece before; reply_by salman",
+            }
+        ),
+        acted=True,
+    )
+    return record, plan
+
+
+def _seating_still_open(work: TurnWork) -> bool:
+    """A group still being seated piece by piece: the next piece comes before
+    what goes with it, so the add stays Sara's (10.3). Read from the staged
+    state, so a goal she closes this turn no longer holds the cross-sell back."""
+    return any(
+        goal.kind is GoalKind.SEATING and goal.status is GoalStatus.OPEN
+        for goal in work.staged.goals
     )
 
 

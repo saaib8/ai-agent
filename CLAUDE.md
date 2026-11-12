@@ -732,19 +732,44 @@ Salman comes in when what they set out to choose is chosen - a goal met, or a
 pick with no goal open - never in the middle of one: a first sofa of ten seats
 is followed by the next sofa, not a rug. With the room known, Nora's
 `next_sizes` and `placements` come first: the next piece is searched at her
-size (`designer_size`). After Sara adds a finished pick, Nora first records up
-to four complementary kinds and a colour/style direction with
-`cross_sell_advice`, then hands straight to Salman. Salman calls
-`what_goes_with` once with those kinds, builds the grid and replies. Its kinds
-use the same closed commerce vocabulary as search; stocked choices Nora names
-may extend the reviewed pairing list, and unavailable choices are filled from
-the reviewed stocked kinds so her plan never makes the grid smaller than the
-ordinary cross-sell. The cards
-are never shown before Nora's choice and are not handed back for a second
-review. This is Sara -> Nora -> Salman, within the three-agent hop limit.
-The client-generated "I've added X to my cart" message after Select is the same
-finished-add event: even though the cart changed before the agent turn, code
-continues it through Nora and Salman rather than relying on Sara to infer it.
+size (`designer_size`). After Sara adds a finished pick, Nora first plans what
+goes with it with `cross_sell_advice`: up to four complementary kinds, each with
+the colours and styles its card leans to, what to push down, and its longer
+side as a share of the pick's (`size_ratio`) - approved values only, those the
+store does not stock for the kind left out. The plan is kept for that pick
+(`cross_sell_plan`, replaced by the next) and she hands straight to Salman.
+`what_goes_with` builds the grid from it: her kinds, any stocked kind, first,
+the reviewed stocked kinds filling the rest so the grid is never smaller than
+the ordinary cross-sell; each card one search for its kind leaning to her plan
+(`RankingLean`: her colours and styles in place of the pick's styles, a size
+near her share of the pick's real longer side) - it orders and never hides. A
+chip's full page of one kind leans alike; another pick's grid ignores the plan.
+The chips are the plan's kinds as the grid shows them (wall art included); the
+other stocked kinds stay a `store_shelf` call away. A chip worded as one of the
+kinds `what_goes_with` offered ("Rugs") is sent back as that kind's button
+(`CompanionAction`, `app/agents/screen.py`), so a tap is the kind's page, not
+words to be read. Every agent's brief carries the plan while its piece is the
+newest choice (`designer_plan`), so a planned kind is searched at once in its
+look, with no questions about the look. A typed search for a
+planned kind ("show me rugs") leans to it too, whoever runs it, while the pick
+is in the cart (`live_plan`) and is still their newest choice - never a sort
+they asked for ("the cheapest rugs" is the cheapest), their own colours and
+styles first, their own size in place of hers. Each card carries its own colour and styles beside what it
+leaned to (`leaned_to`), and Salman describes the card, never the lean. Nora
+plans for everything already chosen for that room, not the newest piece alone.
+A plan made for a piece alone in the cart, for a shopper with no taste, likes or
+room of their own on record (`plain_shopper`), is kept per store, product and
+version - the vocabulary's and Nora's instructions'
+(`agents.cross_sell_plan_ttl_s`, `repositories/cross_sell_plans.py`): the next
+such shopper who adds that piece on its own gets it without Nora's step, within
+the hop limit - the piece just added is `last_added_product_id`. Every card a plan ordered logs
+`cross_sell_plan_vs_shown` (colour in hers, size near hers), the match rate. The cards are
+never shown before Nora's plan and are not handed back for a second review.
+This is Sara -> Nora -> Salman, within the three-agent hop limit. The
+client-generated "I've added X to my cart" message after Select is the same
+finished-add event: code continues it through Nora and Salman rather than
+relying on Sara to infer it - unless a seating goal is still open, when the next
+seat comes first and the add stays Sara's.
 Otherwise `what_goes_with` without a kind lists the
 reviewed pairings the store stocks, most stocked first, no counts - and, for
 a piece that seats several (a sofa, sectional or sofa set), another of its own

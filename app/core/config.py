@@ -804,6 +804,11 @@ class AgentsSettings(BaseModel):
     its look is this close to the best match's (similarity difference). 0 means
     only an equally close look; larger trades a little look for premium."""
 
+    cross_sell_plan_ttl_s: int = Field(default=604800, ge=0, le=2592000)
+    """How long Nora's plan for what goes with a product is kept for reuse by
+    the next shopper who picks it on its own (CLAUDE.md 10.3). 0 keeps none,
+    so every cross-sell asks her again."""
+
     room_search_concurrency: int = Field(default=3, ge=1, le=8)
     """How many of a room's pieces are searched at once: one on the request's
     own session, the rest each on a session of its own. 1 searches them one

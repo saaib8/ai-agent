@@ -221,12 +221,26 @@ export function AssistantBubble({
   const answersQuestion = (quickReplies ?? []).some(
     (r) => r.product_action?.kind === 'add_to_cart' || r.product_action?.kind === 'more_like_this',
   )
+  // A reply whose chips mix the kinds it offers ("Rugs", a button) with plain
+  // answers ("Design the whole room") is one set of answers to its question:
+  // one row beside the question, the kinds first - split, the plain answers
+  // sat beside the question with nothing on screen to do with them.
+  const mixed =
+    !answersQuestion &&
+    !offering &&
+    (quickReplies ?? []).some((r) => r.product_action) &&
+    (quickReplies ?? []).some((r) => !r.product_action)
   const textReplies = answersQuestion
     ? quickReplies ?? []
     : offering
       ? []
-      : (quickReplies ?? []).filter((r) => !r.product_action)
-  const actionReplies = answersQuestion
+      : mixed
+        ? [
+            ...(quickReplies ?? []).filter((r) => r.product_action),
+            ...(quickReplies ?? []).filter((r) => !r.product_action),
+          ]
+        : (quickReplies ?? []).filter((r) => !r.product_action)
+  const actionReplies = answersQuestion || mixed
     ? []
     : offering
       ? quickReplies ?? []

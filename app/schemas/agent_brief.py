@@ -261,6 +261,23 @@ class GoalBrief(_Brief):
     members: tuple[GoalMember, ...] = ()
 
 
+class PlannedKindBrief(_Brief):
+    kind: str
+    colours: tuple[str, ...] = ()
+    styles: tuple[str, ...] = ()
+    pushed_down: tuple[str, ...] = ()
+    sized_to_the_piece: bool | None = None
+
+
+class DesignerPlanBrief(_Brief):
+    """What Nora planned to go with their newest pick: the kinds, and the look
+    each search of them leans to - a chip's page and their own words alike
+    (CLAUDE.md 10.3)."""
+
+    beside: str
+    kinds: tuple[PlannedKindBrief, ...]
+
+
 class PendingBrief(_Brief):
     seating: SeatingBrief | None = None
     over_budget_offer: OverBudgetOffer | None = None
@@ -291,6 +308,9 @@ class SessionBrief(_Brief):
     """The latest products shown to them, in the order they saw them, in this
     chat or an earlier one - what a `seen_before` reference names."""
     taste: TasteBrief | None = None
+    designer_plan: DesignerPlanBrief | None = None
+    """Nora's plan beside their newest pick, while it is their newest: a
+    planned kind is searched in its look without asking about the look."""
     saved_sizes: tuple[SavedSizes, ...] | None = None
     pending: PendingBrief | None = None
 

@@ -91,6 +91,19 @@ class Complements:
             None,
         )
 
+    def worded(self, subcategory: str) -> Companion | None:
+        """The type as the reviewed pairings word it ("wall art"), wherever it
+        is paired - for a type offered beside a piece it is not reviewed with."""
+        return next(
+            (
+                entry
+                for entries in self._companions.values()
+                for entry in entries
+                if entry.commerce_subcategory == subcategory
+            ),
+            None,
+        )
+
     def __repr__(self) -> str:
         return f"Complements(version={self._version!r}, anchors={len(self._companions)})"
 

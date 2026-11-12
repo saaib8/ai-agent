@@ -28,8 +28,10 @@ from app.integrations.llm import StructuredLLMClient
 from app.integrations.postgres import Database
 from app.integrations.redis import RedisClient
 from app.orchestration.graph import ChatGraphRunner
+from app.prompts.agents.v2 import VERSION as AGENT_PROMPT_VERSION
 from app.repositories.catalog_cache import OverviewCache
 from app.repositories.conversation_moves import ConversationMoves
+from app.repositories.cross_sell_plans import CrossSellPlanCache
 from app.repositories.finder_photos import FinderPhotoStore
 from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
@@ -528,6 +530,18 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         display=product_display_words(app_resources),
         seating=app_resources.seating,
         looks=StockedLooks(capability, app_resources.attributes),
+        cross_sell_plans=(
+            CrossSellPlanCache(
+                app_resources.redis.client,
+                settings.agents.cross_sell_plan_ttl_s,
+                settings.session.operation_timeout_s,
+                # A plan is kept per vocabulary and per Nora's instructions:
+                # a change to either plans afresh.
+                f"{app_resources.taxonomy.version}.{AGENT_PROMPT_VERSION}",
+            )
+            if settings.agents.cross_sell_plan_ttl_s
+            else None
+        ),
         discovery=product_discovery_service(session, app_resources),
         shelf_depth=(settings.catalog.shelf_few_max, settings.catalog.shelf_some_max),
         catalog_reset=session.rollback,

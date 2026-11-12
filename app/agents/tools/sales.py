@@ -31,14 +31,20 @@ from app.agents.tools.shopping import (
 from app.agents.work import ToolStatus, TurnWork
 from app.core.exceptions import IntegrationUnavailableError
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import MAX_FINISHED_ROOMS, AgentStateV1
+from app.schemas.agent_state import (
+    MAX_FINISHED_ROOMS,
+    AgentStateV1,
+    CrossSellKindPlan,
+    CrossSellPlan,
+)
 from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS
 from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding, SearchOutcome
 from app.schemas.product import CommerceClassification, ProductCandidate
-from app.schemas.query import ResolvedSearch
+from app.schemas.query import RankingLean, ResolvedSearch
 from app.schemas.relaxation import StopReason
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.services.agent_state import commit_search_results
+from app.services.cross_sell import live_plan, log_plan_vs_shown, longer_side, plan_lean
 from app.services.design_checks import not_the_anchors_kind
 from app.services.room_cart import finished
 from app.taxonomy.complements import Companion
@@ -56,11 +62,6 @@ class GoesWithArgs(ProductRef):
             "The kind to show, as listed by a call without it (its `kind`). Omit to be "
             "told the kinds that could go with the piece."
         ),
-    )
-    planned_kinds: list[str] = Field(
-        default_factory=list,
-        max_length=4,
-        description="Nora's cross_sell_advice kinds for the initial grid.",
     )
 
 
@@ -89,6 +90,7 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
             capabilities = await services.capabilities.capabilities(context.retailer)
         except IntegrationUnavailableError:
             return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
+        plan = _plan_for(work.staged, anchor)
         if args.show_kind is None:
             # Every kind the store stocks may go with it; the reviewed pairings
             # are marked, the most stocked first - never a count, which would
@@ -112,14 +114,7 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                 ),
                 key=lambda pair: -pair[0],
             )
-            kinds = [
-                {
-                    "kind": kind.commerce_subcategory,
-                    "label": kind.label,
-                    **({"label_ar": kind.label_ar} if kind.label_ar else {}),
-                }
-                for _, kind in stocked
-            ]
+            kinds = [_kind_entry(kind) for _, kind in stocked]
             # The complementary kinds the grid samples - the chips' kinds, before
             # the anchor's own kind (another_of_its_kind) is listed for seating,
             # which is a similar-product chip, not a grid card.
@@ -139,30 +134,41 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                 facts["none_reviewed"] = "choose the kinds that would suit it from these"
             else:
                 facts["other_kinds"] = "store_shelf lists every other kind the store stocks"
-            if args.planned_kinds:
+            if plan is not None:
                 baseline = [
                     companion
                     for companion in companions
                     if companion.commerce_subcategory not in cart_kinds
                 ][:CROSS_SELL_GRID_KINDS]
+                # A planned kind keeps its reviewed words on its chip ("rugs",
+                # not "carpets"; "wall art", not "art canvas") wherever it is paired.
+                named = {c.commerce_subcategory: c for c in reviewed}
                 planned = [
-                    companion
-                    for name in args.planned_kinds
-                    if (
-                        companion := _stocked_kind(services, capabilities, name)
-                    ) is not None
+                    named.get(name)
+                    or (services.complements.worded(name) if services.complements else None)
+                    or companion
+                    for name in (item.kind for item in plan.kinds)
+                    if (companion := _stocked_kind(services, capabilities, name)) is not None
                     and companion.commerce_subcategory not in anchor_kinds
                     and companion.commerce_subcategory not in cart_kinds
                 ]
                 companions = _unique([*planned, *baseline])[: max(len(baseline), len(planned))]
                 facts["design_plan_applied"] = True
                 unavailable = [
-                    name
-                    for name in args.planned_kinds
-                    if name not in {item.commerce_subcategory for item in planned}
+                    item.kind
+                    for item in plan.kinds
+                    if item.kind not in {item.commerce_subcategory for item in planned}
                 ]
                 if unavailable:
                     facts["planned_kinds_replaced"] = unavailable
+                # The chips are the plan's kinds as the grid shows them, so every
+                # chip opens a page that leans to her plan; the other stocked
+                # kinds stay a store_shelf call away.
+                kinds = [
+                    _kind_entry(companion)
+                    for companion in companions
+                    if companion.commerce_subcategory not in cart_kinds
+                ]
             grid = await _cross_sell_grid(
                 anchor,
                 [c for c in companions if c.commerce_subcategory not in cart_kinds],
@@ -170,6 +176,7 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                 work.staged,
                 context.retailer,
                 cart=cart,
+                plan=plan,
             )
             kinds = [*_another_of_its_kind(services, capabilities, anchor.commerce), *kinds]
             if grid is None:
@@ -201,15 +208,30 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
         kind = _stocked_kind(services, capabilities, args.show_kind)
         if kind is None:
             return ToolOutcome(status=ToolStatus.REFUSED, code="kind_not_stocked")
-        resolved = _without(cart, services.companion_search.build(anchor, kind))
+        kind_plan = plan.for_kind(kind.commerce_subcategory) if plan else None
+        resolved = _leaning(
+            _without(cart, services.companion_search.build(anchor, kind)), anchor, kind_plan
+        )
         run = await services.search.new(
             resolved, work.staged, context.retailer, alongside=False, asked=False
         )
         if run.grounding is None:
             return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
-        return search_outcome(
-            run, {"goes_with": product_facts(anchor, None), "shown_kind": kind.label}
-        )
+        shown: dict[str, Any] = {
+            "goes_with": product_facts(anchor, None),
+            "shown_kind": kind.label,
+        }
+        if (leaned := _leaned_to(resolved.lean)) is not None:
+            shown["leaned_to"] = leaned
+        for product in run.grounding.products[:CROSS_SELL_GRID_KINDS]:
+            log_plan_vs_shown(
+                "chip_page",
+                kind.commerce_subcategory,
+                resolved.lean if kind_plan else None,
+                product.main_color,
+                longer_side(product.dimensions),
+            )
+        return search_outcome(run, shown)
 
     return ZoryTool(
         name="what_goes_with",
@@ -219,8 +241,9 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
             "as chips (kinds), the most stocked first - present the variety and offer a "
             "chip to see more of one kind; with none reviewed (none_reviewed), the stocked "
             "kinds to choose from. With show_kind: a full page of that one kind, leaning to "
-            "the piece's look. Its own kind is listed only for a piece that seats several "
-            "(another_of_its_kind), shown with more_like_this."
+            "Nora's plan for it when she made one, else to the piece's look. Its own kind "
+            "is listed only for a piece that seats several (another_of_its_kind), shown "
+            "with more_like_this."
         ),
         args=GoesWithArgs,
         owners=SALMAN,
@@ -243,14 +266,17 @@ async def _cross_sell_grid(
     context: RetailerContext,
     *,
     cart: tuple[int, ...] = (),
+    plan: CrossSellPlan | None = None,
 ) -> tuple[SearchExecutionGrounding, AgentStateV1, list[dict[str, Any]]] | None:
     """One product per complementary kind, assembled into a single grid.
 
     A product beside a pick is a few teasers, not a page: the top match of each
     of the first few complementary kinds (a nightstand, a lamp, a rug), so the
     customer sees the variety the chips name instead of a page of one kind. Each
-    kind is a real companion search (CLAUDE.md 27), leaning to the pick's look;
-    tapping a chip drills into one kind's full page through the show_kind path.
+    kind is a real companion search (CLAUDE.md 27), leaning to Nora's plan for
+    that kind (its colours, styles, what to push down, its size beside the pick)
+    or, with no plan for it, to the pick's styles; tapping a chip drills into
+    one kind's full page through the show_kind path, leaning alike.
 
     The grid is recorded as the presented list, so each card is selectable and
     can be staged "in a room" like any search card; the first kind's search
@@ -270,10 +296,14 @@ async def _cross_sell_grid(
     # serves one query at a time (a fresh-session fan-out, as a room's pieces
     # use, is the way to parallelise this later).
     picks: list[tuple[Companion, int, GroundedProduct, AgentStateV1]] = []
+    leans: dict[str, RankingLean | None] = {}
     seen: set[int] = set()
     for companion in chosen:
+        kind_plan = plan.for_kind(companion.commerce_subcategory) if plan else None
+        resolved = _leaning(_without(cart, builder.build(anchor, companion)), anchor, kind_plan)
+        leans[companion.commerce_subcategory] = resolved.lean
         run = await services.search.new(
-            _without(cart, builder.build(anchor, companion)),
+            resolved,
             state,
             context,
             alongside=False,
@@ -310,6 +340,14 @@ async def _cross_sell_grid(
         exact_candidate_count=count,
         stop_reason=StopReason.EXACT_SUFFICIENT,
     )
+    for companion, _, grounded, _ in picks:
+        log_plan_vs_shown(
+            "grid",
+            companion.commerce_subcategory,
+            leans.get(companion.commerce_subcategory) if plan else None,
+            grounded.main_color,
+            longer_side(grounded.dimensions),
+        )
     committed = commit_search_results(picks[0][3], tuple(pid for _, pid, _, _ in picks))
     suggestions = [
         {
@@ -317,10 +355,69 @@ async def _cross_sell_grid(
             "label": companion.label,
             "card": ordinal,
             "name": grounded.name_english,
+            **({"colour": grounded.main_color} if grounded.main_color else {}),
+            **({"styles": list(grounded.styles)} if grounded.styles else {}),
+            **(
+                {"leaned_to": leaned}
+                if (leaned := _leaned_to(leans.get(companion.commerce_subcategory)))
+                else {}
+            ),
         }
         for ordinal, (companion, _, grounded, _) in enumerate(picks, 1)
     ]
     return grounding, committed, suggestions
+
+
+def _plan_for(state: AgentStateV1, anchor: ProductCandidate) -> CrossSellPlan | None:
+    """Nora's plan, only for the pick it was made for and while it is in the
+    cart: another piece's grid is the reviewed pairings, as before (CLAUDE.md
+    10.3)."""
+    plan = live_plan(state)
+    return plan if plan is not None and plan.anchor_product_id == anchor.product_id else None
+
+
+def _leaning(
+    resolved: ResolvedSearch, anchor: ProductCandidate, plan: CrossSellKindPlan | None
+) -> ResolvedSearch:
+    """A companion search leaning to Nora's plan for its kind (`plan_lean`):
+    her styles take the place of the pick's own when she gave any; given only
+    colours, the pick's styles still lead the look. With no plan for the kind
+    the search is unchanged."""
+    lean = plan_lean(anchor, plan) if plan is not None else None
+    if lean is None or plan is None:
+        return resolved
+    return resolved.model_copy(
+        update={
+            "lean": lean,
+            **({"semantic_preferences": ()} if plan.styles else {}),
+        }
+    )
+
+
+def _kind_entry(companion: Companion) -> dict[str, Any]:
+    return {
+        "kind": companion.commerce_subcategory,
+        "family": companion.commerce_category,
+        "label": companion.label,
+        **({"label_ar": companion.label_ar} if companion.label_ar else {}),
+    }
+
+
+def _leaned_to(lean: RankingLean | None) -> dict[str, Any] | None:
+    """What a card was ordered by, for Salman's words - so he only says a rug
+    is sand when its card is."""
+    if lean is None:
+        return None
+    leaned: dict[str, Any] = {}
+    if lean.colours:
+        leaned["colours"] = list(lean.colours)
+    if lean.styles:
+        leaned["styles"] = list(lean.styles)
+    if lean.avoid_colours or lean.avoid_styles:
+        leaned["pushed_down"] = [*lean.avoid_colours, *lean.avoid_styles]
+    if lean.size_target_cm is not None:
+        leaned["longer_side_near_cm"] = str(lean.size_target_cm)
+    return leaned or None
 
 
 def _without(cart: tuple[int, ...], resolved: ResolvedSearch) -> ResolvedSearch:
