@@ -109,7 +109,11 @@ class SearchRunner:
             )
         composed = _with_avoids(composed, state)
         active = state.active_search
-        if active is not None and _same_search(composed.candidate, active):
+        if (
+            active is not None
+            and not active.one_per_kind
+            and _same_search(composed.candidate, active)
+        ):
             # The same search stated again is its next page, never its first
             # page again: only a change of criteria starts a fresh set (13.5).
             again = await self.again_excluding(
@@ -125,7 +129,8 @@ class SearchRunner:
         """The search on screen again, leaving more products out - the next
         page, or one card turned down. None with no search on screen."""
         active = state.active_search
-        if active is None:
+        if active is None or active.one_per_kind:
+            # A grid of one per kind is no search to page.
             return None
         merged = tuple(dict.fromkeys((*active.request.exclude_product_ids, *excluded)))
         request = active.request.model_copy(

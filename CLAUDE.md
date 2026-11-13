@@ -739,7 +739,15 @@ side as a share of the pick's (`size_ratio`) - approved values only, those the
 store does not stock for the kind left out. The plan is kept for that pick
 (`cross_sell_plan`, replaced by the next) and she hands straight to Salman.
 `what_goes_with` builds the grid from it (`more_options: false`: one product
-per kind, so no "different options" under it): her kinds, any stocked kind, first,
+per kind, so no "different options" under it; `kind_cards: true`: each card
+stands for its kind, drawn small - its image and the kind's name in customer
+words (`kind_names`), no price or buttons - and a tap is its kind chip, that
+kind's page; the only chips beside it are code's (`grid_chips`, worded from the
+labels `another_kind`, `design_named_room` and `design_room_around`): another of
+its kind where the reviewed seating data offers it, and a room around it when
+the piece grows one (`room_pieces_v1.yaml` `grows_a_room`), no goal is open and
+no room is under way - "Design the bedroom" when the piece's room is known
+(36), else "Design a room around it" - Salman writes none): her kinds, any stocked kind, first,
 the reviewed stocked kinds filling the rest so the grid is never smaller than
 the ordinary cross-sell; each card one search for its kind leaning to her plan
 (`RankingLean`: her colours and styles in place of the pick's styles, a size
@@ -766,11 +774,20 @@ such shopper who adds that piece on its own gets it without Nora's step, within
 the hop limit - the piece just added is `last_added_product_id`. Every card a plan ordered logs
 `cross_sell_plan_vs_shown` (colour in hers, size near hers), the match rate. The cards are
 never shown before Nora's plan and are not handed back for a second review.
-This is Sara -> Nora -> Salman, within the three-agent hop limit. The
-client-generated "I've added X to my cart" message after Select is the same
-finished-add event: code continues it through Nora and Salman rather than
-relying on Sara to infer it - unless a seating goal is still open, when the next
-seat comes first and the add stays Sara's.
+**An add is a fixed event, routed by code** (`app/agents/after_add.py`). A tap
+on Add to cart returns, from `POST /v1/picks`, the turn it opens
+(`PicksResponse.follow_up`: the customer's words in the conversation's language
+and `product_action` `added_to_cart` with the pick), which the client sends to
+chat unchanged; the older "I've added X to my cart" words are read the same
+way. No model chooses who follows: the piece just added first joins the open
+goal it counts toward (a seating goal for a piece that counts as seats, a piece
+goal for its kind), then an ordered list of rules on the session decides - an
+open goal still unmet (`goal_progress`, counted from the cart) goes to Sara for
+the next piece; otherwise Nora plans (only `cross_sell_advice`, or the saved
+plan reused) and code passes the turn to Salman whatever she names. A goal Sara
+sees met mid-turn moves on to Nora the same way. A new case is one more rule,
+with its test. A typed "add the second one" is Sara's add and takes the same
+path once she has made it.
 Otherwise `what_goes_with` without a kind lists the
 reviewed pairings the store stocks, most stocked first, no counts - and, for
 a piece that seats several (a sofa, sectional or sofa set), another of its own
@@ -781,6 +798,12 @@ with no reviewed pairing the store stocks gets the stocked kinds instead
 kind `store_shelf` lists, and calls it again with `show_kind`: a page of that
 kind leaning to the piece's look. It is a reason it could suit, never "usually
 bought together" and never a verdict that it goes - whether it goes is Nora's.
+"These often go nicely with a piece like this" is a styling suggestion and is
+allowed; what others buy ("customers also bought") is a sales claim and is not.
+Right after an add, unasked, Salman offers the grid softly and briefly - at most
+two short sentences, a nod to their choice and one easy question, no card
+numbers, colours, styles or prices; cards are described one by one only on a
+kind's own page or when asked.
 
 After a room is in the cart he offers its styling, on top of the room's budget,
 and `finish_room` asks in his own words which room is next. When a room-defining
@@ -821,12 +844,16 @@ channels are drawn from its contacts when `contact_store` ran.
 
 `AgentStateV1.goals` holds what the customer is trying to finish - seat ten
 people (`seating`), furnish a room (`room`, whose engine is `room_project`), a
-rug for the sofa (`piece`) - each `open`, `done` or `dropped`, with its members:
-the cart products chosen for it (`add_to_cart` `for_goal`). Sara, Nora and
+rug for the sofa, two beds (`piece`, with `count` when more than one) - each
+`open`, `done` or `dropped`, with its members: the cart products chosen for it
+(`add_to_cart` `for_goal`, or a piece added from the screen that counts toward
+it). Sara, Nora and
 Salman keep them with `update_goal`: open, revise, done, drop - their
 judgement, never a reflex. Code only counts progress for the brief: for
 seating, the seats its members give (reviewed capacities only - a product with
-no recorded seats counts none) and the seats left. The next step comes from the
+no recorded seats counts none) and the seats left; for a piece, the pieces of
+its kind in the cart and how many are left (`app/services/goal_progress.py`,
+the same count the add rules read). The next step comes from the
 open goals: an unmet goal first, and only when it is met, what goes with it
 (10.3).
 
@@ -1941,7 +1968,8 @@ A button that is a fixed command names the tool it runs (`Tap.runs`); when the
 allowlist gives that tool exactly one owner, the turn starts with that agent
 and no model guesses - the words a model wrote for the button cannot steer it.
 Today only a kind chip after a pick (`companion`, `what_goes_with`, Salman's)
-does. Every hop after the first, and every typed message, is routed as above.
+does. An add (`added_to_cart`) is routed by its own rules (10.3). Every other
+hop, and every typed message, is routed as above.
 
 ---
 
@@ -2779,6 +2807,23 @@ keeps a cart of its own.
   joins the account's after its own lines, a product in both keeping the larger
   quantity, so every account chat loads it; their likes follow the
   account's, each once.
+- **Which room each product is for is known only from a fact, never from its
+  kind** - a sofa may be for a bedroom (`ProductInteractionState.pick_rooms`,
+  `app/services/room_cart.py`). A product gets a room when the customer says it
+  (`set_pick_room`, any agent) or when a room design takes it; a kind that
+  belongs to one room only is that room's without asking (`room_pieces_v1.yaml`
+  `one_room`: a bed, a nightstand, a dining chair - never a sofa, a rug or a
+  lamp); a product added from a piece's suggestions (a kind in that piece's live
+  plan) goes with that piece (`with_product`), sharing its room. A design around
+  their picks takes only what is for its room. While the cart is ambiguous -
+  another room's pieces in it, or two groups that each start a room
+  (`grows_a_room`) - `design_room` refuses `which_room_first` naming the piece
+  in doubt, the one the design is around first, and what is already in each
+  room, so Nora asks once ("is the sofa for your bedroom with the bed, or
+  another room?"); one room alone in the cart asks nothing. Every brief carries
+  the pieces in doubt (`rooms_in_doubt`: the pieces and what each room already
+  holds), so she asks it first, before the budget. Cart lines show the
+  room (`room`).
 - **The agents read it** in the session brief (10.4): each line by its place
   in the cart (`picked_ordinal`), with name, kind, quantity, line total and the
   room it was bought for, and the totals per currency - summed by the

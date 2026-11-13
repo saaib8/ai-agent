@@ -31,6 +31,8 @@ from app.schemas.agent_brief import (
     PendingBrief,
     PlannedKindBrief,
     RoomBrief,
+    RoomInDoubt,
+    RoomsInDoubt,
     RoomSizeBrief,
     SavedSizes,
     SearchBrief,
@@ -46,7 +48,6 @@ from app.schemas.agent_brief import (
 from app.schemas.agent_state import (
     SEEN_NAMED,
     AgentStateV1,
-    GoalKind,
     OfferedCombination,
     SeatingOfferState,
 )
@@ -61,8 +62,10 @@ from app.schemas.product import ProductCandidate
 from app.schemas.query import SemanticPreference
 from app.services.cross_sell import live_plan
 from app.services.fit import knows_room_size
-from app.services.room_cart import room_names, room_words
+from app.services.goal_progress import goal_progress
+from app.services.room_cart import picks_for_design, room_names, room_words
 from app.taxonomy.attributes import AttributeFamily
+from app.taxonomy.rooms import RoomPieces
 from app.taxonomy.words import customer_words
 
 
@@ -140,6 +143,9 @@ async def session_brief(
         budgets=_budgets(state) or None,
         search=_search(state),
         goals=_goals(state, by_id, arabic=arabic) or None,
+        rooms_in_doubt=_rooms_in_doubt(
+            state, by_id, getattr(services, "room_pieces", None), arabic=arabic
+        ),
         room=_room(state, room_plan),
         finished_rooms=_finished(state) or None,
         liked=numbered(interaction.liked_product_ids) or None,
@@ -344,8 +350,7 @@ def _goals(
             for pid in goal.members
             if pid in picks and (product := by_id.get(pid)) is not None
         ]
-        covered = sum((m.seats or 0) * m.quantity for m in members)
-        seating = goal.kind is GoalKind.SEATING and goal.seats is not None
+        progress = goal_progress(goal, state, by_id)
         briefs.append(
             GoalBrief(
                 goal=goal.goal,
@@ -355,12 +360,59 @@ def _goals(
                 room=goal.room,
                 for_kind=customer_words(goal.for_kind) if goal.for_kind else None,
                 seats=goal.seats,
-                seats_covered=covered if seating else None,
-                seats_left=max((goal.seats or 0) - covered, 0) if seating else None,
+                seats_covered=progress.seats_covered,
+                seats_left=progress.seats_left,
+                count=goal.count,
+                pieces_covered=progress.pieces_covered,
+                pieces_left=progress.pieces_left,
                 members=tuple(members),
             )
         )
     return tuple(briefs)
+
+
+def _rooms_in_doubt(
+    state: AgentStateV1,
+    by_id: Mapping[int, ProductCandidate],
+    guide: RoomPieces | None,
+    *,
+    arabic: bool,
+) -> RoomsInDoubt | None:
+    """The cart's pieces whose room is unknown while another room is in it - so
+    the designer asks which room first, before anything else about the room."""
+    cart = state.product_interaction.selected_product_ids
+    found = picks_for_design(
+        state,
+        None,
+        None,
+        {pid: by_id[pid].commerce.subcategory for pid in cart if pid in by_id},
+        guide.grows_a_room if guide else frozenset(),
+        frozenset(),
+        guide.one_room if guide else lambda _: None,
+    )
+    if not found.ask:
+        return None
+
+    def named(pid: int) -> str:
+        product = by_id[pid]
+        return (product.name_arabic or product.name_english) if arabic else product.name_english
+
+    known: dict[str, list[str]] = {}
+    for pid, room in found.rooms.items():
+        if room is not None and pid in by_id:
+            known.setdefault(room, []).append(
+                customer_words(by_id[pid].commerce.subcategory or "piece")
+            )
+    return RoomsInDoubt(
+        ask_about=tuple(
+            RoomInDoubt(
+                pick=cart.index(pid) + 1, name=named(pid), kind=by_id[pid].commerce.subcategory
+            )
+            for pid in found.ask
+            if pid in by_id
+        ),
+        known={room: tuple(kinds) for room, kinds in known.items()},
+    )
 
 
 def _finished(state: AgentStateV1) -> tuple[FinishedRoomBrief, ...]:

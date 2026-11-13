@@ -26,6 +26,7 @@ from app.schemas.agent_state import MAX_CART_QUANTITY
 from app.schemas.cart import CartView
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 from app.schemas.product import ProductDisplay
+from app.schemas.product_action import AddedToCartAction
 
 
 class SelectPickAction(BaseModel):
@@ -195,6 +196,17 @@ class LikedView(BaseModel):
     """Its text, ready to show in the conversation's language."""
 
 
+class AddedFollowUp(BaseModel):
+    """The turn a new pick opens, ready to send to `/v1/chat` as it is: the
+    customer's words in the conversation's language and the typed event the
+    agents route by. A client adds nothing and words nothing."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    message: str = Field(min_length=1)
+    product_action: AddedToCartAction
+
+
 class PicksResponse(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -208,6 +220,9 @@ class PicksResponse(BaseModel):
     conversation ("I like the ..."): its card, and what goes with it when
     anything does. Set on every new pick; None on an untick, a tick that
     changed nothing, or a pick that could not be read back."""
+    follow_up: AddedFollowUp | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Set beside `goes_with`: send it to `/v1/chat` unchanged (`message` and
+    `product_action`) - the add's turn, routed by code (CLAUDE.md 10.3)."""
     cart: CartView | None = Field(default=None, exclude_if=lambda v: v is None)
     """The cart after this action - the picks with how many of each, the
     totals, and what changed for the store's own cart (CLAUDE.md 36). None

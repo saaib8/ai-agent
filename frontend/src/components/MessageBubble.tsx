@@ -16,6 +16,7 @@ import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
 import { FocusCard } from './presentation/FocusCard'
 import { ProductGrid } from './presentation/ProductGrid'
+import { KindCards, kindsOnCards } from './presentation/KindCards'
 import type {
   GridCompare,
   GridLikes,
@@ -180,7 +181,7 @@ export function AssistantBubble({
   onMoreLikeThis,
   onVisualizeProduct,
   compare,
-  quickReplies,
+  quickReplies: allReplies,
   onQuickReply,
   onVisualize,
   onVisualizeInRoom,
@@ -208,6 +209,13 @@ export function AssistantBubble({
   const isResultList = presentation?.product_source === 'search'
   const actsOnCards = isResultList || presentation?.product_source === 'liked'
   const focus = presentation?.focus ?? null
+  // The grid of what goes with a pick is drawn as small kind cards; a kind
+  // chip a card already stands for is not drawn a second time.
+  const kindCards = !!presentation?.kind_cards && hasProducts
+  const onCards = kindCards ? kindsOnCards(presentation!.products) : new Set<string>()
+  const quickReplies = (allReplies ?? []).filter(
+    (r) => !(r.product_action?.kind === 'companion' && onCards.has(r.product_action.subcategory)),
+  )
   // Chips that run an action - the companions of a product - belong under the
   // cards they extend; plain answers to a question stay beside the question.
   // Offered beside a pick with nothing searched, the kinds and "No thanks"
@@ -293,7 +301,7 @@ export function AssistantBubble({
 
         <SupportChannels support={presentation?.support} />
 
-        {textReplies.length > 0 && onQuickReply && (
+        {textReplies.length > 0 && onQuickReply && !kindCards && (
           <QuickReplies
             replies={textReplies}
             onPick={onQuickReply}
@@ -309,7 +317,21 @@ export function AssistantBubble({
         {brief?.mode === 'ask' && briefCard}
 
         {focus && <FocusCard product={focus} labels={data.labels} />}
-        {hasProducts && (
+        {kindCards && (
+          <KindCards
+            products={presentation!.products}
+            names={presentation!.kind_names ?? {}}
+            chips={allReplies ?? []}
+            onPick={onQuickReply ? (value, action) => onQuickReply(value, action) : undefined}
+            busy={!!busy}
+          />
+        )}
+        {/* With kind cards, the remaining chips (the whole room, another sofa)
+            follow the cards on the same left edge, the next steps after them. */}
+        {kindCards && textReplies.length > 0 && onQuickReply && (
+          <QuickReplies replies={textReplies} onPick={onQuickReply} disabled={!!busy} label={null} />
+        )}
+        {hasProducts && !kindCards && (
           <ProductGrid
             products={presentation!.products}
             pick={pick}

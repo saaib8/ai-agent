@@ -193,33 +193,51 @@ cart or Like on these cards: the option replaces the piece in the room, and
 A room just designed is drawn only once the agent has checked it - a reply
 may describe a room before its package appears on a later reply.
 
-### 4.2 What goes with a pick: the kind chips
+### 4.2 What goes with a pick: small kind cards
 
-After a pick, Salman shows a grid of one product per kind (a nightstand, a
-lamp, a rug) and, in `presentation.choices`, a chip for each kind. A kind chip
-carries `product_action`:
+Right after a product is added (6, `follow_up`), Salman shows what goes with it:
+a short line, then a grid of **one product per kind** (a nightstand, a lamp, a
+rug), each standing for its kind. The presentation marks it:
 
 ```json
-{"label": "Nightstands", "value": "Show me nightstands",
- "product_action": {"kind": "companion", "category": "tables", "subcategory": "nightstand"}}
+"presentation": {
+  "kind_cards": true,
+  "more_options": false,
+  "kind_names": {"nightstand": "Nightstands", "carpet": "Rugs", "table-lamp": "Table lamps"},
+  "products": [ {"commerce": {"category": "tables", "subcategory": "nightstand"}, "image_url": "..."} ],
+  "choices": [ {"label": "Design the bedroom", "value": "Design the bedroom around my bed"} ]
+}
 ```
 
-- **On a tap, send the chip's `product_action` with its `value` as the
-  message** - never the words alone. The action is what makes it a tap: it goes
-  straight to Salman, whose page of that kind leans to the designer's plan for
-  the pick (her colours, styles and size first). Sent as words only, it is read
-  like a typed message, may reach another agent and need not follow the plan.
-- The `value` is the agent's own wording ("Show me rugs for the sofa") and may
-  differ from reply to reply; it is shown on the customer's side and changes
-  nothing about what the tap does.
-- The same reply may also carry plain chips (no `product_action`, such as
-  "Design the whole room"). Draw them in one row with the kind chips, the kind
-  chips first - they are one set of answers to the reply's question.
-- The grid's presentation carries `more_options: false`: draw no "different
-  options" button (`show_different_options`, `search_action` `more_options`)
-  under it - the kind chips are how to see more of any one kind. Everything else
-  on its cards stays (Select, Like, Compare, Not this one). A kind's own page,
-  and every other list, carries `more_options: true`.
+- **Draw each product as a small card** - its `image_url` and its kind's name,
+  `kind_names[commerce.subcategory]` (customer words in the reply's language:
+  "Rugs", "سجاد" - never the catalog's "carpet"). No price, no product name, no
+  buttons: a small card is not bought from the grid.
+- **A tap on a card opens that kind's page.** Send the kind's name as the
+  message and `product_action` `companion` with the card's own `commerce`:
+
+  ```json
+  {"message": "Show me nightstands",
+   "product_action": {"kind": "companion", "category": "tables", "subcategory": "nightstand"}}
+  ```
+
+  The action is what routes it - straight to Salman, whose page of that kind
+  follows the designer's plan for the pick, **the card's product first**. Sent as
+  words only, it is read like a typed message and may reach another agent. The
+  page that comes back is an ordinary list (`kind_cards: false`,
+  `more_options: true`) with full cards and their buttons.
+- **The chips under the cards** (`presentation.choices`) are only the server's,
+  at most two plain chips sent as words: "Another sofa" (a piece that seats
+  several), and "Design the bedroom" when the piece's room is known or "Design a
+  room around it" when it is not. Draw them **under the cards, on the same left
+  edge**, with no "Quick reply" label. There are no kind chips beside the cards -
+  the cards are the kinds.
+- **No "different options" button** under the grid (`more_options: false`):
+  it is a mix of kinds, not one list to page.
+- A kind chip still sent beside an ordinary list (no `kind_cards`) carries the
+  same `product_action` `companion` and is tapped the same way, with its
+  `value` as the message.
+- Each cart line names its room (`room`) once it is known.
 
 ## 5. Furniture Finder runs as the shopper
 
@@ -300,8 +318,18 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
 - **Changing it:** `POST /v1/picks` with `{"kind":"quantity","pick":N,"quantity":Q}`
   (1..`cart_max_quantity`, default 20 - else 422 `cart_quantity`), `{"kind":"deselect","pick":N}`
   to remove, `{"kind":"select","ordinal":N,"list_revision":R}` to add a card (cart
-  full - default 100 products - is 422 `pick_limit`). After a new pick the widget
-  opens the turn as before (`goes_with`), now with `say_added_to_cart` as the message.
+  full - default 100 products - is 422 `pick_limit`). After a new pick the answer
+  carries `follow_up` - send it to `/v1/chat` **unchanged**, beside your
+  `session_id` and `store_id`:
+
+  ```json
+  "follow_up": {"message": "I've added the Handmade Sarouk Rug to my cart",
+                "product_action": {"kind": "added_to_cart", "pick": 5}}
+  ```
+
+  The message is already in the conversation's language; the action is what
+  routes the turn (what goes with it, or the next piece of what they are still
+  choosing). Build nothing and word nothing; with no `follow_up`, send nothing.
 - **"I like the fifth one" asks first.** The reply offers it - its price and what the
   cart would then come to - with two chips in `presentation.choices`: Yes
   (`offer_add`, carrying `product_action: {"kind":"add_to_cart","card":{...}}`) and

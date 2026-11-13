@@ -220,6 +220,18 @@ class CardLabels(BaseModel):
     say_not_option: str
     say_more_seating: str
     say_other_options: str
+    another_kind: str
+    """"Another {name}" - the chip beside a grid of kinds for a second of the
+    piece's own kind (a second sofa)."""
+    say_another_kind: str
+    design_named_room: str
+    """"Design the {room}" - the chip beside a grid of kinds when the piece's
+    room is known."""
+    say_design_named_room: str
+    design_room_around: str
+    """"Design a room around it" - the same chip while its room is not known:
+    the designer asks which room first."""
+    say_design_room_around: str
     say_remove_piece: str
     """The message a room piece's Remove button records."""
     add_to_room: str

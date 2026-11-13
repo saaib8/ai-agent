@@ -201,6 +201,12 @@ export interface CardLabels {
   say_not_option: string
   say_more_seating: string
   say_other_options: string
+  another_kind: string
+  say_another_kind: string
+  design_named_room: string
+  say_design_named_room: string
+  design_room_around: string
+  say_design_room_around: string
   say_remove_piece: string
   add_to_room: string
   say_add_to_room: string
@@ -413,6 +419,10 @@ export interface ChatPresentation {
   product_source?: 'search' | 'selection' | 'liked' | 'detail' | 'room_options' | null
   /** False: offer no "different options" under these products (the grid of what goes with a pick). */
   more_options?: boolean
+  /** True: each product stands for its kind - draw it small (image and kind name); a tap sends `companion` for that kind. */
+  kind_cards?: boolean
+  /** With kind_cards: each card's kind in the customer's words and the reply's language, by commerce.subcategory. */
+  kind_names?: Record<string, string>
   /** For room options: the room piece they are for (1-based). Their cards'
    *  action is "Use this" - a swap into the room, never Select. */
   options_for_piece?: number | null
@@ -795,6 +805,8 @@ export type ProductAction =
   | { kind: 'add_to_cart'; card?: { list_revision: number; ordinal: number } | null }
   /** "See it in a room" on a card: stage its product in a room of its own. */
   | { kind: 'visualize'; card: { list_revision: number; ordinal: number } }
+  /** The add a pick just made, sent back as `PicksResponse.follow_up` gave it. */
+  | { kind: 'added_to_cart'; pick: number }
 
 /** A ready answer to tap; when it carries an action, tapping runs it. */
 export interface ReplyChoice {
@@ -870,6 +882,8 @@ export interface PicksResponse {
   liked?: LikedView[] | null
   /** Set when this tick picked the first of its kind: show what goes with it. */
   goes_with?: number | null
+  /** The turn this pick opens - send it to chat unchanged. */
+  follow_up?: { message: string; product_action: ProductAction } | null
   /** The cart after this action; null when it could not be read - the client
    *  keeps the cart it has. */
   cart?: CartView | null

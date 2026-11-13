@@ -144,6 +144,18 @@ class AddToCartAction(BaseModel):
     card: CardRef | None = None
 
 
+class AddedToCartAction(BaseModel):
+    """The customer has just put a pick in the cart from the screen - the
+    follow-up `POST /v1/picks` returns (`PicksResponse.follow_up`), sent back
+    unchanged as a turn. The cart already holds it; what comes next is decided
+    by the rules for an add (`app/agents/after_add.py`), never guessed."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["added_to_cart"] = "added_to_cart"
+    pick: int = Field(ge=1)
+
+
 class VisualizeAction(BaseModel):
     """See this card's product staged in a room of its own - the "See it in a
     room" button, routed to Sara exactly as a typed "show the second one in a
@@ -162,6 +174,7 @@ ProductActionRequest = Annotated[
     | CompanionAction
     | MoreLikeThisAction
     | AddToCartAction
+    | AddedToCartAction
     | VisualizeAction,
     Field(discriminator="kind"),
 ]

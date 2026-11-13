@@ -258,6 +258,11 @@ class GoalBrief(_Brief):
     seats_covered: int | None = None
     """Seats its members in the cart give, from their recorded seat counts."""
     seats_left: int | None = None
+    count: int | None = None
+    """For a piece: how many they want."""
+    pieces_covered: int | None = None
+    """For a piece: how many of its kind are in the cart for it."""
+    pieces_left: int | None = None
     members: tuple[GoalMember, ...] = ()
 
 
@@ -284,6 +289,21 @@ class PendingBrief(_Brief):
     options_on_screen_for_room_piece: int | None = None
 
 
+class RoomInDoubt(_Brief):
+    """A cart piece whose room is not known while another room is in the cart
+    (CLAUDE.md 36) - asked before designing a room around it."""
+
+    pick: int = Field(ge=1)
+    name: str
+    kind: str | None = None
+
+
+class RoomsInDoubt(_Brief):
+    ask_about: tuple[RoomInDoubt, ...]
+    known: dict[str, tuple[str, ...]] = {}
+    """What is already known to be in each room ("bedroom": bed, nightstand)."""
+
+
 class SessionBrief(_Brief):
     language: str
     store_currency: str | None = None
@@ -295,6 +315,8 @@ class SessionBrief(_Brief):
     budgets: tuple[Budget, ...] | None = None
     search: SearchBrief | None = None
     goals: tuple[GoalBrief, ...] | None = None
+    rooms_in_doubt: RoomsInDoubt | None = None
+    """Cart pieces whose room is unknown while the cart holds another room's."""
     """What they are working toward, and how far each has come."""
     room: RoomBrief | None = None
     finished_rooms: tuple[FinishedRoomBrief, ...] | None = None

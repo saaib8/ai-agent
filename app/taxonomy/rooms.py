@@ -101,16 +101,31 @@ class RoomPieces:
         version: str,
         rooms: Mapping[str, RoomTemplate],
         bought_once: frozenset[str] = frozenset(),
+        grows_a_room: frozenset[str] = frozenset(),
+        one_room: Mapping[str, str] | None = None,
     ) -> None:
         self._version = version
         self._rooms = dict(rooms)
         self._bought_once = bought_once
+        self._grows_a_room = grows_a_room
+        self._one_room = dict(one_room or {})
 
     @property
     def bought_once(self) -> frozenset[str]:
         """Kinds never bought as identical copies: more than one of them is
         different pieces, or a set sold as one."""
         return self._bought_once
+
+    def one_room(self, kind: str | None) -> str | None:
+        """The one room this kind belongs to (a bed: "bedroom"), or None when it
+        may stand in more than one - then its room is never assumed."""
+        return self._one_room.get(kind) if kind else None
+
+    @property
+    def grows_a_room(self) -> frozenset[str]:
+        """Kinds a whole room is designed around once one is chosen - a sofa,
+        a bed, a dining table - never what only finishes a room."""
+        return self._grows_a_room
 
     @property
     def version(self) -> str:
@@ -160,7 +175,9 @@ def load_room_pieces(
         if not isinstance(kind, str) or not kind or not isinstance(raw, dict):
             raise TaxonomyConfigurationError(detail=f"{source.name}: each room must be a mapping")
         rooms[kind] = _room(kind, raw, source, taxonomy, seating)
-    bought_once = _bought_once(document.get("bought_once", []), source, taxonomy)
+    bought_once = _kinds(document.get("bought_once", []), "bought_once", source, taxonomy)
+    grows_a_room = _kinds(document.get("grows_a_room", []), "grows_a_room", source, taxonomy)
+    one_room = _one_room(document.get("one_room", {}), source, taxonomy)
     arabic = parse_arabic_labels(
         document.get("arabic"),
         {piece.label for room in rooms.values() for piece in room.pieces},
@@ -176,19 +193,37 @@ def load_room_pieces(
             for kind, room in rooms.items()
         },
         bought_once=bought_once,
+        grows_a_room=grows_a_room,
+        one_room=one_room,
     )
 
 
-def _bought_once(raw: Any, source: Path, taxonomy: CommerceTaxonomy | None) -> frozenset[str]:
+def _one_room(raw: Any, source: Path, taxonomy: CommerceTaxonomy | None) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        raise TaxonomyConfigurationError(detail=f"{source.name}: 'one_room' must be a mapping")
+    rooms: dict[str, str] = {}
+    for room, kinds in raw.items():
+        if not isinstance(room, str) or not room:
+            raise TaxonomyConfigurationError(detail=f"{source.name}: 'one_room' rooms are words")
+        for kind in _kinds(kinds, "one_room", source, taxonomy):
+            if kind in rooms:
+                raise TaxonomyConfigurationError(
+                    detail=f"{source.name}: 'one_room' lists {kind} in two rooms"
+                )
+            rooms[kind] = room
+    return rooms
+
+
+def _kinds(raw: Any, field: str, source: Path, taxonomy: CommerceTaxonomy | None) -> frozenset[str]:
     if not isinstance(raw, list) or not all(isinstance(k, str) and k for k in raw):
         raise TaxonomyConfigurationError(
-            detail=f"{source.name}: 'bought_once' must be a list of product types"
+            detail=f"{source.name}: '{field}' must be a list of product types"
         )
     if taxonomy is not None:
         unknown = sorted(k for k in raw if taxonomy.category_of(k) is None)
         if unknown:
             raise TaxonomyConfigurationError(
-                detail=f"{source.name}: 'bought_once' names unapproved types {unknown}"
+                detail=f"{source.name}: '{field}' names unapproved types {unknown}"
             )
     return frozenset(raw)
 
