@@ -235,6 +235,14 @@ class ChatPresentation(BaseModel):
     """Whether a client offers "different options" (`search_action` more_options)
     under these products. False on the grid of what goes with a pick - one
     product per kind, where the kind chips show more of any one kind."""
+    kind_cards: bool = False
+    """True on that grid: each product stands for its kind. A client draws it
+    small - its image and its kind's name, no price or buttons - and a tap sends
+    `product_action` `companion` for that kind, as its kind chip does."""
+    kind_names: dict[str, str] = Field(default_factory=dict)
+    """With `kind_cards`: each card's kind in the customer's words and the
+    reply's language ("Rugs", not the catalog's "carpet"), by
+    `commerce.subcategory` - the name a client writes on the small card."""
     options_for_piece: int | None = Field(default=None, ge=1)
     """For room options: the room piece they are for, by its card's place."""
     """Which of those `products` is.

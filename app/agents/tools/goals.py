@@ -17,7 +17,7 @@ from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool
 from app.agents.tools.schemas import ToolSchemas
 from app.agents.work import ToolStatus, TurnWork
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import MAX_ROOM_WORDS, GoalKind, GoalStatus
+from app.schemas.agent_state import MAX_GOAL_COUNT, MAX_ROOM_WORDS, GoalKind, GoalStatus
 from app.schemas.design import MAX_REGULAR_SEATING_COUNT
 from app.services.agent_state import set_goal
 
@@ -39,6 +39,12 @@ class GoalArgs(ToolArgs):
     for_kind: str | None = Field(
         default=None, max_length=64, description="A piece: its kind (an approved type)."
     )
+    count: int | None = Field(
+        default=None,
+        ge=2,
+        le=MAX_GOAL_COUNT,
+        description="A piece: how many they want, when more than one ('two beds').",
+    )
     room: str | None = Field(default=None, min_length=1, max_length=MAX_ROOM_WORDS)
 
 
@@ -59,6 +65,7 @@ def update_goal_tool(schemas: ToolSchemas) -> ZoryTool[GoalArgs]:
             summary=args.summary,
             seats=args.seats,
             for_kind=args.for_kind,
+            count=args.count,
             room=args.room,
             status=_STATUS.get(args.action),
         )

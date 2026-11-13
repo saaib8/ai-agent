@@ -112,13 +112,13 @@ from app.schemas.query import (
 from app.schemas.relaxation import StopReason
 from app.schemas.resolution import CandidatePoolResult, ProductSearchExecutionResult
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
-from app.services.agent_state import apply_update, commit_search_results
+from app.services.agent_state import apply_update, commit_search_results, tag_pick_rooms
 from app.services.bundle_cards import BundleCardGroup, group_bundle_cards
 from app.services.bundle_presentation import (
     build_state_bundle_presentation,
     present_room_bundle,
 )
-from app.services.room_cart import finished, room_words
+from app.services.room_cart import finished, picks_for_design, room_words
 from app.services.room_stock import (
     part_of,
     short_by_stock,
@@ -1267,7 +1267,23 @@ class RoomEngine:
         room = staged.room_project
         if not picks or room is None:
             return staged
-        products = await self._hydration.hydrate_ids(picks, context)
+        # Only what is known to be for this room joins it; what could be for
+        # another room was asked about before the design (CLAUDE.md 36).
+        cart = original.product_interaction.selected_product_ids
+        in_cart = await self._hydration.hydrate_ids(cart, context)
+        allowed = picks_for_design(
+            original,
+            room.room_type,
+            room.room_kind,
+            {p.product_id: p.commerce.subcategory for p in in_cart},
+            self._rooms.grows_a_room if self._rooms is not None else frozenset(),
+            frozenset(must),
+            self._rooms.one_room if self._rooms is not None else lambda _: None,
+        ).takes
+        products = [p for p in in_cart if p.product_id in allowed and p.product_id in picks]
+        picks = tuple(p.product_id for p in products)
+        if not picks:
+            return staged
         belongs = {
             p.product_id
             for p in products
@@ -1295,10 +1311,12 @@ class RoomEngine:
                 )
         if not operations:
             return staged
-        return apply_update(
+        locked = apply_update(
             staged,
             AgentStateUpdate(room_project=RoomProjectUpdate(bundle_operations=tuple(operations))),
         )
+        # Its pieces are now known to be for this room.
+        return tag_pick_rooms(locked, kept, room_words(room))
 
     def _room_seats(self, bundle: RoomBundle | None) -> int | None:
         """How many the room's seating seats, or None when any count is unknown."""

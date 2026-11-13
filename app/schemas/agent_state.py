@@ -230,6 +230,12 @@ class ActiveSearchState(BaseModel):
     """The customer's own words for this search, kept so "show me more" ranks
     the next page the same way. A new search replaces them."""
 
+    one_per_kind: bool = Field(default=False, exclude_if=lambda v: not v)
+    """The list on screen is a grid of one product per kind (what goes with a
+    pick), not this search's page: nothing pages from it, so a later search for
+    one of its kinds - tapped or typed - starts whole, its card's product
+    included, since a card there cannot be bought from the grid itself."""
+
     ordered_by_pick: bool = False
     """The cards were chosen to go with a pick - the designer's kind, or a
     kind tapped beneath the pick - and lean on its look, not on anything the
@@ -308,6 +314,27 @@ MAX_CART_QUANTITY = 100
 configuration may allow fewer (`customer_agent.cart_max_quantity`)."""
 
 
+class PickRoom(BaseModel):
+    """Where a cart product belongs, known from a fact - never guessed from its
+    kind (CLAUDE.md 36): the room the customer said it is for, or a piece of a
+    room design; or the piece it was added beside (its suggestions), so it
+    shares that piece's room once it is known."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int
+    room: str | None = Field(default=None, min_length=1, max_length=40)
+    """The room in customer words, lower case ("bedroom", "majlis")."""
+    with_product: int | None = None
+    """The piece it was added beside - a nightstand from the bed's suggestions."""
+
+    @model_validator(mode="after")
+    def _says_something(self) -> PickRoom:
+        if self.room is None and self.with_product is None:
+            raise ValueError("a pick's place names a room or the piece it goes with")
+        return self
+
+
 class CartQuantity(BaseModel):
     """How many of one product in their cart, where it is more than one.
 
@@ -351,6 +378,9 @@ class ProductInteractionState(BaseModel):
     product adds it to the cart (CLAUDE.md 36)."""
 
     cart_quantities: tuple[CartQuantity, ...] = Field(default=(), exclude_if=lambda v: not v)
+    pick_rooms: tuple[PickRoom, ...] = Field(default=(), exclude_if=lambda v: not v)
+    """The room each cart product is for, where a fact says so; an untagged
+    product's room is unknown. A product that leaves the cart takes its tag."""
     """How many of each cart product, where more than one - a room's two
     armchairs, "make it 2". Every line names a selected product. Defaulted
     and left out while unused, so every saved session still reads."""
@@ -1107,6 +1137,7 @@ class GoalStatus(StrEnum):
 
 MAX_GOALS = 8
 MAX_GOAL_MEMBERS = 50
+MAX_GOAL_COUNT = 20
 
 
 class GoalState(BaseModel):
@@ -1127,6 +1158,8 @@ class GoalState(BaseModel):
     """For seating: how many people it must seat."""
     for_kind: str | None = Field(default=None, max_length=64)
     """For a piece: the kind it is - an approved sub-category."""
+    count: int | None = Field(default=None, ge=2, le=MAX_GOAL_COUNT, exclude_if=lambda v: v is None)
+    """For a piece: how many they want ("two beds"); none is one."""
     room: str | None = Field(default=None, max_length=MAX_ROOM_WORDS)
     members: tuple[int, ...] = Field(default=(), max_length=MAX_GOAL_MEMBERS)
     """Products chosen for it - counted only while they are in the cart."""

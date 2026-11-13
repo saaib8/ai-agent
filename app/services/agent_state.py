@@ -38,6 +38,7 @@ from app.schemas.agent_state import (
     GoalState,
     GoalStatus,
     KindAsked,
+    PickRoom,
     PresentedList,
     ProductInteractionState,
     RoomDesignNeedState,
@@ -155,6 +156,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
             ),
             selected_product_ids=interaction.selected_product_ids,
             cart_quantities=interaction.cart_quantities,
+            pick_rooms=interaction.pick_rooms,
             liked_product_ids=interaction.liked_product_ids,
             explored_product_ids=interaction.explored_product_ids,
             turned_down_product_ids=interaction.turned_down_product_ids,
@@ -321,6 +323,7 @@ def set_goal(
     summary: str | None = None,
     seats: int | None = None,
     for_kind: str | None = None,
+    count: int | None = None,
     room: str | None = None,
     status: GoalStatus | None = None,
 ) -> tuple[AgentStateV1, GoalState]:
@@ -341,6 +344,7 @@ def set_goal(
             summary=summary,
             seats=seats,
             for_kind=for_kind,
+            count=count,
             room=room,
         )
         goals.append(made)
@@ -359,6 +363,7 @@ def set_goal(
             ("summary", summary),
             ("seats", seats),
             ("for_kind", for_kind),
+            ("count", count),
             ("room", room),
             ("status", status),
         ):
@@ -464,6 +469,7 @@ def _interaction(
         focused_product_id=focus,
         selected_product_ids=selected,
         cart_quantities=cart_quantities(current.cart_quantities, update.cart_quantities, selected),
+        pick_rooms=tuple(tag for tag in current.pick_rooms if tag.product_id in selected),
         liked_product_ids=liked,
         explored_product_ids=apply_items(current.explored_product_ids, update.explored_product_ids),
         turned_down_product_ids=tuple(
@@ -983,6 +989,85 @@ def note_kind_asked(
     if state.kind_asked == asked:
         return state
     return state.model_copy(update={"kind_asked": asked})
+
+
+def room_key(words: str) -> str:
+    """A room's words as tags compare them: lower case, single spaces, "_"
+    read as a space ("living_room" is "living room")."""
+    return " ".join(words.replace("_", " ").casefold().split())
+
+
+def tag_pick_rooms(state: AgentStateV1, product_ids: Sequence[int], room: str) -> AgentStateV1:
+    """These cart products are for this room - replacing any room they had,
+    keeping the piece each was added beside. A product not in the cart is not
+    tagged."""
+    interaction = state.product_interaction
+    wanted = {pid for pid in product_ids if pid in interaction.selected_product_ids}
+    if not wanted:
+        return state
+    key = room_key(room)
+    old = {tag.product_id: tag for tag in interaction.pick_rooms}
+    kept = tuple(tag for tag in interaction.pick_rooms if tag.product_id not in wanted)
+    added = tuple(
+        PickRoom(
+            product_id=pid,
+            room=key,
+            with_product=old[pid].with_product if pid in old else None,
+        )
+        for pid in interaction.selected_product_ids
+        if pid in wanted
+    )
+    return _with_pick_rooms(state, kept + added)
+
+
+def link_pick(state: AgentStateV1, product_id: int, with_product: int) -> AgentStateV1:
+    """A product added beside another - from its suggestions - goes where it
+    goes. Never linked to itself or to what left the cart; a room already
+    known for it stays."""
+    interaction = state.product_interaction
+    cart = interaction.selected_product_ids
+    if product_id == with_product or product_id not in cart or with_product not in cart:
+        return state
+    old = next((t for t in interaction.pick_rooms if t.product_id == product_id), None)
+    if old is not None and old.room is not None:
+        return state
+    kept = tuple(t for t in interaction.pick_rooms if t.product_id != product_id)
+    return _with_pick_rooms(
+        state, (*kept, PickRoom(product_id=product_id, with_product=with_product))
+    )
+
+
+def _with_pick_rooms(state: AgentStateV1, tags: tuple[PickRoom, ...]) -> AgentStateV1:
+    interaction = state.product_interaction
+    return state.model_copy(
+        update={"product_interaction": interaction.model_copy(update={"pick_rooms": tags})}
+    )
+
+
+def pick_group(state: AgentStateV1, product_id: int) -> int:
+    """The piece a cart product was added beside, followed back to the first -
+    the product itself when it stands alone."""
+    links = {t.product_id: t.with_product for t in state.product_interaction.pick_rooms}
+    seen = {product_id}
+    current = product_id
+    while (nxt := links.get(current)) is not None and nxt not in seen:
+        seen.add(nxt)
+        current = nxt
+    return current
+
+
+def room_of_pick(state: AgentStateV1, product_id: int) -> str | None:
+    """Its own room, else the room of the piece it was added beside."""
+    rooms = {t.product_id: t.room for t in state.product_interaction.pick_rooms}
+    seen: set[int] = set()
+    links = {t.product_id: t.with_product for t in state.product_interaction.pick_rooms}
+    current: int | None = product_id
+    while current is not None and current not in seen:
+        seen.add(current)
+        if rooms.get(current) is not None:
+            return rooms[current]
+        current = links.get(current)
+    return None
 
 
 def plan_cross_sell(state: AgentStateV1, plan: CrossSellPlan) -> AgentStateV1:

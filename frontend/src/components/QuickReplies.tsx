@@ -6,8 +6,8 @@ interface QuickRepliesProps {
    *  action, or a room edit for the yes/no on an over-budget swap. */
   onPick: (value: string, action?: ProductAction | null, bundle?: BundleAction | null, search?: SearchAction | null) => void
   disabled: boolean
-  /** What the row is. Defaults to "Quick reply". */
-  label?: string
+  /** What the row is. Defaults to "Quick reply"; null draws the chips alone. */
+  label?: string | null
 }
 
 export function QuickReplies({
@@ -19,7 +19,7 @@ export function QuickReplies({
   if (replies.length === 0) return null
   return (
     <div className="flex animate-rise flex-wrap items-center gap-2 pt-0.5">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</span>
+      {label && <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</span>}
       {replies.map((reply) => (
         <button
           key={reply.value}

@@ -28,6 +28,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.agents.after_add import AddContext, AddDecision, AfterAdd, decide, goal_for, progress_of
 from app.agents.context import ToolContext
 from app.agents.deadline import within
 from app.agents.loop import AgentLoop, HandedBack, Responded, TurnBudget, json_facts
@@ -49,9 +50,9 @@ from app.core.exceptions import AgentTurnIncompleteError, LLMResponseInvalidErro
 from app.integrations.chat_models import call_chat_model
 from app.prompts.agents.v2 import SUPERVISOR, agent_instructions, reply_correction
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import AgentStateV1, CrossSellPlan, GoalKind, GoalStatus
+from app.schemas.agent_state import AgentStateV1, CrossSellPlan
 from app.schemas.conversation import ConversationContext, ConversationMessage, ConversationRole
-from app.services.agent_state import plan_cross_sell
+from app.services.agent_state import add_to_goal, link_pick, pick_group, plan_cross_sell
 from app.services.cross_sell import plain_shopper
 
 SUPERVISOR_ROLE = "supervisor"
@@ -150,6 +151,8 @@ class _GraphState(TypedDict, total=False):
     handed_back: HandBackReason | None
     need: str | None
     asked_again: bool
+    after_add: bool
+    """This turn is an add to the cart going down its fixed path (after_add.py)."""
 
 
 class AgentTeam:
@@ -428,6 +431,19 @@ class AgentTeam:
             return {"next": f"{last.value}:reply"}
         turn = state["turn"]
         work = state["work"]
+        if last is None and _is_add(turn):
+            # An add is a fixed event: what follows it is decided by the rules
+            # on the session, never guessed (CLAUDE.md 10.3).
+            decision = await _after_add(turn, work)
+            state["trace"].add(
+                TraceEvent(SUPERVISOR_ROLE, "handoff", f"after_add:{decision.rule}", 0)
+            )
+            planning = decision.path is AfterAdd.PLAN_THEN_SHOW
+            return {
+                "next": decision.first.value,
+                "need": (Need.DESIGN if planning else Need.SHOPPING).value,
+                "after_add": planning,
+            }
         if last is None and (owner := self._button_owner(turn.tap)) is not None:
             # A fixed command with one owner: no model is asked to guess who
             # handles it, and words a model wrote for the button cannot steer it.
@@ -527,12 +543,16 @@ class AgentTeam:
                 if agent is AgentPersona.NORA and not reply_only and _planning_a_room(work)
                 else None
             )
-            cross_sell_consultation = (
-                agent is AgentPersona.NORA
-                and state.get("last") is AgentPersona.SARA
-                and state.get("need") == Need.DESIGN.value
-                and (_added_this_turn(work) or _cart_add_notice(turn))
-                and not _seating_still_open(work)
+            cross_sell_consultation = agent is AgentPersona.NORA and (
+                bool(state.get("after_add"))
+                or (
+                    # Sara added it on their word ("add the second one") and
+                    # passed it on: the same path as a tapped add.
+                    state.get("last") is AgentPersona.SARA
+                    and state.get("need") == Need.DESIGN.value
+                    and _added_this_turn(work)
+                    and (await _after_add(turn, work)).path is AfterAdd.PLAN_THEN_SHOW
+                )
             )
             if (
                 cross_sell_consultation
@@ -587,12 +607,32 @@ class AgentTeam:
                 wording_model=self._wording.get(agent),
             )
             views = [*state["views"], view] if view is not state["view"] else state["views"]
+            can_pass = (
+                not reply_only
+                and len(handoffs) < self._settings.max_hops
+                and not state["budget"].last_call
+            )
+            if cross_sell_consultation and can_pass:
+                # Her plan is made (or she could not make one): Salman shows
+                # what goes with it, whoever she named (CLAUDE.md 10.3).
+                state["trace"].add(TraceEvent(agent.value, "handoff", "salman", 0))
+                return {
+                    "handoffs": handoffs,
+                    "last": agent,
+                    "handed_back": HandBackReason.NEEDS_SALES,
+                    "views": views,
+                    "next": AgentPersona.SALMAN.value,
+                    "need": Need.SALES.value,
+                    "after_add": False,
+                }
             if isinstance(end, Responded):
                 if (
                     agent is AgentPersona.SARA
-                    and _cart_add_notice(turn)
-                    and not _seating_still_open(work)
+                    and can_pass
+                    and _is_add(turn)
+                    and (await _after_add(turn, work)).path is AfterAdd.PLAN_THEN_SHOW
                 ):
+                    # The goal she was finishing is met: what goes with it next.
                     state["trace"].add(TraceEvent(agent.value, "handoff", "nora", 0))
                     return {
                         "handoffs": handoffs,
@@ -600,6 +640,7 @@ class AgentTeam:
                         "next": AgentPersona.NORA.value,
                         "need": Need.DESIGN.value,
                         "views": views,
+                        "after_add": True,
                     }
                 return {
                     "reply": end,
@@ -699,14 +740,70 @@ async def _reuse_saved_plan(
     return record, plan
 
 
-def _seating_still_open(work: TurnWork) -> bool:
-    """A group still being seated piece by piece: the next piece comes before
-    what goes with it, so the add stays Sara's (10.3). Read from the staged
-    state, so a goal she closes this turn no longer holds the cross-sell back."""
-    return any(
-        goal.kind is GoalKind.SEATING and goal.status is GoalStatus.OPEN
-        for goal in work.staged.goals
+def _is_add(turn: TeamTurn) -> bool:
+    """This turn is an add the customer just made on the screen: the typed
+    event (`added_to_cart`), or the words an older client sends for it."""
+    tapped = turn.tap is not None and turn.tap.event.button == "added_to_cart"
+    return tapped or _cart_add_notice(turn)
+
+
+async def _after_add(turn: TeamTurn, work: TurnWork) -> AddDecision:
+    """Which path an add takes (after_add.py). The piece just added first joins
+    the open goal it counts toward, so the goal's count includes it - recorded
+    as a step of the turn, so every agent reads that it joined."""
+    services = turn.context.services
+    staged = work.staged
+    added_id = staged.product_interaction.last_added_product_id
+    wanted = tuple(
+        dict.fromkeys(
+            (
+                *(pid for goal in staged.goals for pid in goal.members),
+                *((added_id,) if added_id else ()),
+            )
+        )
     )
+    products = await services.hydration.hydrate_ids(wanted, turn.context.retailer) if wanted else ()
+    by_id = {product.product_id: product for product in products}
+    added = by_id.get(added_id) if added_id is not None else None
+    plan = staged.cross_sell_plan
+    if (
+        added is not None
+        and plan is not None
+        and plan.anchor_product_id != added.product_id
+        and plan.for_kind(added.commerce.subcategory or "") is not None
+        and pick_group(staged, added.product_id) == added.product_id
+    ):
+        # Chosen from that piece's suggestions: it goes where that piece goes.
+        linked = link_pick(staged, added.product_id, plan.anchor_product_id)
+        if linked is not staged:
+            work.record(
+                ToolRecord(
+                    agent=AgentPersona.SALMAN,
+                    tool="set_pick_room",
+                    status=ToolStatus.OK,
+                    facts=json_facts({"goes_with_the_piece": "it was chosen beside"}),
+                    acted=True,
+                ),
+                linked,
+            )
+            staged = work.staged
+    if added is not None:
+        goal = goal_for(staged, added, getattr(services, "seating", None))
+        if goal is not None:
+            work.record(
+                ToolRecord(
+                    agent=AgentPersona.SARA,
+                    tool="update_goal",
+                    status=ToolStatus.OK,
+                    facts=json_facts(
+                        {"goal": goal, "joined": "the piece just added counts toward it"}
+                    ),
+                    acted=True,
+                ),
+                add_to_goal(staged, goal, (added.product_id,)),
+            )
+            staged = work.staged
+    return decide(AddContext(staged, added, progress_of(staged, by_id)))
 
 
 def _cart_add_notice(turn: TeamTurn) -> bool:

@@ -250,10 +250,11 @@ export default function App() {
       // Every new pick - "Add to cart" - comes into the conversation as the
       // customer's own words. What happens next is the agents' call: the next
       // sofa of a group's seating, the next piece of a room, or what goes with it.
-      const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
-      if (chosen) {
+      // The server words the add's turn and types its event: sent unchanged.
+      const followUp = saved?.follow_up
+      if (followUp) {
         setSwap(null)
-        void chat.send(say.addedToCart(chosen.name_english), config.config)
+        void chat.send(followUp.message, config.config, { product: followUp.product_action })
       }
     },
     [chat, config.config, say],
@@ -292,10 +293,11 @@ export default function App() {
     async (item: LikedView) => {
       if (chat.sending || chat.picking) return
       const saved = await chat.changePicks({ kind: 'select_liked', liked: item.liked }, config.config)
-      const chosen = saved?.picks.find((p) => p.pick === saved.goes_with)
-      if (chosen) {
+      // The server words the add's turn and types its event: sent unchanged.
+      const followUp = saved?.follow_up
+      if (followUp) {
         setSwap(null)
-        void chat.send(say.addedToCart(chosen.name_english), config.config)
+        void chat.send(followUp.message, config.config, { product: followUp.product_action })
       }
     },
     [chat, config.config, say],

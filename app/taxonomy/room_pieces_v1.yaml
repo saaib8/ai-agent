@@ -23,6 +23,21 @@ version: v1
 # side tables, lamps and dining chairs may still be identical pairs or sets.
 bought_once: [art-canvas, mirror, flower-pot-and-plant, vase, statue-and-antique, wall-clock]
 
+# Kinds a whole room grows from (CLAUDE.md 10.3): once one is in the cart, the
+# rest of its room can be designed around it. A lamp, a rug or a vase is not
+# one - it finishes a room, it does not start one.
+grows_a_room: [sofa, sectional-sofa, sofa-set, bed, dining-table, dining-set]
+
+# Kinds that belong to one room only (CLAUDE.md 36): a bed is a bedroom's, a
+# dining chair a dining room's - nobody is asked which room they are for. A
+# kind found in more than one room (a sofa, an armchair, a rug, a lamp, art,
+# a coffee table) is never listed: its room is asked or told, never guessed.
+one_room:
+  bedroom: [bed, nightstand, wardrobe, dresser, dressing-table, mattresses, mattress-pad, comforter, bedspread]
+  dining room: [dining-table, dining-set, dining-chair]
+  home office: [office-table, office-chair]
+  outdoor: [outdoor-chair, outdoor-lighting]
+
 rooms:
   living_room:
     asks_seats: true

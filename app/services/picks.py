@@ -51,16 +51,19 @@ from app.schemas.cart import (
 )
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import (
+    AddedFollowUp,
     DeselectPickAction,
     LikeCardAction,
     PicksRequest,
     PicksResponse,
+    PickView,
     SelectLikedAction,
     SelectPickAction,
     SetQuantityAction,
     UnlikeAction,
 )
 from app.schemas.product import ProductCandidate
+from app.schemas.product_action import AddedToCartAction
 from app.schemas.resolution import (
     ReferenceFailureReason,
     ReferenceUnresolved,
@@ -69,6 +72,7 @@ from app.schemas.resolution import (
 from app.schemas.retailer import RetailerContext
 from app.schemas.session import new_session
 from app.services.agent_state import apply_update
+from app.services.card_labels import card_labels
 from app.services.cart import CartService
 from app.services.hydration import ProductHydrationService
 from app.services.picks_words import say
@@ -199,6 +203,7 @@ class PicksRuntime:
                 build_liked(final, products, self._display, language) if self._buttons else None
             ),
             goes_with=goes_with,
+            follow_up=_follow_up(goes_with, picks, language),
             cart=(
                 await self._cart.view(final, picks, context, language, before=state)
                 if self._cart is not None
@@ -527,3 +532,18 @@ class PicksRuntime:
                 product_interaction=ProductInteractionUpdate(liked_product_ids=change)
             ),
         )
+
+
+def _follow_up(
+    pick: int | None, picks: Sequence[PickView], language: ReplyLanguage
+) -> AddedFollowUp | None:
+    """The turn a new pick opens: the customer's words in the conversation's
+    language and the typed event, so a client sends it unchanged."""
+    view = next((p for p in picks if p.pick == pick), None) if pick is not None else None
+    if view is None:
+        return None
+    name = view.display.name if view.display is not None else view.name_english
+    return AddedFollowUp(
+        message=card_labels(language).say_added_to_cart.replace("{name}", name),
+        product_action=AddedToCartAction(pick=view.pick),
+    )

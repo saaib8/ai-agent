@@ -59,6 +59,7 @@ from app.services.bundle_cards import group_bundle_cards
 from app.services.cross_sell import plain_shopper
 from app.services.design_checks import figure_free, stocked_direction, usable_next_sizes
 from app.services.fit import fit_checks, fit_words, floor_share, knows_room_size, room_spaces
+from app.services.room_cart import picks_for_design
 from app.services.room_design import (
     MAX_PIECE_QUANTITY,
     MAX_ROOM_PIECES,
@@ -501,6 +502,66 @@ _PIECE_TYPES = (
 )
 
 
+async def _rooms_to_ask(
+    services: AgentServices,
+    work: TurnWork,
+    context: ToolContext,
+    room_type: str,
+    room_kind: str | None,
+    named_places: set[int],
+) -> ToolOutcome | None:
+    """Designing around their picks while the cart holds pieces that could be
+    for another room: which room they are for is asked first - never guessed
+    from their kind (CLAUDE.md 36). A pick named for a piece (from_pick) is
+    decided, and so are the pieces added beside it."""
+    state = work.staged
+    cart = state.product_interaction.selected_product_ids
+    named = frozenset(cart[place - 1] for place in named_places if 1 <= place <= len(cart))
+    products = await hydrated(services, cart, context)
+    by_id = {p.product_id: p for p in products or ()}
+    guide = services.room_pieces
+    kinds = {pid: product.commerce.subcategory for pid, product in by_id.items()}
+    found = picks_for_design(
+        state,
+        room_type,
+        room_kind,
+        kinds,
+        guide.grows_a_room if guide else frozenset(),
+        named,
+        guide.one_room if guide else lambda _: None,
+    )
+    unknown = found.ask
+    if not unknown:
+        return None
+    other_rooms: dict[str, list[str]] = {}
+    for pid, room in found.rooms.items():
+        if room is not None and pid not in found.takes and pid in by_id:
+            other_rooms.setdefault(room, []).append(customer_words(kinds[pid] or "piece"))
+    rooms = sorted({tag.room for tag in state.product_interaction.pick_rooms if tag.room})
+    return ToolOutcome(
+        status=ToolStatus.REFUSED,
+        code="which_room_first",
+        facts={
+            "rooms_in_cart": rooms,
+            "already_in_rooms": other_rooms,
+            "room_unknown": [
+                {
+                    "pick": cart.index(pid) + 1,
+                    "name": by_id[pid].name_english if pid in by_id else None,
+                    "kind": by_id[pid].commerce.subcategory if pid in by_id else None,
+                }
+                for pid in unknown
+            ],
+            "ask": (
+                "ask them once which room these are for, naming what is already in each "
+                "room ('is the sofa for your bedroom with the bed, or another room?') - one "
+                "question; record the answer with set_pick_room (a piece's room carries to "
+                "what was added beside it), then design that room"
+            ),
+        },
+    )
+
+
 def room_design_args(schemas: ToolSchemas) -> type[ToolArgs]:
     """Nora's room design as arguments: approved colours and styles only;
     types are checked against the registry when the room is built."""
@@ -682,6 +743,12 @@ def design_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             return ToolOutcome(
                 status=ToolStatus.REFUSED, code="nothing_stocked", facts=checked.facts
             )
+        if args.around_picks or checked.picks:
+            ask = await _rooms_to_ask(
+                services, work, context, args.room_type, args.room_kind, set(checked.picks.values())
+            )
+            if ask is not None:
+                return ask
         inputs = RoomDesignInputs(
             room_type=args.room_type,
             room_kind=args.room_kind,

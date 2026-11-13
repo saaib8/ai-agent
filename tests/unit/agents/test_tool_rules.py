@@ -420,6 +420,13 @@ async def test_what_goes_with_lists_kinds_until_one_is_chosen() -> None:
     assert shown.payload is not None and shown.payload.more_options is True, (
         "a kind's full page still offers different options"
     )
+    assert listed.payload.kind_cards is True, "the grid's cards stand for their kinds"
+    assert listed.state is not None and listed.state.active_search is not None
+    assert listed.state.active_search.one_per_kind, (
+        "a grid of kinds is no one search to page - a kind's tap opens it whole"
+    )
+    assert listed.payload.kind_names["carpet"][0] == "rugs", "a kind card reads in customer words"
+    assert shown.payload.kind_cards is False, "a kind's own page shows full cards"
     assert [k["kind"] for k in listed.facts["kinds"]] == ["carpet"]
     assert [s["kind"] for s in listed.facts["suggestions"]] == ["carpet"]
     assert "store_shelf" in listed.facts["other_kinds"]

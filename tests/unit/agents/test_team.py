@@ -218,9 +218,9 @@ async def test_add_routes_sara_to_nora_to_salman_within_the_hop_limit() -> None:
     )
 
 
-async def test_select_add_notice_routes_even_when_sara_only_confirms() -> None:
-    supervisor = ScriptedChatModel(script=[transfer(SARA)])
-    sara = ScriptedChatModel(script=[reply("It is in your cart.")])
+async def test_an_add_goes_to_noras_plan_then_salman_with_no_routing_call() -> None:
+    supervisor = ScriptedChatModel(script=[])
+    sara = ScriptedChatModel(script=[])
     nora = ScriptedChatModel(
         script=[
             step(call("cross_sell_advice", "n1")),
@@ -239,7 +239,8 @@ async def test_select_add_notice_routes_even_when_sara_only_confirms() -> None:
     )
 
     assert result.owner is SALMAN
-    assert result.handoffs == (SARA, NORA, SALMAN)
+    assert result.handoffs == (NORA, SALMAN)
+    assert supervisor.seen == [] and sara.seen == [], "no model guesses who follows an add"
     assert [record.tool for record in result.work.records] == [
         "cross_sell_advice",
         "what_goes_with",

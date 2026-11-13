@@ -15,7 +15,7 @@ from pydantic import Field
 from app.agents.context import ToolContext
 from app.agents.facts import product_facts
 from app.agents.operations.cart import as_room_in_cart, room_pieces_to_buy
-from app.agents.payloads import SearchShown
+from app.agents.payloads import GridChip, SearchShown
 from app.agents.services import AgentServices
 from app.agents.tools.base import ToolOutcome, ZoryTool
 from app.agents.tools.schemas import ToolSchemas
@@ -36,6 +36,8 @@ from app.schemas.agent_state import (
     AgentStateV1,
     CrossSellKindPlan,
     CrossSellPlan,
+    GoalKind,
+    GoalStatus,
 )
 from app.schemas.discovery import MAX_EXCLUDED_PRODUCT_IDS
 from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding, SearchOutcome
@@ -43,7 +45,7 @@ from app.schemas.product import CommerceClassification, ProductCandidate
 from app.schemas.query import RankingLean, ResolvedSearch
 from app.schemas.relaxation import StopReason
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
-from app.services.agent_state import commit_search_results
+from app.services.agent_state import commit_search_results, pick_group, room_of_pick
 from app.services.cross_sell import live_plan, log_plan_vs_shown, longer_side, plan_lean
 from app.services.design_checks import not_the_anchors_kind
 from app.services.room_cart import finished
@@ -185,18 +187,33 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
                     facts={**facts, "kinds": kinds},
                 )
             grounding, committed, suggestions = grid
+            # The room a piece belongs to starts from the first piece of its
+            # group: a mattress chosen beside a bed grows the bed's bedroom.
+            head_id = pick_group(work.staged, anchor.product_id)
+            head = anchor
+            if head_id != anchor.product_id:
+                found = await hydrated(services, (head_id,), context)
+                head = found[0] if found else anchor
+            chips = _grid_chips(services, capabilities, anchor, head, work.staged)
             return ToolOutcome(
                 facts={
                     **facts,
                     "kinds": kinds,
                     "suggestions": suggestions,
+                    "chips_shown": [chip.offers for chip in chips],
                     "one_per_kind": (
                         "one product from each kind, so they see the variety; offer the "
                         "chips to see more of any one kind, not a generic 'show more'"
                     ),
                 },
                 state=committed,
-                payload=SearchShown(grounding=grounding, more_options=False),
+                payload=SearchShown(
+                    grounding=grounding,
+                    more_options=False,
+                    kind_cards=True,
+                    kind_names={c.commerce_subcategory: (c.label, c.label_ar) for c in companions},
+                    grid_chips=chips,
+                ),
             )
         if not not_the_anchors_kind(args.show_kind, anchor_kinds):
             # Another of its own kind is a similar-product search, not a pairing.
@@ -348,7 +365,17 @@ async def _cross_sell_grid(
             grounded.main_color,
             longer_side(grounded.dimensions),
         )
+    # A grid of kinds is no one search: it is marked so that nothing pages from
+    # it, and a kind tapped or typed opens its page whole - the card just shown
+    # included, since a card cannot be bought from the grid - rather than the
+    # first kind's "next page" (a store with one comforter would show none).
     committed = commit_search_results(picks[0][3], tuple(pid for _, pid, _, _ in picks))
+    if committed.active_search is not None:
+        committed = committed.model_copy(
+            update={
+                "active_search": committed.active_search.model_copy(update={"one_per_kind": True})
+            }
+        )
     suggestions = [
         {
             "kind": companion.commerce_subcategory,
@@ -455,6 +482,55 @@ def _stocked_kinds(
         for e in entries[:MAX_STOCKED_KINDS]
         if e.commerce_subcategory is not None
     ]
+
+
+def _grid_chips(
+    services: AgentServices,
+    capabilities: RetailerCatalogCapabilities,
+    anchor: ProductCandidate,
+    head: ProductCandidate,
+    state: AgentStateV1,
+) -> tuple[GridChip, ...]:
+    """The only chips beside a grid of kinds, decided by code (CLAUDE.md 10.3):
+    another of the piece's own kind where the reviewed seating data offers it,
+    and the rest of its room when its group grows one - the piece itself, or
+    the first piece it was chosen beside (`head`: the bed a mattress was added
+    beside; `room_pieces_v1.yaml` `grows_a_room`) - with nothing still being
+    chosen for a goal and no room under way."""
+    kind = anchor.commerce.subcategory
+    if kind is None:
+        return ()
+    name, name_ar = customer_words(kind), services.taxonomy.arabic(kind)
+    chips: list[GridChip] = []
+    if _another_of_its_kind(services, capabilities, anchor.commerce):
+        chips.append(GridChip(offers="another_of_its_kind", name=name, name_ar=name_ar))
+    starter = next(
+        (
+            piece
+            for piece in (anchor, head)
+            if services.room_pieces is not None
+            and piece.commerce.subcategory in services.room_pieces.grows_a_room
+        ),
+        None,
+    )
+    if starter is None:
+        return tuple(chips)
+    kind = starter.commerce.subcategory or kind
+    name, name_ar = customer_words(kind), services.taxonomy.arabic(kind)
+    rooms = services.room_pieces
+    goal_open = any(
+        goal.status is GoalStatus.OPEN and goal.kind is not GoalKind.ROOM for goal in state.goals
+    )
+    if rooms is not None and not goal_open and state.room_project is None:
+        chips.append(
+            GridChip(
+                offers="whole_room",
+                name=name,
+                name_ar=name_ar,
+                room=room_of_pick(state, starter.product_id) or rooms.one_room(kind),
+            )
+        )
+    return tuple(chips)
 
 
 def _another_of_its_kind(

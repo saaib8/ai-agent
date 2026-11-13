@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from app.agents.operations.rooms import open_room_options
 from app.agents.payloads import (
     ComparisonShown,
+    GridChip,
     KnowledgeShown,
     OptionsShown,
     ProductShown,
@@ -30,6 +31,7 @@ from app.schemas.language import ReplyLanguage
 from app.schemas.product_action import CompanionAction
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.text_choice import TextReplyChoice
+from app.services.card_labels import card_labels
 from app.services.room_cart import room_in_cart
 from app.services.seating_presentation import present_seating_solution
 from app.services.support_channels import channels_for
@@ -117,12 +119,25 @@ def presentation(
     screen = candidates[-1] if candidates and show != "unchanged" else None
     support = next((p for p in reversed(shown) if isinstance(p, SupportShown)), None)
     fields: dict[str, object] = {}
+    beside_grid: tuple[GridChip, ...] = ()
     match screen:
-        case SearchShown(grounding=grounding, more_options=more_options) if grounding.products:
+        case SearchShown(
+            grounding=grounding,
+            more_options=more_options,
+            kind_cards=kind_cards,
+            kind_names=kind_names,
+            grid_chips=grid_chips,
+        ) if grounding.products:
+            beside_grid = grid_chips
             fields.update(
                 products=grounding.products,
                 product_source="search",
                 more_options=more_options,
+                kind_cards=kind_cards,
+                kind_names={
+                    kind: (arabic if language is ReplyLanguage.AR and arabic else english)
+                    for kind, (english, arabic) in kind_names.items()
+                },
                 list_revision=state.product_interaction.presented_search_revision,
             )
         case OptionsShown(products=products) if products:
@@ -151,9 +166,36 @@ def presentation(
         offered = support.support
         fields["support"] = channels_for(offered.contacts, language, handover=offered.handover)
     kinds = _kinds_offered(work)
+    if fields.get("kind_cards"):
+        # Beside a grid of kinds code draws the chips (CLAUDE.md 10.3): the
+        # cards are the kinds, so a chip the reply wrote would only repeat one.
+        fields["choices"] = _grid_choices(beside_grid, language)
+        built = ChatPresentation.model_validate(fields)
+        return None if built.is_empty() else built
     fields["choices"] = tuple(
         ReplyChoice(label=c.label, value=c.value, product_action=kinds.get(_chip_key(c.label)))
         for c in choices
     )
     built = ChatPresentation.model_validate(fields)
     return None if built.is_empty() else built
+
+
+def _grid_choices(chips: Sequence[GridChip], language: ReplyLanguage) -> tuple[ReplyChoice, ...]:
+    labels = card_labels(language)
+    choices = []
+    for chip in chips:
+        if chip.offers == "another_of_its_kind":
+            label, said = labels.another_kind, labels.say_another_kind
+        elif chip.room is not None:
+            label, said = labels.design_named_room, labels.say_design_named_room
+        else:
+            label, said = labels.design_room_around, labels.say_design_room_around
+        name = chip.name_ar if language is ReplyLanguage.AR and chip.name_ar else chip.name
+        room = chip.room or ""
+        choices.append(
+            ReplyChoice(
+                label=label.replace("{name}", name).replace("{room}", room),
+                value=said.replace("{name}", name).replace("{room}", room),
+            )
+        )
+    return tuple(choices)
