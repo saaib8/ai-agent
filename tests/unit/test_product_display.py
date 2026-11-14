@@ -489,7 +489,7 @@ async def test_the_catalogue_reads_in_the_requested_language() -> None:
     assert {c.value: c.label for c in facets.colors} == {"Beige": "بيج", "Grey": "رمادي"}
     assert (
         facets.studio.style_labels is not None
-        and facets.studio.style_labels["Japandi"] == "جاباندي"
+        and facets.studio.style_labels["Modern"] == "عصري"
     )
     assert page.items[0].display is not None and page.items[0].display.price == "2,500 ريال"
     # The room step's choices and the currency a client totals in, in Arabic too.

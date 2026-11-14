@@ -42,12 +42,12 @@ from app.schemas.retailer import RetailerContext
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.search_pipeline import _type_mix
 from app.services.semantic_ranking import SemanticRankingService
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import load_seating_semantics
 from pydantic import BaseModel, ValidationError
 
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 from tests.unit.agents.fakes import SOFAS
 
 TAXONOMY = load_taxonomy()

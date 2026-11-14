@@ -27,6 +27,7 @@ from sqlalchemy import (
     func,
     literal,
     select,
+    tuple_,
     type_coerce,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -1135,7 +1136,10 @@ class ProductRepository:
     ) -> list[ColumnElement[bool]]:
         """The one definition of which products a browse page may show, shared
         by the page and its count so the two can never disagree."""
-        clauses: list[ColumnElement[bool]] = [*self._scope_clauses(context)]
+        clauses: list[ColumnElement[bool]] = [
+            *self._scope_clauses(context),
+            *_classified_as(filters.kinds),
+        ]
         for word in filters.name_words:
             pattern = _like_escaped(word)
             clauses.append(
@@ -1194,13 +1198,17 @@ class ProductRepository:
         result = await self._session.execute(statement)
         return int(result.scalar_one())
 
-    async def facet_counts(self, context: RetailerContext) -> FacetCounts:
-        """Colours, style tokens and price ranges the store's catalog holds.
+    async def facet_counts(
+        self, context: RetailerContext, kinds: Sequence[tuple[str, str]] = ()
+    ) -> FacetCounts:
+        """Colours, style tokens and price ranges the store's catalog holds -
+        among the products filed as one of `kinds` when given, the same ones a
+        browse page shows.
 
         Raw values, counted as stored. Which of them are approved vocabulary
         is the registries' decision, made by the caller.
         """
-        scope = self._scope_clauses(context)
+        scope = (*self._scope_clauses(context), *_classified_as(kinds))
         colors = await self._session.execute(
             select(core_product.c.main_color, func.count())
             .where(*scope, core_product.c.main_color.is_not(None))
@@ -1299,3 +1307,16 @@ class ProductRepository:
         )
         result = await self._session.execute(statement)
         return int(result.scalar_one())
+
+
+def _classified_as(kinds: Sequence[tuple[str, str]]) -> tuple[ColumnElement[bool], ...]:
+    """Only products filed as one of these (family, type) pairs; none when no
+    pairs are given. A product with no family, no type, or a pair the
+    vocabulary does not hold is left out."""
+    if not kinds:
+        return ()
+    return (
+        tuple_(core_product.c.commerce_category, core_product.c.commerce_subcategory).in_(
+            list(kinds)
+        ),
+    )

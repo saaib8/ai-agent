@@ -29,9 +29,9 @@ from app.schemas.discovery import (
 from app.schemas.product import EligibleProduct
 from app.schemas.retailer import RetailerContext
 from app.services.discovery import ProductDiscoveryService
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 CONTEXT = RetailerContext(store_id=50)
 

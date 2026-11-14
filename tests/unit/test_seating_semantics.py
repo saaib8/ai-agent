@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 from app.core.exceptions import TaxonomyConfigurationError
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import load_seating_semantics
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 TAXONOMY = load_taxonomy()
 

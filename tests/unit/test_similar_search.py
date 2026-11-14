@@ -22,8 +22,9 @@ from app.schemas.resolution import (
 )
 from app.services.grounding_builder import to_grounded_product
 from app.services.similar_search import SimilarSearchBuilder
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
-from app.taxonomy.registry import load_taxonomy
+from app.taxonomy.attributes import AttributeFamily
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 REFERENCE_ID = 165645
 

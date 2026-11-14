@@ -123,7 +123,7 @@ def test_no_subcategory_alternative_map_exists() -> None:
     Checks for taxonomy *values* rather than prose: a docstring explaining why
     there is no alternative policy should stay, a hardcoded mapping should not.
     """
-    from app.taxonomy.registry import load_taxonomy
+    from tests.fixtures.vocabulary import load_taxonomy
 
     taxonomy = load_taxonomy()
     values = {

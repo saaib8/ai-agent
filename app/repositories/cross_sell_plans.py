@@ -5,10 +5,11 @@ leans - is a designer's judgement about the product, not about the shopper, so
 the next shopper who picks the same product alone is shown it without asking
 her again (CLAUDE.md 10.3). Their own taste still ranks first in every search.
 
-Keyed by store, version and product - the version names the vocabulary and
-Nora's instructions it was made under - so a plan is only ever read back for
-the shop it was made in, and a change to either plans afresh (CLAUDE.md 8). A plan that cannot
-be read or written is not an outage: Nora is asked instead.
+Keyed by store, version and product - the version names Nora's instructions it
+was made under - so a plan is only ever read back for the shop it was made in,
+and new instructions plan afresh (CLAUDE.md 8). The vocabulary is not part of
+the key: it only ever gains values, which leave a kept plan right. A plan that
+cannot be read or written is not an outage: Nora is asked instead.
 """
 
 from __future__ import annotations

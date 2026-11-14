@@ -768,7 +768,7 @@ leaned to (`leaned_to`), and Salman describes the card, never the lean. Nora
 plans for everything already chosen for that room, not the newest piece alone.
 A plan made for a piece alone in the cart, for a shopper with no taste, likes or
 room of their own on record (`plain_shopper`), is kept per store, product and
-version - the vocabulary's and Nora's instructions'
+version of Nora's instructions - not the vocabulary's, which only gains values
 (`agents.cross_sell_plan_ttl_s`, `repositories/cross_sell_plans.py`): the next
 such shopper who adds that piece on its own gets it without Nora's step, within
 the hop limit - the piece just added is `last_added_product_id`. Every card a plan ordered logs
@@ -1090,14 +1090,16 @@ Colour and style are controlled vocabularies, stored per product:
 - colour in `core_product.main_color`, one approved value per product
 - style in `core_product.styles`, approved values comma-separated
 
-The vocabulary is the reviewed catalog-attribute registry (with each value's
-Arabic name) **plus the values the stores actually hold**, read once at startup
-(`CatalogAttributes.with_stored`, `app/repositories/vocabulary.py`): the
-catalog's colours, styles and main materials are trusted data, so a colour a
-store sells is offered and searched though the file does not name it yet. A
+The vocabulary is the database's `product_attribute_value` table - every
+colour, style and material with its Arabic name, kept by the product-data
+pipeline - read at startup and every few minutes (14.1). A value still waiting
+for its Arabic name (`vocabulary_pending`) is live too (`app/taxonomy/tables.py`),
+shown in English until its Arabic arrives and logged by name
+(`vocabulary_values_in_english`). Only the tables are read, never the products:
+a value products carry that no table names (written outside the pipeline) is
+not offered, searched or leaned to - the product is still found and shown. A
 value is never restated in a prompt, an enum, a validator or a test; a stored
-value that reads like a reviewed one keeps the reviewed spelling, and one with
-no reviewed Arabic name is shown in English. Which values a store carries for a
+value that reads like one in the table keeps the table's spelling. Which values a store carries for a
 kind is its shelf, read per store.
 Style values contain no spaces, which is what allows a stored string to be
 split into exact tokens whatever spacing a merchant used.
@@ -1410,9 +1412,32 @@ tables   -> center-table, service-table, nightstand, console, tv-table
 
 Requirements:
 
-- keep it in a versioned domain configuration source, not in environment variables and not scattered through Python
+- keep it in the database - `commerce_category` and `commerce_subcategory`
+  (each kind filed under one family by `category_id`, each with its Arabic
+  name), kept by the product-data pipeline - not in environment variables, not
+  in a file and not scattered through Python. It is the one source: there is no
+  YAML copy
+- read it at startup and again every `vocabulary.refresh_every_s` (5 minutes)
+  while the service runs (`app/core/vocabulary.py`): a change - a type, a value,
+  an Arabic name - is built with everything checked against it (the reviewed
+  files, the agents' tools) and swapped into the app's resources in one step,
+  so a turn uses one vocabulary from start to end and the next turn the new
+  one. The rows are the pipeline's and trusted as they are, like a store's
+  prices: nothing in them is refused, a value with no Arabic name reads in
+  English, and a row that cannot be used at all is left out and logged
+  (`build_vocabulary`). Nothing in the tables stops the service: a database
+  that cannot be read at startup is answered from the last good copy (Redis,
+  saved after every good read); during a check, or a change that clashes with
+  a reviewed file, the vocabulary in use stays. Only a first start with no
+  database and no copy waits (`vocabulary.startup_wait_s`) and then fails. Only
+  the tables and the waiting list are read, never the products. Its
+  version is a fingerprint of what was read (`db-...`), so the caches keyed by
+  it (the store's shelf) change exactly when the vocabulary does; a kept
+  cross-sell plan is keyed by Nora's instructions alone, since the vocabulary
+  only ever gains values. Tests build it from a snapshot of the tables
+  (`tests/fixtures/vocabulary.json`, refreshed with
+  `uv run python -m tests.fixtures.vocabulary --refresh`)
 - make it straightforward to extend with new approved values
-- load and validate it at startup; an invalid registry is a startup failure
 - expose it to application code as a typed, queryable structure
 
 Do not hardcode category/subcategory relationships throughout business logic.
@@ -2367,8 +2392,8 @@ no copy of its own (docs/widget-display-contract.md). Each product on the
 chat's cards, the product in focus, the products compared, the picks tray and
 Browse Catalogue's tiles carries `display`: the name (in Arabic, the store's
 `name_arabic` exactly as stored - the English name only where it is empty),
-the kind, colour and styles in the registries' reviewed words
-(`commerce_v1.yaml`, `catalog_attributes_v1.yaml`), and the seats, price and
+the kind, colour and styles in the vocabulary's words (the `commerce_*` and
+`product_attribute_value` tables), and the seats, price and
 listed size worded for the language, in Western digits
 (`app/services/product_display.py`). Every piece of a room package and of a
 seating combination carries `display` too (name, kind, seats, the price of one,
@@ -2380,8 +2405,10 @@ tapped button puts on the customer's side - with placeholders for the client to
 fill (`app/services/card_labels.py`; an Arabic label may leave one out, never add
 one). A photo search's pick and a room picture carry `labels` too, and the pick's
 cards `display`. The console keeps no words of its own beyond an English
-fallback; `GET /v1/labels?language=` answers before any reply has. Browse Catalogue takes `language` and words its tiles, filter options
-(`label`), room styles (`style_labels`), room types and the currency
+fallback; `GET /v1/labels?language=` answers before any reply has. Browse
+Catalogue shows only products filed as a (family, type) pair the vocabulary
+holds - the ones the agents can find - and its filters count only those. It takes `language` and words its tiles, filter options
+(`label`), room styles (`style_labels` - every style in the vocabulary, since a room's style describes the room, not its products), room types and the currency
 (`price.currency_label`) in it. The language is the reply's
 (`reply_language`), the session's for the picks endpoint, and English while
 `customer_agent.arabic_replies` is off. Display only: every search, filter,

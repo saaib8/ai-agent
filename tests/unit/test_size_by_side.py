@@ -27,7 +27,8 @@ from app.taxonomy.dimensions import (
     load_dimension_semantics,
     side_of,
 )
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 TAXONOMY = load_taxonomy()
 BY_SIDE = load_dimension_semantics(taxonomy=TAXONOMY, by_side=True)
@@ -199,8 +200,8 @@ async def test_a_bed_width_said_in_words_is_searched_on_its_short_side() -> None
     from app.integrations.llm import StructuredLLMClient
     from app.schemas.query import CommerceInterpretation, DimensionInterpretation, ResolvedSearch
     from app.services.query_understanding import QueryUnderstandingService
-    from app.taxonomy.attributes import load_catalog_attributes
 
+    from tests.fixtures.vocabulary import load_catalog_attributes
     from tests.unit.test_query_understanding import FakeLLMClient
 
     client = FakeLLMClient(

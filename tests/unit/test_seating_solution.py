@@ -38,8 +38,9 @@ from app.services.discovery import to_candidate
 from app.services.seating_solution import SeatingSolutionPlanner
 from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import load_seating_semantics
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 CONTEXT = RetailerContext(store_id=50)
 

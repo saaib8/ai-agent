@@ -171,7 +171,7 @@ def test_noras_knowledge_states_each_policy(policy: str, phrasings: tuple[str, .
 def test_noras_knowledge_names_no_product_type() -> None:
     import re
 
-    from app.taxonomy.registry import load_taxonomy
+    from tests.fixtures.vocabulary import load_taxonomy
 
     taxonomy = load_taxonomy()
     source = KNOWLEDGE.read_text()

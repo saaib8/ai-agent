@@ -18,6 +18,7 @@ It must never be pointed at a real one.
 from __future__ import annotations
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -168,3 +169,44 @@ PRODUCT_DATA_COLUMNS: frozenset[str] = frozenset(
 """The product data every product read selects: checked at startup like the
 commerce columns, so a catalog without them fails loudly rather than per query.
 Empty values are expected - most stores have not filled them."""
+
+
+# The vocabulary, kept by the product-data pipeline (Django-owned, read only):
+# the families, the kinds filed under each, and the colours, styles and
+# materials - each with its Arabic name (CLAUDE.md 6.2, 12.4, 14.1).
+commerce_category = Table(
+    "commerce_category",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("name", String, nullable=False, unique=True),
+    Column("name_arabic", String, nullable=False),
+)
+
+commerce_subcategory = Table(
+    "commerce_subcategory",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("name", String, nullable=False, unique=True),
+    Column("name_arabic", String, nullable=False),
+    Column("category_id", BigInteger, ForeignKey("commerce_category.id"), nullable=False),
+)
+
+product_attribute_value = Table(
+    "product_attribute_value",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("kind", String, nullable=False),
+    Column("name", String, nullable=False),
+    Column("name_arabic", String, nullable=False),
+)
+
+vocabulary_pending = Table(
+    "vocabulary_pending",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("kind", String, nullable=False),
+    Column("name", String, nullable=False),
+    Column("category", String, nullable=False),
+)
+"""Values the pipeline accepted whose Arabic name is still being made: live in
+English until their row arrives (`app/taxonomy/tables.py`)."""

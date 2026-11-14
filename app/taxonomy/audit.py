@@ -162,13 +162,16 @@ def render(report: TaxonomyAuditReport) -> str:
 async def _main() -> int:
     from app.core.config import get_settings
     from app.integrations.postgres import Database
-    from app.taxonomy.registry import load_taxonomy
+    from app.repositories.vocabulary import VocabularyRepository
+    from app.taxonomy.tables import build_vocabulary
 
     settings = get_settings()
     database = Database.create(settings.db)
     try:
         async with database.session() as session:
-            service = TaxonomyAuditService(CatalogAuditRepository(session), load_taxonomy())
+            tables = await VocabularyRepository(session).tables()
+            taxonomy = build_vocabulary(tables).taxonomy
+            service = TaxonomyAuditService(CatalogAuditRepository(session), taxonomy)
             report = await service.run()
     finally:
         await database.dispose()

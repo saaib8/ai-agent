@@ -1,9 +1,9 @@
 """The approved global commerce taxonomy: vocabulary, loading and validation.
 
-``commerce_v1.yaml`` is the single source of truth. Nothing else in the codebase
-enumerates categories or subcategories - no Enum, no validation table, no
-prompt constant, no if/elif chain. Adding a value is a one-file change
-(CLAUDE.md 14.1).
+The database is the single source of truth (`commerce_category`,
+`commerce_subcategory`, read at startup by `app/repositories/vocabulary.py`).
+Nothing else in the codebase enumerates categories or subcategories - no Enum,
+no validation table, no prompt constant, no if/elif chain (CLAUDE.md 14.1).
 
 The registry defines vocabulary and nothing else. It deliberately knows nothing
 about product counts, `store_id`, retailer capabilities or current
@@ -14,10 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from pathlib import Path
-from typing import Any, Final
-
-import yaml
+from typing import Any
 
 from app.core.exceptions import (
     TaxonomyConfigurationError,
@@ -25,8 +22,6 @@ from app.core.exceptions import (
     UnknownCommerceSubcategoryError,
 )
 from app.taxonomy.arabic import parse_arabic_labels
-
-DEFAULT_TAXONOMY_PATH: Final[Path] = Path(__file__).parent / "commerce_v1.yaml"
 
 # Approved tokens are lowercase hyphenated slugs. Enforced at load time so a
 # typo in the vocabulary fails at startup rather than silently never matching.
@@ -124,7 +119,9 @@ def _require_slug(value: Any, *, field: str) -> str:
     return value
 
 
-def _parse(document: Any, *, source: str) -> CommerceTaxonomy:
+def parse_taxonomy(document: Any, *, source: str) -> CommerceTaxonomy:
+    """Validate a taxonomy document - ``version``, ``categories`` (family to
+    kinds) and ``arabic`` - into the registry. Raises on anything malformed."""
     if not isinstance(document, dict):
         raise TaxonomyConfigurationError(detail=f"{source}: top level must be a mapping")
 
@@ -163,21 +160,3 @@ def _parse(document: Any, *, source: str) -> CommerceTaxonomy:
         where=source,
     )
     return CommerceTaxonomy(version=version, categories=categories, arabic=arabic)
-
-
-def load_taxonomy(path: Path | None = None) -> CommerceTaxonomy:
-    """Load and validate the taxonomy. Raises on anything malformed."""
-    source = path or DEFAULT_TAXONOMY_PATH
-    try:
-        text = source.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise TaxonomyConfigurationError(
-            detail=f"cannot read taxonomy at {source}: {type(exc).__name__}"
-        ) from exc
-    try:
-        document = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise TaxonomyConfigurationError(
-            detail=f"{source.name} is not valid YAML: {type(exc).__name__}"
-        ) from exc
-    return _parse(document, source=source.name)

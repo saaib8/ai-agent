@@ -1,11 +1,11 @@
 """The catalog-attribute vocabularies: colours, styles and materials.
 
-``catalog_attributes_v1.yaml`` holds the reviewed colours and styles and their
-Arabic names. At startup the values the stores actually hold are added
-(`CatalogAttributes.with_stored`): the catalog's own colours, styles and
-materials are trusted data, so a colour a store sells is a value the agent can
-offer and search even before the file names it. Nothing else enumerates a
-value - not a prompt, not an enum, not a validator.
+The database is the one source (`product_attribute_value`, read by
+`app/repositories/vocabulary.py`): every value with its Arabic name, kept by the
+product-data pipeline, with the values still waiting for their Arabic name
+(`app/taxonomy/tables.py`) - those shown in English. A value only products
+carry, no table naming it, is not part of the vocabulary. Nothing else
+enumerates a value - not a prompt, not an enum, not a validator.
 
 The vocabulary knows nothing about which products carry which value, or how
 many of anything a retailer stocks: that is the store's shelf, read per store.
@@ -13,17 +13,12 @@ many of anything a retailer stocks: that is the store's shelf, read per store.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from enum import StrEnum
-from pathlib import Path
-from typing import Any, Final
-
-import yaml
+from typing import Any
 
 from app.core.exceptions import TaxonomyConfigurationError
 from app.taxonomy.arabic import parse_arabic_labels
-
-DEFAULT_ATTRIBUTES_PATH: Final[Path] = Path(__file__).parent / "catalog_attributes_v1.yaml"
 
 
 class AttributeFamily(StrEnum):
@@ -33,7 +28,7 @@ class AttributeFamily(StrEnum):
     STYLE = "style"
     MATERIAL = "material"
     """The product's one main material (CLAUDE.md 5): a leaning that orders,
-    never a filter. The file names none; every value is the catalog's own."""
+    never a filter."""
 
 
 class CatalogAttributes:
@@ -44,15 +39,10 @@ class CatalogAttributes:
         version: str,
         values: Mapping[AttributeFamily, frozenset[str]],
         arabic: Mapping[AttributeFamily, Mapping[str, str]] | None = None,
-        reviewed: Mapping[AttributeFamily, frozenset[str]] | None = None,
     ) -> None:
         self._version = version
         self._values: Mapping[AttributeFamily, frozenset[str]] = {
             family: frozenset(values.get(family, ())) for family in AttributeFamily
-        }
-        source = values if reviewed is None else reviewed
-        self._reviewed: Mapping[AttributeFamily, frozenset[str]] = {
-            family: frozenset(source.get(family, ())) for family in AttributeFamily
         }
         self._arabic: Mapping[AttributeFamily, Mapping[str, str]] = dict(arabic or {})
         self._by_spelling: Mapping[AttributeFamily, Mapping[str, str]] = {
@@ -74,30 +64,6 @@ class CatalogAttributes:
     @property
     def materials(self) -> frozenset[str]:
         return self._values[AttributeFamily.MATERIAL]
-
-    def with_stored(self, stored: Mapping[AttributeFamily, Iterable[str]]) -> CatalogAttributes:
-        """This vocabulary with the values the catalog holds added.
-
-        A stored value that reads like one already known (case, spacing,
-        separators) is not added again: the known spelling stays, so a value is
-        never two. Blank values are skipped. Arabic names stay the file's; a
-        value it does not name is shown in English.
-        """
-        merged: dict[AttributeFamily, frozenset[str]] = {}
-        for family in AttributeFamily:
-            known = {spelling_key(v): v for v in self._values[family]}
-            for value in sorted(stored.get(family, ())):
-                value = value.strip()
-                if value and spelling_key(value) not in known:
-                    known[spelling_key(value)] = value
-            merged[family] = frozenset(known.values())
-        return CatalogAttributes(self._version, merged, self._arabic, self._reviewed)
-
-    def reviewed(self, family: AttributeFamily) -> frozenset[str]:
-        """The file's own values for a family - reviewed and named in Arabic -
-        for the places that offer a fixed list of their own, such as a room
-        style picker, rather than what one store carries."""
-        return self._reviewed[family]
 
     def values(self, family: AttributeFamily) -> frozenset[str]:
         return self._values[family]
@@ -127,8 +93,8 @@ class CatalogAttributes:
         """How an approved value reads to a customer answered in Arabic.
 
         Display only - products, filters and decisions keep the English value.
-        None for a value with no reviewed Arabic, which the loader makes
-        impossible for the registry itself; the caller shows the English then.
+        None for a value with no Arabic name - one a product carries that the
+        table does not hold yet; the caller shows the English then.
         """
         return self._arabic.get(family, {}).get(value)
 
@@ -180,45 +146,34 @@ def _parse_family(document: Any, key: str, *, source: str) -> frozenset[str]:
     return frozenset(seen)
 
 
-def load_catalog_attributes(path: Path | None = None) -> CatalogAttributes:
-    """Load and validate the vocabularies. Raises on anything malformed."""
-    source = path or DEFAULT_ATTRIBUTES_PATH
-    try:
-        text = source.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise TaxonomyConfigurationError(
-            detail=f"cannot read catalog attributes at {source}: {type(exc).__name__}"
-        ) from exc
-    try:
-        document = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise TaxonomyConfigurationError(
-            detail=f"{source.name} is not valid YAML: {type(exc).__name__}"
-        ) from exc
+def parse_catalog_attributes(document: Any, *, source: str) -> CatalogAttributes:
+    """Validate a vocabulary document - ``version``, ``colors``, ``styles``,
+    optional ``materials``, and ``arabic`` for each - into the attributes.
+    Raises on anything malformed: every value named once, in Arabic, and no
+    style with a space."""
     if not isinstance(document, dict):
-        raise TaxonomyConfigurationError(detail=f"{source.name}: top level must be a mapping")
-
+        raise TaxonomyConfigurationError(detail=f"{source}: top level must be a mapping")
     version = document.get("version")
     if not isinstance(version, str) or not version:
-        raise TaxonomyConfigurationError(
-            detail=f"{source.name}: 'version' must be a non-empty string"
-        )
-
-    styles = _parse_family(document, "styles", source=source.name)
+        raise TaxonomyConfigurationError(detail=f"{source}: 'version' must be a non-empty string")
+    styles = _parse_family(document, "styles", source=source)
     if any(" " in style for style in styles):
         # Stored styles are split on commas after spaces are stripped, which is
         # only sound while no approved style contains one.
-        raise TaxonomyConfigurationError(
-            detail=f"{source.name}: style values must not contain spaces"
-        )
+        raise TaxonomyConfigurationError(detail=f"{source}: style values must not contain spaces")
     values = {
-        AttributeFamily.COLOR: _parse_family(document, "colors", source=source.name),
+        AttributeFamily.COLOR: _parse_family(document, "colors", source=source),
         AttributeFamily.STYLE: styles,
+        AttributeFamily.MATERIAL: (
+            _parse_family(document, "materials", source=source)
+            if document.get("materials")
+            else frozenset()
+        ),
     }
     return CatalogAttributes(
         version=version,
         values=values,
-        arabic=_parse_arabic(document, values, source=source.name),
+        arabic=_parse_arabic(document, values, source=source),
     )
 
 
@@ -231,5 +186,10 @@ def _parse_arabic(
         raise TaxonomyConfigurationError(detail=f"{source}: 'arabic' must be a mapping")
     return {
         family: parse_arabic_labels(raw.get(key), values[family], where=f"{source}: {key}")
-        for family, key in ((AttributeFamily.COLOR, "colors"), (AttributeFamily.STYLE, "styles"))
+        for family, key in (
+            (AttributeFamily.COLOR, "colors"),
+            (AttributeFamily.STYLE, "styles"),
+            (AttributeFamily.MATERIAL, "materials"),
+        )
+        if values[family]
     }

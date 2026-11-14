@@ -29,15 +29,14 @@ from app.schemas.product import CommerceClassification, ProductRow
 from app.services.card_comparison import CardComparisonService
 from app.services.comparison import ProductComparisonService
 from app.services.reference_resolver import ProductReferenceResolver
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.compare_groups import load_compare_groups
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import load_seating_semantics
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 from tests.unit.agents.fakes import CONTEXT
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 from tests.unit.test_picks import SESSION, STORE, _stored

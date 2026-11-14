@@ -20,10 +20,10 @@ from app.schemas.discovery import (
 )
 from app.schemas.retailer import RetailerContext
 from app.services.discovery import ProductDiscoveryService
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 pytestmark = pytest.mark.integration
 

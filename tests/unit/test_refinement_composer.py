@@ -58,9 +58,10 @@ from app.schemas.refinement import (
     SortRefinement,
 )
 from app.services.refinement_composer import SearchRefinementComposer
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 SAR = "SAR"
 LOCKED = ConstraintStrength.LOCKED

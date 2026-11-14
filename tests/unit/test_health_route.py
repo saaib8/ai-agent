@@ -14,13 +14,13 @@ from app.integrations.redis import RedisClient
 from app.main import create_app
 from app.orchestration.graph import ChatGraphRunner
 from app.services.health import HealthService
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 
 class _Stub:

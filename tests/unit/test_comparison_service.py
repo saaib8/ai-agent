@@ -28,8 +28,9 @@ from app.schemas.resolution import ComparisonFailureReason, ComparisonUnavailabl
 from app.schemas.retailer import RetailerContext
 from app.services.comparison import ProductComparisonService
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import load_seating_semantics
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 CONTEXT = RetailerContext(store_id=50)
 

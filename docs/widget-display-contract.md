@@ -137,7 +137,7 @@ one of `routing`, `working`, `searching`, `designing`, `updating_cart`,
 `GET /v1/catalog/products?...&language=ar` → tiles' `display` in Arabic.
 `GET /v1/catalog/facets?store_id=..&language=ar` → each category, sub-category,
 colour and style option carries `label` (show it; send its `value` back as the
-filter), and `studio.style_labels` maps each room style value to its name.
+filter), and `studio.style_labels` maps each room style value to its name - the room styles are every style in the vocabulary, whatever the store tags, since a room's style describes the room.
 Pass the conversation's latest `reply_language`. The facets' `studio.room_types` labels
 and `price.currency_label` ("ريال", for a total the widget adds up) are in that
 language too.

@@ -2,8 +2,8 @@
 
 The console and a store's widget show what this produces and decide nothing:
 the name - in Arabic, the store's `name_arabic` exactly as stored - and the
-kind, colour and styles in the registries' reviewed words (`commerce_v1.yaml`,
-`catalog_attributes_v1.yaml`), with the seats, price and listed size worded for
+kind, colour and styles in the vocabulary's words (the `commerce_*` and
+`product_attribute_value` tables), with the seats, price and listed size worded for
 the language, in Western digits (docs/arabic-replies-plan.md). A lookup and a
 format, not a translation: nothing here guesses a word, and a value with no
 reviewed Arabic is shown as stored.

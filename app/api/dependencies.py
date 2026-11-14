@@ -552,9 +552,10 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
                 app_resources.redis.client,
                 settings.agents.cross_sell_plan_ttl_s,
                 settings.session.operation_timeout_s,
-                # A plan is kept per vocabulary and per Nora's instructions:
-                # a change to either plans afresh.
-                f"{app_resources.taxonomy.version}.{AGENT_PROMPT_VERSION}",
+                # A plan is kept per Nora's instructions: a change to them plans
+                # afresh. Not per vocabulary - it only ever gains values, so a
+                # plan made before a new one existed is still right.
+                AGENT_PROMPT_VERSION,
             )
             if settings.agents.cross_sell_plan_ttl_s
             else None

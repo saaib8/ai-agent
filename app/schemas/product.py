@@ -239,7 +239,7 @@ class ProductDisplay(BaseModel):
     A client - the console or a store's widget - shows these as they are and
     decides nothing: the name (in Arabic, the store's `name_arabic` as stored;
     the English name only where it is empty), the kind, colour and styles in the
-    registries' reviewed words (`commerce_v1.yaml`, `catalog_attributes_v1.yaml`),
+    vocabulary's words (the `commerce_*` and `product_attribute_value` tables),
     and the seats, price and listed size worded for that language, in Western
     digits. Display only: every search, filter, comparison and pick keeps the
     English values beside it.

@@ -26,11 +26,10 @@ from app.schemas.refinement import (
     SearchRefinementDelta,
 )
 from app.services.refinement_composer import SearchRefinementComposer
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import SeatingSemantics, load_seating_semantics
 
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 from tests.unit.test_refinement_composer import _state
 
 ONE = SeatingCapacityConstraint(min_capacity=1, max_capacity=1)

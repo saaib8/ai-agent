@@ -25,8 +25,8 @@ from app.services.product_display import (
     rating_words,
     weight_words,
 )
-from app.taxonomy.attributes import load_catalog_attributes
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 WORDS = ProductDisplayWords(load_taxonomy(), load_catalog_attributes())
 
