@@ -50,8 +50,9 @@ from app.schemas.product_reference import PresentedOrdinal
 from app.services.agent_state import apply_update
 from app.services.bundle_cards import group_bundle_cards
 from app.services.bundle_presentation import build_state_bundle_presentation
-from app.taxonomy.registry import load_taxonomy
 from pydantic import ValidationError
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 TAXONOMY = load_taxonomy()
 CONTEXT = __import__("app.schemas.retailer", fromlist=["RetailerContext"]).RetailerContext(

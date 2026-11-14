@@ -19,9 +19,10 @@ from app.schemas.query import (
     ConstraintStrength,
     RequirementFamily,
 )
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole, UnsupportedDimensionReason
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 GOLDEN_PATH = Path(__file__).parents[2] / "evals/query_understanding/golden_v2.yaml"
 TAXONOMY = load_taxonomy()

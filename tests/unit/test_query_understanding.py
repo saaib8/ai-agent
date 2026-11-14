@@ -23,10 +23,10 @@ from app.schemas.query import (
     ResolvedSearch,
 )
 from app.services.query_understanding import MAX_MESSAGE_CHARS, QueryUnderstandingService
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from pydantic import BaseModel
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 TAXONOMY = load_taxonomy()
 ATTRIBUTES = load_catalog_attributes()
@@ -385,19 +385,18 @@ def test_the_prompt_carries_no_catalog_or_secret() -> None:
 
 
 def test_a_custom_registry_changes_the_prompt() -> None:
-    """Adding a category is still a one-file change, prompt included."""
-    from pathlib import Path
-    from tempfile import TemporaryDirectory
+    """Adding a category is a row in the tables, prompt included."""
+    from app.taxonomy.registry import parse_taxonomy
 
-    from app.taxonomy.registry import load_taxonomy as load
-
-    with TemporaryDirectory() as tmp:
-        path = Path(tmp) / "custom.yaml"
-        path.write_text(
-            "version: v9\ncategories:\n  outdoor: [parasol, hammock]\n"
-            "arabic: {outdoor: خارجي, parasol: مظلة, hammock: أرجوحة}\n"
-        )
-        assert "parasol" in render_taxonomy(load(path))
+    custom = parse_taxonomy(
+        {
+            "version": "v9",
+            "categories": {"outdoor": ["parasol", "hammock"]},
+            "arabic": {"outdoor": "خارجي", "parasol": "مظلة", "hammock": "أرجوحة"},
+        },
+        source="test",
+    )
+    assert "parasol" in render_taxonomy(custom)
 
 
 # ── semantic_text (M9B-2) ───────────────────────────────────────────────────

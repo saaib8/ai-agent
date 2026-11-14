@@ -28,11 +28,11 @@ from app.services.chat_runtime import ChatRuntime
 from app.services.picks import PicksRuntime
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.store_cart_mirror import StoreCartMirror, mirrored_cart
-from app.taxonomy.attributes import load_catalog_attributes
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from tests.fixtures.vocabulary import load_catalog_attributes
 from tests.unit.test_cart import _cart
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 from tests.unit.test_picks import SESSION, STORE, Hydration, _state, _stored

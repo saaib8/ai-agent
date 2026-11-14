@@ -14,8 +14,9 @@ from app.core.config import SizeSettings
 from app.repositories.products import CatalogOverviewRow
 from app.schemas.retailer import RetailerContext
 from app.services.catalog_capability import CatalogCapabilityService
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.seating import load_seating_semantics
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 TAXONOMY = load_taxonomy()
 SEATING = load_seating_semantics(taxonomy=TAXONOMY)

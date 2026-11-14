@@ -25,9 +25,9 @@ from app.schemas.geometry import (
     RoomMeasurementRole,
 )
 from app.schemas.retailer import RetailerCatalogCapabilities, RetailerCatalogCapability
-from app.taxonomy.attributes import load_catalog_attributes
-from app.taxonomy.registry import load_taxonomy
 from pydantic import BaseModel, ValidationError
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 STOCKED_WITH_RANGE = 12
 """A capability depth that is not the thing under test.

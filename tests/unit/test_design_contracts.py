@@ -29,8 +29,9 @@ from app.schemas.retailer import (
     RetailerCatalogCapability,
 )
 from app.taxonomy.attributes import AttributeFamily
-from app.taxonomy.registry import load_taxonomy
 from pydantic import ValidationError
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 TAXONOMY = load_taxonomy()
 SAR = "SAR"

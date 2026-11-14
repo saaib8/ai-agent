@@ -1,7 +1,8 @@
 """The store's own colours, styles and materials are trusted data.
 
-What the stores hold joins the reviewed vocabulary at startup, so a colour a
-store sells can be offered and searched though the file does not name it. A
+The vocabulary is the database's; a value still waiting for its Arabic name
+joins it (shown in English), so a colour a store sells can be offered and
+searched before the pipeline names it. A
 material the customer wants puts the pieces made of it first, never filters. A
 chip Sara offers that names a colour, style or material names one the store was
 shown to carry (CLAUDE.md 10.2, 12.4).
@@ -38,48 +39,41 @@ from app.schemas.text_choice import TextReplyChoice
 from app.services.query_document import build_query_document
 from app.services.query_understanding import QueryUnderstandingService
 from app.services.semantic_ranking import SemanticRankingService
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.seating import load_seating_semantics
 
+from tests.fixtures.vocabulary import load_catalog_attributes, with_waiting
 from tests.unit.agents.fakes import agent_services, real_loop, tool_context
 from tests.unit.test_query_understanding import DIMENSIONS, TAXONOMY, FakeLLMClient
 
 FILE = load_catalog_attributes()
-STORED = FILE.with_stored(
-    {
-        AttributeFamily.COLOR: ["Red", " ", "beige"],
-        AttributeFamily.STYLE: ["Vintage"],
-        AttributeFamily.MATERIAL: ["Solid Wood", "Velvet", "Glass"],
-    }
+STORED = with_waiting(
+    colour=["Mauve", " ", "beige"], style=["Steampunk"], material=["Solid Wood", "Moonstone"]
 )
 
 
 # ── the vocabulary ──────────────────────────────────────────────────────────
 
 
-def test_what_the_stores_hold_joins_the_file() -> None:
-    assert "Red" not in FILE.colors and "Red" in STORED.colors
-    assert "Vintage" in STORED.styles
-    assert STORED.materials == {"Solid Wood", "Velvet", "Glass"}
-    assert not FILE.materials
+def test_a_waiting_value_joins_the_tables() -> None:
+    assert "Mauve" not in FILE.colors and "Mauve" in STORED.colors
+    assert "Steampunk" in STORED.styles
+    assert {"Solid Wood", "Moonstone"} <= STORED.materials
+    assert "Solid Wood" in FILE.materials, "the tables name materials too"
 
 
 def test_a_value_the_file_names_keeps_its_spelling_and_blanks_are_skipped() -> None:
     assert "beige" not in STORED.colors and "Beige" in STORED.colors
     assert all(c.strip() for c in STORED.colors)
-    assert STORED.canonical(AttributeFamily.COLOR, "red") == "Red"
+    assert STORED.canonical(AttributeFamily.COLOR, "mauve") == "Mauve"
 
 
-def test_the_files_own_values_stay_known_as_reviewed() -> None:
-    assert STORED.reviewed(AttributeFamily.STYLE) == FILE.styles
-    assert "Vintage" not in STORED.reviewed(AttributeFamily.STYLE)
-
-
-def test_arabic_stays_the_files() -> None:
+def test_arabic_is_the_tables() -> None:
     assert STORED.arabic(AttributeFamily.COLOR, "Beige") == FILE.arabic(
         AttributeFamily.COLOR, "Beige"
     )
-    assert STORED.arabic(AttributeFamily.COLOR, "Red") is None
+    assert FILE.arabic(AttributeFamily.COLOR, "Champagne"), "every value the tables hold"
+    assert STORED.arabic(AttributeFamily.COLOR, "Mauve") is None, "one they do not: English"
 
 
 # ── a material is a leaning ─────────────────────────────────────────────────

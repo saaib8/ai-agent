@@ -76,15 +76,14 @@ from app.services.hydration import ProductHydrationService
 from app.services.reference_resolver import ProductReferenceResolver
 from app.services.refinement_composer import SearchRefinementComposer
 from app.services.similar_search import SimilarSearchBuilder
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 from pydantic import SecretStr, ValidationError
 
 from tests.conftest import build_settings
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 from tests.unit.click_ids import no_click_ids
 from tests.unit.test_chat_api import GRAPH, FakeRetailers, FakeSessionStore, Harness, a_selection
 

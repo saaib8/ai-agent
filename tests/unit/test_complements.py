@@ -15,7 +15,8 @@ from app.taxonomy.complements import (
     Companion,
     load_complements,
 )
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 TAXONOMY = load_taxonomy()
 

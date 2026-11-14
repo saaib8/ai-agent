@@ -48,13 +48,12 @@ from app.schemas.visualization import RenderRoomSpec, RenderSource, RenderView, 
 from app.services.catalog import FLOOR_CATEGORIES, CatalogService, catalog_item
 from app.services.click_tracking import ClickTrackingService
 from app.services.room_visualization import CatalogVisualizationRuntime, RoomVisualizer
-from app.taxonomy.attributes import load_catalog_attributes
-from app.taxonomy.registry import load_taxonomy
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from tests.conftest import build_settings
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 from tests.unit.click_ids import FakeClickIds, no_click_ids
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 from tests.unit.test_room_visualization import (
@@ -118,6 +117,7 @@ class FakeBrowseRepository:
         self.count = len(self.rows) if count is None else count
         self.filters: list[CatalogFilter] = []
         self.pages: list[tuple[int, int]] = []
+        self.facet_kinds: tuple[tuple[str, str], ...] = ()
 
     async def count_browse(self, filters: CatalogFilter, context: RetailerContext) -> int:
         self.filters.append(filters)
@@ -147,7 +147,10 @@ class FakeBrowseRepository:
             ("not-a-category", "sofa", 7),
         )
 
-    async def facet_counts(self, context: RetailerContext) -> FacetCounts:
+    async def facet_counts(
+        self, context: RetailerContext, kinds: Sequence[tuple[str, str]] = ()
+    ) -> FacetCounts:
+        self.facet_kinds = tuple(kinds)
         return FacetCounts(
             colors=(("Beige", 5), ("beige", 2), ("Moonbeam", 9), ("Grey", 6)),
             styles=(("Modern", 8), ("Modern_Classic", 3), ("Futurist", 4)),
@@ -251,6 +254,14 @@ class TestBrowse:
         await service.browse(a_query(), CONTEXT)
         assert set(repo.filters[0].lead_categories) == FLOOR_CATEGORIES
 
+    async def test_a_page_shows_only_products_filed_as_an_approved_type(self) -> None:
+        service, repo = a_service()
+        await service.browse(a_query(), CONTEXT)
+
+        kinds = repo.filters[0].kinds
+        assert ("seating", "sofa") in kinds and ("tables", "nightstand") in kinds
+        assert len(kinds) == sum(len(TAXONOMY.subcategories(c)) for c in TAXONOMY.categories)
+
     async def test_name_words_are_split_deduplicated_and_bounded(self) -> None:
         service, repo = a_service()
         await service.browse(a_query(q="  grey   sofa grey a b c d e f g "), CONTEXT)
@@ -296,7 +307,9 @@ class TestFacets:
         service, _ = a_service()
         facets = await service.facets(CONTEXT)
 
-        assert [(c.value, c.count) for c in facets.categories] == [("decor", 3), ("seating", 17)]
+        # Only products filed as an approved type count: none with no type,
+        # nor one the vocabulary does not hold.
+        assert [(c.value, c.count) for c in facets.categories] == [("decor", 3), ("seating", 14)]
         seating = facets.categories[1]
         assert [(s.value, s.count) for s in seating.subcategories] == [("chair", 4), ("sofa", 10)]
         assert [(c.value, c.count) for c in facets.colors] == [("Beige", 7), ("Grey", 6)]
@@ -304,6 +317,13 @@ class TestFacets:
             ("Modern", 8),
             ("Modern_Classic", 3),
         ]
+
+    async def test_filters_count_only_classified_products(self) -> None:
+        service, repository = a_service()
+        await service.facets(CONTEXT)
+
+        assert ("seating", "sofa") in repository.facet_kinds
+        assert all(TAXONOMY.is_pair(c, s) for c, s in repository.facet_kinds)
 
     async def test_the_price_range_is_the_main_currency_s(self) -> None:
         service, _ = a_service()
@@ -319,7 +339,7 @@ class TestFacets:
         service, _ = a_service(render_available=False, max_products=9, max_quantity=4)
         studio = (await service.facets(CONTEXT)).studio
         assert [r.value for r in studio.room_types] == list(RoomType)
-        assert set(studio.styles) == ATTRIBUTES.styles
+        assert set(studio.styles) == set(ATTRIBUTES.styles), "every style, not only those stocked"
         assert (studio.max_products, studio.max_quantity) == (9, 4)
         assert studio.render_available is False
 

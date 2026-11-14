@@ -5,20 +5,33 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from app.core.exceptions import (
     TaxonomyConfigurationError,
     UnknownCommerceCategoryError,
     UnknownCommerceSubcategoryError,
 )
-from app.taxonomy.registry import DEFAULT_TAXONOMY_PATH, CommerceTaxonomy, load_taxonomy
+from app.taxonomy.registry import CommerceTaxonomy, parse_taxonomy
 
-# The approved global taxonomy, restated here independently of the YAML so the
-# test is a genuine check on the file rather than a mirror of it.
+from tests.fixtures.vocabulary import load_taxonomy
+
+# The approved global taxonomy, restated here independently of the tables so the
+# test is a genuine check on them rather than a mirror of them.
 APPROVED: dict[str, set[str]] = {
     "seating": {
-        "chair", "dining-chair", "lounge-chair", "office-chair", "recliner",
-        "stool", "outdoor-chair", "single-seater-sofa", "sofa", "sectional-sofa",
-        "sofa-bed", "sofa-set", "chaise-lounge",
+        "chair",
+        "dining-chair",
+        "lounge-chair",
+        "office-chair",
+        "recliner",
+        "stool",
+        "outdoor-chair",
+        "single-seater-sofa",
+        "sofa",
+        "sectional-sofa",
+        "sofa-bed",
+        "sofa-set",
+        "chaise-lounge",
     },
     "bedroom": {"bed", "dressing-table", "wardrobe", "dresser"},
     "bedding": {"bedspread", "pillow", "mattresses", "mattress-pad", "comforter"},
@@ -27,22 +40,51 @@ APPROVED: dict[str, set[str]] = {
     "office": {"office-table"},
     "storage": {"storage-box", "laundry-basket", "shelve"},
     "decor": {
-        "carpet", "flower-pot-and-plant", "statue-and-antique", "candle",
-        "candlestick", "vase", "flower", "wall-clock", "decorative-hanger",
-        "art-canvas", "mirror",
+        "carpet",
+        "flower-pot-and-plant",
+        "statue-and-antique",
+        "candle",
+        "candlestick",
+        "vase",
+        "flower",
+        "wall-clock",
+        "decorative-hanger",
+        "art-canvas",
+        "mirror",
     },
     "lighting": {
-        "lighting", "table-lamp", "floor-lamp", "wall-lighting",
-        "outdoor-lighting", "chandelier", "pendant-lighting",
+        "lighting",
+        "table-lamp",
+        "floor-lamp",
+        "wall-lighting",
+        "outdoor-lighting",
+        "chandelier",
+        "pendant-lighting",
+        "ceiling-lighting",
+        "floor-lighting",
+        "string-lighting",
+        "track-lighting",
     },
     "kitchen-appliances": {"coffee-maker", "cooking-appliance", "food-processor"},
     "kitchenware": {"cooking-pot", "serving-utensil-and-tray", "cup", "plate"},
     "fitness": {
-        "weight-bench-flat", "weight-bench-adjustable", "stationary-bike",
-        "treadmill", "dumbbell", "elliptical-machine", "kettlebells",
-        "medicine-ball", "power-rack", "yoga-mat", "leg-press-machine",
-        "chest-press-machine", "jump-rope", "air-bike", "barbell",
-        "boxing-gloves", "weight-plates",
+        "weight-bench-flat",
+        "weight-bench-adjustable",
+        "stationary-bike",
+        "treadmill",
+        "dumbbell",
+        "elliptical-machine",
+        "kettlebells",
+        "medicine-ball",
+        "power-rack",
+        "yoga-mat",
+        "leg-press-machine",
+        "chest-press-machine",
+        "jump-rope",
+        "air-bike",
+        "barbell",
+        "boxing-gloves",
+        "weight-plates",
     },
 }
 
@@ -55,8 +97,7 @@ def taxonomy() -> CommerceTaxonomy:
 
 
 def test_the_packaged_taxonomy_loads(taxonomy: CommerceTaxonomy) -> None:
-    assert taxonomy.version == "v1"
-    assert DEFAULT_TAXONOMY_PATH.exists()
+    assert taxonomy.version.startswith("db-"), "the vocabulary is the database's"
 
 
 def test_every_approved_parent_category_loads(taxonomy: CommerceTaxonomy) -> None:
@@ -104,9 +145,7 @@ def test_a_valid_subcategory_under_the_wrong_category_is_rejected(
     "superseded",
     ["l-shape-sofa", "side-table", "lampshade", "floor-stand"],
 )
-def test_superseded_tokens_are_not_canonical(
-    taxonomy: CommerceTaxonomy, superseded: str
-) -> None:
+def test_superseded_tokens_are_not_canonical(taxonomy: CommerceTaxonomy, superseded: str) -> None:
     for category in taxonomy.categories:
         assert not taxonomy.is_pair(category, superseded), (category, superseded)
 
@@ -129,8 +168,14 @@ def test_the_registry_knows_nothing_about_inventory(taxonomy: CommerceTaxonomy) 
     surface = {name for name in dir(taxonomy) if not name.startswith("_")}
     assert surface == {
         "arabic",
-        "categories", "category_of", "is_category", "is_pair", "is_subcategory",
-        "subcategories", "validate_pair", "version",
+        "categories",
+        "category_of",
+        "is_category",
+        "is_pair",
+        "is_subcategory",
+        "subcategories",
+        "validate_pair",
+        "version",
     }
 
 
@@ -141,8 +186,9 @@ def test_no_synonym_or_visual_category_dependency() -> None:
         text = module.read_text()
         assert "alias" not in text.lower() or "aliases" not in text.lower()
         assert "visual_map" not in text
-    yaml_text = DEFAULT_TAXONOMY_PATH.read_text()
-    assert "alias" not in yaml_text.lower()
+    assert not (Path(__file__).parents[2] / "app/taxonomy/commerce_v1.yaml").exists(), (
+        "the database is the one source of the taxonomy"
+    )
 
 
 @pytest.mark.parametrize(
@@ -159,33 +205,23 @@ def test_no_synonym_or_visual_category_dependency() -> None:
         ("version: v1\ncategories:\n  seating: [sofa, sofa]\n", "more than once"),
         ("version: v1\ncategories:\n  seating: [123]\n", "slug"),
         ("version: ''\ncategories:\n  seating: [sofa]\n", "version"),
-        ("::: not yaml :::\n", "YAML"),
     ],
 )
-def test_malformed_registry_is_rejected(
-    tmp_path: Path, document: str, reason: str
-) -> None:
-    path = tmp_path / "broken.yaml"
-    path.write_text(document)
-
+def test_malformed_registry_is_rejected(document: str, reason: str) -> None:
     with pytest.raises(TaxonomyConfigurationError, match=reason):
-        load_taxonomy(path)
+        parse_taxonomy(yaml.safe_load(document), source="test")
 
 
-def test_a_missing_registry_file_is_rejected(tmp_path: Path) -> None:
-    with pytest.raises(TaxonomyConfigurationError, match="cannot read"):
-        load_taxonomy(tmp_path / "absent.yaml")
-
-
-def test_a_valid_custom_registry_loads(tmp_path: Path) -> None:
-    """Adding a category is a one-file change; nothing else enumerates them."""
-    path = tmp_path / "custom.yaml"
-    path.write_text(
-        "version: v9\ncategories:\n  outdoor: [parasol, hammock]\n"
-        "arabic: {outdoor: خارجي, parasol: مظلة, hammock: أرجوحة}\n"
+def test_a_valid_custom_registry_loads() -> None:
+    """Adding a category is a row in the tables; nothing else enumerates them."""
+    custom = parse_taxonomy(
+        {
+            "version": "v9",
+            "categories": {"outdoor": ["parasol", "hammock"]},
+            "arabic": {"outdoor": "خارجي", "parasol": "مظلة", "hammock": "أرجوحة"},
+        },
+        source="test",
     )
-
-    custom = load_taxonomy(path)
 
     assert custom.version == "v9"
     assert custom.categories == frozenset({"outdoor"})

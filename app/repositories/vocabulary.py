@@ -1,42 +1,96 @@
-"""The colours, styles and materials the catalog holds - values, not products.
+"""The vocabulary, read from the database - values, never products.
 
-The one read that is not scoped to a store, on purpose: it builds the
-vocabulary the agents may use (`CatalogAttributes.with_stored`), as the
-taxonomy registry does, and returns no product, price or count. Which values a
-store actually carries for a kind is read per store, from its shelf
+`VocabularyRepository.tables` reads the families, the kinds filed under each,
+the colours, styles and materials, each with its Arabic name, and the values
+still waiting for one (`vocabulary_pending`) - the backend's tables and nothing
+else, never the products (`app/taxonomy/tables.py`, CLAUDE.md 6.2, 12.4, 14.1).
+
+It is not scoped to a store, on purpose: they build the vocabulary
+the agents may use and return no product, price or count. Which values a store
+carries for a kind is read per store, from its shelf
 (`ProductRepository.catalog_overview`), and that is all an agent is offered.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.tables import core_product
-from app.repositories.products import style_tokens
-from app.taxonomy.attributes import AttributeFamily
+from app.db.tables import (
+    commerce_category,
+    commerce_subcategory,
+    product_attribute_value,
+    vocabulary_pending,
+)
+from app.taxonomy.tables import (
+    FAMILY_OF_KIND,
+    FamilyRow,
+    KindRow,
+    ValueRow,
+    VocabularyTables,
+    WaitingRow,
+)
 
 
-class StoredVocabularyRepository:
+class VocabularyRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def values(self) -> dict[AttributeFamily, tuple[str, ...]]:
-        """Each family's distinct stored values among active products, sorted."""
-        token = func.unnest(style_tokens()).label("value")
-        styles = select(token).where(core_product.c.is_active.is_(True)).subquery()
-        found: dict[AttributeFamily, tuple[str, ...]] = {}
-        for family, statement in (
-            (AttributeFamily.COLOR, _distinct(core_product.c.main_color)),
-            (AttributeFamily.MATERIAL, _distinct(core_product.c.material)),
-            (AttributeFamily.STYLE, select(styles.c.value).distinct()),
-        ):
-            rows = (await self._session.execute(statement)).scalars()
-            found[family] = tuple(sorted({v.strip() for v in rows if v and v.strip()}))
-        return found
-
-
-def _distinct(column: Any) -> Any:
-    return select(column).where(core_product.c.is_active.is_(True), column.is_not(None)).distinct()
+    async def tables(self) -> VocabularyTables:
+        """Every row, oldest first, and the values products carry."""
+        families = (
+            await self._session.execute(
+                select(
+                    commerce_category.c.id,
+                    commerce_category.c.name,
+                    commerce_category.c.name_arabic,
+                ).order_by(commerce_category.c.id)
+            )
+        ).all()
+        family_of = {row.id: row.name for row in families}
+        kinds = (
+            await self._session.execute(
+                select(
+                    commerce_subcategory.c.name,
+                    commerce_subcategory.c.name_arabic,
+                    commerce_subcategory.c.category_id,
+                ).order_by(commerce_subcategory.c.id)
+            )
+        ).all()
+        values = (
+            await self._session.execute(
+                select(
+                    product_attribute_value.c.kind,
+                    product_attribute_value.c.name,
+                    product_attribute_value.c.name_arabic,
+                )
+                .where(product_attribute_value.c.kind.in_(tuple(FAMILY_OF_KIND)))
+                .order_by(product_attribute_value.c.id)
+            )
+        ).all()
+        waiting = (
+            await self._session.execute(
+                select(
+                    vocabulary_pending.c.kind,
+                    vocabulary_pending.c.name,
+                    vocabulary_pending.c.category,
+                ).order_by(vocabulary_pending.c.id)
+            )
+        ).all()
+        return VocabularyTables(
+            families=tuple(FamilyRow(name=r.name, arabic=r.name_arabic or "") for r in families),
+            kinds=tuple(
+                KindRow(
+                    name=r.name,
+                    family=family_of.get(r.category_id),
+                    arabic=r.name_arabic or "",
+                )
+                for r in kinds
+            ),
+            values=tuple(
+                ValueRow(kind=r.kind, name=r.name, arabic=r.name_arabic or "") for r in values
+            ),
+            waiting=tuple(
+                WaitingRow(kind=r.kind, name=r.name, family=r.category or "") for r in waiting
+            ),
+        )

@@ -40,8 +40,9 @@ from app.services.dimension_policy import (
 )
 from app.services.relaxation import PlannedRelaxation, RelaxationPlanner
 from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from pydantic import ValidationError
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 WIDTH = DimensionRole.OVERALL_WIDTH
 DEPTH = DimensionRole.DEPTH

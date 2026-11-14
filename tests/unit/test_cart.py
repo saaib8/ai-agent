@@ -47,11 +47,11 @@ from app.services.cart import CartService
 from app.services.picks import PicksRuntime
 from app.services.picks_words import WORDS
 from app.services.reference_resolver import ProductReferenceResolver
-from app.taxonomy.attributes import load_catalog_attributes
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
+from tests.fixtures.vocabulary import load_catalog_attributes
 from tests.unit.test_chat_api import FakeRetailers, FakeSessionStore
 from tests.unit.test_picks import STORE, Hydration, _state, _stored
 from tests.unit.test_reference_resolver import FakeRepository, _row

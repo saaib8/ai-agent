@@ -6,26 +6,24 @@ down on shutdown. Nothing constructs a client per request (CLAUDE.md 24).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 
 from fastapi import FastAPI
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.agents.loop import AgentLoop
 from app.agents.team import AgentTeam
-from app.agents.tools.catalog import build_registry
-from app.agents.tools.schemas import ToolSchemas
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ResourceNotInitialisedError
 from app.core.logging import configure_logging, get_logger
+from app.core.vocabulary import VocabularyRefresher, team_models
 from app.db.catalog_schema import (
     verify_commerce_schema,
     verify_product_data_schema,
     verify_support_schema,
 )
-from app.integrations.chat_models import build_chat_model, build_wording_model
 from app.integrations.embeddings import OpenAIQueryEmbedder
 from app.integrations.image_generation import (
     FallbackImageGenerator,
@@ -42,19 +40,17 @@ from app.integrations.salla_storefront import SallaStorefrontClient
 from app.integrations.store_knowledge import PineconeKnowledgeIndex
 from app.integrations.zory_finder import ZoryFinderClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
-from app.repositories.vocabulary import StoredVocabularyRepository
-from app.schemas.agent_persona import AgentPersona
-from app.schemas.query import build_constrained_interpretation
+from app.repositories.vocabulary_copy import VocabularyCopy
 from app.services.history_summary import HistorySummarizer
 from app.services.service_health import OutsideHealthCache
 from app.services.store_knowledge import StoreKnowledgeService
-from app.taxonomy.attributes import CatalogAttributes, load_catalog_attributes
-from app.taxonomy.compare_groups import CompareGroups, load_compare_groups
-from app.taxonomy.complements import Complements, load_complements
-from app.taxonomy.dimensions import DimensionSemantics, load_dimension_semantics
-from app.taxonomy.registry import CommerceTaxonomy, load_taxonomy
-from app.taxonomy.rooms import RoomPieces, load_room_pieces
-from app.taxonomy.seating import SeatingSemantics, load_seating_semantics
+from app.taxonomy.attributes import CatalogAttributes
+from app.taxonomy.compare_groups import CompareGroups
+from app.taxonomy.complements import Complements
+from app.taxonomy.dimensions import DimensionSemantics
+from app.taxonomy.registry import CommerceTaxonomy
+from app.taxonomy.rooms import RoomPieces
+from app.taxonomy.seating import SeatingSemantics
 
 logger = get_logger(__name__)
 
@@ -118,77 +114,6 @@ def get_resources(app: FastAPI) -> AppResources:
     return resources
 
 
-def _agent_team(
-    settings: Settings,
-    taxonomy: CommerceTaxonomy,
-    attributes: CatalogAttributes,
-    rooms: RoomPieces,
-) -> AgentTeam | None:
-    """The supervisor and the four agents, each its own model - or None when
-    any of them has none, and chat then refuses as not configured."""
-    agents = settings.agents
-    use_responses = agents.use_responses_api
-    supervisor = build_chat_model(settings.llm, agents.supervisor, use_responses_api=use_responses)
-    models = {
-        persona: build_chat_model(
-            settings.llm, getattr(agents, persona.value), use_responses_api=use_responses
-        )
-        for persona in AgentPersona
-    }
-    if supervisor is None or any(model is None for model in models.values()):
-        return None
-    registry = build_registry(
-        ToolSchemas(
-            interpretation=build_constrained_interpretation(taxonomy, attributes),
-            attributes=attributes,
-            room_pieces=rooms,
-        )
-    )
-    wording = {
-        persona: model
-        for persona in AgentPersona
-        if (
-            model := build_wording_model(
-                settings.llm, getattr(agents, persona.value), use_responses_api=use_responses
-            )
-        )
-        is not None
-    }
-    return AgentTeam(
-        supervisor,
-        {persona: model for persona, model in models.items() if model is not None},
-        agents,
-        AgentLoop(registry, max_tool_calls=agents.max_tool_calls),
-        wording=wording,
-    )
-
-
-async def _with_stored_values(
-    database: Database, attributes: CatalogAttributes
-) -> CatalogAttributes:
-    """The vocabulary with the colours, styles and materials the stores hold.
-
-    The catalog's own values are trusted data, so an agent can offer and search
-    a colour a store sells though the reviewed file does not name it. A catalog
-    that cannot be read now leaves the file's values alone - colours and styles
-    still work, materials wait for the next start.
-    """
-    try:
-        async with database.session() as session:
-            stored = await StoredVocabularyRepository(session).values()
-    except (SQLAlchemyError, OSError) as exc:
-        logger.warning("stored_vocabulary_unavailable", error_type=type(exc).__name__)
-        return attributes
-    widened = attributes.with_stored(stored)
-    logger.info(
-        "stored_vocabulary_loaded",
-        color_count=len(widened.colors),
-        style_count=len(widened.styles),
-        material_count=len(widened.materials),
-    )
-    return widened
-
-
 async def _check_catalog_schema(database: Database, *, support: bool = False) -> None:
     """Verify the live catalog has the commerce columns this service requires,
     and the store's support columns where the support agent reads them.
@@ -225,37 +150,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.observability)
     logger.info("service_starting", **settings.redacted())
 
-    # Loaded before any connection is opened: a malformed vocabulary is a
-    # configuration error and must fail the process immediately.
-    taxonomy = load_taxonomy()
-    attributes = load_catalog_attributes()
-    # Validated against the commerce taxonomy: a mapping for an unapproved
-    # subcategory is a configuration error, not something to discover later.
-    dimensions = load_dimension_semantics(
-        taxonomy=taxonomy, by_side=settings.discovery.size_by_side
-    )
-    seating = load_seating_semantics(taxonomy=taxonomy)
-    rooms = load_room_pieces(taxonomy=taxonomy, seating=seating)
-    complements = load_complements(taxonomy=taxonomy)
-    compare_groups = load_compare_groups(taxonomy=taxonomy)
-    logger.info(
-        "taxonomy_loaded",
-        taxonomy_version=taxonomy.version,
-        category_count=len(taxonomy.categories),
-        attributes_version=attributes.version,
-        color_count=len(attributes.colors),
-        style_count=len(attributes.styles),
-        dimension_semantics_version=dimensions.version,
-        dimension_subcategories=len(dimensions.subcategories),
-        seating_version=seating.version,
-        room_pieces_version=rooms.version,
-        complements_version=complements.version,
-        compare_groups_version=compare_groups.version,
-    )
-
+    # The vocabulary comes from the database - the one source - with every
+    # reviewed file checked against it, and is checked again every few minutes
+    # while the service runs (CLAUDE.md 14.1). It never stops the service: an
+    # unreadable database is answered from the last good copy.
     database = Database.create(settings.db)
-    attributes = await _with_stored_values(database, attributes)
     redis_client = RedisClient.create(settings.redis)
+    vocabulary = VocabularyRefresher(
+        database,
+        VocabularyCopy(redis_client.client, settings.session.operation_timeout_s),
+        settings,
+        team_models(settings),
+    )
+    words = await vocabulary.at_startup()
     # Compiled once for the process. The per-request runtime travels with each
     # invocation, so one graph serves every customer (CLAUDE.md 24).
     chat_graph = ChatGraphRunner()
@@ -346,8 +253,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             max_bytes=visualization.reference_max_bytes,
         )
         closables.extend([*generators.values(), render_photos])
-    agent_team = _agent_team(settings, taxonomy, attributes, rooms)
-    logger.info("chat_graph_compiled", nodes=len(NODE_ORDER), agents=agent_team is not None)
+    logger.info("chat_graph_compiled", nodes=len(NODE_ORDER), agents=words.agent_team is not None)
     logger.info(
         "semantic_ranking_configured",
         enabled=semantic_index is not None,
@@ -381,15 +287,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         embedder=embedder,
         semantic_index=semantic_index,
         store_knowledge=store_knowledge,
-        taxonomy=taxonomy,
-        attributes=attributes,
-        dimensions=dimensions,
-        seating=seating,
         chat_graph=chat_graph,
-        agent_team=agent_team,
-        rooms=rooms,
-        complements=complements,
-        compare_groups=compare_groups,
+        **words.fields(),
         zory_finder=zory_finder,
         salla=salla,
         render_generator=render_generator,
@@ -400,10 +299,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     await _check_catalog_schema(database, support=settings.customer_agent.support_agent)
-    logger.info("service_started")
+    refresh = asyncio.create_task(vocabulary.run(app), name="vocabulary_refresh")
+    logger.info("service_started", vocabulary_version=vocabulary.version)
     try:
         yield
     finally:
+        refresh.cancel()
+        with suppress(asyncio.CancelledError):
+            await refresh
         if embedder is not None:
             await embedder.close()
         if knowledge_embedder is not None:

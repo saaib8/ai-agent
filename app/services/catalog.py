@@ -132,7 +132,8 @@ class CatalogService:
     ) -> CatalogFacets:
         shown = self._language(language)
         types = await self._repository.supported_commerce_types(context)
-        counts = await self._repository.facet_counts(context)
+        counts = await self._repository.facet_counts(context, self._kinds())
+        room_styles = tuple(sorted(self._attributes.styles))
         price = counts.prices[0] if counts.prices else None
         return CatalogFacets(
             categories=self._categories(types, shown),
@@ -160,15 +161,12 @@ class CatalogService:
                     )
                     for room_type, (label, _) in ROOM_TYPES.items()
                 ),
-                # The reviewed styles, each named in Arabic - never every
-                # store's own (CLAUDE.md 12.4).
-                styles=tuple(sorted(self._attributes.reviewed(AttributeFamily.STYLE))),
+                # Every style in the vocabulary, whatever this store tags: a
+                # room's style describes the room, not the products in it, and a
+                # store with no styled product must still offer one to choose.
+                styles=room_styles,
                 style_labels=(
-                    self._display.labels(
-                        AttributeFamily.STYLE,
-                        sorted(self._attributes.reviewed(AttributeFamily.STYLE)),
-                        shown,
-                    )
+                    self._display.labels(AttributeFamily.STYLE, room_styles, shown)
                     if self._display is not None
                     else None
                 ),
@@ -211,6 +209,17 @@ class CatalogService:
             # "Featured" opens on furniture: this catalogue is for furnishing a
             # room, and a vase is rarely where that starts.
             lead_categories=tuple(sorted(FLOOR_CATEGORIES)),
+            kinds=self._kinds(),
+        )
+
+    def _kinds(self) -> tuple[tuple[str, str], ...]:
+        """Every (family, type) pair the vocabulary holds. Browse shows only
+        products filed as one: the agents can find, match and design with no
+        other, so a pick from here is always one they can work with."""
+        return tuple(
+            (category, subcategory)
+            for category in sorted(self._taxonomy.categories)
+            for subcategory in sorted(self._taxonomy.subcategories(category))
         )
 
     def _name_words(self, q: str | None) -> tuple[str, ...]:
@@ -245,18 +254,17 @@ class CatalogService:
         self, types: tuple[tuple[str, str | None, int], ...], language: ReplyLanguage
     ) -> tuple[CategoryFacet, ...]:
         """Approved categories this store stocks, each with its approved
-        subcategories. A category counts every product in it, including those
-        whose subcategory was never reviewed."""
+        subcategories. A category counts the products filed as one of its
+        approved types - the ones a browse page shows."""
         totals: dict[str, int] = {}
         children: dict[str, list[Facet]] = {}
         for category, subcategory, count in types:
-            if not self._taxonomy.is_category(category):
+            if subcategory is None or not self._taxonomy.is_pair(category, subcategory):
                 continue
             totals[category] = totals.get(category, 0) + count
-            if subcategory is not None and self._taxonomy.is_pair(category, subcategory):
-                children.setdefault(category, []).append(
-                    Facet(value=subcategory, count=count, label=self._kind(subcategory, language))
-                )
+            children.setdefault(category, []).append(
+                Facet(value=subcategory, count=count, label=self._kind(subcategory, language))
+            )
         return tuple(
             CategoryFacet(
                 value=category,

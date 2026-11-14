@@ -556,6 +556,21 @@ class VisualizationSettings(BaseModel):
         return self
 
 
+class VocabularySettings(BaseModel):
+    """The vocabulary, read from the database (CLAUDE.md 14.1).
+
+    Read at startup and again every `refresh_every_s` while the service runs; a
+    change is built and swapped in whole, so a new product type is found
+    within minutes of the pipeline adding it. Each good read is saved as the
+    last good copy: a database that cannot be read at startup is answered from
+    it at once. Only with no copy is the database waited for, retried every
+    `retry_every_s` for at most `startup_wait_s`, before startup fails."""
+
+    refresh_every_s: float = Field(default=300.0, gt=0)
+    startup_wait_s: float = Field(default=120.0, gt=0)
+    retry_every_s: float = Field(default=5.0, gt=0)
+
+
 class CatalogSettings(BaseModel):
     """Browsing the store's catalog and rendering a room from what was picked.
 
@@ -1010,6 +1025,7 @@ class Settings(BaseSettings):
     # And again: without it the Visualize route refuses and nothing else changes.
     visualization: VisualizationSettings | None = None
     catalog: CatalogSettings = CatalogSettings()
+    vocabulary: VocabularySettings = VocabularySettings()
     products: ProductDataSettings = ProductDataSettings()
     salla: SallaSettings = SallaSettings()
     observability: ObservabilitySettings = ObservabilitySettings()

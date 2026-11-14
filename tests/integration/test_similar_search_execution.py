@@ -24,10 +24,10 @@ from app.services.controlled_search import ControlledRelaxationService
 from app.services.discovery import ProductDiscoveryService, to_candidate
 from app.services.relaxation import RelaxationPlanner
 from app.services.similar_search import SimilarSearchBuilder
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 pytestmark = pytest.mark.integration
 

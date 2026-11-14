@@ -54,9 +54,9 @@ from app.schemas.refinement import (
 from app.schemas.session import SessionEnvelope, new_session
 from app.services.agent_state import apply_update, commit_search_results, remember_measurements
 from app.services.refinement_composer import SearchRefinementComposer
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 LOCKED = ConstraintStrength.LOCKED
 WIDTH, DEPTH = DimensionRole.OVERALL_WIDTH, DimensionRole.DEPTH

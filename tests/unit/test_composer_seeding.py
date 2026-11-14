@@ -42,9 +42,10 @@ from app.schemas.refinement import (
     SearchRefinementDelta,
 )
 from app.services.refinement_composer import SearchRefinementComposer
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
+from app.taxonomy.attributes import AttributeFamily
 from app.taxonomy.dimensions import DimensionRole, load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 APP = Path(__file__).parents[2] / "app"
 COLOR, STYLE = AttributeFamily.COLOR, AttributeFamily.STYLE

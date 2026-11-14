@@ -56,7 +56,8 @@ from app.schemas.retailer import (
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.search_pipeline import ProductSearchPipeline
 from app.taxonomy.attributes import AttributeFamily
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 TAXONOMY = load_taxonomy()
 CONTEXT = RetailerContext(store_id=50)

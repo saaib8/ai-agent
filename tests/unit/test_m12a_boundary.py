@@ -178,7 +178,7 @@ def test_the_design_foundations_hold_no_room_composition_table() -> None:
     product type whose width was validated - and flagging those would be
     flagging the system working correctly.
     """
-    from app.taxonomy.registry import load_taxonomy
+    from tests.fixtures.vocabulary import load_taxonomy
 
     taxonomy = load_taxonomy()
     subcategories = {

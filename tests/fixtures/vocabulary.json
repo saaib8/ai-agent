@@ -1,0 +1,1456 @@
+{
+ "note": "A snapshot of the vocabulary tables; refresh with `uv run python -m tests.fixtures.vocabulary --refresh`.",
+ "tables": {
+  "families": [
+   {
+    "name": "decor",
+    "arabic": "ديكور"
+   },
+   {
+    "name": "lighting",
+    "arabic": "إضاءة"
+   },
+   {
+    "name": "kitchenware",
+    "arabic": "أدوات المطبخ"
+   },
+   {
+    "name": "kitchen-appliances",
+    "arabic": "أجهزة المطبخ"
+   },
+   {
+    "name": "seating",
+    "arabic": "مقاعد"
+   },
+   {
+    "name": "tables",
+    "arabic": "طاولات"
+   },
+   {
+    "name": "bedroom",
+    "arabic": "أثاث غرفة النوم"
+   },
+   {
+    "name": "bedding",
+    "arabic": "مفروشات السرير"
+   },
+   {
+    "name": "storage",
+    "arabic": "وحدات تخزين"
+   },
+   {
+    "name": "dining",
+    "arabic": "أثاث غرفة الطعام"
+   },
+   {
+    "name": "office",
+    "arabic": "أثاث المكتب"
+   },
+   {
+    "name": "fitness",
+    "arabic": "معدات رياضية"
+   }
+  ],
+  "kinds": [
+   {
+    "name": "art-canvas",
+    "family": "decor",
+    "arabic": "لوحة جدارية"
+   },
+   {
+    "name": "cup",
+    "family": "kitchenware",
+    "arabic": "كوب"
+   },
+   {
+    "name": "cooking-appliance",
+    "family": "kitchen-appliances",
+    "arabic": "جهاز طبخ"
+   },
+   {
+    "name": "wall-lighting",
+    "family": "lighting",
+    "arabic": "إضاءة جدارية"
+   },
+   {
+    "name": "wall-clock",
+    "family": "decor",
+    "arabic": "ساعة حائط"
+   },
+   {
+    "name": "serving-utensil-and-tray",
+    "family": "kitchenware",
+    "arabic": "أدوات وصواني تقديم"
+   },
+   {
+    "name": "pendant-lighting",
+    "family": "lighting",
+    "arabic": "إضاءة معلقة"
+   },
+   {
+    "name": "sectional-sofa",
+    "family": "seating",
+    "arabic": "كنبة زاوية"
+   },
+   {
+    "name": "food-processor",
+    "family": "kitchen-appliances",
+    "arabic": "محضرة طعام"
+   },
+   {
+    "name": "carpet",
+    "family": "decor",
+    "arabic": "سجادة"
+   },
+   {
+    "name": "statue-and-antique",
+    "family": "decor",
+    "arabic": "تماثيل وتحف"
+   },
+   {
+    "name": "sofa",
+    "family": "seating",
+    "arabic": "كنبة"
+   },
+   {
+    "name": "cooking-pot",
+    "family": "kitchenware",
+    "arabic": "قدر طبخ"
+   },
+   {
+    "name": "coffee-maker",
+    "family": "kitchen-appliances",
+    "arabic": "آلة قهوة"
+   },
+   {
+    "name": "ceiling-lighting",
+    "family": "lighting",
+    "arabic": "إضاءة سقف"
+   },
+   {
+    "name": "chandelier",
+    "family": "lighting",
+    "arabic": "ثريا"
+   },
+   {
+    "name": "center-table",
+    "family": "tables",
+    "arabic": "طاولة وسط"
+   },
+   {
+    "name": "outdoor-lighting",
+    "family": "lighting",
+    "arabic": "إضاءة خارجية"
+   },
+   {
+    "name": "table-lamp",
+    "family": "lighting",
+    "arabic": "أباجورة"
+   },
+   {
+    "name": "bed",
+    "family": "bedroom",
+    "arabic": "سرير"
+   },
+   {
+    "name": "service-table",
+    "family": "tables",
+    "arabic": "طاولة جانبية"
+   },
+   {
+    "name": "single-seater-sofa",
+    "family": "seating",
+    "arabic": "كنبة فردية"
+   },
+   {
+    "name": "flower-pot-and-plant",
+    "family": "decor",
+    "arabic": "أصص ونباتات"
+   },
+   {
+    "name": "vase",
+    "family": "decor",
+    "arabic": "مزهرية"
+   },
+   {
+    "name": "floor-lamp",
+    "family": "lighting",
+    "arabic": "أباجورة أرضية"
+   },
+   {
+    "name": "lighting",
+    "family": "lighting",
+    "arabic": "إضاءة"
+   },
+   {
+    "name": "sofa-set",
+    "family": "seating",
+    "arabic": "طقم كنب"
+   },
+   {
+    "name": "plate",
+    "family": "kitchenware",
+    "arabic": "طبق"
+   },
+   {
+    "name": "decorative-hanger",
+    "family": "decor",
+    "arabic": "علّاقة ديكور"
+   },
+   {
+    "name": "mattresses",
+    "family": "bedding",
+    "arabic": "مرتبة"
+   },
+   {
+    "name": "console",
+    "family": "tables",
+    "arabic": "كونسول"
+   },
+   {
+    "name": "tv-table",
+    "family": "tables",
+    "arabic": "طاولة تلفزيون"
+   },
+   {
+    "name": "candlestick",
+    "family": "decor",
+    "arabic": "حامل شموع"
+   },
+   {
+    "name": "chair",
+    "family": "seating",
+    "arabic": "كرسي"
+   },
+   {
+    "name": "chaise-lounge",
+    "family": "seating",
+    "arabic": "شيزلونج"
+   },
+   {
+    "name": "lounge-chair",
+    "family": "seating",
+    "arabic": "كرسي استرخاء"
+   },
+   {
+    "name": "track-lighting",
+    "family": "lighting",
+    "arabic": "إضاءة مسارية"
+   },
+   {
+    "name": "shelve",
+    "family": "storage",
+    "arabic": "رف"
+   },
+   {
+    "name": "wardrobe",
+    "family": "bedroom",
+    "arabic": "دولاب"
+   },
+   {
+    "name": "bedspread",
+    "family": "bedding",
+    "arabic": "مفرش سرير"
+   },
+   {
+    "name": "nightstand",
+    "family": "tables",
+    "arabic": "كومودينة"
+   },
+   {
+    "name": "dressing-table",
+    "family": "bedroom",
+    "arabic": "تسريحة"
+   },
+   {
+    "name": "candle",
+    "family": "decor",
+    "arabic": "شمعة"
+   },
+   {
+    "name": "dining-chair",
+    "family": "seating",
+    "arabic": "كرسي طعام"
+   },
+   {
+    "name": "storage-box",
+    "family": "storage",
+    "arabic": "صندوق تخزين"
+   },
+   {
+    "name": "flower",
+    "family": "decor",
+    "arabic": "زهور"
+   },
+   {
+    "name": "dining-table",
+    "family": "dining",
+    "arabic": "طاولة طعام"
+   },
+   {
+    "name": "pillow",
+    "family": "bedding",
+    "arabic": "وسادة"
+   },
+   {
+    "name": "sofa-bed",
+    "family": "seating",
+    "arabic": "كنبة سرير"
+   },
+   {
+    "name": "string-lighting",
+    "family": "lighting",
+    "arabic": "إضاءة خيطية"
+   },
+   {
+    "name": "laundry-basket",
+    "family": "storage",
+    "arabic": "سلة غسيل"
+   },
+   {
+    "name": "mattress-pad",
+    "family": "bedding",
+    "arabic": "واقي مرتبة"
+   },
+   {
+    "name": "office-table",
+    "family": "office",
+    "arabic": "مكتب"
+   },
+   {
+    "name": "mirror",
+    "family": "decor",
+    "arabic": "مرآة"
+   },
+   {
+    "name": "office-chair",
+    "family": "seating",
+    "arabic": "كرسي مكتب"
+   },
+   {
+    "name": "comforter",
+    "family": "bedding",
+    "arabic": "لحاف"
+   },
+   {
+    "name": "floor-lighting",
+    "family": "lighting",
+    "arabic": "إضاءة أرضية"
+   },
+   {
+    "name": "jump-rope",
+    "family": "fitness",
+    "arabic": "حبل قفز"
+   },
+   {
+    "name": "medicine-ball",
+    "family": "fitness",
+    "arabic": "كرة طبية"
+   },
+   {
+    "name": "stool",
+    "family": "seating",
+    "arabic": "ستول"
+   },
+   {
+    "name": "air-bike",
+    "family": "fitness",
+    "arabic": "دراجة مقاومة هوائية"
+   },
+   {
+    "name": "barbell",
+    "family": "fitness",
+    "arabic": "قضيب أوزان"
+   },
+   {
+    "name": "boxing-gloves",
+    "family": "fitness",
+    "arabic": "قفازات ملاكمة"
+   },
+   {
+    "name": "chest-press-machine",
+    "family": "fitness",
+    "arabic": "جهاز ضغط الصدر"
+   },
+   {
+    "name": "dining-set",
+    "family": "dining",
+    "arabic": "طقم طعام"
+   },
+   {
+    "name": "dresser",
+    "family": "bedroom",
+    "arabic": "خزانة أدراج"
+   },
+   {
+    "name": "dumbbell",
+    "family": "fitness",
+    "arabic": "دمبل"
+   },
+   {
+    "name": "elliptical-machine",
+    "family": "fitness",
+    "arabic": "جهاز تمرين بيضاوي"
+   },
+   {
+    "name": "kettlebells",
+    "family": "fitness",
+    "arabic": "أوزان كيتل بيل"
+   },
+   {
+    "name": "leg-press-machine",
+    "family": "fitness",
+    "arabic": "جهاز ضغط الأرجل"
+   },
+   {
+    "name": "outdoor-chair",
+    "family": "seating",
+    "arabic": "كرسي خارجي"
+   },
+   {
+    "name": "power-rack",
+    "family": "fitness",
+    "arabic": "قفص تمارين الأوزان"
+   },
+   {
+    "name": "recliner",
+    "family": "seating",
+    "arabic": "كرسي ريكلاينر"
+   },
+   {
+    "name": "stationary-bike",
+    "family": "fitness",
+    "arabic": "دراجة ثابتة"
+   },
+   {
+    "name": "treadmill",
+    "family": "fitness",
+    "arabic": "جهاز مشي"
+   },
+   {
+    "name": "weight-bench-adjustable",
+    "family": "fitness",
+    "arabic": "مقعد أوزان قابل للتعديل"
+   },
+   {
+    "name": "weight-bench-flat",
+    "family": "fitness",
+    "arabic": "مقعد أوزان مسطح"
+   },
+   {
+    "name": "weight-plates",
+    "family": "fitness",
+    "arabic": "أقراص أوزان"
+   },
+   {
+    "name": "yoga-mat",
+    "family": "fitness",
+    "arabic": "بساط يوغا"
+   }
+  ],
+  "values": [
+   {
+    "kind": "colour",
+    "name": "Multicolored",
+    "arabic": "متعدد الألوان"
+   },
+   {
+    "kind": "colour",
+    "name": "Beige",
+    "arabic": "بيج"
+   },
+   {
+    "kind": "colour",
+    "name": "White",
+    "arabic": "أبيض"
+   },
+   {
+    "kind": "colour",
+    "name": "Black",
+    "arabic": "أسود"
+   },
+   {
+    "kind": "colour",
+    "name": "Gold",
+    "arabic": "ذهبي"
+   },
+   {
+    "kind": "colour",
+    "name": "Walnut",
+    "arabic": "خشب الجوز"
+   },
+   {
+    "kind": "colour",
+    "name": "Ivory",
+    "arabic": "عاجي"
+   },
+   {
+    "kind": "colour",
+    "name": "Grey",
+    "arabic": "رمادي"
+   },
+   {
+    "kind": "colour",
+    "name": "Silver",
+    "arabic": "فضي"
+   },
+   {
+    "kind": "colour",
+    "name": "Clear",
+    "arabic": "شفاف"
+   },
+   {
+    "kind": "colour",
+    "name": "Light Grey",
+    "arabic": "رمادي فاتح"
+   },
+   {
+    "kind": "colour",
+    "name": "Oak",
+    "arabic": "خشب البلوط"
+   },
+   {
+    "kind": "colour",
+    "name": "Brown",
+    "arabic": "بني"
+   },
+   {
+    "kind": "colour",
+    "name": "Greige",
+    "arabic": "رمادي بيج"
+   },
+   {
+    "kind": "colour",
+    "name": "Brass",
+    "arabic": "نحاسي"
+   },
+   {
+    "kind": "colour",
+    "name": "Wooden",
+    "arabic": "خشبي"
+   },
+   {
+    "kind": "colour",
+    "name": "Denim Blue",
+    "arabic": "أزرق جينز"
+   },
+   {
+    "kind": "colour",
+    "name": "Navy",
+    "arabic": "كحلي"
+   },
+   {
+    "kind": "colour",
+    "name": "Powder Blue",
+    "arabic": "أزرق فاتح"
+   },
+   {
+    "kind": "colour",
+    "name": "Charcoal",
+    "arabic": "فحمي"
+   },
+   {
+    "kind": "colour",
+    "name": "Red",
+    "arabic": "أحمر"
+   },
+   {
+    "kind": "colour",
+    "name": "Chrome",
+    "arabic": "كرومي"
+   },
+   {
+    "kind": "colour",
+    "name": "Metal",
+    "arabic": "معدني"
+   },
+   {
+    "kind": "colour",
+    "name": "Espresso",
+    "arabic": "بني داكن"
+   },
+   {
+    "kind": "colour",
+    "name": "Platinum",
+    "arabic": "بلاتيني"
+   },
+   {
+    "kind": "colour",
+    "name": "Forest Green",
+    "arabic": "أخضر غامق"
+   },
+   {
+    "kind": "colour",
+    "name": "Burnt Orange",
+    "arabic": "برتقالي محروق"
+   },
+   {
+    "kind": "colour",
+    "name": "Blush",
+    "arabic": "وردي فاتح"
+   },
+   {
+    "kind": "colour",
+    "name": "Teal",
+    "arabic": "أزرق مخضر"
+   },
+   {
+    "kind": "colour",
+    "name": "Taupe",
+    "arabic": "رمادي بني"
+   },
+   {
+    "kind": "colour",
+    "name": "Bronze",
+    "arabic": "برونزي"
+   },
+   {
+    "kind": "colour",
+    "name": "Green",
+    "arabic": "أخضر"
+   },
+   {
+    "kind": "colour",
+    "name": "Mustard",
+    "arabic": "خردلي"
+   },
+   {
+    "kind": "colour",
+    "name": "Pink",
+    "arabic": "وردي"
+   },
+   {
+    "kind": "colour",
+    "name": "Ruby",
+    "arabic": "أحمر ياقوتي"
+   },
+   {
+    "kind": "colour",
+    "name": "Yellow",
+    "arabic": "أصفر"
+   },
+   {
+    "kind": "colour",
+    "name": "Blue",
+    "arabic": "أزرق"
+   },
+   {
+    "kind": "colour",
+    "name": "Warm Light",
+    "arabic": "ضوء دافئ"
+   },
+   {
+    "kind": "colour",
+    "name": "Plum",
+    "arabic": "برقوقي"
+   },
+   {
+    "kind": "colour",
+    "name": "Sage",
+    "arabic": "أخضر ميرمية"
+   },
+   {
+    "kind": "colour",
+    "name": "Terracotta",
+    "arabic": "تيراكوتا"
+   },
+   {
+    "kind": "colour",
+    "name": "Olive",
+    "arabic": "زيتي"
+   },
+   {
+    "kind": "colour",
+    "name": "Nickel",
+    "arabic": "نيكلي"
+   },
+   {
+    "kind": "colour",
+    "name": "Copper",
+    "arabic": "نحاسي محمر"
+   },
+   {
+    "kind": "colour",
+    "name": "Steel",
+    "arabic": "رمادي معدني"
+   },
+   {
+    "kind": "colour",
+    "name": "Turquoise",
+    "arabic": "فيروزي"
+   },
+   {
+    "kind": "colour",
+    "name": "Amber",
+    "arabic": "كهرماني"
+   },
+   {
+    "kind": "colour",
+    "name": "Orange",
+    "arabic": "برتقالي"
+   },
+   {
+    "kind": "colour",
+    "name": "Emerald",
+    "arabic": "زمردي"
+   },
+   {
+    "kind": "colour",
+    "name": "Clay",
+    "arabic": "طيني"
+   },
+   {
+    "kind": "colour",
+    "name": "Dark Wooden",
+    "arabic": "خشب داكن"
+   },
+   {
+    "kind": "colour",
+    "name": "Smoke",
+    "arabic": "رمادي دخاني"
+   },
+   {
+    "kind": "colour",
+    "name": "Purple",
+    "arabic": "أرجواني"
+   },
+   {
+    "kind": "colour",
+    "name": "Champagne",
+    "arabic": "شمباني"
+   },
+   {
+    "kind": "colour",
+    "name": "Lavender",
+    "arabic": "لافندر"
+   },
+   {
+    "kind": "colour",
+    "name": "Sand",
+    "arabic": "رملي"
+   },
+   {
+    "kind": "colour",
+    "name": "Coffee",
+    "arabic": "بني قهوة"
+   },
+   {
+    "kind": "colour",
+    "name": "Rose Gold",
+    "arabic": "ذهبي وردي"
+   },
+   {
+    "kind": "colour",
+    "name": "Dark Red",
+    "arabic": "أحمر غامق"
+   },
+   {
+    "kind": "colour",
+    "name": "Light Green",
+    "arabic": "أخضر فاتح"
+   },
+   {
+    "kind": "colour",
+    "name": "Marble",
+    "arabic": "رخامي"
+   },
+   {
+    "kind": "colour",
+    "name": "Dark Grey",
+    "arabic": "رمادي غامق"
+   },
+   {
+    "kind": "colour",
+    "name": "Coral",
+    "arabic": "مرجاني"
+   },
+   {
+    "kind": "colour",
+    "name": "Light Wooden",
+    "arabic": "خشب فاتح"
+   },
+   {
+    "kind": "colour",
+    "name": "Sapphire",
+    "arabic": "أزرق ملكي"
+   },
+   {
+    "kind": "colour",
+    "name": "Light Gold",
+    "arabic": "ذهبي فاتح"
+   },
+   {
+    "kind": "style",
+    "name": "Modern",
+    "arabic": "عصري"
+   },
+   {
+    "kind": "style",
+    "name": "Minimalist",
+    "arabic": "بسيط"
+   },
+   {
+    "kind": "style",
+    "name": "Contemporary",
+    "arabic": "معاصر"
+   },
+   {
+    "kind": "style",
+    "name": "Classy",
+    "arabic": "أنيق"
+   },
+   {
+    "kind": "style",
+    "name": "Artistic",
+    "arabic": "فني"
+   },
+   {
+    "kind": "style",
+    "name": "Islamic",
+    "arabic": "إسلامي"
+   },
+   {
+    "kind": "style",
+    "name": "Traditional",
+    "arabic": "تقليدي"
+   },
+   {
+    "kind": "style",
+    "name": "Abstract",
+    "arabic": "مجرد"
+   },
+   {
+    "kind": "style",
+    "name": "Scandinavian",
+    "arabic": "إسكندنافي"
+   },
+   {
+    "kind": "style",
+    "name": "Modern_Classic",
+    "arabic": "كلاسيكي عصري"
+   },
+   {
+    "kind": "style",
+    "name": "Inspirational",
+    "arabic": "ملهم"
+   },
+   {
+    "kind": "style",
+    "name": "Decorative",
+    "arabic": "زخرفي"
+   },
+   {
+    "kind": "style",
+    "name": "Practical",
+    "arabic": "عملي"
+   },
+   {
+    "kind": "style",
+    "name": "Cultural",
+    "arabic": "ثقافي"
+   },
+   {
+    "kind": "style",
+    "name": "Pop_Art",
+    "arabic": "بوب آرت"
+   },
+   {
+    "kind": "style",
+    "name": "Eclectic",
+    "arabic": "انتقائي"
+   },
+   {
+    "kind": "style",
+    "name": "Nature-Inspired",
+    "arabic": "مستوحى من الطبيعة"
+   },
+   {
+    "kind": "style",
+    "name": "Rustic_Modern",
+    "arabic": "ريفي عصري"
+   },
+   {
+    "kind": "style",
+    "name": "Vintage",
+    "arabic": "فينتج"
+   },
+   {
+    "kind": "style",
+    "name": "Anime",
+    "arabic": "أنمي"
+   },
+   {
+    "kind": "style",
+    "name": "Boho",
+    "arabic": "بوهيمي"
+   },
+   {
+    "kind": "style",
+    "name": "Industrial",
+    "arabic": "صناعي"
+   },
+   {
+    "kind": "style",
+    "name": "Moroccan",
+    "arabic": "مغربي"
+   },
+   {
+    "kind": "style",
+    "name": "Elegant",
+    "arabic": "راقي"
+   },
+   {
+    "kind": "style",
+    "name": "Luxury",
+    "arabic": "فاخر"
+   },
+   {
+    "kind": "style",
+    "name": "Asian",
+    "arabic": "آسيوي"
+   },
+   {
+    "kind": "style",
+    "name": "Sporty",
+    "arabic": "رياضي"
+   },
+   {
+    "kind": "style",
+    "name": "Eco-Friendly",
+    "arabic": "صديق للبيئة"
+   },
+   {
+    "kind": "style",
+    "name": "Mid_Century",
+    "arabic": "طراز منتصف القرن"
+   },
+   {
+    "kind": "style",
+    "name": "Technical",
+    "arabic": "تقني"
+   },
+   {
+    "kind": "style",
+    "name": "Casual",
+    "arabic": "كاجوال"
+   },
+   {
+    "kind": "style",
+    "name": "Geometric",
+    "arabic": "هندسي"
+   },
+   {
+    "kind": "style",
+    "name": "Customizable",
+    "arabic": "قابل للتخصيص"
+   },
+   {
+    "kind": "style",
+    "name": "Shabby_Chic",
+    "arabic": "شابي شيك"
+   },
+   {
+    "kind": "style",
+    "name": "Zen",
+    "arabic": "زن"
+   },
+   {
+    "kind": "style",
+    "name": "Coastal",
+    "arabic": "ساحلي"
+   },
+   {
+    "kind": "style",
+    "name": "Black_and_White",
+    "arabic": "أسود وأبيض"
+   },
+   {
+    "kind": "style",
+    "name": "African",
+    "arabic": "أفريقي"
+   },
+   {
+    "kind": "style",
+    "name": "Classic",
+    "arabic": "كلاسيكي"
+   },
+   {
+    "kind": "style",
+    "name": "Tropical",
+    "arabic": "استوائي"
+   },
+   {
+    "kind": "style",
+    "name": "Fantasy",
+    "arabic": "فانتازيا"
+   },
+   {
+    "kind": "style",
+    "name": "Japandi",
+    "arabic": "جاباندي"
+   },
+   {
+    "kind": "style",
+    "name": "Transparent",
+    "arabic": "شفاف"
+   },
+   {
+    "kind": "style",
+    "name": "Colorful",
+    "arabic": "ملون"
+   },
+   {
+    "kind": "style",
+    "name": "Urban",
+    "arabic": "حضري"
+   },
+   {
+    "kind": "style",
+    "name": "Comfortable",
+    "arabic": "مريح"
+   },
+   {
+    "kind": "style",
+    "name": "Mystery",
+    "arabic": "غامض"
+   },
+   {
+    "kind": "style",
+    "name": "Surreal",
+    "arabic": "سريالي"
+   },
+   {
+    "kind": "style",
+    "name": "Oriental",
+    "arabic": "شرقي"
+   },
+   {
+    "kind": "style",
+    "name": "Portable",
+    "arabic": "محمول"
+   },
+   {
+    "kind": "style",
+    "name": "Whimsical",
+    "arabic": "مرح"
+   },
+   {
+    "kind": "style",
+    "name": "Futuristic",
+    "arabic": "مستقبلي"
+   },
+   {
+    "kind": "material",
+    "name": "Canvas",
+    "arabic": "كانفس"
+   },
+   {
+    "kind": "material",
+    "name": "Acrylic",
+    "arabic": "اكريليك"
+   },
+   {
+    "kind": "material",
+    "name": "Metal",
+    "arabic": "معدن"
+   },
+   {
+    "kind": "material",
+    "name": "Glass",
+    "arabic": "زجاج"
+   },
+   {
+    "kind": "material",
+    "name": "Stainless Steel",
+    "arabic": "فولاذ مقاوم للصدأ"
+   },
+   {
+    "kind": "material",
+    "name": "Plastic",
+    "arabic": "بلاستيك"
+   },
+   {
+    "kind": "material",
+    "name": "Engineered Wood",
+    "arabic": "خشب مصنّع"
+   },
+   {
+    "kind": "material",
+    "name": "Solid Wood",
+    "arabic": "خشب صلب"
+   },
+   {
+    "kind": "material",
+    "name": "Aluminum",
+    "arabic": "ألمنيوم"
+   },
+   {
+    "kind": "material",
+    "name": "Polyester Fabric",
+    "arabic": "قماش بوليستر"
+   },
+   {
+    "kind": "material",
+    "name": "Natural Fabric",
+    "arabic": "قماش طبيعي"
+   },
+   {
+    "kind": "material",
+    "name": "LED",
+    "arabic": "إل إي دي"
+   },
+   {
+    "kind": "material",
+    "name": "Porcelain",
+    "arabic": "بورسلان"
+   },
+   {
+    "kind": "material",
+    "name": "Non-Stick Coating",
+    "arabic": "طلاء غير لاصق"
+   },
+   {
+    "kind": "material",
+    "name": "Tempered Glass",
+    "arabic": "زجاج مقوى"
+   },
+   {
+    "kind": "material",
+    "name": "Fabric",
+    "arabic": "قماش"
+   },
+   {
+    "kind": "material",
+    "name": "Crystal",
+    "arabic": "كريستال"
+   },
+   {
+    "kind": "material",
+    "name": "Paper",
+    "arabic": "ورق"
+   },
+   {
+    "kind": "material",
+    "name": "Ceramic",
+    "arabic": "سيراميك"
+   },
+   {
+    "kind": "material",
+    "name": "Marble",
+    "arabic": "رخام"
+   },
+   {
+    "kind": "material",
+    "name": "Terracotta",
+    "arabic": "طين محروق"
+   },
+   {
+    "kind": "material",
+    "name": "Wood",
+    "arabic": "خشب"
+   },
+   {
+    "kind": "material",
+    "name": "Chrome",
+    "arabic": "كروم"
+   },
+   {
+    "kind": "material",
+    "name": "Resin",
+    "arabic": "راتنج"
+   },
+   {
+    "kind": "material",
+    "name": "Wood Veneer",
+    "arabic": "قشرة خشب"
+   },
+   {
+    "kind": "material",
+    "name": "Velvet",
+    "arabic": "مخمل"
+   },
+   {
+    "kind": "material",
+    "name": "Electronic Components",
+    "arabic": "مكونات إلكترونية"
+   },
+   {
+    "kind": "material",
+    "name": "Foam",
+    "arabic": "رغوة"
+   },
+   {
+    "kind": "material",
+    "name": "Granite",
+    "arabic": "جرانيت"
+   },
+   {
+    "kind": "material",
+    "name": "Silk",
+    "arabic": "حرير"
+   },
+   {
+    "kind": "material",
+    "name": "Wrought Iron",
+    "arabic": "حديد مشغول"
+   },
+   {
+    "kind": "material",
+    "name": "Fiberglass",
+    "arabic": "فايبرجلاس"
+   },
+   {
+    "kind": "material",
+    "name": "Copper",
+    "arabic": "نحاس"
+   },
+   {
+    "kind": "material",
+    "name": "Gold",
+    "arabic": "ذهب"
+   },
+   {
+    "kind": "material",
+    "name": "Platinum",
+    "arabic": "بلاتين"
+   },
+   {
+    "kind": "material",
+    "name": "Rattan",
+    "arabic": "راتان"
+   },
+   {
+    "kind": "material",
+    "name": "Memory Foam",
+    "arabic": "رغوة الذاكرة"
+   },
+   {
+    "kind": "material",
+    "name": "Cotton",
+    "arabic": "قطن"
+   },
+   {
+    "kind": "material",
+    "name": "Natural Stone",
+    "arabic": "حجر طبيعي"
+   },
+   {
+    "kind": "material",
+    "name": "Natural Wood",
+    "arabic": "خشب طبيعي"
+   },
+   {
+    "kind": "material",
+    "name": "Nickel",
+    "arabic": "نيكل"
+   },
+   {
+    "kind": "material",
+    "name": "Wicker",
+    "arabic": "خوص"
+   },
+   {
+    "kind": "material",
+    "name": "Melamine",
+    "arabic": "ميلامين"
+   },
+   {
+    "kind": "material",
+    "name": "Leather",
+    "arabic": "جلد"
+   },
+   {
+    "kind": "material",
+    "name": "Linen",
+    "arabic": "كتان"
+   },
+   {
+    "kind": "material",
+    "name": "Faux Marble",
+    "arabic": "رخام صناعي"
+   },
+   {
+    "kind": "material",
+    "name": "Spandex",
+    "arabic": "سباندكس"
+   },
+   {
+    "kind": "material",
+    "name": "Fleece",
+    "arabic": "صوف صناعي"
+   },
+   {
+    "kind": "material",
+    "name": "Plaster",
+    "arabic": "جبس"
+   },
+   {
+    "kind": "material",
+    "name": "Wool",
+    "arabic": "صوف"
+   },
+   {
+    "kind": "material",
+    "name": "Brass",
+    "arabic": "نحاس أصفر"
+   },
+   {
+    "kind": "material",
+    "name": "Ceramic Coating",
+    "arabic": "طلاء سيراميك"
+   },
+   {
+    "kind": "material",
+    "name": "Iron",
+    "arabic": "حديد"
+   },
+   {
+    "kind": "material",
+    "name": "Cast Iron",
+    "arabic": "حديد الزهر"
+   },
+   {
+    "kind": "material",
+    "name": "Nylon",
+    "arabic": "نايلون"
+   },
+   {
+    "kind": "material",
+    "name": "PVC",
+    "arabic": "بولي فينيل كلوريد"
+   },
+   {
+    "kind": "material",
+    "name": "Faux Leather",
+    "arabic": "جلد صناعي"
+   },
+   {
+    "kind": "material",
+    "name": "Mesh Fabric",
+    "arabic": "نسيج شبكي"
+   },
+   {
+    "kind": "material",
+    "name": "Rubber",
+    "arabic": "مطاط"
+   },
+   {
+    "kind": "material",
+    "name": "Bronze",
+    "arabic": "برونز"
+   },
+   {
+    "kind": "material",
+    "name": "Concrete",
+    "arabic": "خرسانة"
+   },
+   {
+    "kind": "material",
+    "name": "Frosted Glass",
+    "arabic": "زجاج مصنفر"
+   },
+   {
+    "kind": "material",
+    "name": "Polyester",
+    "arabic": "بوليستر"
+   },
+   {
+    "kind": "material",
+    "name": "Titanium",
+    "arabic": "تيتانيوم"
+   },
+   {
+    "kind": "material",
+    "name": "Silicone",
+    "arabic": "سيليكون"
+   },
+   {
+    "kind": "material",
+    "name": "Wax",
+    "arabic": "شمع"
+   },
+   {
+    "kind": "material",
+    "name": "Zinc",
+    "arabic": "زنك"
+   },
+   {
+    "kind": "material",
+    "name": "Bakelite",
+    "arabic": "بكلايت"
+   },
+   {
+    "kind": "material",
+    "name": "Bamboo",
+    "arabic": "بامبو"
+   },
+   {
+    "kind": "material",
+    "name": "Boucle",
+    "arabic": "بوكل"
+   },
+   {
+    "kind": "material",
+    "name": "Carbon Steel",
+    "arabic": "فولاذ كربوني"
+   },
+   {
+    "kind": "material",
+    "name": "Elastic",
+    "arabic": "قماش مطاطي"
+   },
+   {
+    "kind": "material",
+    "name": "Faux Ivory",
+    "arabic": "عاج صناعي"
+   },
+   {
+    "kind": "material",
+    "name": "Plywood",
+    "arabic": "خشب رقائقي"
+   },
+   {
+    "kind": "material",
+    "name": "Silver",
+    "arabic": "فضة"
+   },
+   {
+    "kind": "material",
+    "name": "Beeswax",
+    "arabic": "شمع العسل"
+   },
+   {
+    "kind": "material",
+    "name": "Crystal Glass",
+    "arabic": "زجاج كريستال"
+   },
+   {
+    "kind": "material",
+    "name": "Enamel",
+    "arabic": "مينا"
+   },
+   {
+    "kind": "material",
+    "name": "Latex",
+    "arabic": "لاتكس"
+   },
+   {
+    "kind": "material",
+    "name": "Polycarbonate",
+    "arabic": "بولي كربونات"
+   },
+   {
+    "kind": "material",
+    "name": "PTFE",
+    "arabic": "تفلون"
+   },
+   {
+    "kind": "material",
+    "name": "Rope",
+    "arabic": "حبل"
+   }
+  ],
+  "waiting": [],
+  "carried": {}
+ }
+}

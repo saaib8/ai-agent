@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import yaml
 from app.core.exceptions import LLMResponseInvalidError, TaxonomyConfigurationError
 from app.integrations.llm import StructuredLLMClient
 from app.schemas.query import (
@@ -18,13 +19,10 @@ from app.schemas.query import (
     build_constrained_interpretation,
 )
 from app.services.query_understanding import QueryUnderstandingService
-from app.taxonomy.attributes import (
-    DEFAULT_ATTRIBUTES_PATH,
-    AttributeFamily,
-    load_catalog_attributes,
-)
+from app.taxonomy.attributes import AttributeFamily, parse_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 ATTRIBUTES = load_catalog_attributes()
 TAXONOMY = load_taxonomy()
@@ -97,9 +95,10 @@ APPROVED_STYLES = {
 
 
 def test_the_approved_vocabularies_load() -> None:
-    assert ATTRIBUTES.colors == frozenset(APPROVED_COLORS)
-    assert ATTRIBUTES.styles == frozenset(APPROVED_STYLES)
-    assert ATTRIBUTES.version == "v1"
+    assert frozenset(APPROVED_COLORS) <= ATTRIBUTES.colors
+    assert frozenset(APPROVED_STYLES) <= ATTRIBUTES.styles
+    assert ATTRIBUTES.materials, "the tables name materials too"
+    assert ATTRIBUTES.version.startswith("db-")
 
 
 def test_families_do_not_leak_into_one_another() -> None:
@@ -131,15 +130,11 @@ def test_colliding_styles_are_distinct_values() -> None:
         ("version: v1\ncolors: [Beige]\nstyles: ['Mid Century']\n", "must not contain spaces"),
         ("version: ''\ncolors: [Beige]\nstyles: [Modern]\n", "version"),
         ("[]\n", "mapping"),
-        ("::: not yaml :::\n", "YAML"),
     ],
 )
-def test_a_malformed_registry_is_rejected(tmp_path: Path, document: str, reason: str) -> None:
-    path = tmp_path / "broken.yaml"
-    path.write_text(document)
-
+def test_a_malformed_registry_is_rejected(document: str, reason: str) -> None:
     with pytest.raises(TaxonomyConfigurationError, match=reason):
-        load_catalog_attributes(path)
+        parse_catalog_attributes(yaml.safe_load(document), source="test")
 
 
 def test_only_the_registry_enumerates_the_vocabulary() -> None:
@@ -150,7 +145,7 @@ def test_only_the_registry_enumerates_the_vocabulary() -> None:
         source = module.read_text()
         for value in samples:
             assert f'"{value}"' not in source, f"{module.name} hardcodes {value}"
-    assert "Beige" in DEFAULT_ATTRIBUTES_PATH.read_text()
+    assert ATTRIBUTES.is_color("Beige"), "the database holds them"
 
 
 # ── the model-facing schema ─────────────────────────────────────────────────
@@ -162,7 +157,8 @@ def test_canonical_values_are_constrained_to_the_registry() -> None:
     attribute = schema["$defs"]["ConstrainedAttributeInterpretation"]
     allowed = set(attribute["properties"]["canonical_value"]["anyOf"][0]["enum"])
 
-    assert allowed == APPROVED_COLORS | APPROVED_STYLES
+    assert allowed == ATTRIBUTES.colors | ATTRIBUTES.styles | ATTRIBUTES.materials
+    assert allowed >= APPROVED_COLORS | APPROVED_STYLES
     assert "red" not in allowed
     assert "warm neutral" not in allowed
 

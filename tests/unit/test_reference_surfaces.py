@@ -185,7 +185,7 @@ def test_the_mismatch_has_its_own_reason() -> None:
 
 
 def test_the_registry_answers_whether_a_kind_is_approved() -> None:
-    from app.taxonomy.registry import load_taxonomy
+    from tests.fixtures.vocabulary import load_taxonomy
 
     taxonomy = load_taxonomy()
 

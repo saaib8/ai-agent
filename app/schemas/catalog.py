@@ -106,6 +106,9 @@ class CatalogFilter(BaseModel):
     """Categories shown ahead of the rest, before the sort's own order. Only
     the default order uses it: a price sort is an instruction, and nothing
     goes ahead of the cheapest."""
+    kinds: tuple[tuple[str, str], ...] = ()
+    """The (family, type) pairs the vocabulary holds: a product shows only when
+    it is filed as one of them, as the agents can only ever find those."""
 
 
 class CatalogItem(BaseModel):

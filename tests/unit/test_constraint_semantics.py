@@ -19,9 +19,9 @@ from app.schemas.query import (
     UnsupportedRequirement,
 )
 from app.services.query_understanding import QueryUnderstandingService
-from app.taxonomy.attributes import load_catalog_attributes
 from app.taxonomy.dimensions import load_dimension_semantics
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
 TAXONOMY = load_taxonomy()
 ATTRIBUTES = load_catalog_attributes()

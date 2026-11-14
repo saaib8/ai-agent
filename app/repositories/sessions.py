@@ -58,11 +58,13 @@ them has to be missed.
 
 SHOPPER_CART_KEY_TEMPLATE = "zory:store:{store_id}:shopper:{shopper}:cart"
 
-CROSS_SELL_PLAN_KEY_TEMPLATE = (
-    "zory:store:{store_id}:cross_sell_plan:{taxonomy_version}:{product_id}"
-)
+CROSS_SELL_PLAN_KEY_TEMPLATE = "zory:store:{store_id}:cross_sell_plan:{plan_version}:{product_id}"
 """Nora's plan for what goes with one product (`repositories/cross_sell_plans.py`):
 keyed by store, so one shop's plan is never reused in another."""
+
+VOCABULARY_COPY_KEY = "zory:vocabulary:last_good"
+"""The vocabulary's tables as last read (`repositories/vocabulary_copy.py`): one
+for the service, not a store's - the vocabulary is the same for every store."""
 
 CATALOG_OVERVIEW_KEY_TEMPLATE = "zory:store:{store_id}:catalog_overview:{taxonomy_version}"
 """The store's shelf summary (`repositories/catalog_cache.py`): keyed by store
@@ -95,9 +97,9 @@ def session_key(store_id: int, session_id: str) -> str:
     return KEY_TEMPLATE.format(store_id=store_id, session_id=session_id)
 
 
-def cross_sell_plan_key(store_id: int, taxonomy_version: str, product_id: int) -> str:
+def cross_sell_plan_key(store_id: int, plan_version: str, product_id: int) -> str:
     return CROSS_SELL_PLAN_KEY_TEMPLATE.format(
-        store_id=store_id, taxonomy_version=taxonomy_version, product_id=product_id
+        store_id=store_id, plan_version=plan_version, product_id=product_id
     )
 
 

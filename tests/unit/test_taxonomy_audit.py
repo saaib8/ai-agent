@@ -10,7 +10,8 @@ from app.repositories.catalog_audit import (
     CommercePairCount,
 )
 from app.taxonomy.audit import PairVerdict, TaxonomyAuditService, render
-from app.taxonomy.registry import load_taxonomy
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 
 class _StubAuditRepository:
@@ -45,9 +46,7 @@ def _service(pairs: list[CommercePairCount]) -> TaxonomyAuditService:
 
 
 async def test_approved_pairs_are_reported_valid() -> None:
-    report = await _service(
-        [_pair("seating", "sofa"), _pair("tables", "nightstand")]
-    ).run()
+    report = await _service([_pair("seating", "sofa"), _pair("tables", "nightstand")]).run()
 
     assert report.conforms
     assert {p.verdict for p in report.pairs} == {PairVerdict.VALID}
@@ -100,19 +99,17 @@ async def test_categories_absent_from_the_data_are_informational_only() -> None:
 
 
 async def test_the_report_carries_the_taxonomy_version() -> None:
-    assert (await _service([_pair("seating", "sofa")]).run()).taxonomy_version == "v1"
+    assert (await _service([_pair("seating", "sofa")]).run()).taxonomy_version.startswith("db-")
 
 
 async def test_rendering_names_every_discrepancy() -> None:
-    report = await _service(
-        [_pair("seating", "sofa"), _pair("seating", "l-shape-sofa")]
-    ).run()
+    report = await _service([_pair("seating", "sofa"), _pair("seating", "l-shape-sofa")]).run()
 
     text = render(report)
 
     assert "DISCREPANCIES FOUND" in text
     assert "l-shape-sofa" in text
-    assert "Taxonomy version: v1" in text
+    assert "Taxonomy version: db-" in text
 
 
 async def test_the_audit_exposes_no_way_to_change_anything() -> None:

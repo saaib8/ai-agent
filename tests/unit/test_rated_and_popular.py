@@ -267,9 +267,9 @@ async def test_with_best_sellers_switched_off_sales_order_nothing() -> None:
     from app.core.config import DiscoverySettings
     from app.repositories.products import ProductRepository
     from app.services.discovery import ProductDiscoveryService
-    from app.taxonomy.attributes import load_catalog_attributes
     from app.taxonomy.dimensions import load_dimension_semantics
-    from app.taxonomy.registry import load_taxonomy
+
+    from tests.fixtures.vocabulary import load_catalog_attributes, load_taxonomy
 
     taxonomy = load_taxonomy()
     repository = _PoolRepository()

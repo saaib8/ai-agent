@@ -43,9 +43,10 @@ from app.services.agent_state import apply_update
 from app.services.bundle_optimizer import BundleOptimizer
 from app.services.design_discovery import DesignDiscoveryService
 from app.services.grounding_builder import to_grounded_product
-from app.taxonomy.registry import load_taxonomy
 from app.taxonomy.rooms import load_room_pieces
 from app.taxonomy.seating import load_seating_semantics
+
+from tests.fixtures.vocabulary import load_taxonomy
 
 CONTEXT = RetailerContext(store_id=50)
 TAXONOMY = load_taxonomy()

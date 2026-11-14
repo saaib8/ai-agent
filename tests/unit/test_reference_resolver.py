@@ -38,7 +38,9 @@ from app.schemas.resolution import (
 )
 from app.schemas.retailer import RetailerContext
 from app.services.reference_resolver import ProductReferenceResolver
-from app.taxonomy.attributes import AttributeFamily, load_catalog_attributes
+from app.taxonomy.attributes import AttributeFamily
+
+from tests.fixtures.vocabulary import load_catalog_attributes, with_waiting
 
 CONTEXT = RetailerContext(store_id=50)
 OTHER = RetailerContext(store_id=60)
@@ -323,7 +325,7 @@ async def test_a_unique_style_match_resolves() -> None:
 
 async def test_a_unique_material_match_resolves() -> None:
     """ "The velvet one" - by the main material the store records."""
-    attributes = load_catalog_attributes().with_stored({AttributeFamily.MATERIAL: ["Velvet"]})
+    attributes = with_waiting(material=["Velvet"])
     velvet = _row(22).model_copy(update={"listing": ProductListing(material="Velvet")})
     resolver = ProductReferenceResolver(
         cast(ProductRepository, FakeRepository([_row(11), velvet])), attributes
