@@ -2473,3 +2473,108 @@ try again, not describe the earlier cards.
 **Status:** Open - not reproduced.
 
 **Reported:** by the user (2026-11-12).
+
+## 41. "I am looking for a king size bed" sometimes shows beds without asking first
+
+**Seen:** on staging (store 151, 2026-11-15). The same first message, sent in
+10 new chats, showed beds at once 7 times and asked first 3 times (a colour
+question with colour chips). Sara is meant to lean to asking two or three
+questions before the first products.
+
+**Cause:** no code rule - two lines of Sara's instructions
+(`app/prompts/agents/v2.py`) pull different ways:
+- "A standard size name - a single, double, queen or king bed or mattress - is
+  a size you know: **search** its usual width range on the shorter side" reads
+  as an instruction to search now; and
+- "when they named enough to go on ('a 3-seater beige sofa under 4000'), show
+  at once" leaves "enough" to her judgement. A kind plus a size is enough 7
+  times in 10.
+
+The asking rule itself ("lean to asking first ... two or three questions,
+fewer when they had said some") says a size answers one question, so the
+look (colour or style) should still be asked.
+
+**Measured (staging, store 151, 2026-11-15):** 16 first messages, 5 new chats
+each. Only messages carrying a **size** go either way; every other kind of first
+message is consistent:
+
+| First message | Showed at once |
+|---|---|
+| a kind only ("I need a sofa", "show me beds", "any rugs?", Arabic) | 0/5 each |
+| a kind and a colour, style or seat count ("a grey sofa", "a modern coffee table", "a 3-seater sofa") | 0/5 each |
+| a kind and a standard size name ("a king size bed", "a queen bed", Arabic "سرير كنج") | 2/5, 3/5, 2/5 |
+| a kind and measurements ("a rug around 2 by 3 metres") | 1/5 |
+| a kind and two or three details ("a grey 3-seater sofa", "a beige king size bed") | 5/5 each |
+
+So the conflict is the size line: a seat count or a colour reliably leaves the
+look to ask, a size does not.
+
+**Possible direction (not agreed):** word the size-name line as how to read
+the size when she searches, not as a cue to search; and say what "enough to go
+on" means - the kind with its look (a colour or a style), as in the example,
+so a kind and a size alone still get one look question.
+
+**Fixed (2026-11-15, prompt `agents/v2.80`):** the size line now reads as how to
+read a size when she searches ("when you search, use its usual width range"),
+and says a size - a size name or measurements - is one detail answered, like a
+colour or a seat count, with the look still hers to ask.
+
+Measured locally after the fix (store 151, 5 chats each unless said):
+
+| First message | Showed at once: before (staging) | After |
+|---|---|---|
+| "I am looking for a king size bed" | 9/15 | 3/15 |
+| "I want a queen bed" | 3/5 | 1/5 |
+| "I want a rug around 2 by 3 metres" | 1/5 | 0/5 |
+| Arabic "أبحث عن سرير كنج" | 2/5 | 0/5 |
+| "a king size bed, just show me", "a rug 2 by 3 metres, just show me" | - | 5/5 each |
+| every other first message | unchanged | unchanged |
+
+Size-only first messages now show at once about 1 time in 8 (4 of 30), down
+from about 1 in 2; "just show me" still shows at once every time. The 64-case
+chat regression set passes.
+
+**Tested more (local, 2026-11-15, 10 chats each):**
+
+| First message | Showed at once |
+|---|---|
+| "I am looking for a king size bed" | 4/10 |
+| "I need a queen size bed" | 0/10 |
+| "show me single beds" | 1/10 |
+| "do you have double beds?" | 2/10 |
+| sofa 220 cm, coffee table 100 cm, rug 160 by 230, desk 120 x 60, wardrobe under 200 cm, Arabic single bed, Arabic sofa 220 cm | 0/10 each |
+| "I want a king mattress" | 10/10 - correct: no mattress in store 151 lists its size, so nothing can be confirmed king, and her rule is to show the closest at once and say so |
+| "a grey king size bed" | 3/10 - she asks one style question the rest of the time, which her rules allow |
+| "show me queen beds, just show me the options" | 10/10 |
+
+Full conversations from a size opener (king, queen, rug 160 by 230, Arabic
+single bed; 5 each, answering her first chip each time): one or two questions,
+then products - never more than two, and every conversation reached products.
+
+Measurements are now consistent; standard bed sizes mostly ask, with king beds
+still showing at once in about a quarter of chats (7 of 25 after the fix).
+
+**Tried and not kept (2026-11-15, prompts `agents/v2.81`-`v2.83`):** defining
+"enough to go on" for every kind (the kind with two details, one of them a
+colour or style) made size openers consistent - king beds asked first 5/5, 155
+of 165 first messages as expected across seven kinds - but it shortened the
+questions for sofas: "I want a grey sofa" often went style, then products, and
+the seats were never asked, before or after the products (on `main` every sofa
+conversation asks the seats first). Kept the smaller v2.80 change instead.
+
+**Stress test of v2.80 against `main` (2026-11-15, store 151):** 33 first
+messages over seven kinds, English and Arabic, 5 chats each, on both. Only size
+openers moved, the way the fix intends - "a king size bed" showed at once 1/5
+(main 3/5), "a queen size bed" 1/5 (4/5), Arabic king bed 0/5 (1/5), "a king
+bed under 3000" 2/5 (5/5); kind-only, look-only, "just show me" and three-detail
+openers are the same on both, and two-detail openers move by one or two either
+way, as they do between runs. Full conversations: never more than three
+questions, every one reaches products, bed openers now ask one or two (main
+mostly none); sofas still get the seats asked (9 of 10). The 64-case chat
+regression set passes.
+
+**Status:** Much reduced, kept at v2.80 - king beds still show at once in about
+one chat in four. Fully consistent would need code to tell Sara which questions
+are still open, rather than wording.
+
+**Reported:** by the user (2026-11-15).

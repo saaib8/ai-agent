@@ -640,8 +640,9 @@ store does not carry for what is being talked about - the kind she last asked ab
 searched, narrowed alike to what the customer decided - is sent back once (`chips_not_in_stock`, `app/agents/chip_check.py`). What the customer likes
 is never counted as stock. Each answer moves to the
 next question still open, never one already answered; what they said counts, so
-"a beige sofa" leaves fewer to ask, and when they already named enough ("a
-3-seater beige sofa under 4000") she shows at once. A kind chosen from her own
+"a beige sofa" or "a king bed" leaves fewer to ask - a size is one detail
+answered, like a colour, with the look still to ask - and when they already
+named enough ("a 3-seater beige sofa under 4000") she shows at once. A kind chosen from her own
 question (which kind of table, an alternative she offered) counts as an answer.
 Once those questions are answered she searches with everything they said and
 shows; "just show me", a decline or impatience shows at once - even when part of
