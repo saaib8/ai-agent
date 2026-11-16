@@ -30,6 +30,7 @@ from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import (
     MAX_CROSS_SELL_KINDS,
     MAX_ROOM_NOTE_CHARS,
+    AgentStateV1,
     CrossSellKindPlan,
     CrossSellPlan,
     RoomProjectState,
@@ -1287,22 +1288,32 @@ def _budget_left(facts: Mapping[str, object] | None) -> Decimal | None:
     return left if isinstance(left, Decimal) else None
 
 
+async def room_could_add(
+    context: ToolContext, state: AgentStateV1
+) -> dict[str, object] | ToolOutcome:
+    """What the room on record could still take, with its budget left - the
+    facts of `room_could_add`, also given when the room goes into the cart.
+    A refusal when there is no room or the catalog cannot be read."""
+    services = context.services
+    room = state.room_project
+    if room is None or not room.bundle_items:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="no_room")
+    try:
+        overview = await services.capabilities.overview(context.retailer)
+    except IntegrationUnavailableError:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
+    current = await services.rooms.current(state, context.retailer)
+    left = _budget_left(current.facts if current else None)
+    facts: dict[str, object] = {"could_add": _could_add(services, room, overview, left)}
+    if left is not None:
+        facts["budget_left"] = left
+    return facts
+
+
 def room_additions_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
     async def additions(args: NoArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
-        services = context.services
-        room = work.staged.room_project
-        if room is None or not room.bundle_items:
-            return ToolOutcome(status=ToolStatus.REFUSED, code="no_room")
-        try:
-            overview = await services.capabilities.overview(context.retailer)
-        except IntegrationUnavailableError:
-            return ToolOutcome(status=ToolStatus.REFUSED, code="catalog_unavailable")
-        current = await services.rooms.current(work.staged, context.retailer)
-        left = _budget_left(current.facts if current else None)
-        facts: dict[str, object] = {"could_add": _could_add(services, room, overview, left)}
-        if left is not None:
-            facts["budget_left"] = left
-        return ToolOutcome(facts=facts)
+        facts = await room_could_add(context, work.staged)
+        return facts if isinstance(facts, ToolOutcome) else ToolOutcome(facts=facts)
 
     return ZoryTool(
         name="room_could_add",

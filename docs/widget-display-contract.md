@@ -432,7 +432,8 @@ Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):
 
 Plan: `docs/visualization-in-chat-plan.md`. Every room picture can now be asked
 for in the chat - "See it in a room" on a card, "show me my room", "show it
-from above", "put it in my photo" - and each checks who may draw first.
+from above", "show it in my room" (the design - their own photo only after an
+upload with the button) - and each checks who may draw first.
 
 **What the gateway sends (needed).** On every chat request (`/v1/chat`,
 `/v1/chat/stream`) and on `/v1/visualizations` and

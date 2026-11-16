@@ -18,6 +18,7 @@ from app.agents.operations.cart import as_room_in_cart, room_pieces_to_buy
 from app.agents.payloads import GridChip, SearchShown
 from app.agents.services import AgentServices
 from app.agents.tools.base import ToolOutcome, ZoryTool
+from app.agents.tools.design import room_could_add
 from app.agents.tools.schemas import ToolSchemas
 from app.agents.tools.shopping import (
     NoArgs,
@@ -610,6 +611,14 @@ def room_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
             "refused_by_store": refusal_facts(change.refused, names),
             "cart_full": change.full,
         }
+        if took:
+            styling = await room_could_add(context, state)
+            if not isinstance(styling, ToolOutcome):
+                facts["room_could_add"] = styling
+                facts["next"] = (
+                    "offer the room's styling from room_could_add - on top of its budget "
+                    "when nothing is left - then finishing the room"
+                )
         code = "cart_full" if change.full else None
         return ToolOutcome(code=code, facts=facts, state=state)
 
