@@ -136,6 +136,9 @@ def test_the_runtime_holds_only_what_it_sequences() -> None:
         # Whether a request with no gateway answer may draw a room - a policy
         # flag, like arabic_replies (docs/visualization-in-chat-plan.md D1).
         "draws_without_gateway",
+        # The shopper's widget session the gateway forwarded - passed on to
+        # the finder as the request's own context, never to a model.
+        "shopper",
     ]
 
 
@@ -286,6 +289,12 @@ def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
         # worked it out - an answer the gateway gives, never an identity
         # (docs/visualization-in-chat-plan.md D1).
         "visualization",
+        # A photo sent with the message: content, never an identity or a
+        # reference (docs/photos-and-cart-pictures-plan.md D2).
+        "photo",
+        # Whether this shopper may use the finder, as the gateway worked it
+        # out - an answer, never an identity (plan D7).
+        "furniture_finder",
     }
 
 

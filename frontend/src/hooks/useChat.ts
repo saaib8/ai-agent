@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { shrinkPhoto } from '../lib/shrinkPhoto'
 import {
   postCatalogVisualize,
   streamChat,
@@ -64,6 +65,8 @@ export interface SendOptions {
   search?: SearchAction
   product?: ProductAction
   rejected?: RejectedRef
+  /** A photo sent with the message - the message may then be empty. */
+  photo?: File
 }
 
 export interface UseChat {
@@ -243,15 +246,22 @@ export function useChat(): UseChat {
   const send = useCallback(
     async (message: string, config: ConsoleConfig, opts?: SendOptions) => {
       const text = message.trim()
-      if (!text) return
+      const photo = opts?.photo
+      if (!text && !photo) return
 
+      let imageUrl: string | undefined
+      if (photo) {
+        imageUrl = URL.createObjectURL(photo)
+        photoUrls.current.push(imageUrl)
+      }
       setTurns((prev) => [
         ...prev,
-        { kind: 'user', id: nextId(), text, rejected: opts?.rejected },
+        { kind: 'user', id: nextId(), text, rejected: opts?.rejected, imageUrl },
       ])
       setSending(true)
       const controller = new AbortController()
       abortRef.current = controller
+      const photoB64 = photo ? await toBase64(await shrinkPhoto(photo)) : undefined
 
       const result = await streamChat(
         config.apiBase,
@@ -263,6 +273,7 @@ export function useChat(): UseChat {
           ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
           ...(opts?.search ? { search_action: opts.search } : {}),
           ...(opts?.product ? { product_action: opts.product } : {}),
+          ...(photoB64 ? { photo: photoB64 } : {}),
         },
         setWorking,
         controller.signal,
@@ -528,4 +539,14 @@ export function useChat(): UseChat {
     visualizeSelection,
     reset,
   }
+}
+
+/** A file as plain base64, without the data: prefix. */
+function toBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] ?? '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }

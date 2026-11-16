@@ -31,7 +31,9 @@ from app.schemas.language import ReplyLanguage
 from app.schemas.product_action import CompanionAction
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.text_choice import TextReplyChoice
+from app.services.agent_state import room_key
 from app.services.card_labels import card_labels
+from app.services.media_wording import ARABIC_ROOMS
 from app.services.room_cart import room_in_cart
 from app.services.seating_presentation import present_seating_solution
 from app.services.support_channels import channels_for
@@ -186,12 +188,17 @@ def _grid_choices(chips: Sequence[GridChip], language: ReplyLanguage) -> tuple[R
     for chip in chips:
         if chip.offers == "another_of_its_kind":
             label, said = labels.another_kind, labels.say_another_kind
+        elif chip.offers == "visualize":
+            if chip.room is not None:
+                label, said = labels.visualize_named_room, labels.say_visualize_named_room
+            else:
+                label, said = labels.visualize_cart, labels.say_visualize_cart
         elif chip.room is not None:
             label, said = labels.design_named_room, labels.say_design_named_room
         else:
             label, said = labels.design_room_around, labels.say_design_room_around
         name = chip.name_ar if language is ReplyLanguage.AR and chip.name_ar else chip.name
-        room = chip.room or ""
+        room = _room_words(chip.room, language)
         choices.append(
             ReplyChoice(
                 label=label.replace("{name}", name).replace("{room}", room),
@@ -199,3 +206,16 @@ def _grid_choices(chips: Sequence[GridChip], language: ReplyLanguage) -> tuple[R
             )
         )
     return tuple(choices)
+
+
+def _room_words(room: str | None, language: ReplyLanguage) -> str:
+    """A room as a chip names it, in the reply's language: "bedroom" is
+    "غرفة النوم" in Arabic. A room with no Arabic name stays in its words."""
+    if not room:
+        return ""
+    if language is ReplyLanguage.AR:
+        kind = room_key(room).replace(" ", "_")
+        arabic = next((words for key, words in ARABIC_ROOMS.items() if key == kind), None)
+        if arabic:
+            return arabic
+    return room

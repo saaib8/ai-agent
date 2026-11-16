@@ -11,7 +11,11 @@ interface ComposerProps {
   onChange: (value: string) => void
   onSend: () => void
   onStop: () => void
+  /** Attach a photo to the next message. */
   onPhoto: (file: File) => void
+  /** The photo attached to the next message, as a preview URL. */
+  photoUrl?: string | null
+  onClearPhoto?: () => void
   onOpenCatalog: () => void
   disabled: boolean
   /** A reply is generating: the send button becomes a Stop button. */
@@ -24,6 +28,8 @@ export function Composer({
   onSend,
   onStop,
   onPhoto,
+  photoUrl,
+  onClearPhoto,
   onOpenCatalog,
   disabled,
   sending,
@@ -39,7 +45,8 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [value])
 
-  const canSend = !disabled && value.trim().length > 0
+  // A photo on its own is a message too: the assistant asks what to do with it.
+  const canSend = !disabled && (value.trim().length > 0 || Boolean(photoUrl))
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -76,13 +83,30 @@ export function Composer({
           <button
             onClick={() => fileRef.current?.click()}
             disabled={disabled}
-            aria-label="Find furniture from a photo"
-            title="Find furniture from a photo"
+            aria-label="Add a photo"
+            title="Add a photo"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-muted shadow-card transition hover:border-clay/40 hover:text-clay focus:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ImageIcon size={19} />
           </button>
-          <div className="flex flex-1 items-end rounded-[22px] border border-line bg-surface px-3.5 shadow-card transition focus-within:border-clay/50 focus-within:ring-2 focus-within:ring-clay/15">
+          <div className="flex flex-1 items-end gap-2 rounded-[22px] border border-line bg-surface px-3.5 shadow-card transition focus-within:border-clay/50 focus-within:ring-2 focus-within:ring-clay/15">
+            {photoUrl && (
+              <div className="relative my-2 shrink-0">
+                <img
+                  src={photoUrl}
+                  alt="Photo to send"
+                  className="h-10 w-10 rounded-lg border border-line object-cover"
+                />
+                <button
+                  onClick={onClearPhoto}
+                  aria-label="Remove photo"
+                  title="Remove photo"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-[11px] leading-none text-white"
+                >
+                  ×
+                </button>
+              </div>
+            )}
             <textarea
               ref={ref}
               value={value}
@@ -116,8 +140,8 @@ export function Composer({
         </div>
         <p className="mt-2 text-center text-[11px] leading-snug text-muted">
           ZORY recommends real products from the retailer&apos;s catalog. Verify details on the
-          merchant&apos;s site. Press Enter to send · Shift+Enter for a new line · Share a photo to
-          find matching furniture.
+          merchant&apos;s site. Press Enter to send · Shift+Enter for a new line · Add a photo to
+          find furniture like it or see your cart in your room.
         </p>
       </div>
     </div>

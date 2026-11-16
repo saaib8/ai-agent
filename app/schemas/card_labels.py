@@ -232,6 +232,14 @@ class CardLabels(BaseModel):
     """"Design a room around it" - the same chip while its room is not known:
     the designer asks which room first."""
     say_design_room_around: str
+    visualize_named_room: str
+    """"Visualize the {room}" - the chip beside a grid of kinds that draws the
+    cart's room as it is now, when the piece's room is known."""
+    say_visualize_named_room: str
+    visualize_cart: str
+    """"Visualize my cart" - the same chip while the room is not known: Sara
+    asks which room first."""
+    say_visualize_cart: str
     say_remove_piece: str
     """The message a room piece's Remove button records."""
     add_to_room: str

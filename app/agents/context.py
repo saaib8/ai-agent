@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.schemas.card_comparison import CardRef
+from app.schemas.furniture_finder import ShopperCredentials
 from app.schemas.language import ReplyLanguage
 from app.schemas.retailer import RetailerContext
 from app.schemas.visualization import VISUALIZATION_ALLOWED
@@ -41,6 +42,15 @@ class ToolContext:
     """The customer uploaded a photo of their room for this picture: the
     upload button's tap says so. Their photo is used only then - never on a
     typed "my room", which means the room being designed."""
+    photo_sent_now: bool = False
+    """A photo came with this message (`AgentStateV1.chat_photo` is its
+    record) - the photo the customer means by "this"."""
+    shopper: ShopperCredentials | None = None
+    """The shopper's widget session the gateway forwarded - what the finder
+    runs as on the platform; never shown to a model."""
+    finder_access: str = VISUALIZATION_ALLOWED
+    """Whether this shopper may use the finder this turn: `allowed`, or the
+    gateway's refusal (the same five values as `visualization`)."""
     visualization: str = VISUALIZATION_ALLOWED
     """Whether this shopper may have a room drawn this turn: `allowed`, or the
     backend's refusal code (`visualization_access`). Every picture tool checks

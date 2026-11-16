@@ -29,6 +29,7 @@ from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.card_labels import CardLabels
 from app.schemas.cart import MAX_STORE_CART_LINES, CartView, StoreCartLine
+from app.schemas.chat_photo import MAX_CHAT_PHOTO_CHARS
 from app.schemas.comparison import ProductComparisonResult
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
@@ -64,7 +65,14 @@ class ChatRequest(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128)
     store_id: int = Field(ge=1)
-    message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+    message: str = Field(default="", max_length=MAX_MESSAGE_CHARS)
+    """What they said. Blank only when a photo is sent on its own."""
+
+    photo: str | None = Field(default=None, min_length=1, max_length=MAX_CHAT_PHOTO_CHARS)
+    """A photo sent with the message, base64 JPEG - prepared by the gateway
+    (upright, metadata removed) before it reaches us. Checked, room-checked
+    once and kept for the chat; later messages refer to the kept photo and
+    never send it again (docs/photos-and-cart-pictures-plan.md D2)."""
 
     bundle_action: BundleActionRequest | None = None
     """A deterministic room edit the customer drove from the screen.
@@ -114,6 +122,12 @@ class ChatRequest(BaseModel):
     Every picture a turn draws checks it before any image is paid for
     (docs/visualization-in-chat-plan.md D1, D2)."""
 
+    furniture_finder: VisualizationAccess = None
+    """Whether this shopper may use the Furniture Finder, as the gateway worked
+    it out from the finder's own check - the same five values as
+    `visualization`, read the same way, overwriting what the widget sent
+    (docs/photos-and-cart-pictures-plan.md D7)."""
+
     locale: ReplyLanguage | None = None
     """The storefront's language, when it has one. It answers only a turn
     nothing in the conversation decided - a first message such as "3000" - and
@@ -162,12 +176,11 @@ class ChatRequest(BaseModel):
             raise ValueError("session_id may contain letters, digits, dot, dash and underscore")
         return value
 
-    @field_validator("message")
-    @classmethod
-    def _a_message_has_content(cls, value: str) -> str:
-        if not value.strip():
+    @model_validator(mode="after")
+    def _a_message_has_content(self) -> Self:
+        if not self.message.strip() and self.photo is None:
             raise ValueError("a message cannot be blank")
-        return value
+        return self
 
     @model_validator(mode="after")
     def _one_structured_action_at_most(self) -> Self:

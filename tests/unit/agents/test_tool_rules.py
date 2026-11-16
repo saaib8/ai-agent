@@ -25,11 +25,13 @@ from app.schemas.agent_state import (
     BundleItemStatus,
     OfferedCombination,
     OfferedCombinationLine,
+    PickRoom,
     ProductInteractionState,
     RoomProjectState,
     SeatingOfferState,
 )
 from app.schemas.card_comparison import CardRef
+from app.schemas.chat_photo import ChatPhoto, ChatPhotoState
 from app.schemas.conversation import ConversationContext
 from app.schemas.dimensions import DimensionStatus, NormalisedDimensions
 from app.schemas.grounding import SearchExecutionGrounding, SearchOutcome
@@ -41,6 +43,7 @@ from app.schemas.resolution import (
     ProductSearchExecutionResult,
     ResolvedProductReference,
 )
+from app.schemas.room_photo import RoomPhoto
 from app.schemas.seating_solution import SeatingShape
 from app.schemas.support import SupportContacts
 from app.schemas.visualization import RenderSource, RoomRenderPresentation
@@ -968,6 +971,22 @@ class _FakeRoomVisualizer:
             room_photo_id="a" * 32 if photo is not None else None,
         ).with_drawn(((10, 1), (11, 2)))
 
+    max_pieces = 14
+
+    async def render_cart(
+        self, products: Any, room: Any, view: Any, context: Any, photo: Any = None
+    ) -> RoomRenderPresentation:
+        self.calls.append((f"cart:{room.room_label}", photo is not None))
+        return RoomRenderPresentation(
+            image_url="data:image/jpeg;base64,eA==",
+            width=1536,
+            height=1024,
+            view=view,
+            view_label="Corner",
+            items=(),
+            source=RenderSource.CART,
+        ).with_drawn(tuple(products))
+
 
 class _FakePhotos:
     def __init__(self, photo: Any) -> None:
@@ -977,9 +996,123 @@ class _FakePhotos:
         return self.photo
 
 
-def _room_services(photo: Any = None) -> tuple[Any, _FakeRoomVisualizer]:
+def _room_services(photo: Any = None, **extra: Any) -> tuple[Any, _FakeRoomVisualizer]:
     viz = _FakeRoomVisualizer()
-    return agent_services(visualizer=cast(Any, viz), room_photos=cast(Any, _FakePhotos(photo))), viz
+    services = agent_services(
+        visualizer=cast(Any, viz), room_photos=cast(Any, _FakePhotos(photo)), **extra
+    )
+    return services, viz
+
+
+def _cart_for(rooms: dict[int, str]) -> AgentStateV1:
+    return AgentStateV1(
+        product_interaction=ProductInteractionState(
+            selected_product_ids=tuple(rooms),
+            pick_rooms=tuple(PickRoom(product_id=pid, room=room) for pid, room in rooms.items()),
+        )
+    )
+
+
+async def test_visualize_room_draws_the_cart_for_one_room_and_remembers_it() -> None:
+    services, viz = _room_services(hydration=FakeHydration(available=(101, 102)))
+    state = _cart_for({101: "living room", 102: "living room"})
+
+    outcome = await _call("visualize_room", {"all_of_them": True}, state, services=services)
+
+    assert outcome.status is ToolStatus.OK
+    assert viz.calls == [("cart:living room", False)]
+    record = outcome.state.last_render
+    assert record.source is RenderSource.CART
+    assert [p.product_id for p in record.pieces] == [101, 102]
+
+
+class _ChatPhotos:
+    async def load(self, state: Any, *, session_id: str, context: Any) -> Any:
+        return ChatPhoto(photo_id="c" * 32, width=100, height=80, jpeg_b64="eA==")
+
+
+class _Emptier:
+    def __init__(self) -> None:
+        self.emptied = 0
+
+    async def is_room(self, jpeg: bytes, context: Any) -> bool | None:
+        return True
+
+    async def empty_and_keep(self, jpeg: bytes, width: int, height: int, **_: Any) -> Any:
+        self.emptied += 1
+        return RoomPhoto(photo_id="d" * 32, width=width, height=height, jpeg_b64="eA==")
+
+
+class _KeptRooms(_FakePhotos):
+    async def load(self, store_id: int, session_id: str, photo_id: str) -> Any:
+        return self.photo if self.photo and self.photo.photo_id == photo_id else None
+
+
+async def test_visualize_room_draws_the_cart_into_the_chats_photo_emptied_once() -> None:
+    emptier = _Emptier()
+    kept = RoomPhoto(photo_id="d" * 32, width=100, height=80, jpeg_b64="eA==")
+    services, viz = _room_services(
+        hydration=FakeHydration(available=(101,)),
+        chat_photos=cast(Any, _ChatPhotos()),
+        room_photo_service=cast(Any, emptier),
+    )
+    services = dataclasses.replace(services, room_photos=cast(Any, _KeptRooms(kept)))
+    state = _cart_for({101: "living room"}).model_copy(
+        update={"chat_photo": ChatPhotoState(photo_id="c" * 32, is_room=True)}
+    )
+
+    first = await _call(
+        "visualize_room", {"in_their_photo": True}, state, services=services, session_id="s1"
+    )
+    second = await _call(
+        "visualize_room", {"in_their_photo": True}, first.state, services=services, session_id="s1"
+    )
+
+    assert first.status is ToolStatus.OK and second.status is ToolStatus.OK
+    assert viz.calls == [("cart:living room", True), ("cart:living room", True)]
+    assert emptier.emptied == 1
+    assert first.state.chat_photo.room_photo_id == "d" * 32
+
+
+async def test_visualize_room_refuses_a_chat_photo_that_is_not_a_room() -> None:
+    services, viz = _room_services(
+        hydration=FakeHydration(available=(101,)),
+        chat_photos=cast(Any, _ChatPhotos()),
+        room_photo_service=cast(Any, _Emptier()),
+    )
+    state = _cart_for({101: "living room"}).model_copy(
+        update={"chat_photo": ChatPhotoState(photo_id="c" * 32, is_room=False)}
+    )
+
+    outcome = await _call(
+        "visualize_room", {"in_their_photo": True}, state, services=services, session_id="s1"
+    )
+
+    assert outcome.code == "photo_is_not_a_room" and viz.calls == []
+
+
+async def test_visualize_room_asks_which_room_when_the_cart_has_two() -> None:
+    services, viz = _room_services(hydration=FakeHydration(available=(101, 102)))
+    state = _cart_for({101: "bedroom", 102: "living room"})
+
+    outcome = await _call("visualize_room", {}, state, services=services)
+
+    assert outcome.code == "which_room_to_draw"
+    assert set(outcome.facts["rooms"]) == {"bedroom", "living room"}
+    assert viz.calls == []
+
+
+async def test_visualize_room_asks_which_products_then_draws_the_ones_named() -> None:
+    services, _ = _room_services(hydration=FakeHydration(available=(101, 102)))
+    state = _cart_for({101: "bedroom", 102: "bedroom"})
+
+    asked = await _call("visualize_room", {}, state, services=services)
+    assert asked.code == "which_products_to_draw"
+    assert [p["picked"] for p in asked.facts["products"]] == [1, 2]
+
+    drawn = await _call("visualize_room", {"products": [2]}, state, services=services)
+    assert drawn.status is ToolStatus.OK
+    assert [p.product_id for p in drawn.state.last_render.pieces] == [102]
 
 
 async def test_visualize_room_draws_the_package_and_remembers_it() -> None:

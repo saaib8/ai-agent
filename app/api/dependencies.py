@@ -30,6 +30,7 @@ from app.integrations.redis import RedisClient
 from app.orchestration.graph import ChatGraphRunner
 from app.prompts.agents.v2 import VERSION as AGENT_PROMPT_VERSION
 from app.repositories.catalog_cache import OverviewCache
+from app.repositories.chat_photos import ChatPhotoStore
 from app.repositories.conversation_moves import ConversationMoves
 from app.repositories.cross_sell_plans import CrossSellPlanCache
 from app.repositories.finder_photos import FinderPhotoStore
@@ -51,6 +52,7 @@ from app.services.card_comparison import CardComparisonService
 from app.services.cart import CartService
 from app.services.catalog import CatalogService
 from app.services.catalog_capability import CatalogCapabilityService
+from app.services.chat_photo import ChatPhotoService
 from app.services.chat_runtime import ChatRuntime
 from app.services.click_tracking import ClickTrackingService
 from app.services.comparison import ProductComparisonService
@@ -540,6 +542,9 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
             if settings.visualization is not None and settings.visualization.room_photos_enabled
             else None
         ),
+        chat_photos=_chat_photo_service(app_resources),
+        finder=_optional_finder(session, app_resources),
+        room_photo_service=_optional_room_photo_service(app_resources),
         best_sellers=BestSellerService(repository, settings.products),
         support=(
             SupportService(
@@ -574,7 +579,9 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
     )
 
 
-def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntime:
+def chat_runtime(
+    session: SessionDep, app_resources: ResourcesDep, shopper: ShopperCredentialsDep
+) -> ChatRuntime:
     """One chat exchange, or a refusal to build one: the team needs every
     agent's model, and the search its presentation limit."""
     team = app_resources.agent_team
@@ -594,6 +601,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         arabic_replies=settings.customer_agent.arabic_replies,
         summarizer=app_resources.history_summarizer,
         draws_without_gateway=settings.draws_without_gateway,
+        shopper=shopper,
     )
 
 
@@ -609,6 +617,15 @@ ChatGraphDep = Annotated[ChatGraphRunner, Depends(chat_graph)]
 
 
 # ── Furniture Finder ────────────────────────────────────────────────────────
+
+
+def _optional_finder(
+    session: AsyncSession, app_resources: AppResources
+) -> FurnitureFinderService | None:
+    """The finder for the chat's photo, or None where it is not configured."""
+    if app_resources.settings.furniture_finder is None or app_resources.zory_finder is None:
+        return None
+    return furniture_finder_service(session, app_resources)
 
 
 def furniture_finder_service(
@@ -782,6 +799,38 @@ def catalog_visualization_runtime(
 
 def _room_photo_store(app_resources: AppResources) -> RoomPhotoStore:
     return RoomPhotoStore(app_resources.redis.client, app_resources.settings.session)
+
+
+def _optional_room_photo_service(app_resources: AppResources) -> RoomPhotoService | None:
+    """Checking and emptying room photos, or None where they are off."""
+    settings = app_resources.settings.visualization
+    checker = app_resources.room_checker
+    emptier = app_resources.empty_room_generator
+    if settings is None or checker is None or emptier is None:
+        return None
+    return RoomPhotoService(checker, emptier, _room_photo_store(app_resources), settings)
+
+
+def _chat_photo_service(app_resources: AppResources) -> ChatPhotoService:
+    """Receiving a photo sent with a chat message. Room photos off, it is
+    still kept for the finder; whether it is a room is then not known."""
+    settings = app_resources.settings
+    finder = settings.furniture_finder
+    visualization = settings.visualization
+    sides = [
+        side
+        for side in (
+            finder.detection_max_side if finder is not None else None,
+            visualization.room_photo_max_side if visualization is not None else None,
+        )
+        if side is not None
+    ]
+    return ChatPhotoService(
+        ChatPhotoStore(app_resources.redis.client, settings.session),
+        _optional_room_photo_service(app_resources),
+        max_bytes=finder.max_upload_bytes if finder is not None else 40 * 1024 * 1024,
+        max_side=max(sides, default=2048),
+    )
 
 
 def room_photo_service(app_resources: ResourcesDep) -> RoomPhotoService:

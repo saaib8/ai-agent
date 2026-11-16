@@ -33,6 +33,7 @@ from app.agents.trace import TraceEvent, TurnTrace
 from app.core.config import SessionSettings
 from app.core.exceptions import (
     AgentTurnIncompleteError,
+    ConfigurationError,
     IntegrationUnavailableError,
     LLMResponseInvalidError,
     SessionConflictError,
@@ -45,6 +46,7 @@ from app.schemas.agent_turn import CustomerResponse
 from app.schemas.cart import CartView
 from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse, WorkflowView
 from app.schemas.conversation import ConversationContext, ConversationMessage, ConversationRole
+from app.schemas.furniture_finder import ShopperCredentials
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import LikedView, PickView
 from app.schemas.product import ProductCandidate
@@ -95,7 +97,11 @@ class ChatRuntime:
         arabic_replies: bool = False,
         summarizer: HistorySummarizer | None = None,
         draws_without_gateway: bool = False,
+        shopper: ShopperCredentials | None = None,
     ) -> None:
+        self._shopper = shopper
+        """The shopper's widget session the gateway forwarded with this
+        request - what the finder runs as; None from the console."""
         self._draws_without_gateway = draws_without_gateway
         """Whether a request with no gateway answer on drawing may draw
         (`Settings.draws_without_gateway`)."""
@@ -120,7 +126,28 @@ class ChatRuntime:
             session_id=request.session_id,
             expected_revision=request.expected_session_revision,
         )
-        return await self._with_store_cart(request, context, loaded)
+        loaded = await self._with_store_cart(request, context, loaded)
+        return await self._with_photo(request, context, loaded)
+
+    async def _with_photo(
+        self, request: ChatRequest, context: RetailerContext | None, loaded: LoadedSession
+    ) -> LoadedSession:
+        """The loaded session with the photo sent with this message received:
+        checked, room-checked once and kept, its record replacing any earlier
+        photo's (docs/photos-and-cart-pictures-plan.md D2)."""
+        if request.photo is None or context is None:
+            return loaded
+        service = self._services.chat_photos
+        if service is None:
+            raise ConfigurationError(
+                detail="chat photos need redis and a configured session store",
+                public_message="Photos are not available right now.",
+            )
+        record = await service.receive(
+            request.photo, session_id=request.session_id, context=context
+        )
+        state = loaded.envelope.state.model_copy(update={"chat_photo": record})
+        return replace(loaded, envelope=loaded.envelope.model_copy(update={"state": state}))
 
     async def _with_store_cart(
         self, request: ChatRequest, context: RetailerContext | None, loaded: LoadedSession
@@ -189,6 +216,9 @@ class ChatRuntime:
                 tap_cards=tap.cards if tap is not None else (),
                 tapped=tap.event.button if tap is not None else None,
                 with_their_photo=bool(tap is not None and tap.event.in_their_photo),
+                photo_sent_now=request.photo is not None,
+                shopper=self._shopper,
+                finder_access=self.finder_access(request),
                 customer_said=request.message if tap is None else None,
                 visualization=self.visualization(request),
                 session_id=request.session_id,
@@ -409,6 +439,16 @@ class ChatRuntime:
         )
         if access == VISUALIZATION_UNRECOGNISED:
             logger.warning("visualization_answer_unrecognised", store_id=request.store_id)
+        return access
+
+    def finder_access(self, request: ChatRequest) -> str:
+        """Whether this request may use the finder: the gateway's answer, else
+        this deployment's default, as for pictures (plan D7)."""
+        access = visualization_access(
+            request.furniture_finder, without_gateway=self._draws_without_gateway
+        )
+        if access == VISUALIZATION_UNRECOGNISED:
+            logger.warning("finder_answer_unrecognised", store_id=request.store_id)
         return access
 
     def public_response(self, request: ChatRequest, revision: int, turn: AgentTurn) -> ChatResponse:

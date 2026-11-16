@@ -515,7 +515,7 @@ def _grid_chips(
         None,
     )
     if starter is None:
-        return tuple(chips)
+        return (*chips, *_visualize_chip(services, anchor, state))
     kind = starter.commerce.subcategory or kind
     name, name_ar = customer_words(kind), services.taxonomy.arabic(kind)
     rooms = services.room_pieces
@@ -531,7 +531,28 @@ def _grid_chips(
                 room=room_of_pick(state, starter.product_id) or rooms.one_room(kind),
             )
         )
-    return tuple(chips)
+    return (*chips, *_visualize_chip(services, anchor, state))
+
+
+def _visualize_chip(
+    services: AgentServices, anchor: ProductCandidate, state: AgentStateV1
+) -> tuple[GridChip, ...]:
+    """The cart as a picture, beside the grid: the piece's room when a fact
+    says it, else the cart, whose room Sara then asks
+    (docs/photos-and-cart-pictures-plan.md D1). None where pictures are off."""
+    kind = anchor.commerce.subcategory
+    if getattr(services, "visualizer", None) is None or kind is None:
+        return ()
+    rooms = services.room_pieces
+    room = room_of_pick(state, anchor.product_id) or (rooms.one_room(kind) if rooms else None)
+    return (
+        GridChip(
+            offers="visualize",
+            name=customer_words(kind),
+            name_ar=services.taxonomy.arabic(kind),
+            room=room,
+        ),
+    )
 
 
 def _another_of_its_kind(

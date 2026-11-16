@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
@@ -29,6 +29,7 @@ from app.schemas.agent_brief import (
     GoalMember,
     OverBudgetOffer,
     PendingBrief,
+    PhotoBrief,
     PictureBrief,
     PlannedKindBrief,
     RoomBrief,
@@ -159,6 +160,7 @@ async def session_brief(
         turned_down=numbered(interaction.turned_down_product_ids) or None,
         seen_before=numbered(interaction.seen_product_ids[-SEEN_NAMED:]) or None,
         picture_on_screen=_picture(state.last_render, numbered),
+        photo_on_record=_photo(state, context.photo_sent_now),
         taste=_taste(state),
         designer_plan=_designer_plan(state, by_id),
         saved_sizes=_saved_sizes(state) or None,
@@ -166,10 +168,33 @@ async def session_brief(
     )
 
 
+def _photo(state: AgentStateV1, sent_now: bool) -> PhotoBrief | None:
+    """The chat's photo as the agents know it (docs/photos-and-cart-pictures-plan.md D3)."""
+    photo = state.chat_photo
+    if photo is None:
+        return None
+    room = state.room_project
+    if room is not None and room.bundle_items and not room.in_cart:
+        can_show: Literal["the designed room", "the cart", "nothing"] = "the designed room"
+    elif state.product_interaction.selected_product_ids:
+        can_show = "the cart"
+    else:
+        can_show = "nothing"
+    return PhotoBrief(
+        sent_now=sent_now,
+        is_room={True: "yes", False: "no", None: "not known"}[photo.is_room],
+        can_show=can_show,
+        pieces_found=(
+            tuple(f"{n}: {piece}" for n, piece in enumerate(photo.pieces, start=1)) or None
+        ),
+    )
+
+
 _PICTURE_SHOWS = {
     RenderSource.PRODUCT: "one product",
     RenderSource.PACKAGE: "the room package",
     RenderSource.CATALOG: "pieces from the catalogue",
+    RenderSource.CART: "their cart, one room",
 }
 
 

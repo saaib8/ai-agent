@@ -44,6 +44,9 @@ class RenderSource(StrEnum):
 
     PACKAGE = "package"
     CATALOG = "catalog"
+    CART = "cart"
+    """Products in the cart for one room, drawn as that room as it is now
+    (docs/photos-and-cart-pictures-plan.md D1)."""
     PRODUCT = "product"
     """One product the customer tapped, shown in an inviting room: the product
     is faithful to the catalog, the room and its decor are invented, and

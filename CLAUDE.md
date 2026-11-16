@@ -1879,7 +1879,7 @@ A supervisor and four agents, built on LangGraph (`app/agents/`).
 | Agent | Owns | Tools (`app/agents/tools/`) |
 |---|---|---|
 | Supervisor | who handles the turn | `transfer_to_<agent>`, `finish` - it never talks to the customer |
-| Sara | finding, comparing, the cart, a group's seating one piece at a time | `ask_about`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room` - the only owner of the cart's adds and of comparisons |
+| Sara | finding, comparing, the cart, a group's seating one piece at a time | `ask_about`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room`, `visualize_product`, `visualize_room`, `find_in_photo` - the only owner of the cart's adds, of comparisons, of pictures and of photos |
 | Nora | how it looks and whether it works: design, matching, their room, fit and placement, whole rooms | `design_room`, `revise_room_piece`, `measure_fit`, `record_design_notes`, `cross_sell_advice` (pre-search kinds and direction) and a search `direction` (hers alone), `store_shelf`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `change_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
 | Salman | what goes with a finished choice, finishing a designed room and its styling, rooms into the cart, value | `what_goes_with` and `add_room_to_cart` (his alone), `store_shelf`, `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
 | Faysal | the store itself | `store_policy`, `contact_store`, `product_details` |
@@ -2382,10 +2382,23 @@ worked on the turn, in order (`handoffs`), ending with the one who replied - the
 console shows "Sara → Salman". Furniture Finder and room renders are Sara's.
 
 **Room pictures go through the chat** (docs/visualization-in-chat-plan.md):
-Sara's `visualize_product` (one product) and `visualize_room` (the room
-package - a camera view, or the room photo the chat keeps), asked for in words
-or by the package's picture buttons (`bundle_action` `visualize`, a fixed
-command). Who may draw is the backend gateway's answer on each request
+Sara's `visualize_product` (one product) and `visualize_room` (the room as it
+is now - a designed room not yet in the cart as designed, otherwise the cart's
+products for one room, asking which room and which products when it cannot
+tell; drawn from a camera view, or into the photo they sent),
+asked for in words or by the package's picture buttons (`bundle_action`
+`visualize`, a fixed command).
+
+**A photo comes with the message** (docs/photos-and-cart-pictures-plan.md):
+`ChatRequest.photo`, prepared by the gateway, room-checked once and kept for the
+chat (`AgentStateV1.chat_photo`, `photo_on_record` in every brief). Sara's
+`find_in_photo` runs the Furniture Finder on it as the shopper (the gateway
+forwards their session on every chat turn), its matches the cards on screen;
+`visualize_room` `in_their_photo` draws their cart into it, emptied once. A
+photo on its own: Sara asks find or see-my-cart only when it is a room and
+there is something to draw, else finds at once; with words, the words decide.
+Whether the finder may run is the gateway's `ChatRequest.furniture_finder`, the
+same five values as `visualization`. Who may draw is the backend gateway's answer on each request
 (`ChatRequest.visualization`: `allowed`, `sign_up_required`, `limit_reached`,
 `not_included` or `store_unavailable` - its own codes mapped onto these, and an
 unknown value read as no picture, never a refused message); every picture
