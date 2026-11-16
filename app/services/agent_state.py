@@ -568,6 +568,14 @@ def _room(
             if _another_room(base, update)
             else base.purpose
         ),
+        already_own=tuple(
+            dict.fromkeys(
+                (
+                    *(() if _another_room(base, update) else base.already_own),
+                    *(update.already_own or ()),
+                )
+            )
+        )[-12:],
         layout_idea=(
             update.layout_idea
             if update.layout_idea is not None

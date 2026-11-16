@@ -155,6 +155,9 @@ class RoomBrief(_Brief):
     palette: tuple[str, ...] | None = None
     """The room's colours as designed."""
     purpose: str | None = None
+    already_own: tuple[str, ...] | None = None
+    """What they said they already have for this room: designed around,
+    never bought."""
     """What the room is mostly for, in their words."""
     layout_idea: str | None = None
     """How Nora arranged it, in her words."""
@@ -337,6 +340,12 @@ class PhotoBrief(_Brief):
 class SessionBrief(_Brief):
     language: str
     store_currency: str | None = None
+    rooms_store_can_design: tuple[str, ...] | None = None
+    """The reviewed rooms this store stocks every must-have of - the rooms to
+    offer when they want one designed (room_pieces_v1.yaml must_have)."""
+    rooms_store_cannot_design: dict[str, tuple[str, ...]] | None = None
+    """The reviewed rooms it cannot, each with what it has none of ("home
+    office": office table, office chair) - said at once if they ask for one."""
     catalog_unavailable: bool | None = None
     cards_on_screen: tuple[BriefProduct, ...] = ()
     comparison_columns: tuple[BriefProduct, ...] | None = None

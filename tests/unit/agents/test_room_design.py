@@ -657,3 +657,79 @@ def test_an_unapproved_kind_in_the_list_fails_at_startup(tmp_path: Any) -> None:
 
     with pytest.raises(TaxonomyConfigurationError):
         load_room_pieces(broken, taxonomy=TAXONOMY, seating=SEATING)
+
+
+async def _design_with_guide(args: dict[str, Any], state: AgentStateV1 | None = None) -> Any:
+    rooms = _Rooms()
+    services = agent_services(  # type: ignore[arg-type]
+        capabilities=_Shelves(),
+        seating=SEATING,
+        room_pieces=load_room_pieces(taxonomy=TAXONOMY, seating=SEATING),
+    )
+    services = replace(services, rooms=rooms)
+    tool = LOOP._registry.get("design_room")
+    assert tool is not None and tool.handler is not None
+    work = TurnWork.starting(state or AgentStateV1())
+    work.working = AgentPersona.NORA
+    outcome = await tool.handler(tool.args.model_validate(args), tool_context(services), work)
+    return outcome, rooms
+
+
+async def test_a_room_the_store_cannot_furnish_is_never_designed() -> None:
+    # The store sells sofas and centre tables - no desk, no office chair.
+    office = {
+        **ARGS,
+        "room_type": "home office",
+        "room_kind": "home_office",
+        "pieces": [{"role": "work table", "types": ["center-table"]}],
+    }
+
+    outcome, rooms = await _design_with_guide(office)
+
+    assert outcome.code == "room_not_stocked" and rooms.inputs == []
+    assert outcome.facts["store_has_none_of"] == ["office table", "office chair"]
+
+
+async def test_a_room_found_by_its_words_is_checked_too() -> None:
+    office = {
+        **ARGS,
+        "room_type": "Home Office",
+        "room_kind": None,
+        "pieces": [{"role": "work table", "types": ["center-table"]}],
+    }
+
+    outcome, _ = await _design_with_guide(office)
+
+    assert outcome.code == "room_not_stocked"
+
+
+async def test_a_room_whose_must_haves_are_stocked_is_designed() -> None:
+    outcome, rooms = await _design_with_guide(ARGS)
+
+    assert outcome.code != "room_not_stocked" and len(rooms.inputs) == 1
+
+
+async def test_pieces_they_said_they_have_count_as_present() -> None:
+    from app.schemas.agent_state import RoomProjectState
+
+    office = {
+        **ARGS,
+        "room_type": "home office",
+        "room_kind": "home_office",
+        "pieces": [{"role": "shelving", "types": ["center-table"]}],
+    }
+    theirs = AgentStateV1(
+        room_project=RoomProjectState(
+            room_type="home office", already_own=("office-table", "office-chair")
+        )
+    )
+    half = AgentStateV1(
+        room_project=RoomProjectState(room_type="home office", already_own=("office-table",))
+    )
+
+    designed, rooms = await _design_with_guide(office, theirs)
+    still_missing, _ = await _design_with_guide(office, half)
+
+    assert designed.code != "room_not_stocked" and len(rooms.inputs) == 1
+    assert still_missing.code == "room_not_stocked"
+    assert still_missing.facts["store_has_none_of"] == ["office chair"]

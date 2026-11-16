@@ -17,7 +17,7 @@ cannot drift from the vocabulary.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -103,7 +103,9 @@ class RoomPieces:
         bought_once: frozenset[str] = frozenset(),
         grows_a_room: frozenset[str] = frozenset(),
         one_room: Mapping[str, str] | None = None,
+        must_have: Mapping[str, tuple[tuple[str, ...], ...]] | None = None,
     ) -> None:
+        self._must_have = {_room_key(room): needs for room, needs in (must_have or {}).items()}
         self._version = version
         self._rooms = dict(rooms)
         self._bought_once = bought_once
@@ -130,6 +132,23 @@ class RoomPieces:
     @property
     def version(self) -> str:
         return self._version
+
+    @property
+    def designed_rooms(self) -> tuple[str, ...]:
+        """The rooms whose must-haves are reviewed, in words ("home office")."""
+        return tuple(self._must_have)
+
+    def missing(
+        self, room: str | None, stocks: Callable[[str], bool]
+    ) -> tuple[tuple[str, ...], ...]:
+        """The must-haves of this room (`must_have`) the store stocks none of -
+        each as its kinds; empty when nothing is missing, or the room's
+        must-haves are not reviewed. `room` is in words or as a kind
+        ("home office", "home_office")."""
+        if not room:
+            return ()
+        needs = self._must_have.get(_room_key(room), ())
+        return tuple(need for need in needs if not any(stocks(kind) for kind in need))
 
     @property
     def kinds(self) -> tuple[str, ...]:
@@ -178,6 +197,7 @@ def load_room_pieces(
     bought_once = _kinds(document.get("bought_once", []), "bought_once", source, taxonomy)
     grows_a_room = _kinds(document.get("grows_a_room", []), "grows_a_room", source, taxonomy)
     one_room = _one_room(document.get("one_room", {}), source, taxonomy)
+    must_have = _must_have(document.get("must_have", {}), source, taxonomy)
     arabic = parse_arabic_labels(
         document.get("arabic"),
         {piece.label for room in rooms.values() for piece in room.pieces},
@@ -195,6 +215,7 @@ def load_room_pieces(
         bought_once=bought_once,
         grows_a_room=grows_a_room,
         one_room=one_room,
+        must_have=must_have,
     )
 
 
@@ -212,6 +233,28 @@ def _one_room(raw: Any, source: Path, taxonomy: CommerceTaxonomy | None) -> dict
                 )
             rooms[kind] = room
     return rooms
+
+
+def _must_have(
+    raw: Any, source: Path, taxonomy: CommerceTaxonomy | None
+) -> dict[str, tuple[tuple[str, ...], ...]]:
+    if not isinstance(raw, dict):
+        raise TaxonomyConfigurationError(detail=f"{source.name}: 'must_have' must be a mapping")
+    rooms: dict[str, tuple[tuple[str, ...], ...]] = {}
+    for room, needs in raw.items():
+        if not isinstance(room, str) or not room or not isinstance(needs, list) or not needs:
+            raise TaxonomyConfigurationError(
+                detail=f"{source.name}: 'must_have' maps a room to a list of must-haves"
+            )
+        rooms[room] = tuple(
+            tuple(sorted(_kinds(need, "must_have", source, taxonomy))) for need in needs
+        )
+    return rooms
+
+
+def _room_key(words: str) -> str:
+    """A room's words as rooms compare them: "home_office" is "home office"."""
+    return " ".join(words.replace("_", " ").casefold().split())
 
 
 def _kinds(raw: Any, field: str, source: Path, taxonomy: CommerceTaxonomy | None) -> frozenset[str]:

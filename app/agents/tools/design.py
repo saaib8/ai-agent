@@ -563,11 +563,40 @@ async def _rooms_to_ask(
     )
 
 
+def _missing_must_haves(
+    services: AgentServices,
+    overview: CatalogOverview,
+    room: str | None,
+    owned: tuple[str, ...] = (),
+) -> tuple[tuple[str, ...], ...]:
+    """The must-haves of this room the store stocks none of and they do not
+    already have."""
+    rooms = services.room_pieces
+    if rooms is None:
+        return ()
+
+    def present(kind: str) -> bool:
+        if kind in owned:
+            return True
+        family = services.taxonomy.category_of(kind)
+        return family is not None and overview.stocks(family, kind)
+
+    return rooms.missing(room, present)
+
+
 def room_design_args(schemas: ToolSchemas) -> type[ToolArgs]:
     """Nora's room design as arguments: approved colours and styles only;
     types are checked against the registry when the room is built."""
     rooms = schemas.room_pieces
-    kinds = tuple(rooms.kinds) if rooms is not None else ()
+    kinds = (
+        tuple(
+            dict.fromkeys(
+                (*rooms.kinds, *(room.replace(" ", "_") for room in rooms.designed_rooms))
+            )
+        )
+        if rooms is not None
+        else ()
+    )
     colour = one_of(tuple(sorted(schemas.attributes.colors)))
     style = one_of(tuple(sorted(schemas.attributes.styles)))
     piece_fields: dict[str, Any] = {
@@ -714,6 +743,22 @@ def design_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             and (args.same_room or (not current.bundle_items and not current.in_cart))
             else None
         )
+        missing = _missing_must_haves(
+            services, overview, args.room_kind or args.room_type, room.already_own if room else ()
+        )
+        if missing:
+            # A room is not designed around what it cannot be: an office with
+            # no desk is not an office (room_pieces_v1.yaml must_have).
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="room_not_stocked",
+                facts={
+                    "room": args.room_type,
+                    "store_has_none_of": [
+                        " or ".join(customer_words(kind) for kind in need) for need in missing
+                    ],
+                },
+            )
         geometry = geometry_of(args.size)
         walls = [w.wall for w in room.layout] if room is not None else []
         walls += [

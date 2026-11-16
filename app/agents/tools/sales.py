@@ -510,7 +510,7 @@ def _grid_chips(
     chips: list[GridChip] = []
     if _another_of_its_kind(services, capabilities, anchor.commerce):
         chips.append(GridChip(offers="another_of_its_kind", name=name, name_ar=name_ar))
-    room = _room_to_design(services, anchor, head, state, in_cart)
+    room = _room_to_design(services, anchor, head, state, in_cart, capabilities)
     return (*chips, *room, *_visualize_chip(services, anchor, state))
 
 
@@ -520,6 +520,7 @@ def _room_to_design(
     head: ProductCandidate,
     state: AgentStateV1,
     in_cart: Sequence[ProductCandidate],
+    capabilities: RetailerCatalogCapabilities | None = None,
 ) -> tuple[GridChip, ...]:
     """The room a design would be of, offered beside the grid.
 
@@ -530,9 +531,11 @@ def _room_to_design(
     sofa the customer placed is that room's; a sofa nobody placed names none
     ("Design a room around it"); pieces of different or unknown rooms together
     (a bed and a sofa) name none either ("Design a room") and the designer asks
-    which. Hidden while a goal is still being chosen, and when the room is the
+    which. Hidden while a goal is still being chosen, when the room is the
     one already designed or in the cart - designing it again would replace
-    their design. A room only noted (its size) hides nothing.
+    their design - and when the store stocks none of one of the room's
+    must-haves (`must_have`: an office with no desks). A room only noted (its
+    size) hides nothing.
     """
     rooms = services.room_pieces
     if rooms is None:
@@ -584,7 +587,16 @@ def _room_to_design(
         # The room on record is designed: an unplaced piece may well be for
         # it, and the same room again would replace it.
         return ()
+    if capabilities is not None and rooms.missing(
+        room, lambda k: _stocked(services, capabilities, k)
+    ):
+        return ()
     return (GridChip(offers="whole_room", name=name, name_ar=name_ar, room=room),)
+
+
+def _stocked(services: AgentServices, capabilities: RetailerCatalogCapabilities, kind: str) -> bool:
+    family = services.taxonomy.category_of(kind)
+    return family is not None and bool(capabilities.product_count(family, kind))
 
 
 def _room_of(services: AgentServices, state: AgentStateV1, piece: ProductCandidate) -> str | None:

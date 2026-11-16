@@ -745,6 +745,11 @@ class RoomProjectState(BaseModel):
     """They would rather not give the room's size: it is not asked again."""
     purpose: str | None = Field(default=None, max_length=MAX_ROOM_NOTE_CHARS)
     """What the room is mostly for, in their words ("hosting guests")."""
+    already_own: tuple[str, ...] = Field(default=(), max_length=12, exclude_if=lambda v: not v)
+    """Kinds of piece they told us they already have for this room ("my desk
+    and chair"), approved types: designed around and never bought, and
+    counted as present when the room's must-haves are checked. Recorded only
+    on their word, never offered."""
     layout_idea: str | None = Field(default=None, max_length=MAX_ROOM_NOTE_CHARS)
     """How Nora arranged it, in her words ("an L in the corner by the window,
     a second sofa facing the TV") - so every later turn describes the same
