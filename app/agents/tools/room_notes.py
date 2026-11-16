@@ -71,6 +71,16 @@ def room_note_args(schemas: ToolSchemas) -> type[ToolArgs]:
                 "family time and TV, reading, children playing.",
             ),
         ),
+        "already_own": (
+            list[str],
+            Field(
+                default_factory=list,
+                max_length=6,
+                description="Product types they said, unprompted, they already have for this "
+                "room ('I already have a desk and chair': office-table, office-chair). Never "
+                "asked or offered.",
+            ),
+        ),
         "declined_size": (
             bool,
             Field(
@@ -97,6 +107,11 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                 facts={"room_on_record": room_words(current)},
             )
         another = current is not None and _names_another_room(current, args)
+        unknown = [k for k in args.already_own if context.services.taxonomy.category_of(k) is None]
+        if unknown:
+            return ToolOutcome(
+                status=ToolStatus.INVALID, code="unapproved_type", facts={"types": unknown}
+            )
         room_type = args.room_type
         if current is not None and current.room_kind and args.room_kind == current.room_kind:
             # The same room in other words ("the lounge") keeps its walls.
@@ -140,6 +155,7 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                     budget=args.budget.constraint() if args.budget else None,
                     size_declined=True if args.declined_size else (False if measured else None),
                     purpose=args.purpose,
+                    already_own=tuple(args.already_own) or None,
                 )
             ),
         )
@@ -151,6 +167,7 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                 "size_known": knows_room_size(room.geometry),
                 **({"size_declined": True} if room.size_declined else {}),
                 **({"purpose": room.purpose} if room.purpose else {}),
+                **({"already_own": list(room.already_own)} if room.already_own else {}),
                 **(
                     {"budget": room.budget.max_amount, "currency": room.budget.currency}
                     if room.budget is not None and room.budget.max_amount is not None

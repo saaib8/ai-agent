@@ -7,6 +7,7 @@ ids. It is data: each agent reads it, none is told to obey it.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
@@ -54,6 +55,7 @@ from app.schemas.agent_state import (
     RenderRecord,
     SeatingOfferState,
 )
+from app.schemas.catalog_overview import CatalogOverview
 from app.schemas.conversation import (
     ConversationContext,
     ConversationMessage,
@@ -126,12 +128,13 @@ async def session_brief(
             if pid in by_id
         )
 
-    try:
-        # The one currency the store prices in: an amount said without one is
-        # in it. None when it prices in several.
-        currency = (await services.capabilities.overview(context.retailer)).currency
-    except IntegrationUnavailableError:
-        currency = None
+    overview: CatalogOverview | None = None
+    with contextlib.suppress(IntegrationUnavailableError):
+        overview = await services.capabilities.overview(context.retailer)
+    # The one currency the store prices in: an amount said without one is in
+    # it. None when it prices in several.
+    currency = overview.currency if overview is not None else None
+    can_design, cannot_design = _rooms_store_can_design(services, overview)
     room_plan: dict[str, Any] | None = None
     if state.room_project is not None and state.room_project.bundle_items:
         try:
@@ -143,6 +146,8 @@ async def session_brief(
     return SessionBrief(
         language=context.language or "en",
         store_currency=currency,
+        rooms_store_can_design=can_design or None,
+        rooms_store_cannot_design=cannot_design or None,
         catalog_unavailable=unavailable or None,
         cards_on_screen=numbered(interaction.presented_product_ids),
         comparison_columns=numbered(interaction.compared_product_ids) or None,
@@ -166,6 +171,30 @@ async def session_brief(
         saved_sizes=_saved_sizes(state) or None,
         pending=_pending(state, by_id, room_plan),
     )
+
+
+def _rooms_store_can_design(
+    services: AgentServices, overview: CatalogOverview | None
+) -> tuple[tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """Which reviewed rooms this store can furnish - every must-have stocked -
+    and, for each it cannot, what it has none of."""
+    rooms = getattr(services, "room_pieces", None)
+    if rooms is None or overview is None:
+        return (), {}
+
+    def stocks(kind: str) -> bool:
+        family = services.taxonomy.category_of(kind)
+        return family is not None and overview.stocks(family, kind)
+
+    can: list[str] = []
+    cannot: dict[str, tuple[str, ...]] = {}
+    for room in rooms.designed_rooms:
+        missing = rooms.missing(room, stocks)
+        if missing:
+            cannot[room] = tuple(" or ".join(customer_words(k) for k in need) for need in missing)
+        else:
+            can.append(room)
+    return tuple(can), cannot
 
 
 def _photo(state: AgentStateV1, sent_now: bool) -> PhotoBrief | None:
@@ -382,6 +411,7 @@ def _room(state: AgentStateV1, plan: dict[str, Any] | None) -> RoomBrief | None:
         size_declined=room.size_declined or None,
         palette=(*room.palette, *room.palette_styles) or None,
         purpose=room.purpose,
+        already_own=tuple(customer_words(k) for k in room.already_own) or None,
         layout_idea=room.layout_idea,
         walls=tuple(
             WallBrief(

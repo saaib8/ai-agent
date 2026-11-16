@@ -38,6 +38,16 @@ one_room:
   home office: [office-table, office-chair]
   outdoor: [outdoor-chair, outdoor-lighting]
 
+# What a room cannot be designed without (reviewed 2026-11-17): each line is
+# one must-have, met by any of its kinds the store stocks. A store missing one
+# is never offered that room, and a design of it is refused - an office is not
+# built around a dining table. A room not listed here is not checked.
+must_have:
+  living room: [[sofa, sectional-sofa, sofa-set]]
+  bedroom: [[bed]]
+  home office: [[office-table], [office-chair]]
+  dining room: [[dining-table, dining-set]]
+
 rooms:
   living_room:
     asks_seats: true

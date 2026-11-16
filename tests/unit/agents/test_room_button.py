@@ -175,3 +175,70 @@ def test_the_room_button(
     case: str, added: Any, state: AgentStateV1, in_cart: Any, expected: list[Any]
 ) -> None:
     assert room_button(added, state, *in_cart) == expected, case
+
+
+def stock(*kinds: str) -> Any:
+    return SimpleNamespace(product_count=lambda family, kind: 5 if kind in kinds else 0)
+
+
+def test_a_room_whose_must_haves_the_store_lacks_is_not_offered() -> None:
+    from app.agents.tools.sales import _room_to_design
+
+    chair = _product(7, subcategory="office-chair")
+    no_desks = _room_to_design(SERVICES, chair, chair, cart(chair), (chair,), stock("office-chair"))
+    with_desks = _room_to_design(
+        SERVICES, chair, chair, cart(chair), (chair,), stock("office-chair", "office-table")
+    )
+
+    assert no_desks == ()
+    assert [(c.offers, c.room) for c in with_desks] == [("whole_room", "home office")]
+
+
+def test_what_they_own_is_kept_on_the_room_and_survives_later_notes() -> None:
+    from app.schemas.agent_updates import AgentStateUpdate, RoomProjectUpdate
+    from app.services.agent_state import apply_update
+
+    state = apply_update(
+        AgentStateV1(),
+        AgentStateUpdate(
+            room_project=RoomProjectUpdate(room_type="home office", already_own=("office-table",))
+        ),
+    )
+    state = apply_update(
+        state, AgentStateUpdate(room_project=RoomProjectUpdate(purpose="working full-time"))
+    )
+    state = apply_update(
+        state, AgentStateUpdate(room_project=RoomProjectUpdate(already_own=("office-chair",)))
+    )
+
+    assert state.room_project is not None
+    assert state.room_project.already_own == ("office-table", "office-chair")
+
+
+def test_the_brief_lists_the_rooms_this_store_can_and_cannot_design() -> None:
+    from app.agents.views import _rooms_store_can_design
+    from app.schemas.catalog_overview import CatalogOverview, SubcategoryShelf
+
+    def shelf(category: str, kind: str) -> SubcategoryShelf:
+        return SubcategoryShelf(
+            commerce_category=category,
+            commerce_subcategory=kind,
+            active_count=3,
+            price_minimum=Decimal("100"),
+            price_maximum=Decimal("900"),
+        )
+
+    # Like store 151: sofas, beds and dining tables - no desk, no office chair.
+    overview = CatalogOverview(
+        store_id=151,
+        shelves=(
+            shelf("seating", "sofa"),
+            shelf("bedroom", "bed"),
+            shelf("dining", "dining-table"),
+        ),
+    )
+
+    can, cannot = _rooms_store_can_design(SERVICES, overview)
+
+    assert can == ("living room", "bedroom", "dining room")
+    assert cannot == {"home office": ("office table", "office chair")}

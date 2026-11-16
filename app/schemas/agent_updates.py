@@ -460,6 +460,9 @@ class RoomProjectUpdate(BaseModel):
     size_declined: bool | None = None
     """They said they would rather not give the room's size."""
     purpose: str | None = None
+    already_own: tuple[str, ...] | None = None
+    """Kinds they said they already have for this room - added to those on
+    record."""
     layout_idea: str | None = None
     room_kind: str | None = None
     """A different kind resets the chosen pieces and the opening question: the
