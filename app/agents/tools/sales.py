@@ -49,7 +49,13 @@ from app.schemas.retailer import RetailerCatalogCapabilities, RetailerContext
 from app.services.agent_state import commit_search_results, pick_group, room_of_pick
 from app.services.cross_sell import live_plan, log_plan_vs_shown, longer_side, plan_lean
 from app.services.design_checks import not_the_anchors_kind
-from app.services.room_cart import finished
+from app.services.room_cart import (
+    current_room_products,
+    finished,
+    is_this_room,
+    room_in_cart,
+    room_words,
+)
 from app.taxonomy.complements import Companion
 from app.taxonomy.words import customer_words
 
@@ -195,7 +201,8 @@ def goes_with_tool(schemas: ToolSchemas) -> ZoryTool[GoesWithArgs]:
             if head_id != anchor.product_id:
                 found = await hydrated(services, (head_id,), context)
                 head = found[0] if found else anchor
-            chips = _grid_chips(services, capabilities, anchor, head, work.staged)
+            in_cart = [p for p in products if p.product_id in cart]
+            chips = _grid_chips(services, capabilities, anchor, head, work.staged, in_cart)
             return ToolOutcome(
                 facts={
                     **facts,
@@ -491,13 +498,11 @@ def _grid_chips(
     anchor: ProductCandidate,
     head: ProductCandidate,
     state: AgentStateV1,
+    in_cart: Sequence[ProductCandidate] = (),
 ) -> tuple[GridChip, ...]:
     """The only chips beside a grid of kinds, decided by code (CLAUDE.md 10.3):
     another of the piece's own kind where the reviewed seating data offers it,
-    and the rest of its room when its group grows one - the piece itself, or
-    the first piece it was chosen beside (`head`: the bed a mattress was added
-    beside; `room_pieces_v1.yaml` `grows_a_room`) - with nothing still being
-    chosen for a goal and no room under way."""
+    the room to design, and the cart as a picture."""
     kind = anchor.commerce.subcategory
     if kind is None:
         return ()
@@ -505,33 +510,95 @@ def _grid_chips(
     chips: list[GridChip] = []
     if _another_of_its_kind(services, capabilities, anchor.commerce):
         chips.append(GridChip(offers="another_of_its_kind", name=name, name_ar=name_ar))
-    starter = next(
-        (
-            piece
-            for piece in (anchor, head)
-            if services.room_pieces is not None
-            and piece.commerce.subcategory in services.room_pieces.grows_a_room
-        ),
-        None,
-    )
-    if starter is None:
-        return (*chips, *_visualize_chip(services, anchor, state))
-    kind = starter.commerce.subcategory or kind
-    name, name_ar = customer_words(kind), services.taxonomy.arabic(kind)
+    room = _room_to_design(services, anchor, head, state, in_cart)
+    return (*chips, *room, *_visualize_chip(services, anchor, state))
+
+
+def _room_to_design(
+    services: AgentServices,
+    anchor: ProductCandidate,
+    head: ProductCandidate,
+    state: AgentStateV1,
+    in_cart: Sequence[ProductCandidate],
+) -> tuple[GridChip, ...]:
+    """The room a design would be of, offered beside the grid.
+
+    It starts from a piece that grows a room or belongs to one
+    (`room_pieces_v1.yaml` `grows_a_room`, `one_room`): the piece added, the
+    piece it was chosen beside, else such a piece in the cart that no finished
+    room holds. The room is named only from a fact - a bed is a bedroom's, a
+    sofa the customer placed is that room's; a sofa nobody placed names none
+    ("Design a room around it"); pieces of different or unknown rooms together
+    (a bed and a sofa) name none either ("Design a room") and the designer asks
+    which. Hidden while a goal is still being chosen, and when the room is the
+    one already designed or in the cart - designing it again would replace
+    their design. A room only noted (its size) hides nothing.
+    """
     rooms = services.room_pieces
-    goal_open = any(
-        goal.status is GoalStatus.OPEN and goal.kind is not GoalKind.ROOM for goal in state.goals
+    if rooms is None:
+        return ()
+    if any(g.status is GoalStatus.OPEN and g.kind is not GoalKind.ROOM for g in state.goals):
+        return ()
+    designed = state.room_project
+    designed_here = designed is not None and bool(designed.bundle_items or designed.in_cart)
+    # Pieces whose room is settled - a finished room's, the designed room's -
+    # never make a new room ambiguous.
+    settled = {pid for done in state.finished_rooms for pid in done.product_ids}
+    if designed is not None and designed_here:
+        settled |= {line.product_id for line in designed.bundle_items}
+        settled |= current_room_products(state)
+
+    def starts(piece: ProductCandidate) -> bool:
+        kind = piece.commerce.subcategory
+        return kind in rooms.grows_a_room or rooms.one_room(kind) is not None
+
+    # A piece that grows a room (the bed) leads one that only belongs to one
+    # (the mattress chosen beside it).
+    picked = sorted(
+        (p for p in dict.fromkeys((anchor, head)) if starts(p)),
+        key=lambda p: p.commerce.subcategory not in rooms.grows_a_room,
     )
-    if rooms is not None and not goal_open and state.room_project is None:
-        chips.append(
-            GridChip(
-                offers="whole_room",
-                name=name,
-                name_ar=name_ar,
-                room=room_of_pick(state, starter.product_id) or rooms.one_room(kind),
-            )
-        )
-    return (*chips, *_visualize_chip(services, anchor, state))
+    if not picked:
+        picked = [p for p in reversed(in_cart) if p.product_id not in settled and starts(p)][:1]
+    if not picked:
+        return ()
+    starter = picked[0]
+    starters = {
+        p.product_id: p
+        for p in (*picked, *in_cart)
+        if (p.product_id not in settled or p in picked) and starts(p)
+    }
+    found = {pid: _room_of(services, state, p) for pid, p in starters.items()}
+    room = found.get(starter.product_id)
+    others = {r for pid, r in found.items() if pid != starter.product_id}
+    kind = starter.commerce.subcategory or ""
+    name, name_ar = customer_words(kind), services.taxonomy.arabic(kind)
+    if others - {room}:
+        # Pieces for another room, or of no known room, beside this one's:
+        # which room is asked first.
+        return (GridChip(offers="a_room", name=name, name_ar=name_ar),)
+    same_room = designed is not None and (
+        room is None or is_this_room(room, designed.room_type, designed.room_kind)
+    )
+    if designed_here and same_room:
+        # The room on record is designed: an unplaced piece may well be for
+        # it, and the same room again would replace it.
+        return ()
+    return (GridChip(offers="whole_room", name=name, name_ar=name_ar, room=room),)
+
+
+def _room_of(services: AgentServices, state: AgentStateV1, piece: ProductCandidate) -> str | None:
+    """A cart piece's room, known only from a fact (CLAUDE.md 36): the room it
+    was placed in, the designed room in the cart it belongs to, a finished
+    room, or the one room its kind belongs to."""
+    rooms = services.room_pieces
+    placed = room_of_pick(state, piece.product_id)
+    if placed:
+        return placed
+    in_cart_room = room_in_cart(state)
+    if in_cart_room is not None and piece.product_id in current_room_products(state):
+        return room_words(in_cart_room)
+    return rooms.one_room(piece.commerce.subcategory) if rooms is not None else None
 
 
 def _visualize_chip(

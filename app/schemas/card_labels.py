@@ -232,6 +232,11 @@ class CardLabels(BaseModel):
     """"Design a room around it" - the same chip while its room is not known:
     the designer asks which room first."""
     say_design_room_around: str
+    design_a_room: str
+    """"Design a room" - the chip beside a grid of kinds when the cart holds
+    pieces of different or unknown rooms (a bed and a sofa): the designer
+    asks which room first."""
+    say_design_a_room: str
     visualize_named_room: str
     """"Visualize the {room}" - the chip beside a grid of kinds that draws the
     cart's room as it is now, when the piece's room is known."""
