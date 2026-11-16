@@ -26,7 +26,7 @@ from app.schemas.furniture_finder import SESSION_ID_PATTERN
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import CommerceClassification, ProductDisplay
 from app.schemas.room_photo import ROOM_PHOTO_ID_PATTERN
-from app.schemas.visualization import RenderRoomSpec, RenderView, RoomType
+from app.schemas.visualization import RenderRoomSpec, RenderView, RoomType, VisualizationAccess
 
 # ── browsing ────────────────────────────────────────────────────────────────
 
@@ -255,6 +255,9 @@ class CatalogVisualizeRequest(BaseModel):
     room_photo_id: str | None = Field(default=None, pattern=ROOM_PHOTO_ID_PATTERN)
     """The emptied photo of their own room this session keeps."""
     view: RenderView = RenderView.CORNER
+    visualization: VisualizationAccess = None
+    """Whether this shopper may have a room drawn - set by the gateway, as on
+    a chat message (`ChatRequest.visualization`)."""
     expected_session_revision: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")

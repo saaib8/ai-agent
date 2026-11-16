@@ -32,6 +32,7 @@ _TOOL_PHASES = {
     "compare_products": Phase.SEARCHING,
     "product_details": Phase.SEARCHING,
     "visualize_product": Phase.RENDERING,
+    "visualize_room": Phase.RENDERING,
     "store_shelf": Phase.DESIGNING,
     "measure_fit": Phase.DESIGNING,
     "record_design_notes": Phase.DESIGNING,

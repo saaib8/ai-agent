@@ -2381,6 +2381,23 @@ Design the response so structured product/bundle data can coexist with assistant
 worked on the turn, in order (`handoffs`), ending with the one who replied - the
 console shows "Sara → Salman". Furniture Finder and room renders are Sara's.
 
+**Room pictures go through the chat** (docs/visualization-in-chat-plan.md):
+Sara's `visualize_product` (one product) and `visualize_room` (the room
+package - a camera view, or the room photo the chat keeps), asked for in words
+or by the package's picture buttons (`bundle_action` `visualize`, a fixed
+command). Who may draw is the backend gateway's answer on each request
+(`ChatRequest.visualization`: `allowed`, `sign_up_required`, `limit_reached`,
+`not_included` or `store_unavailable` - its own codes mapped onto these, and an
+unknown value read as no picture, never a refused message); every picture
+checks it before an image is paid for, and refused, the agent says what it
+means. With no answer (the console, local or on stage), every
+deployment but prod draws (`visualization.allowed_without_gateway`); a request
+with the gateway's answer always follows it. Each reply says `can_visualize` (optional for
+the widget: a refused picture is explained, so the buttons may stay). The two picture
+endpoints check the same answer. Every picture - from the chat, a button or
+Browse Catalogue - is remembered (`AgentStateV1.last_render`): every brief shows
+`picture_on_screen`, and "the sofa in that picture" is a `picture_piece`.
+
 `POST /v1/chat/stream` runs the same turn once and sends server-sent events:
 `progress` (`{agent, phase}`, never arguments or products) while the agents
 work, then exactly one `reply` with the committed `ChatResponse`, or one

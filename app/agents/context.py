@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from app.schemas.card_comparison import CardRef
 from app.schemas.language import ReplyLanguage
 from app.schemas.retailer import RetailerContext
+from app.schemas.visualization import VISUALIZATION_ALLOWED
 
 if TYPE_CHECKING:
     from app.agents.services import AgentServices
@@ -33,3 +34,11 @@ class ToolContext:
     customer_said: str | None = None
     """The message the customer typed this turn - never a tap's stand-in words.
     A search they ask for ranks on it as well as on the agent's wording."""
+    session_id: str | None = None
+    """The chat this turn belongs to - only to find what the chat keeps beside
+    its session (its room photo); never shown to a model."""
+    visualization: str = VISUALIZATION_ALLOWED
+    """Whether this shopper may have a room drawn this turn: `allowed`, or the
+    backend's refusal code (`visualization_access`). Every picture tool checks
+    it before an image is paid for; the chat runtime always sets it from the
+    request."""

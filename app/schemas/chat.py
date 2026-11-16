@@ -38,7 +38,7 @@ from app.schemas.product_brief import BriefChip, ProductBrief
 from app.schemas.reply_choice import ReplyChoice
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.support import SupportActionRequest, SupportPresentation
-from app.schemas.visualization import RoomRenderPresentation
+from app.schemas.visualization import RoomRenderPresentation, VisualizationAccess
 
 MAX_MESSAGE_CHARS = 2000
 """A message, not a transcript. Long enough for a detailed request about a
@@ -102,6 +102,17 @@ class ChatRequest(BaseModel):
     no decision model runs, and the store's channels come from its own
     contacts (CLAUDE.md 3.6). Refused where the support agent is off.
     """
+
+    visualization: VisualizationAccess = None
+    """Whether this shopper may have a room drawn, as the backend's gateway
+    worked it out for this request - one of five fixed values: `allowed`,
+    `sign_up_required`, `limit_reached`, `not_included`, `store_unavailable`
+    (`VisualizationAnswer`). The gateway sets it and overwrites whatever the
+    widget sent. Never a reason to refuse the message: an unknown value is read
+    as no picture. Omitted - the console, a direct call - draws locally and on
+    stage, and not in production (`visualization.allowed_without_gateway`).
+    Every picture a turn draws checks it before any image is paid for
+    (docs/visualization-in-chat-plan.md D1, D2)."""
 
     locale: ReplyLanguage | None = None
     """The storefront's language, when it has one. It answers only a turn
@@ -417,6 +428,11 @@ class ChatResponse(BaseModel):
     replied - so a client can show a handoff ("Sara → Salman")."""
 
     labels: CardLabels | None = Field(default=None, exclude_if=lambda v: v is None)
+    can_visualize: bool | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Whether this shopper may have a room drawn now. False: the widget hides
+    every "See it in a room" and room-picture button, so none is offered only
+    to be refused. Omitted where the answer is not known (replies outside a
+    chat turn)."""
     """The words a client draws around the products - card buttons, the picks
     tray, the compare bar, catalogue tiles - in the reply's language, so a
     widget never keeps its own English copy (`app/services/card_labels.py`)."""

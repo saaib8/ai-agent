@@ -64,6 +64,7 @@ from tests.unit.agents.fakes import (
     real_loop,
     tool_context,
 )
+from tests.unit.test_room_visualization import a_room_state
 
 LOOP = real_loop()
 
@@ -909,3 +910,126 @@ async def test_visualize_product_refused_when_visualisation_is_unconfigured() ->
 
     assert outcome.status is ToolStatus.REFUSED
     assert outcome.code == "visualisation_unavailable"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    ["sign_up_required", "limit_reached", "not_included", "store_unavailable", "not_confirmed"],
+)
+async def test_visualize_product_refused_when_the_shopper_may_not_draw(reason: str) -> None:
+    """The gateway said no (or nothing, where an answer is required): refused
+    with its reason before anything is drawn, so no image is paid for."""
+    viz = _FakeVisualizer()
+    outcome = await _call(
+        "visualize_product",
+        {"which": {"kind": "presented_ordinal", "position": 1}},
+        _state(presented=(10, 11)),
+        services=agent_services(
+            references=FakeReferences(default=ResolvedProductReference(product_id=10)),
+            hydration=FakeHydration(available=(10,)),
+            visualizer=cast(Any, viz),
+        ),
+        visualization=reason,
+    )
+
+    assert outcome.status is ToolStatus.REFUSED
+    assert outcome.code == "drawing_not_allowed"
+    assert outcome.facts == {"reason": reason}
+    assert viz.calls == [], "nothing drawn"
+
+
+# ── visualize_room (the room package as a picture) ──────────────────────────
+
+
+class _FakeRoomVisualizer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, bool]] = []
+
+    async def render(
+        self, state: Any, view: Any, context: Any, photo: Any = None
+    ) -> RoomRenderPresentation:
+        self.calls.append((view.value, photo is not None))
+        return RoomRenderPresentation(
+            image_url="data:image/jpeg;base64,eA==",
+            width=1536,
+            height=1024,
+            view=None if photo is not None else view,
+            view_label="Top-down",
+            items=(),
+            source=RenderSource.PACKAGE,
+            room_photo_id="a" * 32 if photo is not None else None,
+        ).with_drawn(((10, 1), (11, 2)))
+
+
+class _FakePhotos:
+    def __init__(self, photo: Any) -> None:
+        self.photo = photo
+
+    async def latest(self, store_id: int, session_id: str) -> Any:
+        return self.photo
+
+
+def _room_services(photo: Any = None) -> tuple[Any, _FakeRoomVisualizer]:
+    viz = _FakeRoomVisualizer()
+    return agent_services(visualizer=cast(Any, viz), room_photos=cast(Any, _FakePhotos(photo))), viz
+
+
+async def test_visualize_room_draws_the_package_and_remembers_it() -> None:
+    services, viz = _room_services()
+    outcome = await _call("visualize_room", {"view": "top_down"}, a_room_state(), services=services)
+
+    assert outcome.status is ToolStatus.OK
+    assert isinstance(outcome.payload, RenderShown)
+    assert viz.calls == [("top_down", False)]
+    record = outcome.state.last_render
+    assert record.source is RenderSource.PACKAGE
+    assert [(p.product_id, p.quantity) for p in record.pieces] == [(10, 1), (11, 2)]
+
+
+async def test_visualize_room_places_it_in_their_photo() -> None:
+    services, viz = _room_services(photo=object())
+    outcome = await _call(
+        "visualize_room",
+        {"in_their_photo": True},
+        a_room_state(),
+        services=services,
+        session_id="s1",
+    )
+
+    assert outcome.status is ToolStatus.OK
+    assert viz.calls == [("corner", True)]
+    assert outcome.state.last_render.in_their_photo
+
+
+async def test_visualize_room_asks_for_a_photo_when_there_is_none() -> None:
+    services, viz = _room_services(photo=None)
+    outcome = await _call(
+        "visualize_room",
+        {"in_their_photo": True},
+        a_room_state(),
+        services=services,
+        session_id="s1",
+    )
+
+    assert outcome.code == "no_room_photo"
+    assert viz.calls == []
+
+
+async def test_visualize_room_needs_a_room() -> None:
+    services, viz = _room_services()
+    outcome = await _call("visualize_room", {}, AgentStateV1(), services=services)
+
+    assert outcome.code == "no_room_to_draw"
+    assert viz.calls == []
+
+
+@pytest.mark.parametrize("reason", ["sign_up_required", "unrecognised"])
+async def test_visualize_room_refused_when_the_shopper_may_not_draw(reason: str) -> None:
+    services, viz = _room_services()
+    outcome = await _call(
+        "visualize_room", {}, a_room_state(), services=services, visualization=reason
+    )
+
+    assert outcome.code == "drawing_not_allowed"
+    assert outcome.facts == {"reason": reason}
+    assert viz.calls == []

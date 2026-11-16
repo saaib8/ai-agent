@@ -12,7 +12,7 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from app.agents.context import ToolContext
 from app.agents.decided_stock import decided, decided_pool, looks_of, with_kinds_beside
@@ -41,6 +41,7 @@ from app.core.exceptions import (
     IntegrationUnavailableError,
     InvalidRequestError,
     LLMResponseInvalidError,
+    NothingToVisualizeError,
 )
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import (
@@ -71,11 +72,13 @@ from app.schemas.resolution import (
     SimilarSearchSeed,
 )
 from app.schemas.retailer import RetailerContext
+from app.schemas.visualization import VISUALIZATION_ALLOWED, RenderView, RoomType
 from app.services.agent_state import (
     add_to_goal,
     apply_update,
     designer_size,
     note_kind_asked,
+    record_render,
     remember_next_sizes,
     take_back,
     turn_down,
@@ -87,6 +90,7 @@ from app.services.grounding_builder import to_grounded_product
 from app.services.liked_look import with_liked_look
 from app.services.product_details import description_for
 from app.services.query_document import ranking_words
+from app.services.room_visualization import render_record
 from app.services.shopper_memory import log_shopper_event
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.words import customer_words
@@ -697,9 +701,7 @@ async def _kinds_that_meet_it(
 ) -> dict[str, Any]:
     """The other kinds of its family with products meeting what they decided -
     regular sofas under a budget no corner sofa meets - most stocked first."""
-    family = chosen.model_copy(
-        update={"commerce_subcategory": None, "alongside_subcategories": ()}
-    )
+    family = chosen.model_copy(update={"commerce_subcategory": None, "alongside_subcategories": ()})
     pool = await decided_pool(services, family, retailer)
     counts: dict[str, int] = {}
     for product in pool:
@@ -1123,11 +1125,105 @@ def details_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
     )
 
 
+def drawing_refused(context: ToolContext) -> ToolOutcome | None:
+    """None when this shopper may have a room drawn; else the refusal, carrying
+    the backend's own reason, before any image is paid for
+    (docs/visualization-in-chat-plan.md D2)."""
+    if context.visualization == VISUALIZATION_ALLOWED:
+        return None
+    return ToolOutcome(
+        status=ToolStatus.REFUSED,
+        code="drawing_not_allowed",
+        facts={"reason": context.visualization},
+    )
+
+
+class VisualizeRoomArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    view: RenderView = Field(
+        default=RenderView.CORNER,
+        description=(
+            "The camera: corner (default), eye_level, isometric or top_down - 'from above' "
+            "is top_down."
+        ),
+    )
+    in_their_photo: bool = Field(
+        default=False,
+        description=(
+            "Place the room in the photo of their own room they uploaded ('put it in my "
+            "room', 'show it in my photo'), instead of an imagined room."
+        ),
+    )
+
+
+def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
+    async def visualize(
+        args: VisualizeRoomArgs, context: ToolContext, work: TurnWork
+    ) -> ToolOutcome:
+        services = context.services
+        if services.visualizer is None:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="visualisation_unavailable")
+        if (refused := drawing_refused(context)) is not None:
+            return refused
+        state = work.staged
+        room = state.room_project
+        if room is None or not room.bundle_items:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_to_draw")
+        photo = None
+        if args.in_their_photo:
+            if services.room_photos is None or context.session_id is None:
+                return ToolOutcome(status=ToolStatus.REFUSED, code="room_photos_unavailable")
+            photo = await services.room_photos.latest(context.retailer.store_id, context.session_id)
+            if photo is None:
+                return ToolOutcome(
+                    status=ToolStatus.REFUSED,
+                    code="no_room_photo",
+                    facts={"ask": "ask them to upload a photo of their room with its button"},
+                )
+        try:
+            render = await services.visualizer.render(state, args.view, context.retailer, photo)
+        except NothingToVisualizeError:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_to_draw")
+        except IntegrationUnavailableError:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="render_failed")
+        kind = room.room_kind
+        record = render_record(
+            render,
+            room_type=RoomType(kind) if kind in {t.value for t in RoomType} else None,
+        )
+        return ToolOutcome(
+            facts={
+                "drew": "the room package",
+                "view": render.view_label,
+                "in_their_photo": photo is not None,
+                "pieces_drawn": len(render.items),
+                "offer": "offer another view, or to place it in their own room",
+            },
+            state=record_render(state, record),
+            payload=RenderShown(render=render),
+        )
+
+    return ZoryTool(
+        name="visualize_room",
+        description=(
+            "Draw the room package they are designing as a picture - 'show me my room', "
+            "'show it from above', 'put it in my photo', or the package's picture buttons. "
+            "The picture shows the room's own pieces, nothing else for sale."
+        ),
+        args=VisualizeRoomArgs,
+        owners=SARA,
+        handler=visualize,
+    )
+
+
 def visualize_product_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
     async def visualize(args: ProductRef, context: ToolContext, work: TurnWork) -> ToolOutcome:
         services = context.services
         if services.visualizer is None:
             return ToolOutcome(status=ToolStatus.REFUSED, code="visualisation_unavailable")
+        if (refused := drawing_refused(context)) is not None:
+            return refused
         product_id = await resolve_product(services, args.which, work, context)
         if isinstance(product_id, ToolOutcome):
             return product_id
@@ -1145,7 +1241,7 @@ def visualize_product_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
                 "staged": product_facts(found[0], None),
                 "offer": "offer to add this piece to the cart, or to explore more options",
             },
-            state=_focused(work.staged, product_id),
+            state=record_render(_focused(work.staged, product_id), render_record(render)),
             payload=RenderShown(render=render),
         )
 
@@ -1554,6 +1650,7 @@ def shopping_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
         more_like_tool(schemas),
         details_tool(schemas),
         visualize_product_tool(schemas),
+        visualize_room_tool(),
         compare_tool(schemas),
         add_to_cart_tool(schemas),
         remove_from_cart_tool(schemas),

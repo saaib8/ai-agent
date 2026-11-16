@@ -18,6 +18,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.visualization import RenderView
+
 
 class BundleAlternativesAction(BaseModel):
     """Show the alternatives for one room piece, so the customer can pick.
@@ -187,6 +189,22 @@ class BundleRemoveAction(BaseModel):
     bundle_ordinal: int = Field(ge=1)
 
 
+class VisualizeRoomAction(BaseModel):
+    """The room package's picture buttons - "Visualize", a camera view, "Place
+    in my room", "Try this view", "Render again": the room drawn as a picture,
+    through the chat (docs/visualization-in-chat-plan.md D3). A fixed command:
+    the turn goes straight to the one agent who draws, and the picture is
+    checked, billed and remembered like one asked for in words."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["visualize"] = "visualize"
+    view: RenderView = RenderView.CORNER
+    in_their_photo: bool = False
+    """Draw it in the photo of their own room this chat keeps - uploaded first
+    with `POST /v1/room-photos`."""
+
+
 BundleActionRequest = Annotated[
     BundleAlternativesAction
     | BundleSwapAction
@@ -198,6 +216,7 @@ BundleActionRequest = Annotated[
     | SwapDismissAction
     | AddPieceAction
     | FinishingTouchesAction
+    | VisualizeRoomAction
     | AddToRoomAction
     | RoomDoneAction
     | AddRoomToCartAction,

@@ -51,6 +51,26 @@ class RoomPhotoStore:
             logger.warning("room_photo_save_failed", error_type=type(exc).__name__)
             raise SessionStoreUnavailableError(dependency="redis") from exc
 
+    async def latest(self, store_id: int, session_id: str) -> RoomPhoto | None:
+        """The room photo this chat keeps - the one uploaded last - or None.
+        For "put it in my photo" typed in the chat, which names no photo id."""
+        key = room_photo_key(store_id, session_id)
+        try:
+            async with asyncio.timeout(self._settings.operation_timeout_s):
+                raw = await self._client.get(key)
+        except TimeoutError as exc:
+            raise SessionStoreUnavailableError(dependency="redis") from exc
+        except RedisError as exc:
+            logger.warning("room_photo_load_failed", error_type=type(exc).__name__)
+            raise SessionStoreUnavailableError(dependency="redis") from exc
+        if raw is None:
+            return None
+        try:
+            return RoomPhoto.model_validate_json(raw)
+        except ValidationError as exc:
+            logger.warning("room_photo_unreadable", error_count=len(exc.errors()))
+            return None
+
     async def load(self, store_id: int, session_id: str, photo_id: str) -> RoomPhoto | None:
         """The room, or None when it expired, was replaced, never existed or is
         someone else's.

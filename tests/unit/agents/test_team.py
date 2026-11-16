@@ -584,3 +584,32 @@ async def test_other_agents_keep_the_short_limit() -> None:
     await team.run(_turn("show me sofas"), trace)
 
     assert trace.room_design is False
+
+
+def test_a_room_picture_button_runs_sara_s_tool() -> None:
+    """The room package's picture buttons go through the chat as a fixed
+    command: straight to the one agent who draws, with the camera and photo
+    the button named (docs/visualization-in-chat-plan.md D3)."""
+    from app.agents.screen_actions import tap_of
+    from app.schemas.chat import ChatRequest
+
+    from tests.unit.agents.fakes import real_loop
+
+    request = ChatRequest.model_validate(
+        {
+            "session_id": "web-0123456789ab",
+            "store_id": 50,
+            "message": "Show my room from above",
+            "bundle_action": {"kind": "visualize", "view": "top_down", "in_their_photo": True},
+        }
+    )
+    tap = tap_of(request)
+
+    assert tap is not None and tap.runs == "visualize_room"
+    assert tap.event.view == "top_down" and tap.event.in_their_photo is True
+    owners = {
+        agent
+        for agent in AgentPersona
+        if tap.runs in {t.name for t in real_loop().tools_for(agent)}
+    }
+    assert owners == {AgentPersona.SARA}, "only Sara draws"

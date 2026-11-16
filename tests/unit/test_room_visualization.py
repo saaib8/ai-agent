@@ -669,6 +669,7 @@ def a_turn_runtime(
             SessionSettings(max_history_messages=6, summary=NO_SUMMARY),
             photos or FakeRoomPhotos(),  # type: ignore[arg-type]
             arabic_replies=arabic_replies,
+            draws_without_gateway=True,
         ),
         parts,
     )
@@ -690,9 +691,20 @@ class TestTurn:
         assert reply.agent is AgentPersona.SARA, "room visualisation is Sara's"
         assert reply.presentation is not None and reply.presentation.render is not None
         saved = sessions.saved[(STORE, SESSION)]
-        assert saved.state == state, "a picture is not a fact about the room"
+        record = saved.state.last_render
+        assert (
+            saved.state.model_copy(
+                update={"last_render": None, "product_interaction": state.product_interaction}
+            )
+            == state
+        ), "a picture is not a fact about the room - only remembered as a picture"
+        assert record is not None and record.source is RenderSource.PACKAGE
+        assert record.view is RenderView.EYE_LEVEL and not record.in_their_photo
+        assert [p.product_id for p in record.pieces], "which products were drawn"
         user, assistant = saved.conversation.messages
-        assert user.content == "[Asked to see the room package visualised, eye-level view]"
+        assert user.content.startswith(
+            "[Asked to see the room package visualised, eye-level view: "
+        ), "the record names the pieces drawn"
         assert assistant.content == "Here's your bedroom, at eye level."
 
     async def test_a_stale_screen_is_refused_before_an_image_is_paid_for(self) -> None:

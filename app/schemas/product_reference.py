@@ -131,6 +131,16 @@ class SeenBefore(BaseModel):
     position: int = Field(ge=1)
 
 
+class PicturePiece(BaseModel):
+    """ "the sofa in that picture" - a piece of the newest room picture,
+    numbered as the brief's `picture_on_screen` lists them."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["picture_piece"] = "picture_piece"
+    position: int = Field(ge=1)
+
+
 class PresentedAttributeMatch(BaseModel):
     """ "the beige one" - resolved against freshly hydrated presented products."""
 
@@ -177,6 +187,7 @@ ProductReferenceSelector = Annotated[
     | LikedProduct
     | TurnedDownProduct
     | SeenBefore
+    | PicturePiece
     | PresentedAttributeMatch
     | PresentedExtremum,
     BeforeValidator(_must_declare_its_kind),
