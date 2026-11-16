@@ -188,6 +188,8 @@ def _grid_choices(chips: Sequence[GridChip], language: ReplyLanguage) -> tuple[R
     for chip in chips:
         if chip.offers == "another_of_its_kind":
             label, said = labels.another_kind, labels.say_another_kind
+        elif chip.offers == "a_room":
+            label, said = labels.design_a_room, labels.say_design_a_room
         elif chip.offers == "visualize":
             if chip.room is not None:
                 label, said = labels.visualize_named_room, labels.say_visualize_named_room

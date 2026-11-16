@@ -287,7 +287,8 @@ def test_a_mattress_chosen_beside_a_bed_offers_the_bedroom() -> None:
     alone = _grid_chips(services, cast(Any, None), mattress, mattress, _cart(9))
 
     assert [(c.offers, c.name, c.room) for c in beside_bed] == [("whole_room", "bed", "bedroom")]
-    assert alone == (), "a mattress alone starts no room"
+    # A mattress belongs to a bedroom: alone, it offers the bedroom too.
+    assert [(c.offers, c.room) for c in alone] == [("whole_room", "bedroom")]
 
 
 def test_where_pictures_are_set_up_the_grid_offers_to_visualize_the_cart() -> None:

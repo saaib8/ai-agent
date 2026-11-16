@@ -28,7 +28,7 @@ class GridChip(_Payload):
     """A chip code draws beside a grid of kinds (CLAUDE.md 10.3): another of the
     piece's own kind, or the rest of its room - worded from the labels."""
 
-    offers: Literal["another_of_its_kind", "whole_room", "visualize"]
+    offers: Literal["another_of_its_kind", "whole_room", "a_room", "visualize"]
     name: str
     """The piece's kind in customer words."""
     name_ar: str | None = None
