@@ -189,6 +189,9 @@ class Rooms:
     def __init__(self) -> None:
         self.swaps: list[tuple[int, int, bool]] = []
 
+    async def current(self, state: Any, context: Any) -> RoomOutcome | None:
+        return None
+
     async def swap(
         self, state: Any, context: Any, piece: int, option: int, *, allow_over_budget: bool
     ) -> RoomOutcome:
@@ -272,13 +275,18 @@ async def test_a_room_goes_into_the_cart_whole_even_past_the_limit() -> None:
             room_type="living room", bundle_items=lines, next_bundle_line_id=5
         )
     )
-    services = agent_services(max_picks=2, hydration=FakeHydration(available=(101, 102, 103, 104)))
+    services = dataclasses.replace(
+        agent_services(max_picks=2, hydration=FakeHydration(available=(101, 102, 103, 104))),
+        rooms=cast(RoomEngine, Rooms()),
+    )
 
     outcome = await _call("add_room_to_cart", {}, state, services=services)
 
     # Half a room is not a choice they made (CLAUDE.md 36).
     assert len(outcome.state.product_interaction.selected_product_ids) == 4
     assert outcome.code is None
+    # Its styling comes with it, so it is offered whatever budget is left.
+    assert "could_add" in outcome.facts["room_could_add"]
 
 
 # ── the turn's last call is the reply's ─────────────────────────────────────
@@ -990,10 +998,11 @@ async def test_visualize_room_places_it_in_their_photo() -> None:
     services, viz = _room_services(photo=object())
     outcome = await _call(
         "visualize_room",
-        {"in_their_photo": True},
+        {},
         a_room_state(),
         services=services,
         session_id="s1",
+        with_their_photo=True,
     )
 
     assert outcome.status is ToolStatus.OK
@@ -1001,14 +1010,23 @@ async def test_visualize_room_places_it_in_their_photo() -> None:
     assert outcome.state.last_render.in_their_photo
 
 
-async def test_visualize_room_asks_for_a_photo_when_there_is_none() -> None:
+async def test_a_typed_my_room_draws_the_design_even_with_a_photo_kept() -> None:
+    services, viz = _room_services(photo=object())
+    outcome = await _call("visualize_room", {}, a_room_state(), services=services, session_id="s1")
+
+    assert outcome.status is ToolStatus.OK
+    assert viz.calls == [("corner", False)]
+
+
+async def test_visualize_room_refuses_a_photo_upload_that_did_not_arrive() -> None:
     services, viz = _room_services(photo=None)
     outcome = await _call(
         "visualize_room",
-        {"in_their_photo": True},
+        {},
         a_room_state(),
         services=services,
         session_id="s1",
+        with_their_photo=True,
     )
 
     assert outcome.code == "no_room_photo"

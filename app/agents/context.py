@@ -37,6 +37,10 @@ class ToolContext:
     session_id: str | None = None
     """The chat this turn belongs to - only to find what the chat keeps beside
     its session (its room photo); never shown to a model."""
+    with_their_photo: bool = False
+    """The customer uploaded a photo of their room for this picture: the
+    upload button's tap says so. Their photo is used only then - never on a
+    typed "my room", which means the room being designed."""
     visualization: str = VISUALIZATION_ALLOWED
     """Whether this shopper may have a room drawn this turn: `allowed`, or the
     backend's refusal code (`visualization_access`). Every picture tool checks

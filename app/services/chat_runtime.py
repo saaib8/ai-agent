@@ -188,6 +188,7 @@ class ChatRuntime:
                 language=language,
                 tap_cards=tap.cards if tap is not None else (),
                 tapped=tap.event.button if tap is not None else None,
+                with_their_photo=bool(tap is not None and tap.event.in_their_photo),
                 customer_said=request.message if tap is None else None,
                 visualization=self.visualization(request),
                 session_id=request.session_id,

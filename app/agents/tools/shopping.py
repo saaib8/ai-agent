@@ -1148,13 +1148,6 @@ class VisualizeRoomArgs(BaseModel):
             "is top_down."
         ),
     )
-    in_their_photo: bool = Field(
-        default=False,
-        description=(
-            "Place the room in the photo of their own room they uploaded ('put it in my "
-            "room', 'show it in my photo'), instead of an imagined room."
-        ),
-    )
 
 
 def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
@@ -1171,16 +1164,13 @@ def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
         if room is None or not room.bundle_items:
             return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_to_draw")
         photo = None
-        if args.in_their_photo:
+        if context.with_their_photo:
+            # Only when they uploaded it for this picture (the upload's tap).
             if services.room_photos is None or context.session_id is None:
                 return ToolOutcome(status=ToolStatus.REFUSED, code="room_photos_unavailable")
             photo = await services.room_photos.latest(context.retailer.store_id, context.session_id)
             if photo is None:
-                return ToolOutcome(
-                    status=ToolStatus.REFUSED,
-                    code="no_room_photo",
-                    facts={"ask": "ask them to upload a photo of their room with its button"},
-                )
+                return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_photo")
         try:
             render = await services.visualizer.render(state, args.view, context.retailer, photo)
         except NothingToVisualizeError:
@@ -1198,7 +1188,11 @@ def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
                 "view": render.view_label,
                 "in_their_photo": photo is not None,
                 "pieces_drawn": len(render.items),
-                "offer": "offer another view, or to place it in their own room",
+                "offer": (
+                    "offer another view"
+                    if room.in_cart
+                    else "offer another view, or to add the whole room to their cart"
+                ),
             },
             state=record_render(state, record),
             payload=RenderShown(render=render),
@@ -1208,7 +1202,8 @@ def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
         name="visualize_room",
         description=(
             "Draw the room package they are designing as a picture - 'show me my room', "
-            "'show it from above', 'put it in my photo', or the package's picture buttons. "
+            "'show it in my room from above', or the package's picture buttons. 'My room' is "
+            "this design: their own photo is used only when they upload one with the button. "
             "The picture shows the room's own pieces, nothing else for sale."
         ),
         args=VisualizeRoomArgs,
