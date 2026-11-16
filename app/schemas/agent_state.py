@@ -28,6 +28,7 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.acquisition import BundleAcquisition
+from app.schemas.chat_photo import ChatPhotoState
 from app.schemas.design import (
     MAX_DIRECTION_AVOID,
     MAX_DIRECTION_COLOURS,
@@ -1247,6 +1248,11 @@ class AgentStateV1(BaseModel):
     last_render: RenderRecord | None = Field(default=None, exclude_if=lambda v: v is None)
     """The newest room picture shown, whichever way it was asked for. Left out
     while unset, so every saved session still reads."""
+
+    chat_photo: ChatPhotoState | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The photo sent in this chat - what it is, never the picture
+    (docs/photos-and-cart-pictures-plan.md D2). Left out while unset, so every
+    saved session still reads."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

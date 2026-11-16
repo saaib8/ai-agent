@@ -93,37 +93,60 @@ class RoomPhotoService:
             upscale_to=settings.room_photo_upscale_to,
         )
         await self._check(prepared.jpeg, context)
-        frame = Frame(width=prepared.width, height=prepared.height)
-        try:
-            answer = await self._emptier.generate(
-                EMPTY_ROOM_PROMPT,
-                [ImageReference(data=prepared.jpeg, caption="Image 1: the room to empty")],
-                frame,
-            )
-            emptied = fit_exactly(answer.data, frame, _ROOM_JPEG_QUALITY)
-        except RenderUnavailableError as exc:
-            raise RoomPhotoUnavailableError(step="empty") from exc
-
-        photo = RoomPhoto(
-            photo_id=uuid.uuid4().hex,
-            width=frame.width,
-            height=frame.height,
-            jpeg_b64=base64.b64encode(emptied).decode("ascii"),
-        )
+        photo, provider = await self._emptied(prepared.jpeg, prepared.width, prepared.height)
         await self._photos.save(context.store_id, session_id, photo)
         logger.info(
             "room_photo_prepared",
             store_id=context.store_id,
-            width=frame.width,
-            height=frame.height,
-            provider=answer.provider,
-            image_bytes=len(emptied),
+            width=photo.width,
+            height=photo.height,
+            provider=provider,
+            image_bytes=len(photo.jpeg_b64) * 3 // 4,
             prompt_version=VERSION,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return RoomPhotoResponse(
             room_photo_id=photo.photo_id, width=photo.width, height=photo.height
         )
+
+    async def is_room(self, jpeg: bytes, context: RetailerContext) -> bool | None:
+        """The room check's answer for a photo already prepared - None when the
+        check could not be made, which is never "not a room"."""
+        try:
+            await self._check(jpeg, context)
+        except NotARoomError:
+            return False
+        except RoomPhotoUnavailableError:
+            return None
+        return True
+
+    async def empty_and_keep(
+        self, jpeg: bytes, width: int, height: int, *, session_id: str, context: RetailerContext
+    ) -> RoomPhoto:
+        """Empty a photo already checked as a room and keep it for the chat -
+        the canvas their cart is drawn into."""
+        photo, _ = await self._emptied(jpeg, width, height)
+        await self._photos.save(context.store_id, session_id, photo)
+        return photo
+
+    async def _emptied(self, jpeg: bytes, width: int, height: int) -> tuple[RoomPhoto, str]:
+        frame = Frame(width=width, height=height)
+        try:
+            answer = await self._emptier.generate(
+                EMPTY_ROOM_PROMPT,
+                [ImageReference(data=jpeg, caption="Image 1: the room to empty")],
+                frame,
+            )
+            emptied = fit_exactly(answer.data, frame, _ROOM_JPEG_QUALITY)
+        except RenderUnavailableError as exc:
+            raise RoomPhotoUnavailableError(step="empty") from exc
+        photo = RoomPhoto(
+            photo_id=uuid.uuid4().hex,
+            width=frame.width,
+            height=frame.height,
+            jpeg_b64=base64.b64encode(emptied).decode("ascii"),
+        )
+        return photo, answer.provider
 
     async def _check(self, jpeg: bytes, context: RetailerContext) -> None:
         """Refuse a picture that is not a room, before it is emptied.

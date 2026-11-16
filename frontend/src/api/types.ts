@@ -568,7 +568,7 @@ export interface RoomRenderItem {
 /** A package render pictures the conversation's room; a catalogue render,
  *  pieces the customer picked; a product render, one tapped product staged in
  *  a room of its own. Only a package render can go out of date. */
-export type RenderSource = 'package' | 'catalog' | 'product'
+export type RenderSource = 'package' | 'catalog' | 'product' | 'cart'
 
 export type RoomType =
   | 'living_room'
@@ -966,6 +966,9 @@ export interface ChatRequest {
   bundle_action?: BundleAction
   search_action?: SearchAction
   product_action?: ProductAction
+  /** A photo sent with the message, base64 JPEG/PNG/WebP, no data: prefix.
+   *  The message may then be empty: the photo alone is the turn. */
+  photo?: string
 }
 
 export interface ErrorBody {

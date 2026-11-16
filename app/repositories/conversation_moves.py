@@ -1,7 +1,7 @@
 """Where a guest's chat moves under the account they signed in to.
 
 Every Redis command for the move is here, and the move is one transaction: the
-chat, its room photo and its finder photos are written under the new name and
+chat, its photo, room photo and finder photos are written under the new name and
 removed from the old one together, or not at all. Each key comes from the store
 that owns it (`session_key`, `room_photo_key`, `photo_key`), so no address is
 spelled a second time. The finder's own local sign-in (`finder-visitor`) does
@@ -22,6 +22,7 @@ from redis.exceptions import RedisError, WatchError
 from app.core.config import SessionSettings
 from app.core.exceptions import SessionConflictError, SessionStoreUnavailableError
 from app.core.logging import get_logger
+from app.repositories.chat_photos import chat_photo_key
 from app.repositories.finder_photos import photo_key
 from app.repositories.room_photos import room_photo_key
 from app.repositories.sessions import SHOPPER_CART_KEY_TEMPLATE, session_key, shopper_of
@@ -107,8 +108,8 @@ class ConversationMoves:
         return AdoptionOutcome.MOVED
 
     async def _beside(self, store_id: int, session_id: str) -> list[str]:
-        """The chat's room photo and finder photos: every key that extends its own."""
-        keys = [room_photo_key(store_id, session_id)]
+        """The chat's photo, room photo and finder photos: every key that extends its own."""
+        keys = [chat_photo_key(store_id, session_id), room_photo_key(store_id, session_id)]
         # The session id admits no glob character, so this matches its photos only.
         async for key in self._client.scan_iter(match=photo_key(store_id, session_id, "*")):
             keys.append(key if isinstance(key, str) else key.decode())

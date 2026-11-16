@@ -99,6 +99,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         kind_asked=state.kind_asked,
         cross_sell_plan=state.cross_sell_plan,
         last_render=state.last_render,
+        chat_photo=state.chat_photo,
         reply_language=state.reply_language,
     )
 
@@ -181,6 +182,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         kind_asked=state.kind_asked,
         cross_sell_plan=state.cross_sell_plan,
         last_render=state.last_render,
+        chat_photo=state.chat_photo,
         reply_language=state.reply_language,
     )
 
@@ -249,6 +251,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         kind_asked=state.kind_asked,
         cross_sell_plan=state.cross_sell_plan,
         last_render=state.last_render,
+        chat_photo=state.chat_photo,
         reply_language=state.reply_language,
     )
 

@@ -160,6 +160,28 @@ class FurnitureFinderService:
         The photo is prepared before anything is asked of the platform, so an
         unusable upload is refused without a scan.
         """
+        photo, unmatched = await self.detect(
+            data, session_id=session_id, context=context, shopper=shopper
+        )
+        return FinderPhotoResponse(
+            image_id=photo.image_id,
+            width=photo.width,
+            height=photo.height,
+            objects=tuple(view_of(o) for o in photo.objects),
+            unmatched_count=unmatched,
+        )
+
+    async def detect(
+        self,
+        data: bytes,
+        *,
+        session_id: str,
+        context: RetailerContext,
+        shopper: ShopperCredentials | None = None,
+    ) -> tuple[FinderPhoto, int]:
+        """Detect what is in a photo and keep it for the pick that follows -
+        the photo, and how many pieces were left out as nothing this store
+        sells is like them."""
         started = time.perf_counter()
         settings = self._settings
         prepared = prepare_upload(
@@ -195,13 +217,7 @@ class FurnitureFinderService:
             forwarded_shopper=shopper is not None,
             elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         )
-        return FinderPhotoResponse(
-            image_id=photo.image_id,
-            width=photo.width,
-            height=photo.height,
-            objects=tuple(view_of(o) for o in objects),
-            unmatched_count=unmatched,
-        )
+        return photo, unmatched
 
     async def _scan(
         self,
@@ -463,61 +479,7 @@ class FinderTurnRuntime:
     def _committed_state(
         self, state: AgentStateV1, products: Sequence[ProductCandidate]
     ) -> AgentStateV1 | None:
-        """The session state with these products as the list on screen.
-
-        A presented list must belong to an active search - that is what lets
-        the resolver trust "the second one" (M10). So the search criteria are
-        seeded from the closest match whose reviewed classification can seed
-        one, through the same builder "something similar to this" uses.
-
-        None when there is nothing to present, or when no match carries a
-        usable classification. The customer still sees the cards; they just
-        cannot be addressed by position, which is the honest outcome when no
-        search could honestly be recorded behind them.
-        """
-        if not products:
-            return None
-        seed = next(
-            (
-                outcome
-                for outcome in (self._similar.build(p) for p in products)
-                if isinstance(outcome, SimilarSearchSeed)
-            ),
-            None,
-        )
-        if seed is None:
-            logger.warning("finder_results_unseedable", product_count=len(products))
-            return None
-
-        # The builder excludes its reference product, which is right for
-        # "others like this one" and wrong here: the closest match is on
-        # screen, and the customer has turned nothing down.
-        resolved = seed.resolved.model_copy(
-            update={"request": seed.resolved.request.model_copy(update={"exclude_product_ids": ()})}
-        )
-        composed = self._composer.seed_new_task(
-            resolved,
-            room_preferences=(state.room_project.design_preferences if state.room_project else ()),
-            customer_defaults=state.customer_preferences.semantic_preferences,
-            revision=state.active_search.revision if state.active_search else NO_RESULTS_REVISION,
-        )
-        intent = composed.candidate.semantic_intent
-        promoted = apply_update(
-            state,
-            AgentStateUpdate(
-                active_search=ActiveSearchUpdate(
-                    request=composed.candidate.request,
-                    semantics=composed.candidate.semantics,
-                    semantic_preferences=ReplaceItems(
-                        items=composed.candidate.semantic_preferences
-                    ),
-                    semantic_intent=(
-                        ClearSemanticIntent() if intent is None else SetSemanticIntent(value=intent)
-                    ),
-                )
-            ),
-        )
-        return commit_search_results(promoted, tuple(p.product_id for p in products))
+        return finder_results_state(state, products, self._similar, self._composer)
 
     async def _persist(
         self,
@@ -547,6 +509,67 @@ class FinderTurnRuntime:
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def finder_results_state(
+    state: AgentStateV1,
+    products: Sequence[ProductCandidate],
+    similar: SimilarSearchBuilder,
+    composer: SearchRefinementComposer,
+) -> AgentStateV1 | None:
+    """The session state with these products as the list on screen.
+
+    A presented list must belong to an active search - that is what lets
+    the resolver trust "the second one" (M10). So the search criteria are
+    seeded from the closest match whose reviewed classification can seed
+    one, through the same builder "something similar to this" uses.
+
+    None when there is nothing to present, or when no match carries a
+    usable classification. The customer still sees the cards; they just
+    cannot be addressed by position, which is the honest outcome when no
+    search could honestly be recorded behind them.
+    """
+    if not products:
+        return None
+    seed = next(
+        (
+            outcome
+            for outcome in (similar.build(p) for p in products)
+            if isinstance(outcome, SimilarSearchSeed)
+        ),
+        None,
+    )
+    if seed is None:
+        logger.warning("finder_results_unseedable", product_count=len(products))
+        return None
+
+    # The builder excludes its reference product, which is right for
+    # "others like this one" and wrong here: the closest match is on
+    # screen, and the customer has turned nothing down.
+    resolved = seed.resolved.model_copy(
+        update={"request": seed.resolved.request.model_copy(update={"exclude_product_ids": ()})}
+    )
+    composed = composer.seed_new_task(
+        resolved,
+        room_preferences=(state.room_project.design_preferences if state.room_project else ()),
+        customer_defaults=state.customer_preferences.semantic_preferences,
+        revision=state.active_search.revision if state.active_search else NO_RESULTS_REVISION,
+    )
+    intent = composed.candidate.semantic_intent
+    promoted = apply_update(
+        state,
+        AgentStateUpdate(
+            active_search=ActiveSearchUpdate(
+                request=composed.candidate.request,
+                semantics=composed.candidate.semantics,
+                semantic_preferences=ReplaceItems(items=composed.candidate.semantic_preferences),
+                semantic_intent=(
+                    ClearSemanticIntent() if intent is None else SetSemanticIntent(value=intent)
+                ),
+            )
+        ),
+    )
+    return commit_search_results(promoted, tuple(p.product_id for p in products))
 
 
 def _without_cards(state: AgentStateV1) -> AgentStateV1:

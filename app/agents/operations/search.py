@@ -59,6 +59,12 @@ class SearchRunner:
         self._composer = composer
         self._seating = seating
 
+    @property
+    def composer(self) -> SearchRefinementComposer:
+        """How a search is recorded as the one on screen - shared with the
+        finder, whose matches become that search too."""
+        return self._composer
+
     async def new(
         self,
         resolved: ResolvedSearch,

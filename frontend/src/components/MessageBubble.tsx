@@ -39,7 +39,7 @@ export function UserBubble({
 }: {
   text: string
   rejected?: RejectedRef
-  /** A photo they shared with the message - their room. */
+  /** A photo they sent with the message. */
   imageUrl?: string
 }) {
   // A "Not this one" tap: show the product that was dismissed, so the thread
@@ -74,13 +74,16 @@ export function UserBubble({
       {imageUrl && (
         <img
           src={imageUrl}
-          alt="Your room"
+          alt="Your photo"
           className="max-h-56 max-w-[70%] rounded-2xl rounded-br-md border border-line object-cover shadow-card"
         />
       )}
-      <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">
-        {text}
-      </div>
+      {/* A photo sent on its own has no words: no empty bubble under it. */}
+      {text && (
+        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">
+          {text}
+        </div>
+      )}
     </div>
   )
 }

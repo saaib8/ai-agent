@@ -41,6 +41,12 @@ export default function App() {
   const chat = useChat()
   const { health, check } = useHealth(config.config.apiBase)
   const [draft, setDraft] = useState('')
+  // A photo attached to the next message, and its preview while it waits.
+  const [photo, setPhoto] = useState<File | null>(null)
+  const photoUrl = useMemo(() => (photo ? URL.createObjectURL(photo) : null), [photo])
+  useEffect(() => () => {
+    if (photoUrl) URL.revokeObjectURL(photoUrl)
+  }, [photoUrl])
   // A swap-in-progress: the customer tapped "Swap" on a room piece and is now
   // choosing a replacement from the alternatives on screen.
   const [swap, setSwap] = useState<SwapContext | null>(null)
@@ -124,22 +130,19 @@ export default function App() {
   const handleSend = useCallback(
     (text: string) => {
       const trimmed = text.trim()
-      if (!trimmed || chat.sending) return
+      // A photo goes with the message, or alone: the assistant decides what to
+      // do with it - find furniture like it, or show the cart in it.
+      if ((!trimmed && !photo) || chat.sending) return
       setSwap(null) // a freely typed message ends any swap in progress
-      void chat.send(trimmed, config.config)
+      void chat.send(trimmed, config.config, photo ? { photo } : undefined)
       setDraft('')
+      setPhoto(null)
     },
-    [chat, config.config],
+    [chat, config.config, photo],
   )
 
-  const handlePhoto = useCallback(
-    (file: File) => {
-      if (chat.sending) return
-      setSwap(null) // a new photo moves the conversation on, like a message
-      void chat.uploadPhoto(file, config.config)
-    },
-    [chat, config.config],
-  )
+  // The photo button attaches a photo to the next message; nothing is sent yet.
+  const handlePhoto = useCallback((file: File) => setPhoto(file), [])
 
   const handlePickObject = useCallback(
     (photoTurnId: string, imageId: string, object: FinderObject) => {
@@ -702,6 +705,8 @@ export default function App() {
           onSend={handleSend}
           onStop={chat.stop}
           onPhoto={handlePhoto}
+          photoUrl={photoUrl}
+          onClearPhoto={() => setPhoto(null)}
           onPickObject={handlePickObject}
           swapRole={swap?.role ?? null}
           onSwapStart={handleSwapStart}

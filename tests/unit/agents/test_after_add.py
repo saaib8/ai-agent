@@ -288,3 +288,30 @@ def test_a_mattress_chosen_beside_a_bed_offers_the_bedroom() -> None:
 
     assert [(c.offers, c.name, c.room) for c in beside_bed] == [("whole_room", "bed", "bedroom")]
     assert alone == (), "a mattress alone starts no room"
+
+
+def test_where_pictures_are_set_up_the_grid_offers_to_visualize_the_cart() -> None:
+    from types import SimpleNamespace
+    from typing import cast
+
+    from app.agents.services import AgentServices
+    from app.agents.tools.sales import _grid_chips
+    from app.taxonomy.rooms import load_room_pieces
+
+    services = cast(
+        AgentServices,
+        SimpleNamespace(
+            taxonomy=TAXONOMY,
+            seating=SEATING,
+            room_pieces=load_room_pieces(taxonomy=TAXONOMY, seating=SEATING),
+            visualizer=object(),
+        ),
+    )
+    bed, lamp = _product(BED, subcategory="bed"), _product(9, subcategory="floor-lamp")
+
+    # A bed's room is known from its kind; a lamp's is not, so the cart is offered.
+    with_bed = _grid_chips(services, cast(Any, None), bed, bed, _cart(BED))
+    with_lamp = _grid_chips(services, cast(Any, None), lamp, lamp, _cart(9))
+
+    assert ("visualize", "bedroom") in [(c.offers, c.room) for c in with_bed]
+    assert [(c.offers, c.room) for c in with_lamp] == [("visualize", None)]

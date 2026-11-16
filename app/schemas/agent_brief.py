@@ -319,6 +319,21 @@ class PictureBrief(_Brief):
     view: str | None = None
 
 
+class PhotoBrief(_Brief):
+    """The photo sent in this chat - what it is, never the picture
+    (docs/photos-and-cart-pictures-plan.md D2, D3)."""
+
+    sent_now: bool
+    """It came with this message - "this" in their words is this photo."""
+    is_room: Literal["yes", "no", "not known"]
+    """The room check's answer. "not known" is never "not a room"."""
+    can_show: Literal["the designed room", "the cart", "nothing"]
+    """What could be drawn into it, when it is a room."""
+    pieces_found: tuple[str, ...] | None = None
+    """What the finder found in it, numbered as `find_in_photo`'s `number`
+    names them ("2: carpet"), once it looked - in the detector's words."""
+
+
 class SessionBrief(_Brief):
     language: str
     store_currency: str | None = None
@@ -346,6 +361,8 @@ class SessionBrief(_Brief):
     chat or an earlier one - what a `seen_before` reference names."""
     picture_on_screen: PictureBrief | None = None
     """The newest room picture they were shown, however it was asked for."""
+    photo_on_record: PhotoBrief | None = None
+    """The photo they sent in this chat, when there is one."""
     taste: TasteBrief | None = None
     designer_plan: DesignerPlanBrief | None = None
     """Nora's plan beside their newest pick, while it is their newest: a

@@ -40,6 +40,9 @@ from app.taxonomy.seating import SeatingSemantics
 
 if TYPE_CHECKING:
     from app.repositories.room_photos import RoomPhotoStore
+    from app.services.chat_photo import ChatPhotoService
+    from app.services.furniture_finder import FurnitureFinderService
+    from app.services.room_photo import RoomPhotoService
     from app.services.room_visualization import RoomVisualizer
 
 
@@ -69,8 +72,17 @@ class AgentServices:
     """Draws a room picture - one product (visualize_product) or the room
     package (visualize_room); None when visualisation is not configured."""
     room_photos: RoomPhotoStore | None = None
-    """The room photo each chat keeps, for "put it in my photo"
+    """The room photo each chat keeps, for the old room photo upload's taps
     (visualize_room); None when room photos are not configured."""
+    chat_photos: ChatPhotoService | None = None
+    """The photo sent with a chat message: received before the turn, read by
+    the finder and drawn into (docs/photos-and-cart-pictures-plan.md D2)."""
+    finder: FurnitureFinderService | None = None
+    """Finds furniture like a piece in the chat's photo (find_in_photo); None
+    where the finder is not configured."""
+    room_photo_service: RoomPhotoService | None = None
+    """Empties a chat photo checked as a room, the first time their cart is
+    drawn into it; None when room photos are off."""
     best_sellers: BestSellerService | None = None
     """Which products are best sellers, asked for by the customer only."""
     support: SupportService | None = None

@@ -7,6 +7,8 @@ Store scope and product identity never pass through a model.
 
 from __future__ import annotations
 
+import base64
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
@@ -38,10 +40,16 @@ from app.agents.tools.schemas import ToolSchemas
 from app.agents.tools.shelf import kind_on_shelf
 from app.agents.work import ToolStatus, TurnWork
 from app.core.exceptions import (
+    DetectionUnavailableError,
+    FinderAccessRefusedError,
+    FinderImageNotFoundError,
+    ImageRejectedError,
     IntegrationUnavailableError,
     InvalidRequestError,
     LLMResponseInvalidError,
     NothingToVisualizeError,
+    RoomPhotoUnavailableError,
+    VisualSearchUnavailableError,
 )
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import (
@@ -51,7 +59,8 @@ from app.schemas.agent_updates import AgentStateUpdate, ProductInteractionUpdate
 from app.schemas.comparison import MAX_COMPARED_PRODUCTS
 from app.schemas.design import DesignDirection, NextSize
 from app.schemas.discovery import ProductSearchRequest, ProductSort
-from app.schemas.grounding import GroundedProduct
+from app.schemas.furniture_finder import DetectedObject
+from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding, SearchOutcome
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import EligibleProduct, ProductCandidate, ProductListing
 from app.schemas.product_reference import PresentedOrdinal, ProductReferenceSelector
@@ -66,12 +75,14 @@ from app.schemas.query import (
     UnsupportedDimensionRequirement,
     UnsupportedRequirement,
 )
+from app.schemas.relaxation import StopReason
 from app.schemas.resolution import (
     ComparisonUnavailable,
     ResolvedProductReference,
     SimilarSearchSeed,
 )
 from app.schemas.retailer import RetailerContext
+from app.schemas.room_photo import RoomPhoto
 from app.schemas.visualization import VISUALIZATION_ALLOWED, RenderView, RoomType
 from app.services.agent_state import (
     add_to_goal,
@@ -80,17 +91,27 @@ from app.services.agent_state import (
     note_kind_asked,
     record_render,
     remember_next_sizes,
+    tag_pick_rooms,
     take_back,
     turn_down,
+)
+from app.services.cart_picture import (
+    AskProducts,
+    AskRoom,
+    DrawCart,
+    DrawDesign,
+    NothingToDraw,
+    what_to_draw,
 )
 from app.services.cross_sell import live_plan, plan_lean
 from app.services.design_checks import figure_free, stocked_direction
 from app.services.fit import room_fit
+from app.services.furniture_finder import finder_results_state
 from app.services.grounding_builder import to_grounded_product
 from app.services.liked_look import with_liked_look
 from app.services.product_details import description_for
 from app.services.query_document import ranking_words
-from app.services.room_visualization import render_record
+from app.services.room_visualization import cart_room, render_record
 from app.services.shopper_memory import log_shopper_event
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.words import customer_words
@@ -1148,6 +1169,77 @@ class VisualizeRoomArgs(BaseModel):
             "is top_down."
         ),
     )
+    room: str | None = Field(
+        default=None,
+        max_length=40,
+        description=(
+            "The room to draw, in their words ('bedroom', 'living room'), when they named "
+            "one or answered which room."
+        ),
+    )
+    products: list[int] = Field(
+        default_factory=list,
+        max_length=20,
+        description=(
+            "The cart products to draw, by their place in the cart (picked_ordinal), when "
+            "they chose some ('just the sofa and the rug')."
+        ),
+    )
+    all_of_them: bool = Field(
+        default=False,
+        description="They want every product offered for that room drawn ('all of them').",
+    )
+    in_their_photo: bool = Field(
+        default=False,
+        description=(
+            "Draw it into the photo of their room they sent in this chat (photo_on_record), "
+            "when they ask to see it there ('see my cart in this room')."
+        ),
+    )
+
+
+async def _chat_room(
+    context: ToolContext, state: AgentStateV1
+) -> tuple[RoomPhoto, AgentStateV1] | ToolOutcome:
+    """The chat's photo as an emptied room to draw into - emptied the first
+    time, then reused - or the refusal saying why it cannot be."""
+    services = context.services
+    record = state.chat_photo
+    if record is None or context.session_id is None:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="no_photo_sent")
+    if record.is_room is False:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="photo_is_not_a_room")
+    store, session = context.retailer.store_id, context.session_id
+    rooms, emptier, chat_photos = (
+        services.room_photos,
+        services.room_photo_service,
+        services.chat_photos,
+    )
+    if rooms is None or emptier is None or chat_photos is None:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="room_photos_unavailable")
+    if record.room_photo_id is not None:
+        kept = await rooms.load(store, session, record.room_photo_id)
+        if kept is not None:
+            return kept, state
+    sent = await chat_photos.load(record, session_id=session, context=context.retailer)
+    if sent is None:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="photo_expired")
+    jpeg = base64.b64decode(sent.jpeg_b64)
+    # A check that could not be made when it arrived is made now, before emptying;
+    # failing again it is "try again", never "not a room".
+    checked = True if record.is_room else await emptier.is_room(jpeg, context.retailer)
+    if checked is False:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="photo_is_not_a_room")
+    if checked is None:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="render_failed")
+    try:
+        room = await emptier.empty_and_keep(
+            jpeg, sent.width, sent.height, session_id=session, context=context.retailer
+        )
+    except RoomPhotoUnavailableError:
+        return ToolOutcome(status=ToolStatus.REFUSED, code="render_failed")
+    updated = record.model_copy(update={"room_photo_id": room.photo_id, "is_room": True})
+    return room, state.model_copy(update={"chat_photo": updated})
 
 
 def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
@@ -1155,61 +1247,305 @@ def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
         args: VisualizeRoomArgs, context: ToolContext, work: TurnWork
     ) -> ToolOutcome:
         services = context.services
-        if services.visualizer is None:
+        visualizer = services.visualizer
+        if visualizer is None:
             return ToolOutcome(status=ToolStatus.REFUSED, code="visualisation_unavailable")
         if (refused := drawing_refused(context)) is not None:
             return refused
         state = work.staged
-        room = state.room_project
-        if room is None or not room.bundle_items:
+        cart = state.product_interaction.selected_product_ids
+        by_id = {p.product_id: p for p in (await hydrated(services, cart, context) or ())}
+        guide = services.room_pieces
+        decision = what_to_draw(
+            state,
+            {pid: p.commerce.subcategory for pid, p in by_id.items()},
+            guide.one_room if guide else lambda _: None,
+            room=args.room,
+            chosen=[cart[n - 1] for n in args.products if 1 <= n <= len(cart)],
+            all_of_them=args.all_of_them,
+            room_starters=guide.grows_a_room if guide else frozenset(),
+        )
+
+        def named(pids: Sequence[int]) -> list[dict[str, object]]:
+            return [
+                {"picked": cart.index(pid) + 1, "name": by_id[pid].name_english}
+                for pid in pids
+                if pid in by_id
+            ]
+
+        if isinstance(decision, NothingToDraw):
             return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_to_draw")
+        if isinstance(decision, AskRoom):
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="which_room_to_draw",
+                facts={
+                    "rooms": {room: named(pids) for room, pids in decision.rooms.items()},
+                    "room_not_known": named(decision.unplaced),
+                    "ask": "ask which room they would like to see - one room a picture",
+                },
+            )
+        if isinstance(decision, AskProducts):
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="which_products_to_draw",
+                facts={
+                    "room": decision.room,
+                    "products": named(decision.products),
+                    "ask": "ask which of these to show, offering 'All of them' first",
+                },
+            )
         photo = None
-        if context.with_their_photo:
-            # Only when they uploaded it for this picture (the upload's tap).
+        if args.in_their_photo:
+            canvas = await _chat_room(context, state)
+            if isinstance(canvas, ToolOutcome):
+                return canvas
+            photo, state = canvas
+        elif context.with_their_photo:
+            # The old room photo upload's tap: the photo it uploaded.
             if services.room_photos is None or context.session_id is None:
                 return ToolOutcome(status=ToolStatus.REFUSED, code="room_photos_unavailable")
             photo = await services.room_photos.latest(context.retailer.store_id, context.session_id)
             if photo is None:
                 return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_photo")
+        left_out: list[dict[str, object]] = []
         try:
-            render = await services.visualizer.render(state, args.view, context.retailer, photo)
+            if isinstance(decision, DrawDesign):
+                design = state.room_project
+                assert design is not None
+                render = await visualizer.render(state, args.view, context.retailer, photo)
+                kind: str | None = design.room_kind
+                drew = "the room package"
+            else:
+                drawn = decision.products[: visualizer.max_pieces]
+                left_out = named([pid for pid, _ in decision.products[len(drawn) :]])
+                render = await visualizer.render_cart(
+                    drawn,
+                    cart_room(decision.room, decision.designed),
+                    args.view,
+                    context.retailer,
+                    photo,
+                )
+                kind = decision.designed.room_kind if decision.designed else None
+                kind = kind or decision.room.replace(" ", "_")
+                drew = f"their cart's {decision.room}"
         except NothingToVisualizeError:
             return ToolOutcome(status=ToolStatus.REFUSED, code="no_room_to_draw")
         except IntegrationUnavailableError:
             return ToolOutcome(status=ToolStatus.REFUSED, code="render_failed")
-        kind = room.room_kind
         record = render_record(
             render,
             room_type=RoomType(kind) if kind in {t.value for t in RoomType} else None,
         )
-        return ToolOutcome(
-            facts={
-                "drew": "the room package",
-                "view": render.view_label,
-                "in_their_photo": photo is not None,
-                "pieces_drawn": len(render.items),
-                "offer": (
-                    "offer another view"
-                    if room.in_cart
-                    else "offer another view, or to add the whole room to their cart"
-                ),
-            },
-            state=record_render(state, record),
-            payload=RenderShown(render=render),
+        state = record_render(state, record)
+        if isinstance(decision, DrawCart) and decision.newly_placed:
+            state = tag_pick_rooms(state, decision.newly_placed, decision.room)
+        in_cart = isinstance(decision, DrawCart) or (
+            state.room_project is not None and state.room_project.in_cart
         )
+        facts: dict[str, object] = {
+            "drew": drew,
+            "view": render.view_label,
+            "in_their_photo": photo is not None,
+            "pieces_drawn": [item.name_english for item in render.items],
+            "offer": (
+                "offer another view"
+                if in_cart
+                else "offer another view, or to add the whole room to their cart"
+            ),
+        }
+        if left_out:
+            facts["left_out"] = left_out
+        return ToolOutcome(facts=facts, state=state, payload=RenderShown(render=render))
 
     return ZoryTool(
         name="visualize_room",
         description=(
-            "Draw the room package they are designing as a picture - 'show me my room', "
-            "'show it in my room from above', or the package's picture buttons. 'My room' is "
-            "this design: their own photo is used only when they upload one with the button. "
-            "The picture shows the room's own pieces, nothing else for sale."
+            "Draw a room as a picture, as it is now - 'show me my room', 'visualize my cart', "
+            "'show it from above', or the package's picture buttons. A designed room not yet "
+            "in the cart is drawn as designed; otherwise the cart's products for one room "
+            "(a designed room in the cart with what was bought for it since). When it asks "
+            "which room or which products, ask them, then call it again with their answer. "
+            "'My room' is the room, never their photo: their own photo is used only when "
+            "they upload one. The picture shows only these products, nothing else for sale."
         ),
         args=VisualizeRoomArgs,
         owners=SARA,
         handler=visualize,
     )
+
+
+class FindInPhotoArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    piece: str | None = Field(
+        default=None,
+        max_length=40,
+        description=("The piece to find, in their words ('bed', 'the lamp'), when they named one."),
+    )
+    number: int | None = Field(
+        default=None,
+        ge=1,
+        description="A piece the finder found in the photo, by its number in pieces_found.",
+    )
+
+
+def find_in_photo_tool() -> ZoryTool[FindInPhotoArgs]:
+    async def find(args: FindInPhotoArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
+        services = context.services
+        finder, chat_photos = services.finder, services.chat_photos
+        if finder is None or chat_photos is None:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="finder_unavailable")
+        if context.finder_access != VISUALIZATION_ALLOWED:
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="finder_not_allowed",
+                facts={"reason": context.finder_access},
+            )
+        state = work.staged
+        record = state.chat_photo
+        if record is None or context.session_id is None:
+            return ToolOutcome(status=ToolStatus.REFUSED, code="no_photo_sent")
+        retailer, session = context.retailer, context.session_id
+        photo = None
+        if record.finder_image_id is not None:
+            try:
+                photo = await finder.load_photo(session, record.finder_image_id, retailer)
+            except FinderImageNotFoundError:
+                photo = None
+        if photo is None:
+            sent = await chat_photos.load(record, session_id=session, context=retailer)
+            if sent is None:
+                return ToolOutcome(status=ToolStatus.REFUSED, code="photo_expired")
+            try:
+                photo, _ = await finder.detect(
+                    base64.b64decode(sent.jpeg_b64),
+                    session_id=session,
+                    context=retailer,
+                    shopper=context.shopper,
+                )
+            except (FinderAccessRefusedError, DetectionUnavailableError, ImageRejectedError):
+                return ToolOutcome(status=ToolStatus.REFUSED, code="finder_failed")
+            record = record.model_copy(
+                update={
+                    "finder_image_id": photo.image_id,
+                    "pieces": tuple(o.display_label for o in photo.objects),
+                }
+            )
+            state = state.model_copy(update={"chat_photo": record})
+        found = [
+            {"number": n, "piece": o.display_label} for n, o in enumerate(photo.objects, start=1)
+        ]
+        if not photo.objects:
+            return ToolOutcome(
+                code="nothing_found_in_photo", facts={"pieces_found": []}, state=state
+            )
+        detected = _piece_in_photo(photo.objects, args)
+        if detected is None:
+            # The detector names pieces its own way ("carpet", "l shape sofa"):
+            # what they asked for is matched by meaning, by Sara, not by code.
+            facts: dict[str, object] = {"pieces_found": found}
+            if args.piece:
+                facts["asked_for"] = args.piece
+                facts["same_word"] = [
+                    n for n, o in enumerate(photo.objects, start=1) if _named(o, args.piece)
+                ]
+            facts["next"] = (
+                "if one piece found is what they asked for under the detector's name "
+                "(a rug is a carpet, a sectional an L-shaped sofa, a couch a sofa), call "
+                "find_in_photo again with its number, asking nothing; ask which only when "
+                "several could be it; when none is, say what was found and offer to find "
+                "one of those or to search for theirs by words"
+            )
+            return ToolOutcome(code="which_piece", facts=facts, state=state)
+        try:
+            products = await finder.find(photo, detected, retailer, context.shopper)
+        except (FinderAccessRefusedError, VisualSearchUnavailableError):
+            return ToolOutcome(status=ToolStatus.REFUSED, code="finder_failed", state=state)
+        shown = finder_results_state(
+            state, products, services.similar_search, services.search.composer
+        )
+        on_screen = shown is not None
+        grounded = tuple(
+            # A curated list, as Salman's grid is: not a widened search.
+            to_grounded_product(
+                product,
+                grounding_ref=n,
+                presented_ordinal=n if on_screen else None,
+                relaxation_depth=0,
+            )
+            for n, product in enumerate(products, start=1)
+        )
+        payload: SearchShown | SelectionShown
+        if on_screen and grounded:
+            count = len(grounded)
+            payload = SearchShown(
+                grounding=SearchExecutionGrounding(
+                    outcome=SearchOutcome.RESULTS,
+                    products=grounded,
+                    eligible_count=count,
+                    ranked_count=count,
+                    selected_count=count,
+                    presented_count=count,
+                    exact_candidate_count=count,
+                    stop_reason=StopReason.EXACT_SUFFICIENT,
+                ),
+            )
+        else:
+            payload = SelectionShown(products=grounded)
+        return ToolOutcome(
+            code=None if products else "no_matches",
+            facts={
+                "looked_for": detected.display_label,
+                "matches": [
+                    product_facts(p, n if on_screen else None)
+                    for n, p in enumerate(products, start=1)
+                ],
+            },
+            state=shown or state,
+            payload=payload,
+        )
+
+    return ZoryTool(
+        name="find_in_photo",
+        description=(
+            "Find furniture in this store like a piece in the photo they sent in this chat "
+            "(photo_on_record) - 'find this bed', 'find something like this', a photo sent "
+            "on its own once they choose to find furniture. Name the piece they asked for; "
+            "when the photo holds several and they named none, it lists what it found to ask "
+            "which. Its matches are the cards on screen, a search like any other."
+        ),
+        args=FindInPhotoArgs,
+        owners=SARA,
+        handler=find,
+    )
+
+
+def _piece_in_photo(
+    objects: Sequence[DetectedObject], args: FindInPhotoArgs
+) -> DetectedObject | None:
+    """The piece they meant: by its number; else the one piece whose kind is
+    the word they used ("bed" is the bed, "beds" too); else the only piece.
+    None when that leaves a choice - which is then asked."""
+    if args.number is not None:
+        return objects[args.number - 1] if args.number <= len(objects) else None
+    if args.piece:
+        matches = [o for o in objects if _named(o, args.piece)]
+        return matches[0] if len(matches) == 1 else None
+    return objects[0] if len(objects) == 1 else None
+
+
+def _named(piece: DetectedObject, words: str) -> bool:
+    """The piece's own name is the word they used - the same word, or its
+    plural. A different word for it ("rug" for a carpet) is not matched here:
+    it is matched by meaning, by the agent."""
+    return bool(_words(words) & (_words(piece.display_label) | _words(piece.label)))
+
+
+def _words(text: str) -> set[str]:
+    """Text normalisation only: lower case, each word and its singular."""
+    words = {w for w in re.split(r"[^a-z0-9]+", text.lower()) if w and w not in {"the", "a", "an"}}
+    return words | {w[:-1] for w in words if w.endswith("s") and len(w) > 3}
 
 
 def visualize_product_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
@@ -1646,6 +1982,7 @@ def shopping_tools(schemas: ToolSchemas) -> list[ZoryTool[Any]]:
         details_tool(schemas),
         visualize_product_tool(schemas),
         visualize_room_tool(),
+        find_in_photo_tool(),
         compare_tool(schemas),
         add_to_cart_tool(schemas),
         remove_from_cart_tool(schemas),

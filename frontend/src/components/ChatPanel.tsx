@@ -47,6 +47,9 @@ interface ChatPanelProps {
   /** Abort the in-flight reply; the send button is a Stop button while sending. */
   onStop: () => void
   onPhoto: (file: File) => void
+  /** The photo attached to the next message, as a preview URL. */
+  photoUrl?: string | null
+  onClearPhoto?: () => void
   onPickObject: (photoTurnId: string, imageId: string, object: FinderObject) => void
   /** The role being swapped, when a swap is in progress; drives the picker. */
   swapRole: string | null
@@ -139,6 +142,8 @@ export function ChatPanel({
   onSend,
   onStop,
   onPhoto,
+  photoUrl,
+  onClearPhoto,
   onPickObject,
   swapRole,
   onSwapStart,
@@ -393,6 +398,9 @@ export function ChatPanel({
     // A single-product render pictures one tapped card in an imagined room; it
     // is not the room package, so it offers no re-render or edit controls.
     if (render?.source === 'product') return {}
+    // A cart picture is the cart's room as it was drawn: other views are asked
+    // for in the chat, so it carries no package controls.
+    if (render?.source === 'cart') return {}
     if (render) {
       const outdated = currentRoomKey !== null && renderKey(render) !== currentRoomKey
       const photoId = render.room_photo_id
@@ -547,6 +555,8 @@ export function ChatPanel({
         onSend={() => onSend(draft)}
         onStop={onStop}
         onPhoto={onPhoto}
+        photoUrl={photoUrl}
+        onClearPhoto={onClearPhoto}
         onOpenCatalog={onOpenCatalog}
         disabled={busy}
         sending={sending || revealing}

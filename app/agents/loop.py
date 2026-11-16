@@ -364,9 +364,10 @@ class AgentLoop:
         """Run one tool and record it. Also how a screen tap runs its tool,
         so tapping and asking in words execute the same code."""
         assert tool.handler is not None
-        if tool.name in ("visualize_product", "visualize_room"):
-            # The image takes ~25s, past the short deadline; mark the turn so it
-            # takes the room's longer limits (deadline.py, team.py, chat_runtime).
+        if tool.name in ("visualize_product", "visualize_room", "find_in_photo"):
+            # An image (~25s) or a photo's detection takes past the short deadline;
+            # mark the turn so it takes the room's longer limits (deadline.py,
+            # team.py, chat_runtime).
             trace.rendering = True
         started = time.perf_counter()
         try:

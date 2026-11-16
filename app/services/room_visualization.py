@@ -134,6 +134,11 @@ class RoomVisualizer:
         self._generator = generator
         self._settings = settings
 
+    @property
+    def max_pieces(self) -> int:
+        """The most pieces one picture draws: one product photo each."""
+        return self._settings.max_references
+
     async def render(
         self,
         state: AgentStateV1,
@@ -191,6 +196,30 @@ class RoomVisualizer:
             width_m=spec.width_m,
         )
         return await self._draw(items, room, view, context, RenderSource.CATALOG, spec)
+
+    async def render_cart(
+        self,
+        products: Sequence[tuple[int, int]],
+        room: RenderRoom,
+        view: RenderView,
+        context: RetailerContext,
+        photo: RoomPhoto | None = None,
+    ) -> RoomRenderPresentation:
+        """Cart products drawn together as one room - imagined from a view,
+        or placed in the customer's own room when `photo` is given.
+
+        Read back through the store-scoped repository: a product the store no
+        longer sells is left out, in cart order.
+        """
+        rows = await self._repository.get_by_ids([pid for pid, _ in products], context)
+        share = self._discount_max_share
+        by_id = {row.id: to_candidate(row, discount_max_share=share) for row in rows}
+        items = [(by_id[pid], qty) for pid, qty in products if pid in by_id]
+        if not items:
+            raise NothingToVisualizeError(store_id=context.store_id, reason="no_available_pieces")
+        if photo is not None:
+            return await self._draw_in_photo(items, photo, context, RenderSource.CART)
+        return await self._draw(items, room, view, context, RenderSource.CART, None)
 
     async def render_single(
         self, product_id: int, context: RetailerContext
@@ -729,6 +758,14 @@ def _style_words(style: str) -> str:
     """An approved style token as prompt and reply words: underscores become
     spaces and the case is lowered, so a two-word style reads as two words."""
     return style.replace("_", " ").lower()
+
+
+def cart_room(words: str, room: RoomProjectState | None) -> RenderRoom:
+    """The room a cart picture is of: the room on record when it is this one
+    (its size and look), else the room by its words alone."""
+    if room is not None:
+        return _room(room)
+    return RenderRoom(room_label=words or "room", style=None, length_m=None, width_m=None)
 
 
 def _room(room: RoomProjectState) -> RenderRoom:
