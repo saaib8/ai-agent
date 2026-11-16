@@ -38,6 +38,8 @@ class TapEvent(BaseModel):
     seating_option: int | None = None
     kind: str | None = None
     answers: dict[str, str | list[str]] | None = None
+    view: str | None = None
+    in_their_photo: bool | None = None
 
     def described(self) -> str:
         return json.dumps(self.model_dump(mode="json", exclude_none=True), ensure_ascii=False)
@@ -68,7 +70,18 @@ class Tap:
 def tap_of(request: ChatRequest) -> Tap | None:
     """The tap this request carries, or None for a typed message."""
     if request.bundle_action is not None:
-        return Tap(_bundle(request.bundle_action))
+        action = request.bundle_action
+        if action.kind == "visualize":
+            # A fixed command: straight to the one agent who draws.
+            return Tap(
+                TapEvent(
+                    button="visualize_room",
+                    view=action.view.value,
+                    in_their_photo=action.in_their_photo or None,
+                ),
+                runs="visualize_room",
+            )
+        return Tap(_bundle(action))
     if request.search_action is not None:
         return Tap(_search(request.search_action))
     if request.product_action is not None:
@@ -106,6 +119,8 @@ def _bundle(action: BundleActionRequest) -> TapEvent:
             return TapEvent(button="done_with_room")
         case "add_to_cart":
             return TapEvent(button="add_room_to_cart")
+        case "visualize":
+            return TapEvent(button="visualize_room", view=action.view.value)
     raise AssertionError(f"unhandled room action {action.kind}")
 
 

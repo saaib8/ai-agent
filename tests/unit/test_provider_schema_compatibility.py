@@ -33,6 +33,7 @@ from app.schemas.product_reference import (
     ExtremumDirection,
     FocusedProduct,
     LikedProduct,
+    PicturePiece,
     PresentedAttributeMatch,
     PresentedExtremum,
     PresentedOrdinal,
@@ -63,6 +64,7 @@ SELECTOR_MEMBERS = (
     "LikedProduct",
     "TurnedDownProduct",
     "SeenBefore",
+    "PicturePiece",
     "PresentedAttributeMatch",
     "PresentedExtremum",
 )
@@ -213,6 +215,7 @@ VALID_SELECTORS = (
     TurnedDownProduct(),
     TurnedDownProduct(position=2),
     SeenBefore(position=1),
+    PicturePiece(position=1),
     PresentedAttributeMatch(family=AttributeFamily.COLOR, value="Beige"),
     PresentedExtremum(direction=ExtremumDirection.LOWEST),
 )

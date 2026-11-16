@@ -17,9 +17,11 @@ The photo is the room and the camera, so no view is chosen for it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PrivateAttr
 
 from app.schemas.furniture_finder import SESSION_ID_PATTERN
 from app.schemas.room_photo import ROOM_PHOTO_ID_PATTERN
@@ -86,6 +88,9 @@ class VisualizeRequest(BaseModel):
     room_photo_id: str | None = Field(default=None, pattern=ROOM_PHOTO_ID_PATTERN)
     """Draw the package in the customer's own room instead: the emptied photo
     this session keeps. The photo is the camera, so `view` is not used."""
+    visualization: VisualizationAccess = None
+    """Whether this shopper may have a room drawn - the same answer, set the
+    same way by the gateway, as `ChatRequest.visualization`."""
     expected_session_revision: int | None = Field(default=None, ge=0)
     """Same meaning as on a chat message: the revision the client's screen was
     drawn from, checked before any image model is paid."""
@@ -127,3 +132,70 @@ class RoomRenderPresentation(BaseModel):
     room: RenderRoomSpec | None = None
     room_photo_id: str | None = Field(default=None, pattern=ROOM_PHOTO_ID_PATTERN)
     """The customer's room it was drawn in, so it can be drawn there again."""
+
+    _drawn: tuple[tuple[int, int], ...] = PrivateAttr(default=())
+
+    @property
+    def drawn(self) -> tuple[tuple[int, int], ...]:
+        """Each piece drawn as (product id, quantity), in `items` order - for
+        the session's memory of the picture (`AgentStateV1.last_render`).
+        Private: never serialized, so no catalog id reaches a client."""
+        return self._drawn
+
+    def with_drawn(self, pieces: Sequence[tuple[int, int]]) -> RoomRenderPresentation:
+        copy = self.model_copy()
+        copy._drawn = tuple(pieces)
+        return copy
+
+
+class VisualizationAnswer(StrEnum):
+    """Whether this shopper may have a room drawn - the gateway's answer, one
+    of five fixed values (docs/visualization-in-chat-plan.md D1). The gateway
+    maps its own refusal codes onto these, so its codes can change without this
+    service."""
+
+    ALLOWED = "allowed"
+    SIGN_UP_REQUIRED = "sign_up_required"
+    """An anonymous shopper: signing in or up would open it."""
+    LIMIT_REACHED = "limit_reached"
+    """Their own allowance is used up for now (today's, or this month's)."""
+    NOT_INCLUDED = "not_included"
+    """Their role or access does not include it."""
+    STORE_UNAVAILABLE = "store_unavailable"
+    """The store does not offer it right now - its plan, budget or allowance."""
+
+
+VISUALIZATION_ALLOWED = VisualizationAnswer.ALLOWED.value
+VISUALIZATION_UNCONFIRMED = "not_confirmed"
+"""No answer came with the request, and this deployment does not draw without
+one (`visualization.allowed_without_gateway`)."""
+VISUALIZATION_UNRECOGNISED = "unrecognised"
+"""An answer came that is not one of the five: refused, worded like
+`store_unavailable`, and logged so the gateway's mistake is seen."""
+
+_ANSWERS = frozenset(answer.value for answer in VisualizationAnswer)
+
+
+def _read_answer(value: Any) -> str | None:
+    """Never a reason to refuse the request: an answer this service does not
+    know - a new code, a typo, the wrong type - is read as no picture."""
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in _ANSWERS:
+        return value.strip().lower()
+    return VISUALIZATION_UNRECOGNISED
+
+
+VisualizationAccess = Annotated[str | None, BeforeValidator(_read_answer)]
+"""The gateway's answer on drawing, read leniently (`_read_answer`): one of
+`VisualizationAnswer`, `unrecognised`, or None when it sent none. Set by the
+gateway, never by the widget: the gateway overwrites whatever the widget sent."""
+
+
+def visualization_access(sent: str | None, *, without_gateway: bool) -> str:
+    """What this request may draw: the gateway's answer when it sent one; else
+    allowed only where this deployment draws without one (local and stage, for
+    the console) - in production, no answer is no picture."""
+    if sent is not None:
+        return sent
+    return VISUALIZATION_ALLOWED if without_gateway else VISUALIZATION_UNCONFIRMED

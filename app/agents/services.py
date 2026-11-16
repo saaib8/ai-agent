@@ -39,6 +39,7 @@ from app.taxonomy.rooms import RoomPieces
 from app.taxonomy.seating import SeatingSemantics
 
 if TYPE_CHECKING:
+    from app.repositories.room_photos import RoomPhotoStore
     from app.services.room_visualization import RoomVisualizer
 
 
@@ -65,8 +66,11 @@ class AgentServices:
     details: ProductDetailsService | None = None
     """One product's description and reviews, for product details."""
     visualizer: RoomVisualizer | None = None
-    """Stages one product in a room of its own, for visualize_product; None
-    when visualisation is not configured."""
+    """Draws a room picture - one product (visualize_product) or the room
+    package (visualize_room); None when visualisation is not configured."""
+    room_photos: RoomPhotoStore | None = None
+    """The room photo each chat keeps, for "put it in my photo"
+    (visualize_room); None when room photos are not configured."""
     best_sellers: BestSellerService | None = None
     """Which products are best sellers, asked for by the customer only."""
     support: SupportService | None = None

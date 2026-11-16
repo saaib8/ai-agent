@@ -428,6 +428,47 @@ Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):
 | Labels | no route | optional: a proxy for `GET /v1/labels?language=` (or rely on chat replies' `labels`) |
 | Cart read | no route | `GET /api/widgets/ai-agent/cart/?session_id=` → `GET /v1/cart` with the scoped session and the token's store (section 6). Cart changes need nothing: they go through picks and chat, which pass answers through as they are |
 
+## 7.1 Room pictures through the chat (new, 2026-11-15)
+
+Plan: `docs/visualization-in-chat-plan.md`. Every room picture can now be asked
+for in the chat - "See it in a room" on a card, "show me my room", "show it
+from above", "put it in my photo" - and each checks who may draw first.
+
+**What the gateway sends (needed).** On every chat request (`/v1/chat`,
+`/v1/chat/stream`) and on `/v1/visualizations` and
+`/v1/catalog/visualizations`, the field `visualization` - one of five values:
+`allowed`, `sign_up_required`, `limit_reached`, `not_included`,
+`store_unavailable`. The gateway maps its own refusal codes onto them (the table
+in `docs/visualization-in-chat-plan.md` D1), works them out from the same checks
+as the render endpoints, and **always overwrites** anything the widget sent. An
+unknown value never fails the message - it is read as no picture. With no field,
+production draws nothing; local and stage do, for the console
+(`visualization.allowed_without_gateway`).
+
+**What the gateway charges (needed).** A chat reply whose `presentation.render`
+is set drew a picture: charge one design generation, as `render_views` does,
+with the same duplicate window and refund.
+
+**What the widget reads (optional).** Every chat reply carries `can_visualize`.
+The picture buttons may stay visible either way: tapped when not allowed, the
+agent says why (sign in, allowance used, not included, not available) and no
+image is drawn.
+
+**The room package's picture buttons (to move).** Send them as a chat tap
+instead of `POST /v1/visualizations`:
+
+```json
+{"message": "<say_visualize_room>", "session_id": "...", "store_id": 50,
+ "bundle_action": {"kind": "visualize", "view": "top_down", "in_their_photo": false}}
+```
+
+`view` is `corner` (default), `eye_level`, `isometric` or `top_down`;
+`in_their_photo: true` draws it in the room photo this chat keeps - upload it
+first with `POST /v1/room-photos`, as today. The reply carries the picture in
+`presentation.render`, as the endpoint's did. `/v1/visualizations` keeps
+working until the widget has moved. Browse Catalogue keeps
+`/v1/catalog/visualizations` for now.
+
 ## 8. Product links carry Zory's click id
 
 Every `product_url` the service returns now carries `zory_click_id=<the product's public

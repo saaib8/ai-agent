@@ -8,7 +8,7 @@ ids. It is data: each agent reads it, none is told to obey it.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -29,6 +29,7 @@ from app.schemas.agent_brief import (
     GoalMember,
     OverBudgetOffer,
     PendingBrief,
+    PictureBrief,
     PlannedKindBrief,
     RoomBrief,
     RoomInDoubt,
@@ -49,6 +50,7 @@ from app.schemas.agent_state import (
     SEEN_NAMED,
     AgentStateV1,
     OfferedCombination,
+    RenderRecord,
     SeatingOfferState,
 )
 from app.schemas.conversation import (
@@ -60,6 +62,7 @@ from app.schemas.discovery import DimensionConstraint, PlanarDimensionConstraint
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import ProductCandidate
 from app.schemas.query import SemanticPreference
+from app.schemas.visualization import RenderSource
 from app.services.cross_sell import live_plan
 from app.services.fit import knows_room_size
 from app.services.goal_progress import goal_progress
@@ -98,6 +101,10 @@ async def session_brief(
                 *_seating_products(seating),
                 *(pid for goal in state.goals for pid in goal.members),
                 *((held.chosen_product_id,) if held is not None else ()),
+                *(
+                    piece.product_id
+                    for piece in (state.last_render.pieces if state.last_render else ())
+                ),
             )
         )
     )
@@ -151,10 +158,55 @@ async def session_brief(
         liked=numbered(interaction.liked_product_ids) or None,
         turned_down=numbered(interaction.turned_down_product_ids) or None,
         seen_before=numbered(interaction.seen_product_ids[-SEEN_NAMED:]) or None,
+        picture_on_screen=_picture(state.last_render, numbered),
         taste=_taste(state),
         designer_plan=_designer_plan(state, by_id),
         saved_sizes=_saved_sizes(state) or None,
         pending=_pending(state, by_id, room_plan),
+    )
+
+
+_PICTURE_SHOWS = {
+    RenderSource.PRODUCT: "one product",
+    RenderSource.PACKAGE: "the room package",
+    RenderSource.CATALOG: "pieces from the catalogue",
+}
+
+
+def _picture(
+    record: RenderRecord | None,
+    numbered: Callable[[Sequence[int]], tuple[BriefProduct, ...]],
+) -> PictureBrief | None:
+    """The newest room picture, its pieces numbered as it lists them - what a
+    `picture_piece` reference names (docs/visualization-in-chat-plan.md D4)."""
+    if record is None:
+        return None
+    pieces = numbered([piece.product_id for piece in record.pieces])
+    if not pieces:
+        return None
+    quantities = {
+        str(n): piece.quantity
+        for n, piece in enumerate(record.pieces, start=1)
+        if piece.quantity > 1
+    }
+    if record.in_their_photo:
+        room: str | None = "their own photo"
+    elif record.room_type is not None:
+        size = (
+            f" {record.length_m:g} x {record.width_m:g} m"
+            if record.length_m and record.width_m
+            else ""
+        )
+        style = f" {record.style.replace('_', ' ')}" if record.style else ""
+        room = f"{record.room_type.value.replace('_', ' ')}{style}{size}".strip()
+    else:
+        room = None
+    return PictureBrief(
+        shows=_PICTURE_SHOWS[record.source],
+        pieces=pieces,
+        quantities=quantities or None,
+        room=room,
+        view=record.view.value if record.view is not None else None,
     )
 
 

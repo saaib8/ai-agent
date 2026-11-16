@@ -75,6 +75,8 @@ class ReferenceFailureReason(StrEnum):
     SEVERAL_TURNED_DOWN_PRODUCTS = "several_turned_down_products"
     TURNED_DOWN_ORDINAL_OUT_OF_RANGE = "turned_down_ordinal_out_of_range"
     SEEN_ORDINAL_OUT_OF_RANGE = "seen_ordinal_out_of_range"
+    NO_PICTURE = "no_picture"
+    PICTURE_ORDINAL_OUT_OF_RANGE = "picture_ordinal_out_of_range"
 
     NO_ATTRIBUTE_MATCH = "no_attribute_match"
     SEVERAL_ATTRIBUTE_MATCHES = "several_attribute_matches"

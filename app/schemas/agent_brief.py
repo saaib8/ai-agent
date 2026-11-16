@@ -304,6 +304,21 @@ class RoomsInDoubt(_Brief):
     """What is already known to be in each room ("bedroom": bed, nightstand)."""
 
 
+class PictureBrief(_Brief):
+    """The newest room picture the customer was shown, and what was in it."""
+
+    shows: str
+    """`one product`, `the room package` or `pieces from the catalogue`."""
+    pieces: tuple[BriefProduct, ...]
+    """Numbered as the picture lists them - what a `picture_piece` reference
+    names - each with how many were drawn when more than one."""
+    quantities: dict[str, int] | None = None
+    """By piece number, where more than one of it was drawn."""
+    room: str | None = None
+    """The room it was drawn in - its type, style and size - or `their own photo`."""
+    view: str | None = None
+
+
 class SessionBrief(_Brief):
     language: str
     store_currency: str | None = None
@@ -329,6 +344,8 @@ class SessionBrief(_Brief):
     seen_before: tuple[BriefProduct, ...] | None = None
     """The latest products shown to them, in the order they saw them, in this
     chat or an earlier one - what a `seen_before` reference names."""
+    picture_on_screen: PictureBrief | None = None
+    """The newest room picture they were shown, however it was asked for."""
     taste: TasteBrief | None = None
     designer_plan: DesignerPlanBrief | None = None
     """Nora's plan beside their newest pick, while it is their newest: a

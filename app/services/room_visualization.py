@@ -42,6 +42,7 @@ from app.core.exceptions import (
     RenderUnavailableError,
     SelectionRejectedError,
     SelectionUnavailableError,
+    VisualizationNotAllowedError,
 )
 from app.core.logging import get_logger
 from app.integrations.image_generation import Frame, ImageGenerator, ImageReference
@@ -62,7 +63,7 @@ from app.repositories.products import ProductRepository
 from app.repositories.room_photos import RoomPhotoStore
 from app.repositories.sessions import SessionStore
 from app.schemas.agent_persona import AgentPersona
-from app.schemas.agent_state import AgentStateV1, RoomProjectState
+from app.schemas.agent_state import AgentStateV1, RenderedPiece, RenderRecord, RoomProjectState
 from app.schemas.agent_turn import CustomerResponse
 from app.schemas.catalog import CatalogSelectionItem, CatalogVisualizeRequest
 from app.schemas.chat import ChatPresentation, ChatResponse
@@ -74,13 +75,17 @@ from app.schemas.reply_choice import ReplyChoice
 from app.schemas.retailer import RetailerContext
 from app.schemas.room_photo import RoomPhoto
 from app.schemas.visualization import (
+    VISUALIZATION_ALLOWED,
     RenderRoomSpec,
     RenderSource,
     RenderView,
     RoomRenderItem,
     RoomRenderPresentation,
+    RoomType,
     VisualizeRequest,
+    visualization_access,
 )
+from app.services.agent_state import record_render
 from app.services.card_labels import card_labels
 from app.services.discovery import to_candidate
 from app.services.media_wording import (
@@ -245,7 +250,7 @@ class RoomVisualizer:
             items=_render_items([(product, 1)]),
             source=RenderSource.PRODUCT,
             room=None,
-        )
+        ).with_drawn(((product.product_id, 1),))
 
     async def _draw(
         self,
@@ -298,7 +303,7 @@ class RoomVisualizer:
             items=_render_items(items),
             source=source,
             room=spec,
-        )
+        ).with_drawn(_drawn(items))
 
     async def _draw_in_photo(
         self,
@@ -362,7 +367,7 @@ class RoomVisualizer:
             source=source,
             room=None,
             room_photo_id=photo.photo_id,
-        )
+        ).with_drawn(_drawn(items))
 
     async def _pieces(
         self, room: RoomProjectState, context: RetailerContext
@@ -404,6 +409,7 @@ class VisualizationTurnRuntime:
         *,
         arabic_replies: bool = False,
         writer: ReplyWriter | None = None,
+        draws_without_gateway: bool = False,
     ) -> None:
         self._arabic_replies = arabic_replies
         self._visualizer = visualizer
@@ -412,6 +418,7 @@ class VisualizationTurnRuntime:
         self._room_photos = room_photos
         self._writer = writer
         """Words the reply in Sara's voice; None keeps the fixed words."""
+        self._draws_without_gateway = draws_without_gateway
 
     async def visualize(self, request: VisualizeRequest, context: RetailerContext) -> ChatResponse:
         """Load, render, commit, answer.
@@ -420,6 +427,7 @@ class VisualizationTurnRuntime:
         is out of date would render a room the customer is no longer looking
         at.
         """
+        refuse_unless_allowed(request.visualization, self._draws_without_gateway, context)
         loaded = await load_for_turn(
             self._sessions,
             store_id=request.store_id,
@@ -446,12 +454,23 @@ class VisualizationTurnRuntime:
             room_label = ARABIC_ROOMS.get(room_key, "الغرفة")
         if photo is not None:
             response = room_photo_reply(room_label, language)
-            customer_said = "[Asked to see the room package placed in a photo of their own room]"
+            customer_said = (
+                "[Asked to see the room package placed in a photo of their own room: "
+                f"{_named(render)}]"
+            )
         else:
             response = render_reply(room_label, request.view, language)
             customer_said = (
-                f"[Asked to see the room package visualised, {render.view_label.lower()} view]"
+                f"[Asked to see the room package visualised, {render.view_label.lower()} "
+                f"view: {_named(render)}]"
             )
+        room_kind = state.room_project.room_kind if state.room_project else None
+        state = record_render(
+            state,
+            render_record(
+                render, room_type=RoomType(room_kind) if room_kind in _ROOM_TYPES else None
+            ),
+        )
         if self._writer is not None:
             response = await self._writer.write(
                 happened=customer_said + " [The render is now on screen]",
@@ -509,10 +528,12 @@ class CatalogVisualizationRuntime:
         *,
         arabic_replies: bool = False,
         writer: ReplyWriter | None = None,
+        draws_without_gateway: bool = False,
     ) -> None:
         self._arabic_replies = arabic_replies
         self._writer = writer
         """Words the reply in Sara's voice; None keeps the fixed words."""
+        self._draws_without_gateway = draws_without_gateway
         self._visualizer = visualizer
         self._sessions = sessions
         self._session_settings = session_settings
@@ -528,6 +549,7 @@ class CatalogVisualizationRuntime:
         Everything the customer set is checked before the session is loaded,
         and the revision before an image model is paid.
         """
+        refuse_unless_allowed(request.visualization, self._draws_without_gateway, context)
         spec = self._checked_room(request.room) if request.room is not None else None
         self._check_items(request.items)
         loaded = await load_for_turn(
@@ -560,7 +582,7 @@ class CatalogVisualizationRuntime:
             response = room_photo_reply(None, language, dropped=dropped)
             customer_said = (
                 f"[Visualised {units} pieces picked from the catalogue in a photo of "
-                "their own room]"
+                f"their own room: {_named(render)}]"
             )
         else:
             room_words = f"{_style_words(spec.style)} {room_type_label(spec.room_type).lower()}"
@@ -574,8 +596,9 @@ class CatalogVisualizationRuntime:
             customer_said = (
                 f"[Visualised {units} pieces picked from the catalogue in a "
                 f"{spec.length_m:g} x {spec.width_m:g} m {room_words}, "
-                f"{render.view_label.lower()} view]"
+                f"{render.view_label.lower()} view: {_named(render)}]"
             )
+        state = record_render(loaded.envelope.state, render_record(render))
         if self._writer is not None:
             response = await self._writer.write(
                 happened=customer_said + " [The render is now on screen]",
@@ -585,7 +608,7 @@ class CatalogVisualizationRuntime:
                     "view": render.view_label,
                     "in_their_own_photo": spec is None,
                 },
-                state=loaded.envelope.state,
+                state=state,
                 conversation=loaded.envelope.conversation,
                 retailer=context,
                 language=language,
@@ -597,7 +620,7 @@ class CatalogVisualizationRuntime:
             store_id=request.store_id,
             session_id=request.session_id,
             loaded=loaded,
-            state=loaded.envelope.state,
+            state=state,
             customer_said=customer_said,
             response=response,
             # Room visualisation is Sara's (CLAUDE.md 25).
@@ -641,6 +664,53 @@ class CatalogVisualizationRuntime:
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+
+def refuse_unless_allowed(
+    sent: str | None, draws_without_gateway: bool, context: RetailerContext
+) -> None:
+    """Raise unless this request may have a room drawn - the gateway's answer,
+    else this deployment's default - before anything is loaded or paid for
+    (docs/visualization-in-chat-plan.md D1)."""
+    access = visualization_access(sent, without_gateway=draws_without_gateway)
+    if access != VISUALIZATION_ALLOWED:
+        logger.info("visualization_refused", store_id=context.store_id, reason=access)
+        raise VisualizationNotAllowedError(reason=access)
+
+
+_ROOM_TYPES = frozenset(r.value for r in RoomType)
+
+
+def render_record(
+    render: RoomRenderPresentation, *, room_type: RoomType | None = None
+) -> RenderRecord | None:
+    """What a finished picture showed, for the session's memory of it
+    (`AgentStateV1.last_render`); None for one that names no piece."""
+    if not render.drawn:
+        return None
+    spec = render.room
+    return RenderRecord(
+        source=render.source,
+        pieces=tuple(RenderedPiece(product_id=pid, quantity=qty) for pid, qty in render.drawn),
+        view=render.view,
+        in_their_photo=render.room_photo_id is not None,
+        room_type=spec.room_type if spec is not None else room_type,
+        style=spec.style if spec is not None else None,
+        length_m=spec.length_m if spec is not None else None,
+        width_m=spec.width_m if spec is not None else None,
+    )
+
+
+def _named(render: RoomRenderPresentation) -> str:
+    """The pieces a picture showed, by name, for the conversation's record."""
+    return ", ".join(
+        f"{item.name_english}{f' x{item.quantity}' if item.quantity > 1 else ''}"
+        for item in render.items
+    )
+
+
+def _drawn(items: Sequence[tuple[ProductCandidate, int]]) -> tuple[tuple[int, int], ...]:
+    return tuple((product.product_id, quantity) for product, quantity in items)
 
 
 def _render_items(items: Sequence[tuple[ProductCandidate, int]]) -> tuple[RoomRenderItem, ...]:

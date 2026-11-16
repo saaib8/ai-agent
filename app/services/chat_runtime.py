@@ -49,6 +49,11 @@ from app.schemas.language import ReplyLanguage
 from app.schemas.picks import LikedView, PickView
 from app.schemas.product import ProductCandidate
 from app.schemas.retailer import RetailerContext
+from app.schemas.visualization import (
+    VISUALIZATION_ALLOWED,
+    VISUALIZATION_UNRECOGNISED,
+    visualization_access,
+)
 from app.services.agent_state import keep_screen
 from app.services.card_labels import card_labels
 from app.services.history_summary import Fold, HistorySummarizer, next_history
@@ -89,7 +94,11 @@ class ChatRuntime:
         room_deadline_s: float | None = None,
         arabic_replies: bool = False,
         summarizer: HistorySummarizer | None = None,
+        draws_without_gateway: bool = False,
     ) -> None:
+        self._draws_without_gateway = draws_without_gateway
+        """Whether a request with no gateway answer on drawing may draw
+        (`Settings.draws_without_gateway`)."""
         self._deadline_s = deadline_s
         self._room_deadline_s = room_deadline_s if room_deadline_s is not None else deadline_s
         self._team = team
@@ -180,6 +189,8 @@ class ChatRuntime:
                 tap_cards=tap.cards if tap is not None else (),
                 tapped=tap.event.button if tap is not None else None,
                 customer_said=request.message if tap is None else None,
+                visualization=self.visualization(request),
+                session_id=request.session_id,
             ),
             tap=tap,
         )
@@ -389,6 +400,16 @@ class ChatRuntime:
         )
         return next_history(loaded.envelope.conversation, exchange, self._settings, turn.fold)
 
+    def visualization(self, request: ChatRequest) -> str:
+        """What this request may draw: the gateway's answer, else this
+        deployment's default (docs/visualization-in-chat-plan.md D1)."""
+        access = visualization_access(
+            request.visualization, without_gateway=self._draws_without_gateway
+        )
+        if access == VISUALIZATION_UNRECOGNISED:
+            logger.warning("visualization_answer_unrecognised", store_id=request.store_id)
+        return access
+
     def public_response(self, request: ChatRequest, revision: int, turn: AgentTurn) -> ChatResponse:
         return ChatResponse(
             session_id=request.session_id,
@@ -402,6 +423,8 @@ class ChatRuntime:
             agent=turn.owner,
             workflow=WorkflowView(owner=turn.owner, handoffs=turn.handoffs),
             labels=card_labels(turn.language if self._arabic else None),
+            can_visualize=self._services.visualizer is not None
+            and self.visualization(request) == VISUALIZATION_ALLOWED,
         )
 
     async def run(self, request: ChatRequest, context: RetailerContext) -> ChatResponse:

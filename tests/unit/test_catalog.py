@@ -469,6 +469,7 @@ def a_runtime(
         ATTRIBUTES,
         FakeRoomPhotos(),  # type: ignore[arg-type]
         arabic_replies=arabic_replies,
+        draws_without_gateway=True,
     )
     return runtime, parts, store
 
@@ -500,8 +501,12 @@ class TestSelectionTurn:
         user, assistant = saved.conversation.messages
         assert user.content == (
             "[Visualised 3 pieces picked from the catalogue in a 4 x 5 m modern living room, "
-            "isometric view]"
+            "isometric view: Boucle Sofa, Accent Chair x2]"
         )
+        record = saved.state.last_render
+        assert record is not None and record.source is RenderSource.CATALOG
+        assert [(p.product_id, p.quantity) for p in record.pieces] == [(1, 1), (2, 2)]
+        assert record.room_type is not None and record.length_m == 4
         assert assistant.content == reply.response.message
 
     async def test_the_reply_says_what_was_left_out(self) -> None:

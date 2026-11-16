@@ -40,6 +40,7 @@ from app.schemas.product_reference import (
     ComparedOrdinal,
     LikedProduct,
     PickedOrdinal,
+    PicturePiece,
     SeenBefore,
     TurnedDownProduct,
 )
@@ -146,6 +147,8 @@ class ProductReferenceResolver:
                 return await self._turned_down(selector, state, context)
             case SeenBefore():
                 return await self._seen(selector, state, context)
+            case PicturePiece():
+                return await self._in_picture(selector, state, context)
             case PresentedAttributeMatch():
                 return await self._by_attribute(selector, state, context)
             case PresentedExtremum():
@@ -274,6 +277,17 @@ class ProductReferenceResolver:
         if selector.position > len(seen):
             return _unresolved(ReferenceFailureReason.SEEN_ORDINAL_OUT_OF_RANGE)
         return await self._verify(seen[selector.position - 1], context)
+
+    async def _in_picture(
+        self, selector: PicturePiece, state: AgentStateV1, context: RetailerContext
+    ) -> ReferenceOutcome:
+        """A piece of the newest room picture, as the picture lists them."""
+        if state.last_render is None:
+            return _unresolved(ReferenceFailureReason.NO_PICTURE)
+        pieces = state.last_render.pieces
+        if selector.position > len(pieces):
+            return _unresolved(ReferenceFailureReason.PICTURE_ORDINAL_OUT_OF_RANGE)
+        return await self._verify(pieces[selector.position - 1].product_id, context)
 
     # ── what they can see ───────────────────────────────────────────────────
 

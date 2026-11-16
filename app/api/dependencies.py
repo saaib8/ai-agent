@@ -535,6 +535,11 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         store_knowledge=app_resources.store_knowledge,
         details=ProductDetailsService(repository, settings.products),
         visualizer=_optional_room_visualizer(session, app_resources),
+        room_photos=(
+            _room_photo_store(app_resources)
+            if settings.visualization is not None and settings.visualization.room_photos_enabled
+            else None
+        ),
         best_sellers=BestSellerService(repository, settings.products),
         support=(
             SupportService(
@@ -588,6 +593,7 @@ def chat_runtime(session: SessionDep, app_resources: ResourcesDep) -> ChatRuntim
         room_deadline_s=settings.agents.room_turn_deadline_s,
         arabic_replies=settings.customer_agent.arabic_replies,
         summarizer=app_resources.history_summarizer,
+        draws_without_gateway=settings.draws_without_gateway,
     )
 
 
@@ -753,6 +759,7 @@ def visualization_turn_runtime(
         _room_photo_store(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
         writer=reply_writer(session, app_resources),
+        draws_without_gateway=app_resources.settings.draws_without_gateway,
     )
 
 
@@ -769,6 +776,7 @@ def catalog_visualization_runtime(
         _room_photo_store(app_resources),
         arabic_replies=app_resources.settings.customer_agent.arabic_replies,
         writer=reply_writer(session, app_resources),
+        draws_without_gateway=app_resources.settings.draws_without_gateway,
     )
 
 

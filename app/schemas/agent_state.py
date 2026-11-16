@@ -63,6 +63,7 @@ from app.schemas.query import (
     validate_dimension_correspondence,
 )
 from app.schemas.seating_solution import SeatingRequirements, SeatingShape
+from app.schemas.visualization import RenderSource, RenderView, RoomType
 
 AGENT_STATE_VERSION: Literal["agent_state_v5"] = "agent_state_v5"
 """The state contract. Change the shape, change this.
@@ -1165,6 +1166,37 @@ class GoalState(BaseModel):
     """Products chosen for it - counted only while they are in the cart."""
 
 
+MAX_RENDERED_PIECES = 50
+
+
+class RenderedPiece(BaseModel):
+    """One product in a room picture, and how many of it were drawn."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    product_id: int = Field(ge=1)
+    quantity: int = Field(default=1, ge=1)
+
+
+class RenderRecord(BaseModel):
+    """The newest room picture the customer was shown - one product, the room
+    package or pieces from Browse Catalogue - so every agent can follow up on
+    it ("swap the sofa in that picture"; docs/visualization-in-chat-plan.md D4).
+    Facts of what was drawn; the picture itself lives only on their screen."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: RenderSource
+    pieces: tuple[RenderedPiece, ...] = Field(min_length=1, max_length=MAX_RENDERED_PIECES)
+    view: RenderView | None = None
+    """None when drawn in their own room photo, or one product staged alone."""
+    in_their_photo: bool = False
+    room_type: RoomType | None = None
+    style: str | None = Field(default=None, max_length=60)
+    length_m: float | None = Field(default=None, gt=0)
+    width_m: float | None = Field(default=None, gt=0)
+
+
 class AgentStateV1(BaseModel):
     """Structured working memory. Five domains, and nothing else."""
 
@@ -1211,6 +1243,10 @@ class AgentStateV1(BaseModel):
     cross_sell_plan: CrossSellPlan | None = Field(default=None, exclude_if=lambda v: v is None)
     """Nora's plan for what goes with the newest finished pick (CLAUDE.md
     10.3). Left out while unset, so every saved session still reads."""
+
+    last_render: RenderRecord | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The newest room picture shown, whichever way it was asked for. Left out
+    while unset, so every saved session still reads."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

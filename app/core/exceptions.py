@@ -181,6 +181,18 @@ class ZoryTokenRejectedError(FinderAccessRefusedError):
     """
 
 
+class VisualizationNotAllowedError(ZoryError):
+    """This shopper may not have a room drawn: the backend's gateway said so
+    for this request, or sent no answer where one is required
+    (`ChatRequest.visualization`). Refused before any image is paid for; the
+    gateway's own reason is logged as `reason`."""
+
+    code = "visualization_not_allowed"
+    http_status = HTTPStatus.FORBIDDEN
+    public_message = "Room pictures aren't available for you right now."
+    public_message_ar = "صور الغرف غير متاحة لك حاليًا."
+
+
 class FinderImageNotFoundError(ZoryError):
     """A pick against a photo this session no longer holds.
 

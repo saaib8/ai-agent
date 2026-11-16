@@ -510,6 +510,14 @@ class VisualizationSettings(BaseModel):
 
     # ── the customer's own room photo ───────────────────────────────────────
 
+    allowed_without_gateway: bool | None = None
+    """Whether a request that came without the backend gateway's answer on who
+    may draw (`ChatRequest.visualization`) may have a room drawn: the internal
+    console and direct calls send none. Unset, it follows the environment -
+    allowed everywhere the console runs (local, test, stage), refused on prod,
+    where every request comes through the gateway (`Settings.draws_without_gateway`).
+    A request that carries the gateway's answer always follows the answer."""
+
     room_check_model: str | None = Field(default=None, min_length=1)
     """A vision model that says whether an upload is a photo of a room, before
     anything is emptied or paid for. None turns room photos off: the uploads
@@ -1143,6 +1151,18 @@ class Settings(BaseSettings):
             return self.catalog
         cap = min(self.catalog.max_products, self.visualization.max_references)
         return self.catalog.model_copy(update={"max_products": cap})
+
+    @property
+    def draws_without_gateway(self) -> bool:
+        """Whether a request with no gateway answer on drawing may draw
+        (`VisualizationSettings.allowed_without_gateway`)."""
+        if self.visualization is None:
+            return False
+        if self.visualization.allowed_without_gateway is not None:
+            return self.visualization.allowed_without_gateway
+        # The console runs locally and on stage with no gateway in front of it;
+        # prod is reached only through the gateway, which always answers.
+        return self.environment is not Environment.PROD
 
     def redacted(self) -> dict[str, Any]:
         """A summary safe to emit at startup: no secret ever renders (22)."""

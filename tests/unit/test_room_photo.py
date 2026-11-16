@@ -314,9 +314,17 @@ async def test_a_render_in_the_room_is_a_committed_turn_worded_for_it() -> None:
 
     assert reply.response.message == "Here's your bedroom package, placed in your own room."
     saved = sessions.saved[(STORE, SESSION)]
-    assert saved.state == state
+    assert (
+        saved.state.model_copy(
+            update={"last_render": None, "product_interaction": state.product_interaction}
+        )
+        == state
+    )
+    assert saved.state.last_render is not None and saved.state.last_render.in_their_photo
     user, _ = saved.conversation.messages
-    assert user.content == "[Asked to see the room package placed in a photo of their own room]"
+    assert user.content.startswith(
+        "[Asked to see the room package placed in a photo of their own room: "
+    )
 
 
 async def test_a_room_photo_the_session_no_longer_holds_is_asked_for_again() -> None:

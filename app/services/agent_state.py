@@ -41,6 +41,7 @@ from app.schemas.agent_state import (
     PickRoom,
     PresentedList,
     ProductInteractionState,
+    RenderRecord,
     RoomDesignNeedState,
     RoomProjectState,
     SavedMeasurements,
@@ -97,6 +98,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         room_swap=state.room_swap,
         kind_asked=state.kind_asked,
         cross_sell_plan=state.cross_sell_plan,
+        last_render=state.last_render,
         reply_language=state.reply_language,
     )
 
@@ -178,6 +180,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         room_swap=state.room_swap,
         kind_asked=state.kind_asked,
         cross_sell_plan=state.cross_sell_plan,
+        last_render=state.last_render,
         reply_language=state.reply_language,
     )
 
@@ -245,6 +248,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         room_swap=state.room_swap,
         kind_asked=state.kind_asked,
         cross_sell_plan=state.cross_sell_plan,
+        last_render=state.last_render,
         reply_language=state.reply_language,
     )
 
@@ -1146,3 +1150,24 @@ def remember_placements(state: AgentStateV1, placements: Sequence[Placement]) ->
     kept = [p for p in room.placements if p.piece.casefold() not in named]
     merged = (*kept, *named.values())[-MAX_PLACEMENTS:]
     return state.model_copy(update={"room_project": room.model_copy(update={"placements": merged})})
+
+
+def record_render(state: AgentStateV1, record: RenderRecord | None) -> AgentStateV1:
+    """The newest room picture, kept for every agent to follow up on
+    (`AgentStateV1.last_render`); it replaces the one before, and its pieces
+    count as seen. None - a picture that names no piece - leaves the state as
+    it is."""
+    if record is None:
+        return state
+    # Its pieces are listed under the picture: shown to them, so "the second
+    # piece in that picture" can be opened and kept in focus like any card.
+    interaction = state.product_interaction
+    seen = _newest(
+        (*interaction.seen_product_ids, *(piece.product_id for piece in record.pieces)), MAX_SEEN
+    )
+    return state.model_copy(
+        update={
+            "last_render": record,
+            "product_interaction": interaction.model_copy(update={"seen_product_ids": seen}),
+        }
+    )

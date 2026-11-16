@@ -133,6 +133,9 @@ def test_the_runtime_holds_only_what_it_sequences() -> None:
         # Folds the oldest messages into the rolling summary beside the team's
         # turn (session.summary) - a service, never a model client of its own.
         "summarizer",
+        # Whether a request with no gateway answer may draw a room - a policy
+        # flag, like arabic_replies (docs/visualization-in-chat-plan.md D1).
+        "draws_without_gateway",
     ]
 
 
@@ -279,6 +282,10 @@ def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
         # The store's own cart as the widget read it: the store's product ids
         # and quantities, looked up within the scoped store only (CLAUDE.md 36).
         "store_cart",
+        # Whether this shopper may have a room drawn, as the backend's gateway
+        # worked it out - an answer the gateway gives, never an identity
+        # (docs/visualization-in-chat-plan.md D1).
+        "visualization",
     }
 
 
