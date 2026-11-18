@@ -14,7 +14,7 @@ from app.agents.payloads import RenderShown
 from app.agents.reply import unsupported_figure
 from app.agents.services import AgentServices
 from app.agents.tools.common import RespondArgs
-from app.agents.tools.shopping import _executable
+from app.agents.tools.shopping import VisualizeRoomArgs, _executable
 from app.agents.trace import TurnTrace
 from app.agents.work import ToolRecord, ToolStatus, TurnWork
 from app.schemas.acquisition import BundleAcquisition
@@ -51,6 +51,7 @@ from app.services.cross_sell import CompanionSearchBuilder
 from app.services.grounding_builder import to_grounded_product
 from app.services.support import SupportService
 from langchain_core.messages import HumanMessage
+from pydantic import ValidationError
 
 from tests.unit.agents.fake_chat_model import ScriptedChatModel, call, step
 from tests.unit.agents.fakes import (
@@ -955,6 +956,7 @@ async def test_visualize_product_refused_when_the_shopper_may_not_draw(reason: s
 class _FakeRoomVisualizer:
     def __init__(self) -> None:
         self.calls: list[tuple[str, bool]] = []
+        self.staged: list[bool] = []
 
     async def render(
         self, state: Any, view: Any, context: Any, photo: Any = None
@@ -974,9 +976,17 @@ class _FakeRoomVisualizer:
     max_pieces = 14
 
     async def render_cart(
-        self, products: Any, room: Any, view: Any, context: Any, photo: Any = None
+        self,
+        products: Any,
+        room: Any,
+        view: Any,
+        context: Any,
+        photo: Any = None,
+        *,
+        staged: bool = False,
     ) -> RoomRenderPresentation:
         self.calls.append((f"cart:{room.room_label}", photo is not None))
+        self.staged.append(staged)
         return RoomRenderPresentation(
             image_url="data:image/jpeg;base64,eA==",
             width=1536,
@@ -1024,6 +1034,35 @@ async def test_visualize_room_draws_the_cart_for_one_room_and_remembers_it() -> 
     record = outcome.state.last_render
     assert record.source is RenderSource.CART
     assert [p.product_id for p in record.pieces] == [101, 102]
+
+
+async def test_visualize_room_stages_the_cart_in_a_created_room_when_asked() -> None:
+    services, viz = _room_services(hydration=FakeHydration(available=(101, 102)))
+    state = _cart_for({101: "living room", 102: "living room"})
+
+    outcome = await _call(
+        "visualize_room", {"all_of_them": True, "staged_room": True}, state, services=services
+    )
+
+    assert outcome.status is ToolStatus.OK
+    assert viz.calls == [("cart:living room", False)]
+    assert viz.staged == [True]
+    assert "not for sale" in outcome.facts["styling"]
+
+
+async def test_visualize_room_keeps_the_cart_bare_unless_a_created_room_is_chosen() -> None:
+    services, viz = _room_services(hydration=FakeHydration(available=(101,)))
+    outcome = await _call(
+        "visualize_room", {"all_of_them": True}, _cart_for({101: "living room"}), services=services
+    )
+
+    assert viz.staged == [False]
+    assert "styling" not in outcome.facts
+
+
+def test_a_created_room_and_their_photo_cannot_both_be_asked_for() -> None:
+    with pytest.raises(ValidationError):
+        VisualizeRoomArgs(staged_room=True, in_their_photo=True)
 
 
 class _ChatPhotos:

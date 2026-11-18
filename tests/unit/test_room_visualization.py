@@ -43,7 +43,12 @@ from app.integrations.image_generation import (
     OpenAIImageGenerator,
 )
 from app.integrations.product_images import ProductImageFetcher, _is_public
-from app.prompts.visualization.v1 import RenderPiece, RenderRoom, build_prompt
+from app.prompts.visualization.v1 import (
+    RenderPiece,
+    RenderRoom,
+    build_prompt,
+    build_staged_prompt,
+)
 from app.schemas.acquisition import BundleAcquisition
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import (
@@ -192,6 +197,27 @@ class TestPrompt:
         bare = RenderRoom(room_label="room", style=None, length_m=None, width_m=None)
         prompt = build_prompt(bare, PIECES[:1], RenderView.CORNER)
         assert prompt.startswith("Create a single photorealistic render of a room.")
+
+
+class TestStagedPrompt:
+    def test_every_product_is_a_hero_in_a_styled_room(self) -> None:
+        prompt = build_staged_prompt(ROOM, PIECES, RenderView.CORNER)
+        assert "fully furnished, lived-in modern bedroom, approximately 4.0 m by 5.0 m." in prompt
+        assert "(4 pieces in total)" in prompt
+        assert "- image 1: Oak Bed (bed, 217 x 140 x 100 cm)" in prompt
+        assert "- image 2: White Nightstand (nightstand) - 2 of them" in prompt
+        assert "- (no photo) Wool Rug (carpet, 230 x 330 cm): draw it faithfully" in prompt
+        assert "*invented* pieces" in prompt, "the bare shell is the other prompt"
+        assert "NOTHING else" not in prompt
+
+    def test_nothing_invented_repeats_a_listed_kind(self) -> None:
+        prompt = build_staged_prompt(ROOM, PIECES, RenderView.CORNER)
+        assert "no extra bed, nightstand, carpet." in prompt
+        assert prompt.rstrip().endswith("nothing invented repeats their kinds.")
+
+    def test_the_view_is_the_one_asked_for(self) -> None:
+        prompt = build_staged_prompt(ROOM, PIECES, RenderView.TOP_DOWN)
+        assert "strict top-down orthographic view" in prompt
 
 
 # ── the image providers ═════════════════════════════════════════════════════
@@ -601,6 +627,44 @@ class TestVisualizer:
         with pytest.raises(NothingToVisualizeError):
             await visualizer.render(a_room_state(), RenderView.CORNER, CONTEXT)
         assert parts["generator"].prompts == []
+
+
+class TestCartVisualizer:
+    ROOM = RenderRoom(room_label="living room", style=None, length_m=None, width_m=None)
+
+    async def test_the_cart_is_drawn_in_a_bare_room_by_default(self) -> None:
+        visualizer, parts = a_visualizer()
+        render = await visualizer.render_cart(
+            [(10, 1), (11, 1)], self.ROOM, RenderView.CORNER, CONTEXT
+        )
+        (prompt,) = parts["generator"].prompts
+        assert "NOTHING else" in prompt
+        assert render.source is RenderSource.CART
+
+    async def test_a_staged_cart_is_drawn_in_a_styled_room(self) -> None:
+        visualizer, parts = a_visualizer()
+        render = await visualizer.render_cart(
+            [(10, 1), (11, 1)], self.ROOM, RenderView.CORNER, CONTEXT, staged=True
+        )
+        (prompt,) = parts["generator"].prompts
+        assert "fully furnished, lived-in living room." in prompt
+        assert "- image 1: Oak Bed" in prompt and "- image 2: Nightstand" in prompt
+        assert render.source is RenderSource.CART
+        assert [i.name_english for i in render.items] == ["Oak Bed", "Nightstand"]
+
+    async def test_their_own_photo_is_never_staged(self) -> None:
+        visualizer, parts = a_visualizer()
+        photo = RoomPhoto(
+            photo_id="d" * 32,
+            width=300,
+            height=200,
+            jpeg_b64=base64.b64encode(a_jpeg()).decode(),
+        )
+        await visualizer.render_cart(
+            [(10, 1)], self.ROOM, RenderView.CORNER, CONTEXT, photo, staged=True
+        )
+        (prompt,) = parts["generator"].prompts
+        assert "*invented* pieces" not in prompt
 
 
 class TestSingleVisualizer:
