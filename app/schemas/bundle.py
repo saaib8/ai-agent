@@ -80,6 +80,16 @@ class BundleOptimizationRequest(BaseModel):
     two-seater fill a "two more seats" need would count its seats twice and add
     nobody's chair (CLAUDE.md 27)."""
 
+    match_locks: bool = False
+    """A piece a lock fills only in part takes the lock's own product for the
+    rest first - one nightstand in the cart and a pair in the plan is a matched
+    pair, as any piece wanted in more than one is (CLAUDE.md 10.1). Only on a
+    fresh design: a rebuild keeps whatever the room already holds."""
+
+    bought_once: frozenset[str] = frozenset()
+    """Kinds never one product bought twice (`room_pieces_v1.yaml`): a lock of
+    one of them is never repeated."""
+
 
 class UnmetReason(StrEnum):
     """Why a need did not get its full quantity. Reasons, never prose."""

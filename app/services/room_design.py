@@ -38,7 +38,7 @@ from app.taxonomy.seating import SEATING_CATEGORY, SeatingSemantics
 from app.taxonomy.words import customer_words
 
 MAX_ROOM_PIECES = 14
-MAX_PIECE_QUANTITY = 6
+MAX_PIECE_QUANTITY = 15
 MAX_SEATS_EACH = 12
 
 
@@ -142,6 +142,22 @@ class RoomDesignChecker:
                     {"piece": number, "types": [customer_words(t) for t in unstocked]}
                 )
             if not stocked and piece.from_pick is None:
+                if piece.must:
+                    # A piece the room needs is never quietly left out: she is
+                    # told what this store does stock in its family and
+                    # re-plans it with those (a dining set -> a table and chairs).
+                    return RoomDesignProblem(
+                        code="needed_piece_not_stocked",
+                        piece=number,
+                        detail={
+                            "not_stocked": [customer_words(t) for t in unstocked],
+                            "stocked_in_its_family": [
+                                customer_words(s.commerce_subcategory)
+                                for s in overview.shelves_in(family)
+                                if s.commerce_subcategory
+                            ],
+                        },
+                    )
                 not_stocked.append(piece.role)
                 continue
             kinds = stocked or piece.types[:1]

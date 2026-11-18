@@ -1174,6 +1174,11 @@ def accept_over_budget_tool(schemas: ToolSchemas) -> ZoryTool[NoArgs]:
         services = context.services
         offer = work.staged.swap_budget_offer
         room = work.staged.room_project
+        if offer is None and room is not None:
+            # A room built over the budget because what it needs costs more.
+            return room_outcome(
+                await services.rooms.accept_room_total(work.staged, context.retailer)
+            )
         if offer is None or room is None or offer.bundle_revision != room.bundle_revision:
             return ToolOutcome(status=ToolStatus.REFUSED, code="no_offer_to_accept")
         if offer.is_change:
