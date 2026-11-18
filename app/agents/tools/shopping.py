@@ -14,7 +14,7 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from app.agents.context import ToolContext
 from app.agents.decided_stock import decided, decided_pool, looks_of, with_kinds_beside
@@ -1196,6 +1196,22 @@ class VisualizeRoomArgs(BaseModel):
             "when they ask to see it there ('see my cart in this room')."
         ),
     )
+    staged_room: bool = Field(
+        default=False,
+        description=(
+            "Draw their cart's products in a room we create, styled with invented decor "
+            "around them, when they chose a generated room for their cart. A designed room "
+            "is always drawn as designed."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _one_room_to_draw_in(self) -> VisualizeRoomArgs:
+        # Told at once, as broken arguments: a generated room and their own photo
+        # are two different pictures, and only the customer can choose between them.
+        if self.staged_room and self.in_their_photo:
+            raise ValueError("staged_room and in_their_photo are two different rooms: choose one")
+        return self
 
 
 async def _chat_room(
@@ -1325,6 +1341,7 @@ def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
                     args.view,
                     context.retailer,
                     photo,
+                    staged=args.staged_room and photo is None,
                 )
                 kind = decision.designed.room_kind if decision.designed else None
                 kind = kind or decision.room.replace(" ", "_")
@@ -1356,6 +1373,8 @@ def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
         }
         if left_out:
             facts["left_out"] = left_out
+        if isinstance(decision, DrawCart) and args.staged_room and photo is None:
+            facts["styling"] = "the decor around their products is invented, not for sale"
         return ToolOutcome(facts=facts, state=state, payload=RenderShown(render=render))
 
     return ZoryTool(
@@ -1367,7 +1386,9 @@ def visualize_room_tool() -> ZoryTool[VisualizeRoomArgs]:
             "(a designed room in the cart with what was bought for it since). When it asks "
             "which room or which products, ask them, then call it again with their answer. "
             "'My room' is the room, never their photo: their own photo is used only when "
-            "they upload one. The picture shows only these products, nothing else for sale."
+            "they upload one, or chose their own room for their cart. The picture shows "
+            "only these products for sale - in a generated room (staged_room) with "
+            "invented decor around them."
         ),
         args=VisualizeRoomArgs,
         owners=SARA,

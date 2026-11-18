@@ -54,6 +54,7 @@ from app.prompts.visualization.v1 import (
     RenderRoom,
     build_prompt,
     build_single_prompt,
+    build_staged_prompt,
     reference_caption,
     room_type_label,
     room_type_words,
@@ -204,9 +205,15 @@ class RoomVisualizer:
         view: RenderView,
         context: RetailerContext,
         photo: RoomPhoto | None = None,
+        *,
+        staged: bool = False,
     ) -> RoomRenderPresentation:
         """Cart products drawn together as one room - imagined from a view,
         or placed in the customer's own room when `photo` is given.
+
+        An imagined room is a bare shell holding only these products, or, when
+        `staged`, a styled room of invented decor around them. A photo is
+        their own room, so `staged` does not apply to it.
 
         Read back through the store-scoped repository: a product the store no
         longer sells is left out, in cart order.
@@ -219,7 +226,7 @@ class RoomVisualizer:
             raise NothingToVisualizeError(store_id=context.store_id, reason="no_available_pieces")
         if photo is not None:
             return await self._draw_in_photo(items, photo, context, RenderSource.CART)
-        return await self._draw(items, room, view, context, RenderSource.CART, None)
+        return await self._draw(items, room, view, context, RenderSource.CART, None, staged=staged)
 
     async def render_single(
         self, product_id: int, context: RetailerContext
@@ -289,6 +296,8 @@ class RoomVisualizer:
         context: RetailerContext,
         source: RenderSource,
         spec: RenderRoomSpec | None,
+        *,
+        staged: bool = False,
     ) -> RoomRenderPresentation:
         started = time.perf_counter()
         photos = await self._photos_for(items)
@@ -307,7 +316,8 @@ class RoomVisualizer:
             if photo is not None:
                 references.append(ImageReference(data=photo, caption=reference_caption(piece)))
 
-        prompt = build_prompt(room, tuple(pieces), view)
+        build = build_staged_prompt if staged else build_prompt
+        prompt = build(room, tuple(pieces), view)
         image = await self._generator.generate(prompt, references)
         jpeg, width, height = _as_jpeg(image.data, self._settings.jpeg_quality)
 
@@ -316,6 +326,7 @@ class RoomVisualizer:
             store_id=context.store_id,
             source=source.value,
             view=view.value,
+            staged=staged,
             piece_count=len(pieces),
             reference_count=len(references),
             provider=image.provider,

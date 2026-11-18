@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from app.schemas.visualization import RenderView, RoomType
 
-VERSION = "visualization/v1"
+VERSION = "visualization/v1.1"
 
 ROOM_TYPES: dict[RoomType, tuple[str, str]] = {
     # (what the customer picks, how the prompt names the room)
@@ -134,6 +134,60 @@ def build_prompt(room: RenderRoom, pieces: tuple[RenderPiece, ...], view: Render
         "",
         f"Before finishing, check that all {units} listed pieces are present and "
         "identifiable, and that nothing unlisted was added.",
+    ]
+    return "\n".join(lines)
+
+
+def build_staged_prompt(room: RenderRoom, pieces: tuple[RenderPiece, ...], view: RenderView) -> str:
+    """Several products staged together in an inviting, lived-in room - the
+    staging of `build_single_prompt` with every listed product as a hero.
+
+    Every listed product must appear, faithful to its photo, the stated number
+    of times, exactly as in `build_prompt`; only the room around them changes
+    from a bare shell to invented styling. Nothing invented may repeat a listed
+    product's kind, so the picture never shows a second sofa or rug the customer
+    could take for one of theirs; the reply, not the picture, tells them only
+    the listed products are for sale.
+    """
+    units = sum(piece.quantity for piece in pieces)
+    style = f"{room.style} " if room.style else ""
+    size = (
+        f", approximately {room.length_m:.1f} m by {room.width_m:.1f} m"
+        if room.length_m and room.width_m
+        else ""
+    )
+    kinds = ", ".join(dict.fromkeys(piece.kind for piece in pieces))
+    lines = [
+        "Create a single photorealistic interior render: an inviting, well-styled, fully "
+        f"furnished, lived-in {style}{room.room_label}{size}.",
+        "",
+        f"The heroes of the scene are EXACTLY these catalog products ({units} pieces in "
+        "total). Every listed product must be visible, each the stated number of times. None "
+        "may be omitted, merged, hidden behind another piece or cropped out of frame. If the "
+        "room looks tight, widen the camera - never drop a piece.",
+        "Reproduce each product faithfully from its reference image - same shape, "
+        "proportions, material and colour. The image is the authority on how a product "
+        "looks; the text below only identifies it and gives its approximate size.",
+        *(piece_line(piece) for piece in pieces),
+        "",
+        "Arrange the listed products the way an interior designer would, as the clear focal "
+        "point of the room, at realistic scale with sensible clearances and walkways.",
+        "",
+        "Furnish and decorate the rest of the room with tasteful, *invented* pieces so it "
+        "reads as a real home: wall art, framed canvases, indoor plants, curtains, soft "
+        "cushions, warm lamps and a few small ornaments. Choose colours and a look that "
+        "flatter the listed products.",
+        "",
+        "Keep the focus honest: the listed products are the ones the customer is shopping "
+        "for, so nothing invented may rival them for attention or repeat their kinds - no "
+        f"extra {kinds}. Everything else is generic background styling, visibly secondary "
+        "to them.",
+        "",
+        f"Photography: {VIEWS[view][1]} Soft natural daylight, realistic scale, no "
+        "people, no text, no watermarks, no brand logos.",
+        "",
+        f"Before finishing, check that all {units} listed pieces are present and match their "
+        "reference images, and that nothing invented repeats their kinds.",
     ]
     return "\n".join(lines)
 
