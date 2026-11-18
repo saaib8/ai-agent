@@ -827,6 +827,14 @@ class AgentsSettings(BaseModel):
     its look is this close to the best match's (similarity difference). 0 means
     only an equally close look; larger trades a little look for premium."""
 
+    bargain_lift_quantile: float | None = Field(default=0.25, gt=0, lt=0.5)
+    """A finishing piece whose product is among this cheapest share of its
+    search's products (in this store) is a bargain-bin pick; with budget left
+    it is lifted to a normal one. None switches the lift off."""
+
+    bargain_lift_similarity_margin: float = Field(default=0.06, ge=0, le=1)
+    """How far below the best look a lifted finishing piece's look may be."""
+
     cross_sell_plan_ttl_s: int = Field(default=604800, ge=0, le=2592000)
     """How long Nora's plan for what goes with a product is kept for reuse by
     the next shopper who picks it on its own (CLAUDE.md 10.3). 0 keeps none,

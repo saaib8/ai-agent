@@ -196,6 +196,10 @@ class Rooms:
     async def current(self, state: Any, context: Any) -> RoomOutcome | None:
         return None
 
+    async def accept_room_total(self, state: Any, context: Any) -> RoomOutcome:
+        # The room here is within its budget: there is nothing to accept.
+        return RoomOutcome(state=state, bundle=None, code="no_offer_to_accept", committed=False)
+
     async def swap(
         self, state: Any, context: Any, piece: int, option: int, *, allow_over_budget: bool
     ) -> RoomOutcome:

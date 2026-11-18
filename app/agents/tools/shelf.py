@@ -14,6 +14,7 @@ hold any stocked kind.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, cast
 
 from pydantic import Field, create_model
@@ -193,19 +194,36 @@ def _close_look(
 
 
 async def stocked_kinds(services: AgentServices, retailer: RetailerContext) -> dict[str, Any]:
-    """The kinds the store stocks, by family - names only, a few dozen words -
-    so Nora plans a room from what exists without a tool call. Colours, seats
-    and prices stay with the checks and the search (CLAUDE.md 10.1). Empty
-    when the catalog cannot be read now."""
+    """The kinds the store stocks, by family, and each kind's price band here
+    (`price_band`: where its cheaper quarter starts, and its middle price) - so
+    Nora plans a room, its layout and what is must, to what this store's
+    things cost, without a tool call. Colours and seats stay with the checks
+    and the search (CLAUDE.md 10.1). The band is for planning, never a figure
+    to say: it has no figure key. Empty when the catalog cannot be read now."""
     try:
         overview = await services.capabilities.overview(retailer)
     except IntegrationUnavailableError:
         return {}
     families: dict[str, list[str]] = {}
+    bands: dict[str, list[int]] = {}
     for shelf in sorted(overview.shelves, key=lambda s: -s.active_count):
-        if shelf.commerce_subcategory is not None:
-            families.setdefault(shelf.commerce_category, []).append(shelf.commerce_subcategory)
-    return {"store_stocks": dict(sorted(families.items()))} if families else {}
+        kind = shelf.commerce_subcategory
+        if kind is None:
+            continue
+        families.setdefault(shelf.commerce_category, []).append(kind)
+        if shelf.price_low is not None and shelf.price_typical is not None:
+            bands[kind] = [_whole(shelf.price_low), _whole(shelf.price_typical)]
+    if not families:
+        return {}
+    stocks: dict[str, Any] = {"store_stocks": dict(sorted(families.items()))}
+    if bands:
+        stocks["price_band"] = bands
+    return stocks
+
+
+def _whole(price: Decimal) -> int:
+    """A price for planning, to the whole unit."""
+    return int(price.to_integral_value(rounding=ROUND_HALF_UP))
 
 
 async def kind_on_shelf(

@@ -57,10 +57,12 @@ OVERVIEW = CatalogOverview(
             colours=("Beige", "Grey"),
             styles=("Modern",),
             long_and_shallow=True,
+            price_low=Decimal("1500.40"),
+            price_typical=Decimal("2300"),
         ),
         _shelf("seating", "chair", 8, implied_seats=1, colours=("Olive",)),
         _shelf("seating", "chaise-lounge", 2),
-        _shelf("decor", "carpet", 12),
+        _shelf("decor", "carpet", 12, price_low=Decimal(1200), price_typical=Decimal(1900)),
     ),
 )
 
@@ -280,9 +282,15 @@ async def test_the_room_guide_marks_kinds_but_never_puts_one_first() -> None:
 async def test_nora_plans_from_the_kinds_the_store_stocks_names_only() -> None:
     from app.agents.tools.shelf import stocked_kinds
 
-    stocks = (await stocked_kinds(_services(), CONTEXT))["store_stocks"]
+    context = await stocked_kinds(_services(), CONTEXT)
 
-    assert stocks == {"decor": ["carpet"], "seating": ["sofa", "chair", "chaise-lounge"]}
+    assert context["store_stocks"] == {
+        "decor": ["carpet"],
+        "seating": ["sofa", "chair", "chaise-lounge"],
+    }
+    # What things cost here, to plan to the budget: [low, typical], whole
+    # units; a kind with no band is named and left unpriced.
+    assert context["price_band"] == {"sofa": [1500, 2300], "carpet": [1200, 1900]}
 
 
 async def test_ask_about_gives_what_the_store_carries_of_the_kind() -> None:

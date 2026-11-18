@@ -122,18 +122,14 @@ def optimize(
     budget: PriceConstraint | None = None,
     locked: tuple[LockedBundleProduct, ...] = (),
 ) -> Any:
-    discovery = DesignDiscoveryResult(
-        needs=tuple(entry(i, n, p) for i, (n, p) in enumerate(needs))
-    )
+    discovery = DesignDiscoveryResult(needs=tuple(entry(i, n, p) for i, (n, p) in enumerate(needs)))
     return OPTIMIZER.optimize(
         BundleOptimizationRequest(discovery=discovery, budget=budget, locked=locked)
     )
 
 
 def sar(amount: str, *, exclusive: bool = False) -> PriceConstraint:
-    return PriceConstraint(
-        currency="SAR", max_amount=Decimal(amount), max_exclusive=exclusive
-    )
+    return PriceConstraint(currency="SAR", max_amount=Decimal(amount), max_exclusive=exclusive)
 
 
 def chosen(bundle: RoomBundle) -> dict[int, int]:
@@ -156,9 +152,10 @@ def test_a_cheaper_lower_ranked_product_wins_when_it_completes_the_room() -> Non
     """
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="8000"), product(2, price="5200"))),
-        (need("tables", "center-table"), pool(
-            product(3, price="9000", category="tables", subcategory="center-table")
-        )),
+        (
+            need("tables", "center-table"),
+            pool(product(3, price="9000", category="tables", subcategory="center-table")),
+        ),
         budget=sar("15000"),
     )
 
@@ -170,9 +167,10 @@ def test_a_cheaper_lower_ranked_product_wins_when_it_completes_the_room() -> Non
 def test_the_best_ranked_product_wins_when_it_costs_the_room_nothing() -> None:
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="8000"), product(2, price="5200"))),
-        (need("tables", "center-table"), pool(
-            product(3, price="2000", category="tables", subcategory="center-table")
-        )),
+        (
+            need("tables", "center-table"),
+            pool(product(3, price="2000", category="tables", subcategory="center-table")),
+        ),
         budget=sar("15000"),
     )
 
@@ -183,11 +181,17 @@ def test_needs_are_never_selected_independently_at_top_one() -> None:
     """Three needs where independent top-1 would overspend by 3,000."""
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="5000"), product(2, price="3000"))),
-        (need("tables", "center-table", priority=DesignPriority.REQUIRED),
-         pool(product(3, price="4000", category="tables", subcategory="center-table"),
-              product(4, price="2000", category="tables", subcategory="center-table"))),
-        (need("decor", "carpet", priority=DesignPriority.REQUIRED),
-         pool(product(5, price="3000", category="decor", subcategory="carpet"))),
+        (
+            need("tables", "center-table", priority=DesignPriority.REQUIRED),
+            pool(
+                product(3, price="4000", category="tables", subcategory="center-table"),
+                product(4, price="2000", category="tables", subcategory="center-table"),
+            ),
+        ),
+        (
+            need("decor", "carpet", priority=DesignPriority.REQUIRED),
+            pool(product(5, price="3000", category="decor", subcategory="carpet")),
+        ),
         budget=sar("9000"),
     )
 
@@ -202,14 +206,18 @@ def test_three_required_needs_beat_two_required_plus_recommended() -> None:
     """Counts, compared tier by tier — never a weighted total."""
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="3000"))),
-        (need("tables", "center-table"), pool(
-            product(2, price="3000", category="tables", subcategory="center-table")
-        )),
-        (need("decor", "carpet"), pool(
-            product(3, price="3000", category="decor", subcategory="carpet")
-        )),
-        (need("lighting", "floor-lamp", priority=DesignPriority.RECOMMENDED),
-         pool(product(4, price="1000", category="lighting", subcategory="floor-lamp"))),
+        (
+            need("tables", "center-table"),
+            pool(product(2, price="3000", category="tables", subcategory="center-table")),
+        ),
+        (
+            need("decor", "carpet"),
+            pool(product(3, price="3000", category="decor", subcategory="carpet")),
+        ),
+        (
+            need("lighting", "floor-lamp", priority=DesignPriority.RECOMMENDED),
+            pool(product(4, price="1000", category="lighting", subcategory="floor-lamp")),
+        ),
         budget=sar("9000"),
     )
 
@@ -221,10 +229,14 @@ def test_three_required_needs_beat_two_required_plus_recommended() -> None:
 def test_optional_is_dropped_before_recommended() -> None:
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="5000"))),
-        (need("tables", "center-table", priority=DesignPriority.RECOMMENDED),
-         pool(product(2, price="2000", category="tables", subcategory="center-table"))),
-        (need("decor", "carpet", priority=DesignPriority.OPTIONAL),
-         pool(product(3, price="2000", category="decor", subcategory="carpet"))),
+        (
+            need("tables", "center-table", priority=DesignPriority.RECOMMENDED),
+            pool(product(2, price="2000", category="tables", subcategory="center-table")),
+        ),
+        (
+            need("decor", "carpet", priority=DesignPriority.OPTIONAL),
+            pool(product(3, price="2000", category="decor", subcategory="carpet")),
+        ),
         budget=sar("7000"),
     )
 
@@ -236,9 +248,10 @@ def test_plan_order_decides_between_equally_affordable_needs() -> None:
     """Same tier, same cost, only one affordable: the earlier need wins."""
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="5000"))),
-        (need("tables", "center-table"), pool(
-            product(2, price="5000", category="tables", subcategory="center-table")
-        )),
+        (
+            need("tables", "center-table"),
+            pool(product(2, price="5000", category="tables", subcategory="center-table")),
+        ),
         budget=sar("5000"),
     )
 
@@ -246,16 +259,52 @@ def test_plan_order_decides_between_equally_affordable_needs() -> None:
     assert result.unmet[0].need_index == 1
 
 
+def test_finishing_pieces_are_given_up_from_the_end_of_the_plan() -> None:
+    """Money for the coffee table or for the three cheaper pieces listed after
+    it, not both: the designer listed the table first, so it is kept and the
+    later pieces go - never three small pieces in place of the one that
+    matters more."""
+    nice = DesignPriority.OPTIONAL
+    result = optimize(
+        (need("seating", "sofa"), pool(product(1, price="4200"))),
+        (
+            need("tables", "center-table", priority=nice),
+            pool(product(2, price="767", category="tables", subcategory="center-table")),
+        ),
+        (
+            need("lighting", "floor-lamp", priority=nice),
+            pool(product(3, price="300", category="lighting", subcategory="floor-lamp")),
+        ),
+        (
+            need("decor", "art-canvas", priority=nice),
+            pool(product(4, price="250", category="decor", subcategory="art-canvas")),
+        ),
+        (
+            need("decor", "flower-pot-and-plant", priority=nice),
+            pool(product(5, price="200", category="decor", subcategory="flower-pot-and-plant")),
+        ),
+        budget=sar("5000"),
+    )
+
+    # 800 left after the sofa: the table (767) or all three later pieces
+    # (750). Counting pieces would keep the three; the plan keeps the table.
+    assert set(chosen(result)) == {0, 1}
+    assert [u.need_index for u in result.unmet] == [2, 3, 4]
+
+
 def _two_required_and_one_recommended(budget: str) -> Any:
     """Only one required need is affordable: the dear earlier one at 9,000 or
     the cheaper later one at 4,000. A recommended need costs 1,000."""
     return optimize(
         (need("seating", "sofa"), pool(product(1, price="9000"))),
-        (need("tables", "center-table"), pool(
-            product(2, price="4000", category="tables", subcategory="center-table")
-        )),
-        (need("decor", "carpet", priority=DesignPriority.RECOMMENDED),
-         pool(product(3, price="1000", category="decor", subcategory="carpet"))),
+        (
+            need("tables", "center-table"),
+            pool(product(2, price="4000", category="tables", subcategory="center-table")),
+        ),
+        (
+            need("decor", "carpet", priority=DesignPriority.RECOMMENDED),
+            pool(product(3, price="1000", category="decor", subcategory="carpet")),
+        ),
         budget=sar(budget),
     )
 
@@ -289,8 +338,10 @@ def test_plan_order_never_costs_a_lower_tier_its_count() -> None:
 
 def test_quantity_buys_the_same_product_n_times() -> None:
     result = optimize(
-        (need("seating", "dining-chair", quantity=4),
-         pool(product(1, price="500", subcategory="dining-chair"))),
+        (
+            need("seating", "dining-chair", quantity=4),
+            pool(product(1, price="500", subcategory="dining-chair")),
+        ),
         budget=sar("2000"),
     )
 
@@ -304,8 +355,10 @@ def test_a_residual_is_filled_completely_or_not_at_all() -> None:
     """Three chairs at 500 need 1,500. With 1,400 available, buying two would
     be a partial-fill policy nobody designed."""
     result = optimize(
-        (need("seating", "dining-chair", quantity=3),
-         pool(product(1, price="500", subcategory="dining-chair"))),
+        (
+            need("seating", "dining-chair", quantity=3),
+            pool(product(1, price="500", subcategory="dining-chair")),
+        ),
         budget=sar("1400"),
     )
 
@@ -366,8 +419,10 @@ def test_a_broad_category_need_is_satisfied_by_any_subtype() -> None:
 def test_a_lock_must_meet_a_stated_seating_requirement() -> None:
     """A two-seat sofa does not satisfy a plan that reasoned to four."""
     result = optimize(
-        (need("seating", "sofa", seats=SeatingCapacityConstraint.at_least(4)),
-         pool(product(9, price="4000", seats=4))),
+        (
+            need("seating", "sofa", seats=SeatingCapacityConstraint.at_least(4)),
+            pool(product(9, price="4000", seats=4)),
+        ),
         locked=(lock(product(1, seats=2)),),
     )
 
@@ -377,8 +432,10 @@ def test_a_lock_must_meet_a_stated_seating_requirement() -> None:
 def test_an_unverified_capacity_satisfies_no_requirement() -> None:
     """NULL means unverified, never "any" (CLAUDE.md 6.1)."""
     result = optimize(
-        (need("seating", "sofa", seats=SeatingCapacityConstraint.at_least(4)),
-         pool(product(9, price="4000", seats=4))),
+        (
+            need("seating", "sofa", seats=SeatingCapacityConstraint.at_least(4)),
+            pool(product(9, price="4000", seats=4)),
+        ),
         locked=(lock(product(1, seats=None)),),
     )
 
@@ -387,8 +444,10 @@ def test_an_unverified_capacity_satisfies_no_requirement() -> None:
 
 def test_a_lock_covers_part_of_a_quantity_and_the_rest_is_bought() -> None:
     result = optimize(
-        (need("seating", "dining-chair", quantity=4),
-         pool(product(9, price="500", subcategory="dining-chair"))),
+        (
+            need("seating", "dining-chair", quantity=4),
+            pool(product(9, price="500", subcategory="dining-chair")),
+        ),
         locked=(lock(product(1, subcategory="dining-chair"), quantity=1),),
     )
 
@@ -411,8 +470,10 @@ def test_surplus_locked_units_stay_in_the_room_unmatched() -> None:
 
 def test_a_lock_whose_type_is_absent_from_the_plan_is_preserved() -> None:
     result = optimize(
-        (need("tables", "center-table"),
-         pool(product(9, category="tables", subcategory="center-table"))),
+        (
+            need("tables", "center-table"),
+            pool(product(9, category="tables", subcategory="center-table")),
+        ),
         locked=(lock(product(1, category="decor", subcategory="carpet")),),
     )
 
@@ -456,8 +517,10 @@ def test_a_selected_line_carries_its_search_provenance() -> None:
 
 def test_an_owned_lock_consumes_no_budget() -> None:
     result = optimize(
-        (need("tables", "center-table"),
-         pool(product(9, price="5000", category="tables", subcategory="center-table"))),
+        (
+            need("tables", "center-table"),
+            pool(product(9, price="5000", category="tables", subcategory="center-table")),
+        ),
         locked=(lock(product(1, price="99000"), BundleAcquisition.ALREADY_OWNED),),
         budget=sar("6000"),
     )
@@ -468,8 +531,10 @@ def test_an_owned_lock_consumes_no_budget() -> None:
 
 def test_a_to_buy_lock_consumes_its_current_price() -> None:
     result = optimize(
-        (need("tables", "center-table"),
-         pool(product(9, price="5000", category="tables", subcategory="center-table"))),
+        (
+            need("tables", "center-table"),
+            pool(product(9, price="5000", category="tables", subcategory="center-table")),
+        ),
         locked=(lock(product(1, price="4000")),),
         budget=sar("10000"),
     )
@@ -496,10 +561,10 @@ def test_locked_spend_alone_over_budget_is_infeasible() -> None:
 @pytest.mark.parametrize(
     ("price", "budget", "exclusive", "bought"),
     [
-        ("5000.00", "5000.00", False, True),   # inclusive, exactly on it
+        ("5000.00", "5000.00", False, True),  # inclusive, exactly on it
         ("5000.01", "5000.00", False, False),  # one cent above
-        ("5000.00", "5000.00", True, False),   # exclusive, exactly on it
-        ("4999.99", "5000.00", True, True),    # exclusive, one cent below
+        ("5000.00", "5000.00", True, False),  # exclusive, exactly on it
+        ("4999.99", "5000.00", True, True),  # exclusive, one cent below
     ],
 )
 def test_the_ceiling_is_honoured_at_the_exact_endpoint(
@@ -627,8 +692,10 @@ def test_a_budget_range_never_crosses_the_ceiling_to_reach_the_floor() -> None:
 def test_without_a_budget_every_fillable_need_is_taken_at_rank_one() -> None:
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="90000"), product(2, price="10"))),
-        (need("tables", "center-table", priority=DesignPriority.OPTIONAL),
-         pool(product(3, price="70000", category="tables", subcategory="center-table"))),
+        (
+            need("tables", "center-table", priority=DesignPriority.OPTIONAL),
+            pool(product(3, price="70000", category="tables", subcategory="center-table")),
+        ),
     )
 
     assert chosen(result) == {0: 1, 1: 3}
@@ -648,9 +715,7 @@ def test_a_candidate_in_another_currency_is_excluded_from_a_budgeted_room() -> N
 
 
 def test_a_need_with_no_comparable_candidate_says_so_precisely() -> None:
-    result = optimize(
-        (need(), pool(product(1, price="100", unit="USD"))), budget=sar("5000")
-    )
+    result = optimize((need(), pool(product(1, price="100", unit="USD"))), budget=sar("5000"))
 
     assert result.unmet[0].reason is UnmetReason.NOT_BUDGET_COMPARABLE
 
@@ -687,8 +752,12 @@ def test_an_owned_lock_in_another_currency_is_fine() -> None:
 def test_mixed_units_without_a_budget_give_a_bundle_and_no_total() -> None:
     result = optimize(
         (need("seating", "sofa"), pool(product(1, price="1000", unit="SAR"))),
-        (need("tables", "center-table"),
-         pool(product(2, price="100", unit="USD", category="tables", subcategory="center-table"))),
+        (
+            need("tables", "center-table"),
+            pool(
+                product(2, price="100", unit="USD", category="tables", subcategory="center-table")
+            ),
+        ),
     )
 
     assert result.status is BundleStatus.COMPLETE
@@ -706,9 +775,7 @@ def test_nothing_converts_or_normalises_a_currency() -> None:
 
 def test_a_case_differing_unit_is_a_different_unit() -> None:
     """Byte-for-byte: normalising would be a guess about an unvalidated column."""
-    result = optimize(
-        (need(), pool(product(1, price="100", unit="sar"))), budget=sar("5000")
-    )
+    result = optimize((need(), pool(product(1, price="100", unit="sar"))), budget=sar("5000"))
 
     assert result.unmet[0].reason is UnmetReason.NOT_BUDGET_COMPARABLE
 
@@ -756,8 +823,10 @@ def test_a_to_buy_lock_without_a_usable_price_is_uncomputable() -> None:
 
 def test_an_owned_lock_without_a_usable_price_is_preserved() -> None:
     result = optimize(
-        (need("tables", "center-table"),
-         pool(product(9, category="tables", subcategory="center-table"))),
+        (
+            need("tables", "center-table"),
+            pool(product(9, category="tables", subcategory="center-table")),
+        ),
         locked=(lock(product(1, price="0.00"), BundleAcquisition.ALREADY_OWNED),),
     )
 
@@ -778,8 +847,10 @@ def test_every_monetary_value_is_decimal() -> None:
 def test_a_required_need_with_no_candidates_makes_the_room_partial() -> None:
     result = optimize(
         (need("seating", "sofa"), pool()),
-        (need("tables", "center-table"),
-         pool(product(2, category="tables", subcategory="center-table"))),
+        (
+            need("tables", "center-table"),
+            pool(product(2, category="tables", subcategory="center-table")),
+        ),
     )
 
     assert result.status is BundleStatus.PARTIAL
@@ -793,9 +864,7 @@ def test_a_skipped_need_is_reported_as_having_no_candidates() -> None:
     assert result.unmet[0].reason is UnmetReason.NO_CANDIDATES
 
 
-@pytest.mark.parametrize(
-    "priority", [DesignPriority.RECOMMENDED, DesignPriority.OPTIONAL]
-)
+@pytest.mark.parametrize("priority", [DesignPriority.RECOMMENDED, DesignPriority.OPTIONAL])
 def test_a_lower_priority_gap_leaves_the_room_complete(
     priority: DesignPriority,
 ) -> None:
@@ -878,6 +947,10 @@ def test_the_request_cannot_carry_state_or_scope() -> None:
         "locked",
         # Need indexes a lock may not fill - still no state and no scope.
         "fresh_needs",
+        # A fresh design matches the rest of a pair to its lock; kinds never
+        # bought twice are not repeated - still no state and no scope.
+        "match_locks",
+        "bought_once",
     }
 
 
@@ -896,3 +969,145 @@ def test_the_design_discovery_path_still_emits_the_default_sort() -> None:
         ):
             assert all(k.arg != "sort" for k in node.keywords)
     assert "ProductSort" not in bridge
+
+
+# ── a piece the room needs keeps its standing ═══════════════════════════════
+
+QUEEN = (0, 0, 0, 0, 0)
+"""A designed piece's tier: seats, size in her range, nothing to avoid, type, depth."""
+SINGLE = (0, 2, 0, 0, 0)
+"""The same piece outside the size she designed it at."""
+
+
+def designed(
+    index: int, design_need: DesignCategoryNeed, *ranked: tuple[ProductCandidate, tuple[int, ...]]
+) -> DesignNeedCandidates:
+    return DesignNeedCandidates(
+        need_index=index,
+        need=design_need,
+        pool=pool(*(p for p, _ in ranked)),
+        tiers=tuple(t for _, t in ranked),
+    )
+
+
+def bed_and_rug(budget: str, *beds: tuple[ProductCandidate, tuple[int, ...]]) -> Any:
+    rug = product(9, price="2700", category="floor", subcategory="carpet")
+    discovery = DesignDiscoveryResult(
+        needs=(
+            designed(0, need("bedroom", "bed"), *beds),
+            designed(1, need("floor", "carpet", priority=DesignPriority.OPTIONAL), (rug, QUEEN)),
+        )
+    )
+    return OPTIMIZER.optimize(BundleOptimizationRequest(discovery=discovery, budget=sar(budget)))
+
+
+def bed(product_id: int, price: str) -> ProductCandidate:
+    return product(product_id, price=price, category="bedroom", subcategory="bed")
+
+
+def test_a_finishing_piece_never_makes_a_needed_piece_smaller() -> None:
+    """Store 21: a queen and a rug do not both fit, a single and the rug do.
+    The queen stays and the rug is left out, to be offered after the room."""
+    result = bed_and_rug("4000", (bed(1, "2500"), QUEEN), (bed(2, "1300"), SINGLE))
+
+    assert chosen(result) == {0: 1}
+    assert [entry.need_index for entry in result.unmet] == [1]
+
+
+def test_a_finishing_piece_may_make_a_needed_piece_a_cheaper_one_of_its_standing() -> None:
+    """The best queen leaves no room for the rug; a cheaper queen does."""
+    result = bed_and_rug(
+        "5200",
+        (bed(1, "3000"), QUEEN),
+        (bed(2, "2400"), QUEEN),
+        (bed(3, "1300"), SINGLE),
+    )
+
+    assert chosen(result) == {0: 2, 1: 9}
+    assert result.unmet == ()
+
+
+def test_the_standing_kept_is_what_the_budget_allows_the_needed_pieces() -> None:
+    """With only the bed to pay for, a budget no queen fits still gets a bed."""
+    result = bed_and_rug("2000", (bed(1, "2500"), QUEEN), (bed(2, "1300"), SINGLE))
+
+    assert chosen(result) == {0: 2}
+
+
+# ── a bargain-bin finishing piece is lifted with budget left ═════════════════
+
+LIFTING = BundleOptimizer(bargain_quantile=0.25, bargain_margin=0.06)
+LAMPS = (("7", 0.80), ("50", 0.79), ("300", 0.78), ("400", 0.77), ("2000", 0.60))
+"""A floor lamp's products as its search ranked them: price and look."""
+
+
+def room_with_lamp(
+    budget: str,
+    *,
+    optimizer: BundleOptimizer = LIFTING,
+    lamp_priority: DesignPriority = DesignPriority.OPTIONAL,
+) -> Any:
+    lamps = tuple(
+        RankedProductCandidate(
+            product=product(20 + n, price=price, category="lighting", subcategory="floor-lamp"),
+            relaxation_depth=0,
+            similarity=look,
+        )
+        for n, (price, look) in enumerate(LAMPS)
+    )
+    sofa = product(1, price="3000")
+    discovery = DesignDiscoveryResult(
+        needs=(
+            designed(0, need("seating", "sofa"), (sofa, QUEEN)),
+            DesignNeedCandidates(
+                need_index=1,
+                need=need("lighting", "floor-lamp", priority=lamp_priority),
+                pool=CandidatePoolResult(
+                    candidates=lamps,
+                    eligible_count=len(lamps),
+                    was_relaxed=False,
+                    stop_reason=StopReason.EXACT_SUFFICIENT,
+                    semantic_used=True,
+                ),
+                tiers=tuple(QUEEN for _ in lamps),
+            ),
+        )
+    )
+    return optimizer.optimize(BundleOptimizationRequest(discovery=discovery, budget=sar(budget)))
+
+
+def lamp_price(result: RoomBundle) -> Decimal:
+    return next(
+        line.product.price_amount
+        for line in result.lines
+        if line.product.commerce.subcategory == "floor-lamp"
+    )
+
+
+def test_a_bargain_finishing_piece_is_lifted_to_a_normal_one_with_budget_left() -> None:
+    """The 7 SAR lamp is the best look; with money left it becomes a normal
+    lamp of a close look - never the dearest one."""
+    result = room_with_lamp("5000")
+
+    assert lamp_price(result) == Decimal("300")
+
+
+def test_the_lift_never_goes_over_the_budget() -> None:
+    result = room_with_lamp("3100")
+
+    assert lamp_price(result) == Decimal("50")
+    assert result.new_spend_total == Decimal("3050")
+
+
+def test_no_spare_money_leaves_the_pick_as_it_is() -> None:
+    assert lamp_price(room_with_lamp("3007")) == Decimal("7")
+
+
+def test_a_piece_the_room_needs_is_never_lifted() -> None:
+    result = room_with_lamp("5000", lamp_priority=DesignPriority.REQUIRED)
+
+    assert lamp_price(result) == Decimal("7")
+
+
+def test_the_lift_is_off_unless_configured() -> None:
+    assert lamp_price(room_with_lamp("5000", optimizer=OPTIMIZER)) == Decimal("7")

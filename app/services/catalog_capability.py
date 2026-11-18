@@ -174,7 +174,7 @@ class CatalogCapabilityService:
         return self._taxonomy.is_pair(category, subcategory)
 
 
-_SHAPE = "seat-counts"
+_SHAPE = "seat-counts.price-band"
 """What the summary holds beyond its registries: a summary cached before seat
 counts were recorded is rebuilt rather than read without them."""
 
@@ -205,6 +205,8 @@ def _shelf_from_row(
         active_count=row.active_count,
         price_minimum=row.price_minimum,
         price_maximum=row.price_maximum,
+        price_low=row.price_low,
+        price_typical=row.price_typical,
         seating=seating,
         implied_seats=implied_seats,
         colours=row.colours,

@@ -98,6 +98,13 @@ class SubcategoryShelf(BaseModel):
     price - it answers "is a 5,000 budget even in play for sofas here", not
     "this sofa costs X"."""
 
+    price_low: Decimal | None = None
+    price_typical: Decimal | None = None
+    """What the cheaper quarter of this type starts at, and the middle price
+    (the 25th and 50th percentile of real prices). What a room is planned
+    against: one stray 40 SAR "rug" moves the minimum, never these. ``None``
+    where the summary was built without them."""
+
     seating: SeatingSpread | None = None
     """Confirmed seat counts for this type, or ``None`` where the catalog
     records none. Only meaningful for seating; a table shelf leaves it ``None``."""
@@ -138,6 +145,11 @@ class SubcategoryShelf(BaseModel):
     def _price_range_is_ordered(self) -> Self:
         if self.price_minimum > self.price_maximum:
             raise ValueError("price minimum cannot exceed the maximum")
+        inner = [p for p in (self.price_low, self.price_typical) if p is not None]
+        if inner != sorted(inner) or any(
+            not self.price_minimum <= p <= self.price_maximum for p in inner
+        ):
+            raise ValueError("the low and typical prices lie in order within the range")
         if self.seating is not None and self.seating.known_count > self.active_count:
             raise ValueError("more pieces have a seat count than exist on the shelf")
         return self

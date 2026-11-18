@@ -473,8 +473,12 @@ a list of search cards while it is built.
   built; "just design it" builds now. An amount said without a currency is in the
   store's (`store_currency`).
 - **What the store stocks** is in Nora's context while a room is planned
-  (`store_stocks`: the kinds by family, names only - a few dozen words), so she
-  plans without a tool call. `store_shelf` (Nora, Salman) gives a kind's price
+  (`store_stocks`: the kinds by family, names only - a few dozen words), with
+  each kind's price band here (`price_band`: [low, typical] - where its cheaper
+  quarter starts and its middle price, real prices one stray row cannot move),
+  so she plans without a tool call and to the budget: the layout follows the
+  people, purpose and size, and the prices choose between layouts that work and
+  decide what is must. The band is for planning, never said (it has no figure key). `store_shelf` (Nora, Salman) gives a kind's price
   range, colours, styles and seats when asked (`range_depth` few, some, many -
   never a count; `seats_counted: false` for a chaise lounge or recliner). The
   room guide's `in_this_room` only marks kinds such a room often holds - never
@@ -529,8 +533,28 @@ a list of search cards while it is built.
   for Sara's searches). Code orders only by facts - a type that counts as seats
   where its types differ, size in range, nothing to avoid, the type she listed
   first, relaxation depth - and the meaning order decides within. Nothing is
-  excluded for fit. The optimiser keeps must before nice and never exceeds the
-  budget; the best match the room can afford stays the pick, and a share only
+  excluded for fit. The optimiser keeps must before nice, gives up nice pieces
+  from the end of her list first (never a coffee table for two cheaper pieces),
+  and never exceeds the
+  budget - with one exception: when the pieces the room needs cost more than
+  the budget even at their cheapest, the ceiling is raised to the least that
+  holds them (found by halving), the room is built with them at their cheapest
+  (finishing pieces given up first) and shown with its total and how much it is over
+  (`over_budget`); the budget stays theirs until they say yes
+  (`accept_over_budget` raises it to the room's total). A must piece of a type
+  the store does not stock is refused (`needed_piece_not_stocked`, with what its
+  family does stock), never quietly left out. A cart pick that fills part of a
+  piece wanted in more than one is matched by the same product for the rest,
+  where stock allows and the kind is not `bought_once`; a piece that came out as
+  two products for stock is named to Nora (`one_piece_two_looks`). A finishing
+  piece is never one outside the size she designed it at (a runner is no
+  room's rug): it is left out and offered after the room. With budget left, a
+  finishing piece whose product is among the cheapest of its search
+  (`agents.bargain_lift_quantile`) is lifted, in two rounds, to a close look
+  (`agents.bargain_lift_similarity_margin`) no dearer than that search's middle
+  price - never a piece the room needs, a lock or a pair's match, never over
+  the budget. The best
+  match the room can afford stays the pick, and a share only
   moves a piece **up** to a dearer product of the same standing whose look
   similarity is within `agents.share_upgrade_similarity_margin` of it - never
   down, never to a weaker look, never without a score.

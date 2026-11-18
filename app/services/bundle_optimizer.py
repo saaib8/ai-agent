@@ -15,7 +15,11 @@ exists to prevent (CLAUDE.md 27).
 The objective is strictly lexicographic - never a weighted score:
 
     hard      locks preserved, acquisition honoured, budget and currency rules,
-              a need's residual filled completely or not at all
+              a need's residual filled completely or not at all, and a
+              REQUIRED need keeps the standing (seats, size, nothing to avoid)
+              the budget allows it with only the other REQUIRED needs - no
+              finishing piece is paid for by a smaller bed or a table that
+              seats fewer; it may become a cheaper product of that standing
     1-3       maximise fully satisfied REQUIRED, then RECOMMENDED, then OPTIONAL
     4         within a tier, prefer earlier needs in design plan order
     5         for that need set, minimise each need's M9 rank, read in plan order
@@ -73,7 +77,7 @@ required plus five recommended, by construction rather than by weighting."""
 class _Residual:
     """One need after locks, as the optimiser needs to see it."""
 
-    __slots__ = ("candidates", "index", "need", "quantity", "reason", "tiers")
+    __slots__ = ("candidates", "index", "matched", "need", "quantity", "reason", "tiers")
 
     def __init__(
         self,
@@ -83,10 +87,14 @@ class _Residual:
         candidates: tuple[RankedProductCandidate, ...],
         reason: UnmetReason,
         tiers: dict[int, tuple[int, ...]] | None = None,
+        matched: int | None = None,
     ) -> None:
         self.need = need
         self.index = index
         self.quantity = quantity
+        self.matched = matched
+        """The lock's product this piece's rest leads with, so it matches the
+        part a lock fills; never traded up for a dearer look."""
         self.tiers = tiers or {}
         """Each candidate's attribute tier by product, for a designed piece:
         spending toward its share never trades one away."""
@@ -115,11 +123,21 @@ class _Residual:
 class BundleOptimizer:
     """A verified room plan and its candidates in, one room out."""
 
-    def __init__(self, similarity_margin: float | None = None) -> None:
+    def __init__(
+        self,
+        similarity_margin: float | None = None,
+        *,
+        bargain_quantile: float | None = None,
+        bargain_margin: float = 0,
+    ) -> None:
         self._similarity_margin = similarity_margin if similarity_margin is not None else 0
         """How close a dearer product's look must be to the best match's for a
         piece to move up to it (`agents.share_upgrade_similarity_margin`);
         unset, only an equally close look."""
+        self._bargain_quantile = bargain_quantile
+        """A finishing piece among this cheapest share of its products is lifted
+        with budget left (`agents.bargain_lift_quantile`); None, never."""
+        self._bargain_margin = bargain_margin
 
     def optimize(self, request: BundleOptimizationRequest) -> BundleOptimizationOutcome:
         """Select the whole room, deterministically.
@@ -146,13 +164,24 @@ class BundleOptimizer:
         if budget is not None and not _within(mandatory, budget):
             return self._infeasible(request, locked_lines, covered, started)
 
-        residuals = _residuals(request, covered, budget)
+        residuals = _standing_kept(
+            _residuals(request, covered, budget, locked_lines), mandatory, budget
+        )
         chosen = _choose(residuals, mandatory, budget)
         selected = _select_candidates(chosen, mandatory, budget)
         if budget is not None:
             selected = _spend_toward_shares(
                 selected, chosen, mandatory, budget, self._similarity_margin
             )
+            if self._bargain_quantile is not None:
+                selected = _lift_bargains(
+                    selected,
+                    chosen,
+                    mandatory,
+                    budget,
+                    self._bargain_quantile,
+                    self._bargain_margin,
+                )
         if budget is not None and budget.min_amount is not None:
             selected = _reach_minimum(selected, chosen, mandatory, budget)
 
@@ -453,6 +482,7 @@ def _residuals(
     request: BundleOptimizationRequest,
     covered: dict[int, int],
     budget: PriceConstraint | None,
+    locked_lines: Sequence[BundleLine] = (),
 ) -> list[_Residual]:
     """Every need still wanting units, with the candidates that could fill it.
 
@@ -461,12 +491,23 @@ def _residuals(
     usable price, or nothing was priced in the budget's currency. Those are
     three different things to tell a customer.
     """
+    filled_by = {
+        line.need_index: line.product for line in locked_lines if line.need_index is not None
+    }
     residuals: list[_Residual] = []
     for entry in request.discovery.needs:
         quantity = entry.need.quantity - covered.get(entry.need_index, 0)
         if quantity <= 0:
             continue
         candidates, reason = _usable_candidates(entry, budget)
+        candidates = _finishing_in_size(entry, candidates)
+        lock = filled_by.get(entry.need_index)
+        match = (
+            _matching_lock(request, entry, lock, budget, candidates) if lock is not None else None
+        )
+        if match is not None:
+            rest = tuple(c for c in candidates if c.product.product_id != match.product.product_id)
+            candidates = (match, *rest)
         tiers = (
             {
                 c.product.product_id: tier
@@ -476,9 +517,62 @@ def _residuals(
             else None
         )
         residuals.append(
-            _Residual(entry.need, entry.need_index, quantity, candidates, reason, tiers)
+            _Residual(
+                entry.need,
+                entry.need_index,
+                quantity,
+                candidates,
+                reason,
+                tiers,
+                matched=match.product.product_id if match is not None else None,
+            )
         )
     return residuals
+
+
+_SIZE = 1
+"""Where a designed piece's tier holds its size: 0 in her range, 1 not listed,
+2 outside it (`design_discovery._size_tier`)."""
+
+
+def _finishing_in_size(
+    entry: DesignNeedCandidates, candidates: tuple[RankedProductCandidate, ...]
+) -> tuple[RankedProductCandidate, ...]:
+    """A finishing piece is never one outside the size she designed it at - a
+    runner is no room's rug: such a piece is left out, to be offered after the
+    room, rather than filled by what does not suit it. A piece the room needs
+    keeps every candidate (CLAUDE.md 10.1: nothing is excluded for fit)."""
+    if entry.need.priority is DesignPriority.REQUIRED or not entry.tiers or entry.pool is None:
+        return candidates
+    outside = {
+        candidate.product.product_id
+        for candidate, tier in zip(entry.pool.candidates, entry.tiers, strict=True)
+        if len(tier) > _SIZE and tier[_SIZE] == 2
+    }
+    return tuple(c for c in candidates if c.product.product_id not in outside)
+
+
+def _matching_lock(
+    request: BundleOptimizationRequest,
+    entry: DesignNeedCandidates,
+    lock: ProductCandidate,
+    budget: PriceConstraint | None,
+    candidates: Sequence[RankedProductCandidate],
+) -> RankedProductCandidate | None:
+    """The lock's own product as the first choice for the rest of its piece,
+    or None: not asked for, a kind never bought twice, a store that has too
+    few for the whole piece (the rest is then the closest look, as before),
+    or a price the room cannot count. The budget still decides - a pair the
+    room cannot afford falls to the next candidate."""
+    if not request.match_locks or lock.commerce.subcategory in request.bought_once:
+        return None
+    stock = lock.listing.stock_quantity
+    if stock is not None and stock < entry.need.quantity:
+        return None
+    if not _usable(lock) or (budget is not None and lock.price_unit != budget.currency):
+        return None
+    found = next((c for c in candidates if c.product.product_id == lock.product_id), None)
+    return found or RankedProductCandidate(product=lock, relaxation_depth=0)
 
 
 def _usable_candidates(
@@ -528,6 +622,11 @@ def _choose(
     leaves the triple achievable, and skipped only when it does not - and when
     inclusion is infeasible, every selection achieving the triple excludes it
     anyway, so skipping never loses reachability.
+
+    Below the required tier the plan's order wins over the count: the designer
+    lists finishing pieces most important first, so when money is short they
+    are given up from the end of the list - a coffee table is never traded for
+    a second artwork and a plant. Each is taken, in order, when it still fits.
     """
     fillable = [residual for residual in residuals if residual.candidates]
     by_tier = {tier: [r for r in fillable if r.priority is tier] for tier in _TIERS}
@@ -543,6 +642,12 @@ def _choose(
     chosen: list[_Residual] = []
     spent = mandatory
     for position, tier in enumerate(_TIERS):
+        if tier is not DesignPriority.REQUIRED:
+            for residual in by_tier[tier]:
+                if _affordable(spent + _cost(residual), budget):
+                    chosen.append(residual)
+                    spent += _cost(residual)
+            continue
         undecided = list(by_tier[tier])
         taken = 0
         # The cheapest way to satisfy the tiers not yet walked at all.
@@ -562,6 +667,52 @@ def _choose(
             spent += _cost(residual)
             taken += 1
     return chosen
+
+
+def _standing_kept(
+    residuals: Sequence[_Residual],
+    mandatory: Decimal,
+    budget: PriceConstraint | None,
+) -> list[_Residual]:
+    """Each piece the room needs, held to the standing it can have.
+
+    The standing (seats, size, nothing to avoid) a REQUIRED piece reaches is
+    decided with only the other REQUIRED pieces sharing the budget; its
+    candidates are then narrowed to that standing, so the finishing pieces
+    chosen after can make it a cheaper product of the same standing - a
+    cheaper queen bed - and never a smaller one. A finishing piece the rest of
+    the money cannot carry is left out instead (offered after the room).
+
+    Feasible by construction: the products chosen here already fit together,
+    and each stays a candidate of its own standing.
+    """
+    required = [r for r in residuals if r.priority is DesignPriority.REQUIRED]
+    if budget is None or not required:
+        return list(residuals)
+    picked = _select_candidates(_choose(required, mandatory, budget), mandatory, budget)
+    kept: list[_Residual] = []
+    for residual in residuals:
+        choice = picked.get(residual.index)
+        if choice is None or not residual.tiers:
+            kept.append(residual)
+            continue
+        standing = _standing(residual.tiers.get(choice.product.product_id))
+        kept.append(
+            _Residual(
+                residual.need,
+                residual.index,
+                residual.quantity,
+                tuple(
+                    c
+                    for c in residual.candidates
+                    if _standing(residual.tiers.get(c.product.product_id)) == standing
+                ),
+                residual.reason,
+                residual.tiers,
+                matched=residual.matched,
+            )
+        )
+    return kept
 
 
 def _cost(residual: _Residual) -> Decimal:
@@ -666,6 +817,8 @@ def _spend_toward_shares(
         if design is None or design.share_percent is None or residual.index not in upgraded:
             continue
         current = upgraded[residual.index]
+        if current.product.product_id == residual.matched:
+            continue  # the rest of a pair stays the pair
         if current.similarity is None:
             continue
         standing = _standing(residual.tiers.get(current.product.product_id))
@@ -700,6 +853,112 @@ def _spend_toward_shares(
         if best is not None:
             upgraded[residual.index] = best[1]
     return upgraded
+
+
+# ── lifting bargain-bin finishing pieces with budget left ────────────────────
+
+
+def _lift_bargains(
+    selected: dict[int, RankedProductCandidate],
+    chosen: Sequence[_Residual],
+    mandatory: Decimal,
+    budget: PriceConstraint,
+    quantile: float,
+    margin: float,
+) -> dict[int, RankedProductCandidate]:
+    """Finishing pieces that came out bargain-bin, lifted with the budget left.
+
+    The best look is the pick, and in a store whose cheapest fillers describe
+    themselves best that can be a 7 SAR light in a room with a thousand left.
+    Only spare money is used, only on finishing pieces (never one the room
+    needs, a pair's match or a lock), only to products of the same standing
+    whose look is within `margin` of the best, and never above the middle price
+    of that piece's own products in this store - so a piece becomes a normal
+    one, never the dearest. Two rounds, in plan order: first every bargain
+    piece just out of the cheapest share, then, with what is left, towards the
+    middle price - so the money is shared across the room rather than taken by
+    its first pieces. The room never goes over the budget.
+    """
+    ceiling = budget.max_amount
+    if ceiling is None:
+        return selected
+    lifted = dict(selected)
+    ordered = sorted(
+        (
+            r
+            for r in chosen
+            if r.priority is not DesignPriority.REQUIRED
+            and r.index in lifted
+            and r.matched is None
+            and len(r.candidates) >= 4
+        ),
+        key=lambda residual: residual.index,
+    )
+
+    def total() -> Decimal:
+        return mandatory + sum(
+            lifted[r.index].product.price_amount * r.quantity for r in chosen if r.index in lifted
+        )
+
+    bounds: dict[int, tuple[Decimal, Decimal]] = {}
+    for residual in ordered:
+        prices = sorted(c.product.price_amount for c in residual.candidates)
+        bounds[residual.index] = (
+            prices[int(len(prices) * quantile)],
+            prices[len(prices) // 2],
+        )
+
+    def options(residual: _Residual, low: Decimal, high: Decimal) -> list[RankedProductCandidate]:
+        current = lifted[residual.index]
+        standing = _standing(residual.tiers.get(current.product.product_id))
+        alike = [
+            c
+            for c in residual.candidates
+            if c.similarity is not None
+            and _standing(residual.tiers.get(c.product.product_id)) == standing
+        ]
+        if not alike:
+            return []
+        best_look = max(c.similarity for c in alike if c.similarity is not None)
+        spare = ceiling - total() + current.product.price_amount * residual.quantity
+        return [
+            c
+            for c in alike
+            if c.similarity is not None
+            and best_look - c.similarity <= margin
+            and low <= c.product.price_amount <= high
+            and c.product.price_amount > current.product.price_amount
+            and c.product.price_amount * residual.quantity <= spare
+            and _within(
+                total()
+                - current.product.price_amount * residual.quantity
+                + c.product.price_amount * residual.quantity,
+                budget,
+            )
+        ]
+
+    def look_then_price(c: RankedProductCandidate) -> tuple[float, Decimal]:
+        return (c.similarity or 0, c.product.price_amount)
+
+    # Round 1: out of the bargain bin, as cheaply as a good look allows.
+    for residual in ordered:
+        floor, middle = bounds[residual.index]
+        if lifted[residual.index].product.price_amount >= floor:
+            continue
+        near = options(residual, floor, floor + (middle - floor) / 2) or options(
+            residual, floor, middle
+        )
+        if near:
+            lifted[residual.index] = max(near, key=look_then_price)
+    # Round 2: towards the middle price, with what is left.
+    for residual in ordered:
+        floor, middle = bounds[residual.index]
+        if selected[residual.index].product.price_amount >= floor:
+            continue
+        better = options(residual, floor, middle)
+        if better:
+            lifted[residual.index] = max(better, key=look_then_price)
+    return lifted
 
 
 _ATTRIBUTES = 3
@@ -753,6 +1012,8 @@ def _reach_minimum(
             if running >= minimum:
                 break
             continue
+        if upgraded[residual.index].product.product_id == residual.matched:
+            continue  # the rest of a pair stays the pair
         current_line = upgraded[residual.index].product.price_amount * residual.quantity
         reacher: tuple[RankedProductCandidate, Decimal] | None = None
         climber: tuple[RankedProductCandidate, Decimal] | None = None

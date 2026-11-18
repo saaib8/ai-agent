@@ -76,6 +76,7 @@ from app.schemas.bundle import (
     BundleUnavailable,
     LockedBundleProduct,
     RoomBundle,
+    UnmetReason,
 )
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.design import (
@@ -450,13 +451,23 @@ class RoomEngine:
             return _refused(original, "catalog_unavailable")
         locked = tuple(product for _, product in locks)
         outcome = self._optimizer.optimize(
-            BundleOptimizationRequest(discovery=discovery, budget=room.budget, locked=locked)
+            BundleOptimizationRequest(
+                discovery=discovery,
+                budget=room.budget,
+                locked=locked,
+                match_locks=True,
+                bought_once=self._bought_once,
+            )
         )
         if not isinstance(outcome, RoomBundle):
             return _unavailable(original, outcome)
         if outcome.status is BundleStatus.INFEASIBLE:
             return self._proposal(original, outcome, "infeasible", room.budget, [])
-        plan, outcome = self._stocked(plan, discovery, outcome, room.budget, locked)
+        budget = room.budget
+        stretched = self._stretched(outcome, discovery, budget, locked)
+        if stretched is not None:
+            budget, outcome = stretched
+        plan, outcome = self._stocked(plan, discovery, outcome, budget, locked)
         committed = _commit_plan(staged, plan, outcome)
         logger.info(
             "room_engine_designed",
@@ -464,9 +475,82 @@ class RoomEngine:
             need_count=len(plan.needs),
             line_count=len(outcome.lines),
             status=str(outcome.status),
+            over_budget=stretched is not None,
         )
         built = self._committed(committed, outcome)
+        if stretched is not None and room.budget is not None:
+            # The pieces the room needs cost more than the budget even at
+            # their cheapest: the room is built with them and shown as it is,
+            # its budget left where they set it until they say yes.
+            built.facts["over_budget"] = {
+                "pieces_it_needs_cost_more_than_the_budget": True,
+                "budget": room.budget.max_amount,
+                "room_total": outcome.new_spend_total,
+                "over_by": (
+                    outcome.new_spend_total - room.budget.max_amount
+                    if outcome.new_spend_total is not None and room.budget.max_amount is not None
+                    else None
+                ),
+                "needs_their_yes": "accept_over_budget raises the budget to the room's total",
+            }
         return built
+
+    def _stretched(
+        self,
+        outcome: RoomBundle,
+        discovery: DesignDiscoveryResult,
+        budget: PriceConstraint | None,
+        locked: tuple[LockedBundleProduct, ...],
+    ) -> tuple[PriceConstraint, RoomBundle] | None:
+        """The room with every piece it needs, when the budget cannot hold them
+        even at their cheapest: the ceiling raised by exactly what the missing
+        ones cost at their lowest, so the needed pieces come first and at their
+        cheapest and finishing pieces are given up before them. None when
+        nothing the room needs was left out for money."""
+        if budget is None or budget.max_amount is None:
+            return None
+        short = sum(
+            (
+                entry.cheapest_price
+                for entry in outcome.unmet
+                if entry.priority is DesignPriority.REQUIRED
+                and entry.reason is UnmetReason.BUDGET_EXHAUSTED
+                and entry.cheapest_price is not None
+            ),
+            Decimal(0),
+        )
+        if short <= 0:
+            return None
+
+        def built(ceiling: Decimal) -> RoomBundle | None:
+            room = self._optimizer.optimize(
+                BundleOptimizationRequest(
+                    discovery=discovery,
+                    budget=budget.model_copy(update={"max_amount": ceiling}),
+                    locked=locked,
+                    match_locks=True,
+                    bought_once=self._bought_once,
+                )
+            )
+            if isinstance(room, RoomBundle) and room.status is BundleStatus.COMPLETE:
+                return room
+            return None
+
+        # The least the room can be with every piece it needs: the smallest
+        # ceiling that holds them, found by halving - so the extra is spent on
+        # what the room needs at its cheapest, never on a dearer look.
+        low, high = budget.max_amount, budget.max_amount + short
+        best = built(high)
+        if best is None:
+            return None
+        while high - low > 1:
+            middle = ((low + high) / 2).quantize(Decimal(1))
+            room = built(middle)
+            if room is None:
+                low = middle
+            else:
+                high, best = middle, room
+        return budget.model_copy(update={"max_amount": high}), best
 
     def _stocked(
         self,
@@ -487,7 +571,13 @@ class RoomEngine:
             if split is None:
                 break
             again = self._optimizer.optimize(
-                BundleOptimizationRequest(discovery=split[1], budget=budget, locked=locked)
+                BundleOptimizationRequest(
+                    discovery=split[1],
+                    budget=budget,
+                    locked=locked,
+                    match_locks=True,
+                    bought_once=self._bought_once,
+                )
             )
             if not isinstance(again, RoomBundle) or again.status is BundleStatus.INFEASIBLE:
                 break
@@ -1245,6 +1335,31 @@ class RoomEngine:
             return await self._rendered(state, context, code="ok", committed=False)
         except _CATALOG_FAILURES:
             return _refused(state, "catalog_unavailable")
+
+    async def accept_room_total(self, state: AgentStateV1, context: RetailerContext) -> RoomOutcome:
+        """Their yes to a room built over the budget because the pieces it
+        needs cost more: the budget is raised to what the room costs, and
+        nothing in it changes."""
+        shown = await self.current(state, context)
+        room = state.room_project
+        if shown is None or shown.view is None or room is None or room.budget is None:
+            return _refused(state, "no_offer_to_accept")
+        totals = shown.view.totals
+        ceiling = room.budget.max_amount
+        if (
+            totals.new_spend_total is None
+            or totals.currency is None
+            or ceiling is None
+            or totals.new_spend_total <= ceiling
+        ):
+            return _refused(state, "no_offer_to_accept")
+        raised = PriceConstraint(currency=totals.currency, max_amount=totals.new_spend_total)
+        accepted = apply_update(
+            state, AgentStateUpdate(room_project=RoomProjectUpdate(budget=raised))
+        )
+        outcome = await self._rendered(accepted, context, code="ok", committed=True)
+        outcome.facts["budget_raised_from"] = ceiling
+        return outcome
 
     # ── internals: building ─────────────────────────────────────────────────
 
@@ -2079,6 +2194,37 @@ def _review_facts(
             piece["share_used_percent"] = int(line_total * 100 / ceiling)
     if colours:
         facts["colours_in_room"] = colours
+    mixed = _mixed_pieces(pieces)
+    if mixed:
+        # For her alone (known issue 37): a piece she wanted as one product
+        # came out as two, so she can make the mix look intended.
+        facts["one_piece_two_looks"] = mixed
+
+
+def _mixed_pieces(pieces: Sequence[object]) -> list[dict[str, object]]:
+    """Each role she designed as one piece that is filled by more than one
+    product of its kind - the store holding too few of the one chosen - with
+    each product's piece number and how many. A piece filled twice by the same
+    product (a pick and its match) is not mixed."""
+    by_role: dict[tuple[str, str], list[tuple[int, dict[str, object]]]] = {}
+    for number, piece in enumerate(pieces, start=1):
+        if isinstance(piece, dict) and isinstance(piece.get("role"), str):
+            key = (str(piece["role"]), str(piece.get("kind")))
+            by_role.setdefault(key, []).append((number, piece))
+    mixed: list[dict[str, object]] = []
+    for (role, _), group in by_role.items():
+        if len({str(p.get("name")) for _, p in group}) < 2:
+            continue
+        mixed.append(
+            {
+                "role": role,
+                "pieces": [
+                    {"piece": n, "name": p.get("name"), "quantity": p.get("quantity")}
+                    for n, p in group
+                ],
+            }
+        )
+    return mixed
 
 
 def _options_facts(

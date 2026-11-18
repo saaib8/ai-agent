@@ -521,7 +521,11 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         ),
         rooms=RoomEngine(
             design_discovery_service(session, app_resources),
-            BundleOptimizer(settings.agents.share_upgrade_similarity_margin),
+            BundleOptimizer(
+                settings.agents.share_upgrade_similarity_margin,
+                bargain_quantile=settings.agents.bargain_lift_quantile,
+                bargain_margin=settings.agents.bargain_lift_similarity_margin,
+            ),
             pipeline,
             capability,
             hydration,

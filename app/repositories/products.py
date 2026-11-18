@@ -164,6 +164,12 @@ def _discount_share(max_share: float) -> ColumnElement[Any]:
     )
 
 
+_LOW_QUARTER = 0.25
+_MIDDLE = 0.5
+"""The shelf's price band: where the cheaper quarter of a kind starts, and its
+middle price - what a room is planned against (CatalogOverview)."""
+
+
 _SOLD = case((core_product.c.sold_quantity > 0, core_product.c.sold_quantity), else_=None)
 """Sales, for ordering only: NULL where nothing sold, so unsold follow sold.
 The number never leaves this module except as an order or a best-seller label."""
@@ -467,6 +473,8 @@ class CatalogOverviewRow:
     price_maximum: Decimal
     colours: tuple[str, ...]
     price_units: tuple[str, ...]
+    price_low: Decimal | None = None
+    price_typical: Decimal | None = None
     styles: tuple[str, ...] = ()
     materials: tuple[str, ...] = ()
     planar_measured: int = 0
@@ -490,6 +498,8 @@ def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
         seat_maximum=row.seat_maximum,
         price_minimum=row.price_minimum,
         price_maximum=row.price_maximum,
+        price_low=row.price_low,
+        price_typical=row.price_typical,
         colours=tuple(sorted(row.colours)) if row.colours else (),
         price_units=tuple(sorted(row.price_units)) if row.price_units else (),
         styles=tuple(
@@ -1022,6 +1032,13 @@ class ProductRepository:
                 ).label("seat_counts"),
                 func.min(core_product.c.price_amount).label("price_minimum"),
                 func.max(core_product.c.price_amount).label("price_maximum"),
+                # Real prices (percentile_disc), robust to one stray row.
+                func.percentile_disc(_LOW_QUARTER)
+                .within_group(core_product.c.price_amount)
+                .label("price_low"),
+                func.percentile_disc(_MIDDLE)
+                .within_group(core_product.c.price_amount)
+                .label("price_typical"),
                 type_coerce(colours, ARRAY(Text)).label("colours"),
                 type_coerce(
                     func.array_agg(core_product.c.price_unit.distinct()), ARRAY(Text)

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from app.agents.work import TurnWork
+from app.agents.work import ToolRecord, TurnWork
 from app.core.exceptions import TaxonomyConfigurationError
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1
@@ -236,7 +236,7 @@ def test_a_design_becomes_one_need_per_piece_in_her_order() -> None:
 
 
 def test_a_type_she_files_wrongly_is_corrected_by_the_registry() -> None:
-    checked = _check(PieceSpec(role="bedside", types=("nightstand",)))
+    checked = _check(PieceSpec(role="bedside", types=("nightstand",), must=False))
 
     # Nightstands are filed under tables; the store here stocks none.
     assert checked.facts["not_stocked"] == ["bedside"] and checked.needs == ()
@@ -381,7 +381,7 @@ def test_only_nora_designs_a_room() -> None:
 def test_a_room_just_designed_is_drawn_only_when_nora_shows_it() -> None:
     from app.agents.payloads import RoomShown
     from app.agents.screen import presentation
-    from app.agents.work import ToolRecord, ToolStatus
+    from app.agents.work import ToolStatus
     from app.schemas.bundle_presentation import GroundedBundlePresentation
     from app.schemas.language import ReplyLanguage
 
@@ -618,8 +618,8 @@ def test_two_of_one_print_is_refused_with_what_to_plan_instead() -> None:
 def test_two_pieces_of_art_and_an_identical_pair_of_chairs_are_fine() -> None:
     checked = CHECKER_ONCE.check(
         (
-            PieceSpec(role="wall art left", types=("art-canvas",)),
-            PieceSpec(role="wall art right", types=("art-canvas",)),
+            PieceSpec(role="wall art left", types=("art-canvas",), must=False),
+            PieceSpec(role="wall art right", types=("art-canvas",), must=False),
             PieceSpec(role="reading chairs", types=("lounge-chair",), quantity=2),
         ),
         OVERVIEW,

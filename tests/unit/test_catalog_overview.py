@@ -47,6 +47,8 @@ def _row(
     price_max: str = "5000",
     colours: tuple[str, ...] = (),
     units: tuple[str, ...] = ("SAR",),
+    price_low: str | None = None,
+    price_typical: str | None = None,
 ) -> CatalogOverviewRow:
     return CatalogOverviewRow(
         commerce_category=category,
@@ -59,6 +61,8 @@ def _row(
         price_maximum=Decimal(price_max),
         colours=colours,
         price_units=units,
+        price_low=None if price_low is None else Decimal(price_low),
+        price_typical=None if price_typical is None else Decimal(price_typical),
     )
 
 
@@ -206,3 +210,39 @@ async def test_the_overview_is_scoped_by_the_context_it_is_given() -> None:
     await service.overview(CONTEXT)
 
     assert repository.calls == [CONTEXT]
+
+
+async def test_each_kind_carries_its_price_band() -> None:
+    """Where the cheaper quarter starts and the middle price: what a room is
+    planned against, which one stray cheap row cannot move."""
+    service, _ = _service(
+        _row("decor", "carpet", price_min="40", price_typical="1600", price_low="900")
+    )
+
+    (carpet,) = (await service.overview(CONTEXT)).shelves
+
+    assert (carpet.price_low, carpet.price_typical) == (Decimal(900), Decimal(1600))
+    assert carpet.price_minimum == Decimal(40)
+
+
+def test_a_price_band_out_of_order_is_refused() -> None:
+    import pytest
+    from app.schemas.catalog_overview import SubcategoryShelf
+    from pydantic import ValidationError
+
+    def shelf(low: int, typical: int) -> SubcategoryShelf:
+        return SubcategoryShelf(
+            commerce_category="decor",
+            commerce_subcategory="carpet",
+            active_count=3,
+            price_minimum=Decimal(100),
+            price_maximum=Decimal(900),
+            price_low=Decimal(low),
+            price_typical=Decimal(typical),
+        )
+
+    assert shelf(200, 400).price_low == Decimal(200)
+    with pytest.raises(ValidationError):
+        shelf(400, 200)
+    with pytest.raises(ValidationError):
+        shelf(50, 400)
