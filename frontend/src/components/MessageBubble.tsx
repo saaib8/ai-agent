@@ -1,5 +1,6 @@
 import type {
   BriefAnswerAction,
+  RoomFormAction,
   BriefChip,
   BundleAction,
   SearchAction,
@@ -12,6 +13,7 @@ import type { RejectedRef } from '../hooks/useChat'
 import type { ReplyChoice } from '../api/types'
 import { BriefBar } from './BriefBar'
 import { BriefCard } from './BriefCard'
+import { RoomFormCard } from './RoomFormCard'
 import { HelpIcon } from './icons'
 import { ComparisonTable } from './presentation/ComparisonTable'
 import { FocusCard } from './presentation/FocusCard'
@@ -160,6 +162,7 @@ interface AssistantBubbleProps {
   latest?: boolean
   /** Answers tapped on a card of questions, sent as a search. */
   onBriefSubmit?: (answer: BriefAnswerAction | null, summary: string) => void
+  onRoomFormSubmit?: (answer: RoomFormAction, summary: string) => void
   /** ✕ on one of the chips naming what the search on screen uses. */
   onDropChip?: (chip: BriefChip) => void
   /** This turn's list is still the one on screen: its chips and Narrow down stay. */
@@ -196,6 +199,7 @@ export function AssistantBubble({
   renderOutdated = false,
   latest,
   onBriefSubmit,
+  onRoomFormSubmit,
   onDropChip,
   onCombination,
   showBrief,
@@ -318,6 +322,16 @@ export function AssistantBubble({
         )}
 
         {brief?.mode === 'ask' && briefCard}
+
+        {presentation?.room_form && onRoomFormSubmit && (
+          <RoomFormCard
+            form={presentation.room_form}
+            labels={data.labels}
+            active={!!latest}
+            busy={!!busy}
+            onSubmit={onRoomFormSubmit}
+          />
+        )}
 
         {focus && <FocusCard product={focus} labels={data.labels} />}
         {kindCards && (

@@ -733,3 +733,14 @@ async def test_pieces_they_said_they_have_count_as_present() -> None:
     assert designed.code != "room_not_stocked" and len(rooms.inputs) == 1
     assert still_missing.code == "room_not_stocked"
     assert still_missing.facts["store_has_none_of"] == ["office chair"]
+
+
+async def test_a_room_is_never_built_without_a_budget() -> None:
+    """With no budget said or on record the room is not built - never a room
+    without a limit - and Nora is told to ask for it once."""
+    unbudgeted = {k: v for k, v in ARGS.items() if k != "budget"}
+
+    outcome, rooms = await _design(unbudgeted)
+
+    assert outcome.status == "refused" and outcome.code == "budget_needed"
+    assert rooms.inputs == []

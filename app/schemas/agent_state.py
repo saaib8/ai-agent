@@ -63,6 +63,7 @@ from app.schemas.query import (
     SemanticPreference,
     validate_dimension_correspondence,
 )
+from app.schemas.room_form import RoomFormRecord
 from app.schemas.seating_solution import SeatingRequirements, SeatingShape
 from app.schemas.visualization import RenderSource, RenderView, RoomType
 
@@ -1258,6 +1259,11 @@ class AgentStateV1(BaseModel):
     """The photo sent in this chat - what it is, never the picture
     (docs/photos-and-cart-pictures-plan.md D2). Left out while unset, so every
     saved session still reads."""
+
+    room_form: RoomFormRecord | None = Field(default=None, exclude_if=lambda v: v is None)
+    """The room form last shown, so the chips tapped on it are read back
+    against what it offered (docs/room-form-plan.md). Left out while unset, so
+    every saved session still reads."""
 
     reply_language: ReplyLanguage | None = Field(default=None, exclude_if=lambda v: v is None)
     """The language this customer is answered in, once settled - Arabic from

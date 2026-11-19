@@ -150,6 +150,15 @@ class RoomPieces:
         needs = self._must_have.get(_room_key(room), ())
         return tuple(need for need in needs if not any(stocks(kind) for kind in need))
 
+    def main_kinds(self, room: str | None) -> tuple[str, ...]:
+        """The kinds of this room's first must-have - its main piece (a living
+        room's sofas, a bedroom's bed) - or () when the room's must-haves are
+        not reviewed. What the room form's looks are read from."""
+        if not room:
+            return ()
+        needs = self._must_have.get(_room_key(room), ())
+        return needs[0] if needs else ()
+
     @property
     def kinds(self) -> tuple[str, ...]:
         return tuple(self._rooms)

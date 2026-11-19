@@ -43,6 +43,7 @@ from app.repositories.sessions import SessionStore
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import AgentStateV1
 from app.schemas.agent_turn import CustomerResponse
+from app.schemas.agent_updates import AgentStateUpdate, RoomProjectUpdate
 from app.schemas.cart import CartView
 from app.schemas.chat import ChatPresentation, ChatRequest, ChatResponse, WorkflowView
 from app.schemas.conversation import ConversationContext, ConversationMessage, ConversationRole
@@ -56,11 +57,12 @@ from app.schemas.visualization import (
     VISUALIZATION_UNRECOGNISED,
     visualization_access,
 )
-from app.services.agent_state import keep_screen
+from app.services.agent_state import apply_update, keep_screen, record_room_form
 from app.services.card_labels import card_labels
 from app.services.history_summary import Fold, HistorySummarizer, next_history
 from app.services.product_display import displayed
 from app.services.product_interaction import build_liked, build_picks
+from app.services.room_form import read_room_form
 from app.services.session_turns import LoadedSession, load_for_turn
 
 logger = get_logger(__name__)
@@ -127,6 +129,7 @@ class ChatRuntime:
             expected_revision=request.expected_session_revision,
         )
         loaded = await self._with_store_cart(request, context, loaded)
+        loaded = _with_room_form(request, loaded)
         return await self._with_photo(request, context, loaded)
 
     async def _with_photo(
@@ -498,3 +501,38 @@ def offered(turn: AgentTurn) -> tuple[str, ...]:
     channels = support.channels if support is not None else ()
     labels = (*(c.label for c in turn.response.choices), *(c.label for c in channels))
     return tuple(dict.fromkeys(labels))[:12]
+
+
+def _with_room_form(request: ChatRequest, loaded: LoadedSession) -> LoadedSession:
+    """The loaded session with the room form's answers saved where they can be
+    read without guessing - a budget chip or a plain amount, a size chip or
+    "4 x 5" - before Nora reads them (docs/room-form-plan.md). The colours,
+    style and anything else in their words are hers to read. Only for a room
+    being started: a room already built or in the cart is never changed by a
+    form for another."""
+    action = request.room_form_action
+    state = loaded.envelope.state
+    record = state.room_form
+    if action is None or record is None:
+        return loaded
+    answers = read_room_form(record, action)
+    if answers is None:
+        return loaded
+    room = state.room_project
+    started = room is None or not (room.in_cart or room.bundle_items)
+    if started and (answers.budget is not None or answers.geometry is not None):
+        state = apply_update(
+            state,
+            AgentStateUpdate(
+                room_project=RoomProjectUpdate(
+                    budget=answers.budget,
+                    geometry=answers.geometry,
+                    size_declined=False if answers.geometry is not None else None,
+                )
+            ),
+        )
+    if record.colours or record.styles:
+        # The look was on the form: answered or left blank, it is not asked
+        # again - blank leaves it to Nora, as "You decide" does.
+        state = record_room_form(state, record.model_copy(update={"looks_answered": True}))
+    return replace(loaded, envelope=loaded.envelope.model_copy(update={"state": state}))

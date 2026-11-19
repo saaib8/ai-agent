@@ -18,6 +18,7 @@ from app.schemas.bundle_action import BundleActionRequest
 from app.schemas.card_comparison import CardRef
 from app.schemas.chat import ChatRequest
 from app.schemas.product_action import ProductActionRequest
+from app.schemas.room_form import RoomFormAction
 from app.schemas.search_action import SearchActionRequest
 
 
@@ -88,7 +89,37 @@ def tap_of(request: ChatRequest) -> Tap | None:
         return _product(request.product_action)
     if request.support_action is not None:
         return Tap(TapEvent(button="contact_store"))
+    if request.room_form_action is not None:
+        # The room form's answers, straight to Nora: the budget and size are
+        # already saved where they could be read (ChatRuntime.load_session).
+        return Tap(
+            TapEvent(button="room_form_answers", answers=_form_answers(request.room_form_action)),
+            runs="ask_room_form",
+        )
     return None
+
+
+def _form_answers(action: RoomFormAction) -> dict[str, str | list[str]]:
+    """The answers as the shopper gave them: the keys tapped - an amount, a
+    size, approved colours and styles - and their own words."""
+    said: dict[str, str | list[str]] = {}
+    for name, value in (
+        ("budget", action.budget),
+        ("budget_words", action.budget_text),
+        ("size", action.size),
+        ("look_words", action.look_text),
+    ):
+        if value:
+            said[name] = value
+    if action.length_m is not None and action.width_m is not None:
+        said["size"] = f"{action.length_m} x {action.width_m} m"
+    if action.colours:
+        said["colours"] = list(action.colours)
+    if action.styles:
+        said["styles"] = list(action.styles)
+    if "budget" not in said and "budget_words" not in said:
+        said["budget"] = "not given"
+    return said
 
 
 def _bundle(action: BundleActionRequest) -> TapEvent:
