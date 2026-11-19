@@ -743,6 +743,14 @@ def design_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             and (args.same_room or (not current.bundle_items and not current.in_cart))
             else None
         )
+        if args.budget is None and (room is None or room.budget is None):
+            # A room is never built without a limit: the budget is theirs to
+            # give, asked once (docs/room-form-plan.md).
+            return ToolOutcome(
+                status=ToolStatus.REFUSED,
+                code="budget_needed",
+                facts={"next": "ask their budget once, in one line; build when they give it"},
+            )
         missing = _missing_must_haves(
             services, overview, args.room_kind or args.room_type, room.already_own if room else ()
         )

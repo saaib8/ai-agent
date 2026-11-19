@@ -24,6 +24,7 @@ import type {
   PicksResponse,
   ProductAction,
   RenderView,
+  RoomFormAction,
   RoomPhotoResponse,
   SearchAction,
 } from '../api/types'
@@ -64,6 +65,8 @@ export interface SendOptions {
   bundle?: BundleAction
   search?: SearchAction
   product?: ProductAction
+  /** The room form's answers. */
+  roomForm?: RoomFormAction
   rejected?: RejectedRef
   /** A photo sent with the message - the message may then be empty. */
   photo?: File
@@ -273,6 +276,7 @@ export function useChat(): UseChat {
           ...(opts?.bundle ? { bundle_action: opts.bundle } : {}),
           ...(opts?.search ? { search_action: opts.search } : {}),
           ...(opts?.product ? { product_action: opts.product } : {}),
+          ...(opts?.roomForm ? { room_form_action: opts.roomForm } : {}),
           ...(photoB64 ? { photo: photoB64 } : {}),
         },
         setWorking,

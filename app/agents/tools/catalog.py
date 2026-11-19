@@ -8,6 +8,7 @@ from app.agents.tools.design import design_tools
 from app.agents.tools.goals import update_goal_tool
 from app.agents.tools.pick_rooms import pick_room_tool
 from app.agents.tools.registry import ToolRegistry
+from app.agents.tools.room_form import ask_room_form_tool
 from app.agents.tools.room_notes import note_room_tool
 from app.agents.tools.sales import sales_tools
 from app.agents.tools.schemas import ToolSchemas
@@ -28,6 +29,7 @@ def build_registry(schemas: ToolSchemas) -> ToolRegistry:
             remember_taste_tool(schemas),
             update_goal_tool(schemas),
             note_room_tool(schemas),
+            ask_room_form_tool(schemas),
             pick_room_tool(),
             calculate_tool(),
             RESPOND,

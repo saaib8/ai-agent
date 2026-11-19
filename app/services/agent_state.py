@@ -73,6 +73,7 @@ from app.schemas.design import MAX_NEXT_SIZES, MAX_PLACEMENTS, NextSize, Placeme
 from app.schemas.discovery import ProductSearchRequest
 from app.schemas.geometry import MAX_WALL_NOTES, REPEATABLE_ROLES, RoomGeometry, WallNote
 from app.schemas.query import ConstraintSemantics, ConstraintStrength, SemanticPreference
+from app.schemas.room_form import RoomFormRecord
 from app.taxonomy.attributes import AttributeFamily
 
 NO_RESULTS_REVISION = 0
@@ -100,6 +101,7 @@ def apply_update(state: AgentStateV1, update: AgentStateUpdate) -> AgentStateV1:
         cross_sell_plan=state.cross_sell_plan,
         last_render=state.last_render,
         chat_photo=state.chat_photo,
+        room_form=state.room_form,
         reply_language=state.reply_language,
     )
 
@@ -183,6 +185,7 @@ def commit_search_results(state: AgentStateV1, product_ids: tuple[int, ...]) -> 
         cross_sell_plan=state.cross_sell_plan,
         last_render=state.last_render,
         chat_photo=state.chat_photo,
+        room_form=state.room_form,
         reply_language=state.reply_language,
     )
 
@@ -252,6 +255,7 @@ def remember_measurements(state: AgentStateV1) -> AgentStateV1:
         cross_sell_plan=state.cross_sell_plan,
         last_render=state.last_render,
         chat_photo=state.chat_photo,
+        room_form=state.room_form,
         reply_language=state.reply_language,
     )
 
@@ -1182,3 +1186,9 @@ def record_render(state: AgentStateV1, record: RenderRecord | None) -> AgentStat
             "product_interaction": interaction.model_copy(update={"seen_product_ids": seen}),
         }
     )
+
+
+def record_room_form(state: AgentStateV1, record: RoomFormRecord) -> AgentStateV1:
+    """The room form just shown, replacing the one before: its chips are what a
+    tap on it may name (docs/room-form-plan.md)."""
+    return state.model_copy(update={"room_form": record})

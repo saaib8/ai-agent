@@ -413,6 +413,56 @@ reads it without a turn (an unstarted session is an empty cart at revision 0).
 - The cart lives as long as the conversation (`ZORY_SESSION__TTL_S`); the store's
   own cart outlives it.
 
+## 6.1 The room form (new, 2026-11-19)
+
+Plan: `docs/room-form-plan.md`. When Nora starts a room, her reply carries
+`presentation.room_form` beneath its one-line message:
+
+```json
+{"number": 1, "submit_label": "Design it",
+ "budget_needed": "Choose or type a budget", "budget_missing": false,
+ "questions": [
+   {"kind": "budget", "label": "Your budget", "required": true, "max_choices": 1,
+    "placeholder": "or type your amount",
+    "choices": [{"key": "5000", "label": "5,000 SAR"}, {"key": "10000", "label": "10,000 SAR"}]},
+   {"kind": "size", "label": "Room size", "max_choices": 1,
+    "choices": [{"key": "small", "label": "Small · about 3 × 3 m"}],
+    "dimensions": {"length_label": "Length", "width_label": "Width", "unit": "m",
+                   "step": "0.1", "minimum": "1", "maximum": "30"}},
+   {"kind": "colours", "label": "Colours", "max_choices": 3,
+    "choices": [{"key": "Beige", "label": "Beige"}]},
+   {"kind": "style", "label": "Style", "max_choices": 2, "placeholder": "or describe the look",
+    "choices": [{"key": "Japandi", "label": "Japandi"}, {"key": "you_decide", "label": "You decide"}]}
+ ]}
+```
+
+**Draw:** each question's `label`, its `choices` as chips (pick up to
+`max_choices`), and - when `placeholder` is set - a text box beside them. The
+size has `dimensions` instead: two number boxes (length and width, with up and
+down, `step`, `minimum` and `maximum`) and the `unit` beside them; a size chip
+and the boxes are one answer - the newest wins. Any
+question may be missing (already known). One button, `submit_label`. The words
+are in the reply's language; never translate them.
+
+**The budget is required.** Design it sends only with a budget chip or text;
+otherwise show `budget_needed` under the budget and send nothing. When
+`budget_missing` is true, mark the budget question the same way.
+
+**Send** one chat request with the customer's words (`labels.room_form_sent`)
+and:
+
+```json
+"room_form_action": {"form": 1, "budget": "10000", "budget_text": null,
+  "size": "medium", "length_m": null, "width_m": null, "colours": ["Beige"], "styles": ["Japandi"],
+  "look_text": "a bit of green"}
+```
+
+Keys exactly as the form gave them; a text box's words as typed; the size boxes
+as numbers in metres, both or neither (`length_m`, `width_m`), never with a size
+chip. Nothing else
+on the request changes. A form whose `number` is not the newest is stale: send
+nothing from it.
+
 ## 7. Gateway (Zory backend `core/ai_agent/`) - what to check
 
 Read-only check on 2026-10-13 (branch `feat/agent-timed-sessions`):

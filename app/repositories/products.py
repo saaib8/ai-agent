@@ -12,7 +12,8 @@ immutable :class:`RetailerContext` resolved by application code
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -483,6 +484,14 @@ class CatalogOverviewRow:
     """Every confirmed seat count among the type's pieces."""
 
 
+def _by_stock(values: Iterable[str]) -> tuple[str, ...]:
+    """Each value once, the one the most products carry first and alphabetical
+    between equals - so a list is stable from read to read and its first few
+    are what the store has most of. The counts order and are never kept."""
+    counts = Counter(values)
+    return tuple(sorted(counts, key=lambda value: (-counts[value], value)))
+
+
 def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
     """Map one aggregation row, deduplicating and sorting its arrays.
 
@@ -500,11 +509,9 @@ def _overview_row(row: Row[Any]) -> CatalogOverviewRow:
         price_maximum=row.price_maximum,
         price_low=row.price_low,
         price_typical=row.price_typical,
-        colours=tuple(sorted(row.colours)) if row.colours else (),
+        colours=_by_stock(row.colours or ()),
         price_units=tuple(sorted(row.price_units)) if row.price_units else (),
-        styles=tuple(
-            sorted({token for raw in (row.styles or ()) for token in parse_style_tokens(raw)})
-        ),
+        styles=_by_stock(token for raw in (row.styles or ()) for token in parse_style_tokens(raw)),
         materials=tuple(sorted(row.materials)) if row.materials else (),
         planar_measured=row.planar_measured,
         seat_counts=tuple(sorted(row.seat_counts)) if row.seat_counts else (),
@@ -1007,12 +1014,12 @@ class ProductRepository:
         the evidence the shape rule reads (``SubcategoryShelf.long_and_shallow``).
         """
         plausible = (size.min_side_cm <= _SHORT_SIDE) & (size.max_side_cm >= _LONG_SIDE)
-        colours = func.array_agg(core_product.c.main_color.distinct()).filter(
+        # Every product's colour and styles, not only the distinct ones: how
+        # many carry each orders the lists, most stocked first (`_by_stock`).
+        colours = func.array_agg(core_product.c.main_color).filter(
             core_product.c.main_color.isnot(None)
         )
-        styles = func.array_agg(core_product.c.styles.distinct()).filter(
-            core_product.c.styles.isnot(None)
-        )
+        styles = func.array_agg(core_product.c.styles).filter(core_product.c.styles.isnot(None))
         materials = func.array_agg(core_product.c.material.distinct()).filter(
             core_product.c.material.isnot(None)
         )

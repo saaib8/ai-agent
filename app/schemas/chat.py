@@ -37,6 +37,7 @@ from app.schemas.picks import LikedView, PickView
 from app.schemas.product_action import ProductActionRequest
 from app.schemas.product_brief import BriefChip, ProductBrief
 from app.schemas.reply_choice import ReplyChoice
+from app.schemas.room_form import RoomForm, RoomFormAction
 from app.schemas.search_action import SearchActionRequest
 from app.schemas.support import SupportActionRequest, SupportPresentation
 from app.schemas.visualization import RoomRenderPresentation, VisualizationAccess
@@ -110,6 +111,12 @@ class ChatRequest(BaseModel):
     no decision model runs, and the store's channels come from its own
     contacts (CLAUDE.md 3.6). Refused where the support agent is off.
     """
+
+    room_form_action: RoomFormAction | None = None
+    """The answers to the room form, sent with one tap on Design it - the
+    budget, the room's size and its look, each a key the form offered or the
+    shopper's own words (docs/room-form-plan.md). The budget and size are
+    saved before any agent runs; the turn then goes to Nora."""
 
     visualization: VisualizationAccess = None
     """Whether this shopper may have a room drawn, as the backend's gateway
@@ -197,6 +204,7 @@ class ChatRequest(BaseModel):
                 self.search_action,
                 self.product_action,
                 self.support_action,
+                self.room_form_action,
             )
             if action is not None
         ]
@@ -365,6 +373,11 @@ class ChatPresentation(BaseModel):
     on a turn about the store, built from the contacts its owner set. Never
     written by a model."""
 
+    room_form: RoomForm | None = None
+    """The room form beneath Nora's reply: the budget, the room's size and its
+    look, each with chips and a box to type, and one Design it button. Built by
+    code from the store's data in the reply's language (docs/room-form-plan.md)."""
+
     def is_empty(self) -> bool:
         """Whether there is anything to draw.
 
@@ -384,6 +397,7 @@ class ChatPresentation(BaseModel):
             and self.piece_picker is None
             and self.brief is None
             and self.support is None
+            and self.room_form is None
         )
 
 
