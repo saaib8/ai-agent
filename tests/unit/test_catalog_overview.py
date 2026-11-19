@@ -246,3 +246,37 @@ def test_a_price_band_out_of_order_is_refused() -> None:
         shelf(400, 200)
     with pytest.raises(ValidationError):
         shelf(50, 400)
+
+
+def test_colours_and_styles_come_most_stocked_first() -> None:
+    """The colours and styles a kind comes in are listed by how many products
+    carry them - the room form and chips offer the first few - alphabetical
+    between equals, and never as counts."""
+    from types import SimpleNamespace
+
+    from app.repositories.products import _overview_row
+
+    row = SimpleNamespace(
+        commerce_category="seating",
+        commerce_subcategory="sofa",
+        active_count=6,
+        seat_known=0,
+        seat_minimum=None,
+        seat_maximum=None,
+        price_minimum=Decimal(900),
+        price_maximum=Decimal(4000),
+        price_low=None,
+        price_typical=None,
+        colours=["Grey", "Beige", "Beige", "Blue", "Beige", "Grey"],
+        price_units=["SAR"],
+        styles=["Modern, Japandi", "Japandi", "Boho", "Japandi"],
+        materials=None,
+        planar_measured=0,
+        planar_elongated=0,
+        seat_counts=None,
+    )
+
+    shelf = _overview_row(row)  # type: ignore[arg-type]
+
+    assert shelf.colours == ("Beige", "Grey", "Blue")
+    assert shelf.styles == ("Japandi", "Boho", "Modern")

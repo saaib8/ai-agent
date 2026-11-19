@@ -342,3 +342,33 @@ class CardLabels(BaseModel):
     one_fewer: str
     one_more: str
     at_most_per_product: str
+
+    # ── the room form (docs/room-form-plan.md) ──────────────────────────────
+    room_form_intro: str
+    """Nora's one line beside the form."""
+    room_form_budget: str
+    room_form_budget_box: str
+    room_form_size: str
+    room_form_length: str
+    room_form_width: str
+    room_form_metres: str
+    """The unit beside the size boxes."""
+    room_form_size_small: str
+    """"Small · about {size}"."""
+    room_form_size_medium: str
+    room_form_size_large: str
+    """"Large · {size} or more"."""
+    room_form_colours: str
+    room_form_style: str
+    room_form_look_box: str
+    room_form_you_decide: str
+    room_form_up_to: str
+    """"Up to {max}", beside a question where several may be chosen."""
+    room_form_submit: str
+    room_form_budget_needed: str
+    """Under the budget when Design it is tapped without one."""
+    room_form_sent: str
+    """The shopper's own message after they send the form."""
+    room_form_no_preference: str
+    """The sent form's line when nothing on it was chosen - only about the
+    form's own questions, so it never reads as "skip the rest"."""

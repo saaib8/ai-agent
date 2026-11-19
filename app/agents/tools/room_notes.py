@@ -14,13 +14,13 @@ from typing import Any, cast
 from pydantic import Field, create_model
 
 from app.agents.context import ToolContext
-from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool, one_of
+from app.agents.tools.base import ToolArgs, ToolOutcome, ZoryTool, list_of, one_of
 from app.agents.tools.design import Budget, Measure
 from app.agents.tools.schemas import ToolSchemas
 from app.agents.work import ToolStatus, TurnWork
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import RoomProjectState
-from app.schemas.agent_updates import AgentStateUpdate, RoomProjectUpdate
+from app.schemas.agent_updates import AgentStateUpdate, ReplaceItems, RoomProjectUpdate
 from app.schemas.geometry import (
     MAX_WALL_NOTES,
     RoomGeometry,
@@ -29,9 +29,12 @@ from app.schemas.geometry import (
     WallFeature,
     WallNote,
 )
+from app.schemas.query import ConstraintStrength, SemanticPreference
+from app.schemas.room_form import MAX_COLOURS_CHOSEN, MAX_STYLES_CHOSEN
 from app.services.agent_state import apply_update
 from app.services.fit import knows_room_size
 from app.services.room_cart import room_words
+from app.taxonomy.attributes import AttributeFamily
 
 ROOM_KEEPERS = frozenset({AgentPersona.SARA, AgentPersona.NORA, AgentPersona.SALMAN})
 
@@ -46,6 +49,8 @@ class WallArgs(ToolArgs):
 def room_note_args(schemas: ToolSchemas) -> type[ToolArgs]:
     rooms = schemas.room_pieces
     kinds = tuple(rooms.kinds) if rooms is not None else ()
+    colour = one_of(tuple(sorted(schemas.attributes.colors)))
+    style = one_of(tuple(sorted(schemas.attributes.styles)))
     fields: dict[str, Any] = {
         "room_type": (str | None, Field(default=None, min_length=1, max_length=60)),
         "room_kind": (one_of(kinds) | None, None) if kinds else (str | None, None),
@@ -59,6 +64,24 @@ def room_note_args(schemas: ToolSchemas) -> type[ToolArgs]:
                 default=None,
                 description="The room's budget, as soon as they say it - kept before anything "
                 "is built, so it is never asked again.",
+            ),
+        ),
+        "colours": (
+            list_of(colour),
+            Field(
+                default_factory=list,
+                max_length=MAX_COLOURS_CHOSEN,
+                description="The colours they said they want for this room ('a blue bedroom'), "
+                "as soon as they say them - replacing the colours said before.",
+            ),
+        ),
+        "styles": (
+            list_of(style),
+            Field(
+                default_factory=list,
+                max_length=MAX_STYLES_CHOSEN,
+                description="The style they said they want for this room ('a modern living "
+                "room') - replacing the style said before.",
             ),
         ),
         "purpose": (
@@ -156,15 +179,20 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                     size_declined=True if args.declined_size else (False if measured else None),
                     purpose=args.purpose,
                     already_own=tuple(args.already_own) or None,
+                    design_preferences=_said_look(
+                        current, tuple(args.colours), tuple(args.styles), another
+                    ),
                 )
             ),
         )
         room = state.room_project
         assert room is not None
+        said = room.design_preferences
         return ToolOutcome(
             facts={
                 "room": room.room_type or room.room_kind,
                 "size_known": knows_room_size(room.geometry),
+                **_look_facts(said),
                 **({"size_declined": True} if room.size_declined else {}),
                 **({"purpose": room.purpose} if room.purpose else {}),
                 **({"already_own": list(room.already_own)} if room.already_own else {}),
@@ -181,15 +209,58 @@ def note_room_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
     return ZoryTool(
         name="note_room",
         description=(
-            "Record what they say about their room: its kind, budget, length and width, the "
-            "doorway, and each wall with what is on it (door, window, TV point, radiator, "
-            "built-in, keep free). Say it once and every fit, placement and size after it "
-            "uses it. Builds nothing."
+            "Record what they say about their room: its kind, budget, colours and style, "
+            "length and width, the doorway, and each wall with what is on it (door, window, "
+            "TV point, radiator, built-in, keep free). Say it once and every fit, placement "
+            "and size after it uses it, and the room form leaves it off. Builds nothing."
         ),
         args=room_note_args(schemas),
         owners=ROOM_KEEPERS,
         handler=note,
     )
+
+
+def _said_look(
+    current: RoomProjectState | None,
+    colours: tuple[str, ...],
+    styles: tuple[str, ...],
+    another: bool,
+) -> ReplaceItems[SemanticPreference] | None:
+    """The room's colours and style as they said them. What they say now
+    replaces what they said before in the same family and keeps the other;
+    another room starts from nothing, so a bedroom's blue never answers the
+    living room's form."""
+    if not (colours or styles or another):
+        return None
+    kept = tuple(
+        p
+        for p in (() if another or current is None else current.design_preferences)
+        if not (p.family is AttributeFamily.COLOR and colours)
+        and not (p.family is AttributeFamily.STYLE and styles)
+    )
+    return ReplaceItems(
+        items=kept
+        + tuple(_preference(AttributeFamily.COLOR, value) for value in colours)
+        + tuple(_preference(AttributeFamily.STYLE, value) for value in styles)
+    )
+
+
+def _preference(family: AttributeFamily, value: str) -> SemanticPreference:
+    return SemanticPreference(
+        family=family,
+        raw_value=value,
+        canonical_value=value,
+        strength=ConstraintStrength.PREFERRED,
+    )
+
+
+def _look_facts(said: tuple[SemanticPreference, ...]) -> dict[str, object]:
+    colours = [p.canonical_value or p.raw_value for p in said if p.family is AttributeFamily.COLOR]
+    styles = [p.canonical_value or p.raw_value for p in said if p.family is AttributeFamily.STYLE]
+    return {
+        **({"colours": colours} if colours else {}),
+        **({"styles": styles} if styles else {}),
+    }
 
 
 def _names_another_room(current: RoomProjectState, args: Any) -> bool:

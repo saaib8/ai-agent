@@ -294,6 +294,25 @@ export interface CardLabels {
   one_fewer: string
   one_more: string
   at_most_per_product: string
+  room_form_intro: string
+  room_form_budget: string
+  room_form_budget_box: string
+  room_form_size: string
+  room_form_length: string
+  room_form_width: string
+  room_form_metres: string
+  room_form_size_small: string
+  room_form_size_medium: string
+  room_form_size_large: string
+  room_form_colours: string
+  room_form_style: string
+  room_form_look_box: string
+  room_form_you_decide: string
+  room_form_up_to: string
+  room_form_submit: string
+  room_form_budget_needed: string
+  room_form_sent: string
+  room_form_no_preference: string
 }
 
 export interface GroundedProduct {
@@ -433,6 +452,8 @@ export interface ChatPresentation {
   /** A card of questions for a product search: asked first, or folded beside
    *  results to narrow them. */
   brief?: ProductBrief | null
+  /** The room form beneath Nora's reply: budget, size, colours and style. */
+  room_form?: RoomForm | null
   /** Every option for the results on screen, opened showing what is used. */
   narrow_down?: ProductBrief | null
   /** What the search on screen is using, each removable. */
@@ -966,6 +987,7 @@ export interface ChatRequest {
   bundle_action?: BundleAction
   search_action?: SearchAction
   product_action?: ProductAction
+  room_form_action?: RoomFormAction
   /** A photo sent with the message, base64 JPEG/PNG/WebP, no data: prefix.
    *  The message may then be empty: the photo alone is the turn. */
   photo?: string
@@ -1134,4 +1156,51 @@ export interface CatalogVisualizeRequest {
   room_photo_id?: string | null
   view: RenderView
   expected_session_revision?: number
+}
+
+/** The room form (docs/room-form-plan.md). */
+export interface RoomFormChoice {
+  key: string
+  label: string
+}
+
+export interface RoomFormQuestion {
+  kind: 'budget' | 'size' | 'colours' | 'style'
+  label: string
+  choices: RoomFormChoice[]
+  max_choices: number
+  placeholder?: string | null
+  required?: boolean
+  /** The size's length and width boxes, in metres, in place of a text box. */
+  dimensions?: RoomFormDimensions | null
+}
+
+export interface RoomFormDimensions {
+  length_label: string
+  width_label: string
+  unit: string
+  step: string | number
+  minimum: string | number
+  maximum: string | number
+}
+
+export interface RoomForm {
+  number: number
+  questions: RoomFormQuestion[]
+  submit_label: string
+  budget_needed: string
+  budget_missing?: boolean
+}
+
+/** The answers, sent with one tap on Design it. */
+export interface RoomFormAction {
+  form: number
+  budget?: string | null
+  budget_text?: string | null
+  size?: string | null
+  length_m?: number | null
+  width_m?: number | null
+  colours?: string[]
+  styles?: string[]
+  look_text?: string | null
 }

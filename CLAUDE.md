@@ -461,17 +461,26 @@ Nora designs the room; code finds the products, does the sums and keeps the
 rules. A room is a path of its own: the customer sees the room package, never
 a list of search cards while it is built.
 
-- **Asking first, one question a turn**, only what changes the design and the
-  brief does not hold: the budget (only when unknown; saved with `note_room` the
-  moment it is said), what the room is mostly for (`note_room` `purpose` -
-  hosting guests, family TV, reading, children), the room's size once and why
-  ("I can design your room better if I know its size" - one plain question,
-  never its doors, windows or TV; declined is `note_room` `declined_size`, never
-  asked again), how many sit there, the colours (several
-  may be given) and look, what they must have, would rather not have, or already
-  own. The budget, purpose, head count and colours or look are known before it is
-  built; "just design it" builds now. An amount said without a currency is in the
-  store's (`store_currency`).
+- **The room form, then its follow-ups** (docs/room-form-plan.md). Which room
+  it is comes first when it is not clear (one question, the rooms the store can
+  furnish as chips). Then Nora calls `ask_room_form`: one small form beneath her
+  one-line reply - the budget (fixed amounts from `room_form.budget_amounts`, or
+  typed; **required**), the room's size (small / medium / large, or length and width
+  in two number boxes), its
+  colours (the main piece's stocked colours, up to 3) and style (its stocked
+  styles, up to 2, or "You decide"), each with a box to type; one Design it
+  button, no "decide everything". Code builds it (`app/services/room_form.py`)
+  and leaves off what is known. Its answers come as one tap
+  (`ChatRequest.room_form_action`, read back against `AgentStateV1.room_form`):
+  a budget or size that reads exactly is saved before Nora runs
+  (`ChatRuntime.load_session`); colours, styles and words are hers - her palette
+  starts from their colours. Then the room's follow-ups as ordinary chat
+  questions with chips, one a reply, never one known: a living room how many sit
+  there, then what it is for; a dining room how many it seats; others none. Then
+  the room is built - never "shall I design it now?". Typed answers count the
+  same. **No room is built without a budget**: `design_room` refuses
+  (`budget_needed`), and Nora asks it once. An amount said without a currency is
+  in the store's (`store_currency`).
 - **What the store stocks** is in Nora's context while a room is planned
   (`store_stocks`: the kinds by family, names only - a few dozen words), with
   each kind's price band here (`price_band`: [low, typical] - where its cheaper

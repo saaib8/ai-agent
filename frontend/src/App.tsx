@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BriefAnswerAction,
+  RoomFormAction,
   BriefChip,
   BundleAction,
   SearchAction,
@@ -435,6 +436,15 @@ export default function App() {
     [chat, config.config],
   )
 
+  const handleRoomFormSubmit = useCallback(
+    (answer: RoomFormAction, summary: string) => {
+      if (chat.sending || chat.picking) return
+      setSwap(null)
+      void chat.send(summary, config.config, { roomForm: answer })
+    },
+    [chat, config.config],
+  )
+
   const handleDropChip = useCallback(
     (chip: BriefChip) => {
       if (chat.sending || chat.picking) return
@@ -749,6 +759,7 @@ export default function App() {
           onClearCompare={handleClearCompare}
           onChoice={handleChoice}
           onBriefSubmit={handleBriefSubmit}
+          onRoomFormSubmit={handleRoomFormSubmit}
           onDropChip={handleDropChip}
           onCombination={handleCombination}
         />

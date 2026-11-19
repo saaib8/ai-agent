@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type {
   BriefAnswerAction,
+  RoomFormAction,
   BriefChip,
   BundleAction,
   CartView,
@@ -120,6 +121,7 @@ interface ChatPanelProps {
   ) => void
   /** Answers tapped on a card of questions. */
   onBriefSubmit: (answer: BriefAnswerAction | null, summary: string) => void
+  onRoomFormSubmit: (answer: RoomFormAction, summary: string) => void
   onDropChip: (chip: BriefChip) => void
   onCombination: (op: 'choose' | 'dismiss' | 'more', position: number | null) => void
 }
@@ -186,6 +188,7 @@ export function ChatPanel({
   onClearCompare,
   onChoice,
   onBriefSubmit,
+  onRoomFormSubmit,
   onDropChip,
   onCombination,
 }: ChatPanelProps) {
@@ -476,6 +479,7 @@ export function ChatPanel({
                       ? likedCards(turn.data.presentation.products)
                       : {})}
                     onBriefSubmit={onBriefSubmit}
+                    onRoomFormSubmit={onRoomFormSubmit}
                     onDropChip={onDropChip}
                     onCombination={turn.id === lastAssistantId ? onCombination : undefined}
                     showBrief={turn.id === briefTurnId}

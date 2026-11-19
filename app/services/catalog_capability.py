@@ -174,7 +174,7 @@ class CatalogCapabilityService:
         return self._taxonomy.is_pair(category, subcategory)
 
 
-_SHAPE = "seat-counts.price-band"
+_SHAPE = "seat-counts.price-band.by-stock"
 """What the summary holds beyond its registries: a summary cached before seat
 counts were recorded is rebuilt rather than read without them."""
 

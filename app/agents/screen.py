@@ -18,6 +18,7 @@ from app.agents.payloads import (
     OptionsShown,
     ProductShown,
     RenderShown,
+    RoomFormShown,
     RoomShown,
     SearchShown,
     SeatingShown,
@@ -95,7 +96,7 @@ def presentation(
     agent chose to put on screen, from what this turn's tools produced; the
     last thing a tool showed when it chose nothing this turn produced."""
     shown = [r.payload for r in work.records if r.status is ToolStatus.OK and r.payload is not None]
-    screens = [p for p in shown if not isinstance(p, SupportShown | KnowledgeShown)]
+    screens = [p for p in shown if not isinstance(p, SupportShown | KnowledgeShown | RoomFormShown)]
     # A room just designed is a draft until Nora has read it: it is drawn only
     # when she says so (show: "room"), never as the default.
     drafts = [
@@ -120,6 +121,7 @@ def presentation(
     # were drafts, and the screen stays as the customer last saw it.
     screen = candidates[-1] if candidates and show != "unchanged" else None
     support = next((p for p in reversed(shown) if isinstance(p, SupportShown)), None)
+    form = next((p for p in reversed(shown) if isinstance(p, RoomFormShown)), None)
     fields: dict[str, object] = {}
     beside_grid: tuple[GridChip, ...] = ()
     match screen:
@@ -164,6 +166,9 @@ def presentation(
             fields.update(render=render)
         case _:
             pass
+    if form is not None:
+        # The room form is drawn beneath the reply, whatever else it shows.
+        fields["room_form"] = form.form
     if support is not None:
         offered = support.support
         fields["support"] = channels_for(offered.contacts, language, handover=offered.handover)

@@ -121,15 +121,17 @@ class SubcategoryShelf(BaseModel):
     colours: tuple[str, ...] = ()
     """The distinct ``main_color`` values this type comes in, in stored form.
 
-    Deduplicated and sorted, so the palette is stable between reads. Empty when
+    The colour the most products carry first, alphabetical between equals, so
+    the palette is stable between reads and its first few are what the store
+    has most of (the room form and chips offer those). Never a count. Empty when
     no product of the type has a recorded colour - said as "unknown", never
     guessed. This is what lets the agent answer "we don't have it in that
     colour, but here's what we do have" instead of a blank search.
     """
 
     styles: tuple[str, ...] = ()
-    """The distinct style tokens this type comes in, sorted - the styles a
-    direction for this kind can actually find."""
+    """The distinct style tokens this type comes in, the most widely carried
+    first - the styles a direction for this kind can actually find."""
 
     materials: tuple[str, ...] = ()
     """The distinct main materials this type comes in, sorted, as stored - the

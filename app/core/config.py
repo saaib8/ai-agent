@@ -579,6 +579,21 @@ class VocabularySettings(BaseModel):
     retry_every_s: float = Field(default=5.0, gt=0)
 
 
+class RoomFormSettings(BaseModel):
+    """The room form's fixed choices (docs/room-form-plan.md). The same in
+    every store - never worked out from its prices or catalog."""
+
+    budget_amounts: tuple[int, ...] = Field(default=(5000, 10000, 15000, 20000), min_length=1)
+    """The budget chips, in the store's currency."""
+    small_room_cm: int = Field(default=300, gt=0)
+    medium_room_cm: int = Field(default=400, gt=0)
+    large_room_cm: int = Field(default=500, gt=0)
+    """Each size chip as a square room's side: small about 3 x 3 m, medium
+    about 4 x 4 m, large 5 x 5 m or more."""
+    max_looks: int = Field(default=6, ge=1, le=12)
+    """How many of the store's looks are offered as chips."""
+
+
 class CatalogSettings(BaseModel):
     """Browsing the store's catalog and rendering a room from what was picked.
 
@@ -1041,6 +1056,7 @@ class Settings(BaseSettings):
     # And again: without it the Visualize route refuses and nothing else changes.
     visualization: VisualizationSettings | None = None
     catalog: CatalogSettings = CatalogSettings()
+    room_form: RoomFormSettings = RoomFormSettings()
     vocabulary: VocabularySettings = VocabularySettings()
     products: ProductDataSettings = ProductDataSettings()
     salla: SallaSettings = SallaSettings()

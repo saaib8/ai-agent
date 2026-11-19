@@ -295,6 +295,9 @@ def test_the_request_asks_for_nothing_that_does_not_exist_yet() -> None:
         # Whether this shopper may use the finder, as the gateway worked it
         # out - an answer, never an identity (plan D7).
         "furniture_finder",
+        # The room form's answers: keys the form offered and the shopper's own
+        # words, never an id (docs/room-form-plan.md).
+        "room_form_action",
     }
 
 
