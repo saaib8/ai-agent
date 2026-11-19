@@ -47,11 +47,14 @@ _FIGURE = re.compile(r"\d[\d,.]*\s*[kK]?")
 
 @dataclass(frozen=True, slots=True)
 class FormKnown:
-    """What the room already has on record, left off the form."""
+    """What the room already has on record, left off the form. The colours and
+    the style are apart: "a blue bedroom" says the colours and leaves the style
+    to ask."""
 
     budget: bool = False
     size: bool = False
-    look: bool = False
+    colours: bool = False
+    styles: bool = False
 
 
 def build_room_form(
@@ -67,7 +70,7 @@ def build_room_form(
     budget_missing: bool = False,
 ) -> tuple[RoomForm, RoomFormRecord] | None:
     """The form for what is still unknown, and its record - or None when the
-    budget, the size and the look are all known already."""
+    budget, the size, the colours and the style are all known already."""
     currency = overview.currency
     questions: list[RoomFormQuestion] = []
     budgets: dict[str, Decimal] = {}
@@ -119,10 +122,8 @@ def build_room_form(
                 ),
             )
         )
-    if not known.look:
+    if not known.colours:
         colours = _stocked(overview, main_kinds, settings.max_looks, "colours")
-        styles = _stocked(overview, main_kinds, settings.max_looks, "styles")
-        style_keys = (*styles, YOU_DECIDE)
         if colours:
             questions.append(
                 RoomFormQuestion(
@@ -137,6 +138,9 @@ def build_room_form(
                     max_choices=min(MAX_COLOURS_CHOSEN, len(colours)),
                 )
             )
+    if not known.styles:
+        styles = _stocked(overview, main_kinds, settings.max_looks, "styles")
+        style_keys = (*styles, YOU_DECIDE)
         questions.append(
             RoomFormQuestion(
                 kind="style",
@@ -170,7 +174,7 @@ def build_room_form(
         sizes=sizes,
         colours=colours,
         styles=style_keys,
-        looks_answered=known.look,
+        looks_answered=known.colours and known.styles,
     )
     return form, record
 

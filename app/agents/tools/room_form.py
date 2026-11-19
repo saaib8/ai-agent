@@ -27,6 +27,7 @@ from app.services.card_labels import card_labels
 from app.services.fit import knows_room_size
 from app.services.product_display import ProductDisplayWords
 from app.services.room_form import FormKnown, build_room_form
+from app.taxonomy.attributes import AttributeFamily
 
 NORA = frozenset({AgentPersona.NORA})
 
@@ -78,12 +79,17 @@ def ask_room_form_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
             )
         room = None if another_in_progress else state.room_project
         previous = state.room_form
+        looks_answered = (
+            previous is not None and previous.looks_answered and not another_in_progress
+        )
+        said = room.design_preferences if room is not None else ()
         known = FormKnown(
             budget=room is not None
             and room.budget is not None
             and room.budget.max_amount is not None,
             size=room is not None and (knows_room_size(room.geometry) or bool(room.size_declined)),
-            look=previous is not None and previous.looks_answered and not another_in_progress,
+            colours=looks_answered or any(p.family is AttributeFamily.COLOR for p in said),
+            styles=looks_answered or any(p.family is AttributeFamily.STYLE for p in said),
         )
         language = context.language or ReplyLanguage.EN
         rooms = services.room_pieces
@@ -103,8 +109,8 @@ def ask_room_form_tool(schemas: ToolSchemas) -> ZoryTool[Any]:
                 status=ToolStatus.REFUSED,
                 code="nothing_to_ask",
                 facts={
-                    "next": "the budget, size and look are known: ask the room's follow-up "
-                    "if it has one left, else build it"
+                    "next": "the budget, size, colours and style are known: ask the room's "
+                    "follow-up if it has one left, else build it"
                 },
                 state=state,
             )

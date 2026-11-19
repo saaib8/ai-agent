@@ -98,7 +98,7 @@ def test_the_form_asks_budget_size_colours_and_style() -> None:
 
 
 def test_what_is_known_is_left_off_and_nothing_left_means_no_form() -> None:
-    form, _ = _form(FormKnown(budget=True, look=True))
+    form, _ = _form(FormKnown(budget=True, colours=True, styles=True))
 
     assert [q.kind for q in form.questions] == ["size"]
     assert (
@@ -110,10 +110,24 @@ def test_what_is_known_is_left_off_and_nothing_left_means_no_form() -> None:
             language=ReplyLanguage.EN,
             overview=OVERVIEW,
             main_kinds=("sofa",),
-            known=FormKnown(budget=True, size=True, look=True),
+            known=FormKnown(budget=True, size=True, colours=True, styles=True),
         )
         is None
     )
+
+
+def test_colours_said_leave_the_style_still_to_ask() -> None:
+    form, record = _form(FormKnown(budget=True, colours=True))
+
+    assert [q.kind for q in form.questions] == ["size", "style"]
+    assert record.colours == () and not record.looks_answered
+
+
+def test_a_style_said_leaves_the_colours_still_to_ask() -> None:
+    form, record = _form(FormKnown(styles=True))
+
+    assert [q.kind for q in form.questions] == ["budget", "size", "colours"]
+    assert record.styles == ()
 
 
 def test_the_form_reads_in_arabic() -> None:
@@ -209,6 +223,57 @@ async def _ask(state: AgentStateV1, tapped: str | None = None) -> Any:
     context = replace(tool_context(services), tapped=tapped)
     args = tool.args.model_validate({"room_type": "living room", "room_kind": "living_room"})
     return await tool.handler(args, context, work)
+
+
+async def _note(state: AgentStateV1, args: dict[str, Any]) -> Any:
+    tool = LOOP._registry.get("note_room")
+    assert tool is not None and tool.handler is not None
+    work = TurnWork.starting(state)
+    work.working = AgentPersona.NORA
+    return await tool.handler(tool.args.model_validate(args), tool_context(agent_services()), work)
+
+
+async def test_colours_said_for_the_room_are_left_off_its_form() -> None:
+    noted = await _note(
+        AgentStateV1(),
+        {"room_type": "living room", "room_kind": "living_room", "colours": ["Beige"]},
+    )
+
+    shown = await _ask(noted.state)
+
+    assert noted.facts["colours"] == ["Beige"]
+    assert shown.facts["form_shows"] == ["budget", "size", "style"]
+
+
+async def test_colours_said_again_replace_the_colours_and_keep_the_style() -> None:
+    first = await _note(
+        AgentStateV1(),
+        {
+            "room_type": "living room",
+            "room_kind": "living_room",
+            "colours": ["Beige"],
+            "styles": ["Modern"],
+        },
+    )
+
+    second = await _note(first.state, {"room_kind": "living_room", "colours": ["Grey"]})
+
+    assert second.facts["colours"] == ["Grey"]
+    assert second.facts["styles"] == ["Modern"]
+
+
+async def test_another_room_does_not_take_the_last_rooms_colours() -> None:
+    blue_bedroom = await _note(
+        AgentStateV1(), {"room_type": "bedroom", "room_kind": "bedroom", "colours": ["Grey"]}
+    )
+
+    living = await _note(
+        blue_bedroom.state, {"room_type": "living room", "room_kind": "living_room"}
+    )
+    shown = await _ask(living.state)
+
+    assert "colours" not in living.facts
+    assert shown.facts["form_shows"] == ["budget", "size", "colours", "style"]
 
 
 async def test_nora_shows_the_form_and_the_session_remembers_it() -> None:
