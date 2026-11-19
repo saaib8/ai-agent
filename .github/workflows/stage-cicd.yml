@@ -1,7 +1,7 @@
 name: CI/CD — checks, then build & deploy on EC2
 on:
   push:
-    branches: [main]
+    branches: [stage]
   workflow_dispatch: {}
 
 concurrency:
