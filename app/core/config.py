@@ -35,6 +35,7 @@ from pydantic_settings import (
 ENV_PREFIX = "ZORY_"
 
 AZURE_KEY_VARIABLE = "AZURE_OPENAI_API_KEY"
+ELEVENLABS_KEY_VARIABLE = "ELEVENLABS_API_KEY"
 AZURE_ENDPOINT_VARIABLE = "AZURE_OPENAI_ENDPOINT"
 
 
@@ -468,6 +469,43 @@ class FurnitureFinderSettings(BaseModel):
         if self.candidate_limit < self.result_limit:
             raise ValueError("furniture_finder candidate_limit must be at least result_limit")
         return self
+
+
+class SpeechToTextSettings(BaseModel):
+    """Voice input: a recording becomes text the customer can check and send.
+
+    Absent when not configured: the microphone route refuses and nothing else
+    changes. ElevenLabs Scribe answers it. The key may also be given as
+    `ELEVENLABS_API_KEY`, the name ElevenLabs' own tooling uses.
+    """
+
+    api_key: SecretStr
+    base_url: str = Field(default="https://api.elevenlabs.io", min_length=1)
+    """ElevenLabs' API host. The same in every environment, like Salla's."""
+
+    model_id: str = Field(default="scribe_v3", min_length=1, max_length=64)
+    timeout_s: float = Field(default=60.0, gt=0, le=300)
+    max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
+    """A memory ceiling for a recording sent whole (the fallback when live
+    listening is unavailable): over an hour of browser audio. Listening itself
+    has no time limit."""
+
+    numbers_format: Literal["digits", "words"] = "digits"
+    """"under 3000 riyals", not "under three thousand riyals": a budget the
+    agent reads as a number."""
+
+    live_enabled: bool = True
+    """Words appear while the customer speaks: the browser streams to
+    ElevenLabs with a single-use token this service mints, so the key never
+    leaves it. Off, the microphone records and transcribes after stop."""
+
+    live_model_id: str = Field(default="scribe_v3_live", min_length=1, max_length=64)
+    live_url: str = Field(
+        default="wss://api.elevenlabs.io/v1/speech-to-text/realtime", pattern=r"^wss://"
+    )
+    live_sample_rate: Literal[8000, 16000, 22050, 24000, 44100, 48000] = 16000
+    live_commit_strategy: Literal["vad", "manual"] = "vad"
+    """`vad`: each pause settles the words before it, so they stop changing."""
 
 
 class VisualizationSettings(BaseModel):
@@ -1055,6 +1093,8 @@ class Settings(BaseSettings):
     store_knowledge: StoreKnowledgeSettings | None = None
     # And again: without it the Visualize route refuses and nothing else changes.
     visualization: VisualizationSettings | None = None
+    # And again: without it the microphone route refuses and nothing else changes.
+    speech_to_text: SpeechToTextSettings | None = None
     catalog: CatalogSettings = CatalogSettings()
     room_form: RoomFormSettings = RoomFormSettings()
     vocabulary: VocabularySettings = VocabularySettings()
@@ -1072,6 +1112,12 @@ class Settings(BaseSettings):
     )
     """Azure OpenAI, under the names Azure's own tooling uses. Both set: every
     model call goes to Azure (`_azure_openai`). Neither: OpenAI, as before."""
+
+    elevenlabs_api_key: SecretStr | None = Field(
+        default=None, validation_alias=ELEVENLABS_KEY_VARIABLE
+    )
+    """ElevenLabs' key under its own name. Set: voice input is on
+    (`_elevenlabs_speech_to_text`) unless `speech_to_text` names its own key."""
 
     @classmethod
     def settings_customise_sources(
@@ -1132,6 +1178,26 @@ class Settings(BaseSettings):
         llm["api_key"] = key
         llm["base_url"] = base
         return {**data, "llm": llm}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _elevenlabs_speech_to_text(cls, data: Any) -> Any:
+        """`ELEVENLABS_API_KEY` alone turns voice input on with its defaults.
+
+        Done before validation, like Azure's key, so `speech_to_text` need not
+        also name it. A key given inside `speech_to_text` wins.
+        """
+        if not isinstance(data, dict):
+            return data
+        values = {str(k).lower(): v for k, v in data.items()}
+        key = values.get(ELEVENLABS_KEY_VARIABLE.lower())
+        if not key:
+            return data
+        group = data.get("speech_to_text")
+        group = dict(group) if isinstance(group, dict) else {}
+        if group.get("api_key"):
+            return data
+        return {**data, "speech_to_text": {**group, "api_key": key}}
 
     @model_validator(mode="after")
     def _azure_openai_complete(self) -> Settings:

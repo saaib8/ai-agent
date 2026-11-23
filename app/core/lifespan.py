@@ -37,6 +37,7 @@ from app.integrations.postgres import Database
 from app.integrations.product_images import ProductImageFetcher
 from app.integrations.redis import RedisClient
 from app.integrations.salla_storefront import SallaStorefrontClient
+from app.integrations.speech_to_text import ElevenLabsTranscriber
 from app.integrations.store_knowledge import PineconeKnowledgeIndex
 from app.integrations.zory_finder import ZoryFinderClient
 from app.orchestration.graph import NODE_ORDER, ChatGraphRunner
@@ -105,6 +106,8 @@ class AppResources:
     # The public health check's last outside-probe results, kept per process
     # so a polled URL never becomes a stream of provider calls.
     outside_health: OutsideHealthCache = field(default_factory=OutsideHealthCache)
+    # None when voice input is not configured: the microphone route refuses.
+    speech_to_text: ElevenLabsTranscriber | None = None
 
 
 def get_resources(app: FastAPI) -> AppResources:
@@ -208,6 +211,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.furniture_finder is not None:
         zory_finder = ZoryFinderClient(settings.furniture_finder)
     salla = SallaStorefrontClient(settings.salla) if settings.salla.check_cart else None
+    speech_to_text = (
+        ElevenLabsTranscriber(settings.speech_to_text) if settings.speech_to_text else None
+    )
     render_generator: ImageGenerator | None = None
     render_photos: ProductImageFetcher | None = None
     room_checker: OpenAIStructuredClient | None = None
@@ -296,6 +302,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         room_checker=room_checker,
         empty_room_generator=empty_room_generator,
         history_summarizer=history_summarizer,
+        speech_to_text=speech_to_text,
     )
 
     await _check_catalog_schema(database, support=settings.customer_agent.support_agent)
@@ -315,6 +322,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await zory_finder.close()
         if salla is not None:
             await salla.close()
+        if speech_to_text is not None:
+            await speech_to_text.close()
         if room_checker is not None:
             await room_checker.close()
         if summary_client is not None:

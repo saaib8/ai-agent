@@ -24,6 +24,7 @@ from app.api.routes.labels import router as labels_router
 from app.api.routes.picks import router as picks_router
 from app.api.routes.service_health import router as service_health_router
 from app.api.routes.sessions import router as sessions_router
+from app.api.routes.speech import router as speech_router
 from app.api.routes.support import router as support_router
 from app.api.routes.visualization import router as visualization_router
 from app.core.config import Settings, get_settings
@@ -78,4 +79,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(labels_router, prefix=settings.api.prefix)
     app.include_router(support_router, prefix=settings.api.prefix)
     app.include_router(sessions_router, prefix=settings.api.prefix)
+    app.include_router(speech_router, prefix=settings.api.prefix)
     return app

@@ -15,6 +15,8 @@ import type {
   RenderView,
   RoomRenderPresentation,
   SearchAction,
+  SpeechTextResponse,
+  LiveSpeechSession,
 } from '../api/types'
 import type { Activity, Turn } from '../hooks/useChat'
 import { CompareBar } from './CompareBar'
@@ -28,7 +30,7 @@ import type { CartLineRef } from './PicksTray'
 import type { CheckedCard } from '../lib/compare'
 import { cardWords, latestLabels } from '../lib/cardWords'
 import { TypingIndicator } from './TypingIndicator'
-import type { AgentProgress } from '../api/client'
+import type { AgentProgress, Fetched } from '../api/client'
 import { agentLook } from '../lib/agents'
 
 interface ChatPanelProps {
@@ -74,6 +76,10 @@ interface ChatPanelProps {
   /** Put the current room package's pieces in the cart. */
   onAddRoomToCart: () => void
   onOpenCatalog: () => void
+  /** Voice input for the composer; no microphone without it. */
+  onVoice?: (audio: Blob, filename: string) => Promise<Fetched<SpeechTextResponse>>
+  /** Live voice input: words appear in the box while they speak. */
+  onLiveVoice?: () => Promise<Fetched<LiveSpeechSession>>
   /** Draw a catalogue selection again, from another view. */
   onRerenderSelection: (selection: CatalogSelection, view: RenderView, viewLabel: string) => void
   /** Reopen the catalogue with a selection's pieces and room. */
@@ -161,6 +167,8 @@ export function ChatPanel({
   roomPhotoPreview,
   onAddRoomToCart,
   onOpenCatalog,
+  onVoice,
+  onLiveVoice,
   onRerenderSelection,
   onEditSelection,
   picks,
@@ -562,6 +570,8 @@ export function ChatPanel({
         photoUrl={photoUrl}
         onClearPhoto={onClearPhoto}
         onOpenCatalog={onOpenCatalog}
+        onVoice={onVoice}
+        onLiveVoice={onLiveVoice}
         disabled={busy}
         sending={sending || revealing}
       />

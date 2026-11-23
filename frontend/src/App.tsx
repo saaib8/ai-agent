@@ -14,7 +14,7 @@ import type {
   RenderRoomSpec,
   RenderView,
 } from './api/types'
-import { getCompareGroups } from './api/client'
+import { getCompareGroups, postLiveSpeechSession, postTranscription } from './api/client'
 import { CatalogDialog } from './components/catalog/CatalogDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
@@ -144,6 +144,17 @@ export default function App() {
 
   // The photo button attaches a photo to the next message; nothing is sent yet.
   const handlePhoto = useCallback((file: File) => setPhoto(file), [])
+
+  // The microphone puts the words heard in the box; nothing is sent yet.
+  const handleVoice = useCallback(
+    (audio: Blob, filename: string) =>
+      postTranscription(config.config.apiBase, { storeId: config.config.storeId, audio, filename }),
+    [config.config.apiBase, config.config.storeId],
+  )
+  const handleLiveVoice = useCallback(
+    () => postLiveSpeechSession(config.config.apiBase, { storeId: config.config.storeId }),
+    [config.config.apiBase, config.config.storeId],
+  )
 
   const handlePickObject = useCallback(
     (photoTurnId: string, imageId: string, object: FinderObject) => {
@@ -732,6 +743,8 @@ export default function App() {
           roomPhotoPreview={roomPhoto?.previewUrl ?? null}
           onAddRoomToCart={handleAddRoomToCart}
           onOpenCatalog={() => setCatalogStep('browse')}
+          onVoice={handleVoice}
+          onLiveVoice={handleLiveVoice}
           onRerenderSelection={handleRerenderSelection}
           onEditSelection={handleEditSelection}
           picks={chat.picks}

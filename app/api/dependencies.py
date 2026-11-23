@@ -86,6 +86,7 @@ from app.services.search_pipeline import ProductSearchPipeline
 from app.services.semantic_ranking import SemanticRankingService
 from app.services.service_health import ServiceHealthService, as_probe
 from app.services.similar_search import SimilarSearchBuilder
+from app.services.speech_to_text import SpeechToTextService
 from app.services.stocked_looks import StockedLooks
 from app.services.store_cart_check import StoreCartCheck
 from app.services.store_cart_mirror import StoreCartMirror
@@ -878,3 +879,23 @@ CatalogVisualizationRuntimeDep = Annotated[
     CatalogVisualizationRuntime, Depends(catalog_visualization_runtime)
 ]
 CatalogServiceDep = Annotated[CatalogService, Depends(catalog_service)]
+
+
+# ── Voice input ─────────────────────────────────────────────────────────────
+
+
+def speech_to_text_service(app_resources: ResourcesDep) -> SpeechToTextService:
+    """Voice input, or a refusal naming what is missing. A deployment without
+    it starts and serves chat exactly as before; only the microphone finds the
+    capability absent."""
+    settings = app_resources.settings.speech_to_text
+    transcriber = app_resources.speech_to_text
+    if settings is None or transcriber is None:
+        raise ConfigurationError(
+            detail="speech_to_text must be configured to use voice input",
+            public_message="Voice input is not configured.",
+        )
+    return SpeechToTextService(transcriber, settings)
+
+
+SpeechToTextServiceDep = Annotated[SpeechToTextService, Depends(speech_to_text_service)]

@@ -527,3 +527,28 @@ class SupportHandoverOffError(ZoryError):
     code = "support_handover_off"
     http_status = HTTPStatus.NOT_FOUND
     public_message = "Sending a request to the store's support is not available here."
+
+
+# ── Voice input ─────────────────────────────────────────────────────────────
+
+
+class SpeechToTextUnavailableError(IntegrationUnavailableError):
+    """The recording could not be turned into text right now."""
+
+    code = "speech_to_text_unavailable"
+    public_message = "We couldn't hear that right now. Please try again, or type your message."
+
+
+class LiveSpeechOffError(ZoryError):
+    """Live voice input is switched off here; the microphone records instead."""
+
+    code = "live_speech_off"
+    http_status = HTTPStatus.NOT_FOUND
+    public_message = "Live voice input is not available here."
+
+
+class AudioRejectedError(InvalidRequestError):
+    """An upload that is not a usable recording: empty, too large, not audio."""
+
+    code = "audio_rejected"
+    public_message = "That recording could not be used. Please try again."
