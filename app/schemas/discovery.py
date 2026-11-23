@@ -302,6 +302,41 @@ class AxisConstraint(BaseModel):
     target_cm: Decimal | None = None
 
 
+class StepUpBasis(BaseModel):
+    """What makes a dearer product a step up from one product: it differs from
+    that product, upward, on at least one listed fact (docs/upselling-plan.md).
+
+    Built only by application code from the product's own listed facts. A fact
+    the product does not list is None, and cannot be a reason: a difference is
+    only ever stated against something the store wrote down. Combined with OR:
+    any one of them qualifies. Never relaxed, never shown."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    from_product_id: int
+    """The product it steps up from - so a choice from this list can offer to
+    take that one out of the cart."""
+    material_other_than: str | None = None
+    """Another main material: different, never "better" (material has no up)."""
+    longer_side_at_least_cm: Decimal | None = Field(default=None, gt=0)
+    """A noticeably longer floor side."""
+    longer_side_not_below_cm: Decimal | None = Field(default=None, gt=0)
+    """Never a noticeably smaller piece, whatever else differs - the one rule
+    every step up must keep (ANDed, not a reason). A piece with no listed size
+    is not held back by it."""
+    seats_more_than: int | None = Field(default=None, ge=1)
+    warranty_more_than: int | None = Field(default=None, ge=0)
+    """A longer warranty, in months, than the one the product lists."""
+    rated_above: Decimal | None = Field(default=None, gt=0, le=5)
+    """A higher rating than the product's, where it has one from enough reviews."""
+    rated_at_least: Decimal = Field(default=Decimal(4), gt=0, le=5)
+    """Where the product has no such rating: a good one, not merely any - a
+    sofa rated 1.8 is no step up from one nobody rated."""
+    min_reviews: int = Field(default=3, ge=1)
+    """The reviews either rating must rest on - one 5-star review is never a
+    reason."""
+
+
 class ProductSearchRequest(BaseModel):
     """A validated structured request. Product Discovery never sees language.
 
@@ -361,6 +396,12 @@ class ProductSearchRequest(BaseModel):
 
     styles_all_of: tuple[str, ...] = ()
     """Every one of these styles must be present on the product (AND)."""
+
+    step_up: StepUpBasis | None = Field(default=None, exclude_if=lambda v: v is None)
+    """Only products that differ upward from one product on a listed fact - a
+    step up from it (docs/upselling-plan.md). Set only by application code,
+    with the price above that product; kept with the search, so its pages are
+    step-ups too."""
 
     exclude_product_ids: tuple[int, ...] = ()
     """Products this search must not return, whatever else matches.

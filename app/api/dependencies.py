@@ -578,6 +578,7 @@ def agent_services(session: SessionDep, app_resources: ResourcesDep) -> AgentSer
         discovery=product_discovery_service(session, app_resources),
         shelf_depth=(settings.catalog.shelf_few_max, settings.catalog.shelf_some_max),
         room_form=settings.room_form,
+        upsell=settings.upsell,
         catalog_reset=session.rollback,
         store_cart_mirror=StoreCartMirror(StoreRepository(session), repository)
         if settings.salla.mirror_store_cart

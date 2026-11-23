@@ -218,6 +218,8 @@ def searched_for(search: ActiveSearchState | None) -> dict[str, Any]:
         asked["on_discount"] = True
     if request.rating_at_least is not None:
         asked["rating_at_least"] = request.rating_at_least
+    if request.step_up is not None:
+        asked["a_step_up_from_a_product"] = True
     if request.dimensions or request.planar_dimensions is not None:
         asked["sizes"] = size_words(request)
     if search.semantic_intent:
