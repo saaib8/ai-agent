@@ -74,7 +74,7 @@ jobs:
 
             # Authenticated fetch that never touches the stored `origin`
             # remote (so the token isn't left in .git/config afterwards).
-            git fetch "https://x-access-token:${GIT_TOKEN}@github.com/${GIT_REPO}.git" main
+            git fetch "https://x-access-token:${GIT_TOKEN}@github.com/${GIT_REPO}.git" stage
             git reset --hard FETCH_HEAD
 
             docker compose build --no-cache
