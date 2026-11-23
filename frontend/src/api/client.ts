@@ -14,6 +14,8 @@ import type {
   PicksRequest,
   PicksResponse,
   RoomPhotoResponse,
+  LiveSpeechSession,
+  SpeechTextResponse,
   VisualizeRequest,
 } from './types'
 import { shrinkPhoto } from '../lib/shrinkPhoto'
@@ -276,6 +278,39 @@ export async function getCart(
 export async function getCompareGroups(base: string): Promise<Fetched<CompareGroupsResponse>> {
   return getJson<CompareGroupsResponse>(base, '/v1/compare-groups', {}, (p) =>
     typeof p === 'object' && p !== null && 'groups' in p,
+  )
+}
+
+// ── Voice input ──────────────────────────────────────────────────────────────
+
+/** Turn a recording into text for the composer. Nothing is sent as a message:
+ *  the customer checks the words and sends them like anything typed. */
+export async function postTranscription(
+  base: string,
+  fields: { storeId: number; audio: Blob; filename: string },
+  signal?: AbortSignal,
+): Promise<Fetched<SpeechTextResponse>> {
+  const form = new FormData()
+  form.append('store_id', String(fields.storeId))
+  form.append('audio', fields.audio, fields.filename)
+  const root = normaliseBase(base)
+  return send<SpeechTextResponse>(
+    root,
+    () => fetch(`${root}/v1/speech/transcriptions`, { method: 'POST', body: form, signal }),
+    (payload) => typeof payload === 'object' && payload !== null && 'text' in payload,
+  )
+}
+
+/** A single-use token and the stream details for live voice input. */
+export async function postLiveSpeechSession(
+  base: string,
+  fields: { storeId: number },
+): Promise<Fetched<LiveSpeechSession>> {
+  return postJson<LiveSpeechSession>(
+    base,
+    '/v1/speech/live-sessions',
+    { store_id: fields.storeId },
+    (payload) => typeof payload === 'object' && payload !== null && 'token' in payload,
   )
 }
 

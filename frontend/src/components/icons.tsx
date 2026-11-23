@@ -224,3 +224,10 @@ export const WhatsAppIcon = (p: IconProps) => (
     <path d="M9 10a.5.5 0 0 0 1 0V9a.5.5 0 0 0-1 0v1a5 5 0 0 0 5 5h1a.5.5 0 0 0 0-1h-1a.5.5 0 0 0 0 1" />
   </Base>
 )
+
+export const MicIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
+  </Base>
+)

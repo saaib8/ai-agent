@@ -1204,3 +1204,22 @@ export interface RoomFormAction {
   styles?: string[]
   look_text?: string | null
 }
+
+/** POST /v1/speech/transcriptions: the words heard in a recording, for the
+ *  customer to check and send. Empty when nothing was said. */
+export interface SpeechTextResponse {
+  text: string
+  language: string | null
+}
+
+/** POST /v1/speech/live-sessions: how the browser streams the microphone to
+ *  ElevenLabs itself, so words appear while the customer speaks. The token is
+ *  single-use; the API key never reaches the browser. */
+export interface LiveSpeechSession {
+  token: string
+  url: string
+  model_id: string
+  audio_format: string
+  sample_rate: number
+  commit_strategy: string
+}
