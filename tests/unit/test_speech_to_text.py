@@ -17,7 +17,6 @@ from app.api.routes.speech import router as speech_router
 from app.core.config import SpeechToTextSettings
 from app.core.exceptions import (
     AudioRejectedError,
-    LiveSpeechOffError,
     SpeechToTextUnavailableError,
 )
 from app.integrations.speech_to_text import ElevenLabsTranscriber
@@ -253,55 +252,3 @@ class TestRoute:
         app.dependency_overrides[db_session] = lambda: None
         reply = await post_audio(app)
         assert reply.json()["error"]["message"] == "Voice input is not configured."
-
-
-# ── live: words while the customer speaks ═══════════════════════════════════
-
-
-class TestLiveSession:
-    async def test_the_browser_gets_a_token_never_the_key(self) -> None:
-        recorder = Recorder(200, {"token": "single-use-abc"})
-        session = await a_service(recorder).live_session(store_id=STORE)
-        assert session.token == "single-use-abc"
-        assert session.model_id == "scribe_v3_live"
-        assert session.url == "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
-        assert (session.audio_format, session.sample_rate) == ("pcm_16000", 16000)
-        assert session.commit_strategy == "vad"
-        assert "xi-test-key" not in session.model_dump_json()
-        request = recorder.requests[0]
-        assert request.url.path == "/v1/single-use-token/realtime_scribe"
-        assert request.headers["xi-api-key"] == "xi-test-key"
-
-    async def test_switched_off_it_refuses_without_asking_elevenlabs(self) -> None:
-        recorder = Recorder(200, {"token": "t"})
-        with pytest.raises(LiveSpeechOffError):
-            await a_service(recorder, live_enabled=False).live_session(store_id=STORE)
-        assert recorder.requests == []
-
-    @pytest.mark.parametrize(
-        ("status", "body"), [(401, {"detail": "bad key"}), (500, {}), (200, {"no": "token"})]
-    )
-    async def test_no_token_is_unavailable(self, status: int, body: Any) -> None:
-        with pytest.raises(SpeechToTextUnavailableError):
-            await a_service(Recorder(status, body)).live_session(store_id=STORE)
-
-    async def test_the_route_answers_with_the_session(self) -> None:
-        app = an_app(a_service(Recorder(200, {"token": "single-use-abc"})))
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-            reply = await client.post("/v1/speech/live-sessions", json={"store_id": STORE})
-        assert reply.status_code == 200
-        assert reply.json()["token"] == "single-use-abc"
-
-    async def test_the_route_says_when_live_is_off(self) -> None:
-        app = an_app(a_service(Recorder(200, {"token": "t"}), live_enabled=False))
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-            reply = await client.post("/v1/speech/live-sessions", json={"store_id": STORE})
-        assert reply.status_code == 404
-        assert reply.json()["error"]["code"] == "live_speech_off"
-
-    async def test_the_route_refuses_an_unknown_store(self) -> None:
-        app = an_app(a_service(Recorder(200, {"token": "t"})))
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-            reply = await client.post("/v1/speech/live-sessions", json={"store_id": 999})
-        assert reply.status_code == 404
-        assert reply.json()["error"]["code"] == "store_not_found"

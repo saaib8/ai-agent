@@ -495,26 +495,12 @@ class SpeechToTextSettings(BaseModel):
     model_id: str = Field(default="scribe_v3", min_length=1, max_length=64)
     timeout_s: float = Field(default=60.0, gt=0, le=300)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
-    """A memory ceiling for a recording sent whole (the fallback when live
-    listening is unavailable): over an hour of browser audio. Listening itself
-    has no time limit."""
+    """A memory ceiling for one recording: over an hour of browser audio.
+    Recording itself has no time limit; the words come back whole at stop."""
 
     numbers_format: Literal["digits", "words"] = "digits"
     """"under 3000 riyals", not "under three thousand riyals": a budget the
     agent reads as a number."""
-
-    live_enabled: bool = True
-    """Words appear while the customer speaks: the browser streams to
-    ElevenLabs with a single-use token this service mints, so the key never
-    leaves it. Off, the microphone records and transcribes after stop."""
-
-    live_model_id: str = Field(default="scribe_v3_live", min_length=1, max_length=64)
-    live_url: str = Field(
-        default="wss://api.elevenlabs.io/v1/speech-to-text/realtime", pattern=r"^wss://"
-    )
-    live_sample_rate: Literal[8000, 16000, 22050, 24000, 44100, 48000] = 16000
-    live_commit_strategy: Literal["vad", "manual"] = "vad"
-    """`vad`: each pause settles the words before it, so they stop changing."""
 
 
 class VisualizationSettings(BaseModel):

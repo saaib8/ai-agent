@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Fetched } from '../api/client'
-import type { LiveSpeechSession, SpeechTextResponse } from '../api/types'
-import { liveSpeechSupported, startLiveSpeech } from '../lib/liveSpeech'
-import type { LiveSpeech } from '../lib/liveSpeech'
+import type { SpeechTextResponse } from '../api/types'
 import { MicIcon, StopIcon } from './icons'
 
 const NOTICE_MS = 5000
@@ -13,20 +11,14 @@ const MIC_BLOCKED = 'Allow microphone access to speak your message.'
 // Safari records mp4. None supported: the browser's own default.
 const RECORDING_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
 
-/** live: words appear while they speak. recording: words come after stop. */
-type Phase = 'idle' | 'connecting' | 'live' | 'recording' | 'finishing'
+/** The whole recording is sent at stop; its words come back at once. */
+type Phase = 'idle' | 'recording' | 'finishing'
 
 interface MicButtonProps {
-  /** Send a recording; the answer is the words heard. The fallback. */
+  /** Send the whole recording; the answer is the words heard. */
   onRecorded: (audio: Blob, filename: string) => Promise<Fetched<SpeechTextResponse>>
-  /** The words heard from a recording, for the composer. Never sent here. */
+  /** The words heard, for the composer. Never sent here. */
   onText: (text: string) => void
-  /** Ask for a live session; without it, the mic always records. */
-  onLiveSession?: () => Promise<Fetched<LiveSpeechSession>>
-  /** Live listening began: what is in the box now stays in front of the words. */
-  onLiveStart?: () => void
-  /** Every word heard so far, while they speak - replaces the last call's. */
-  onLiveText?: (text: string) => void
   disabled: boolean
 }
 
@@ -45,26 +37,18 @@ function clock(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
-function microphoneRefused(err: unknown): boolean {
-  return err instanceof DOMException && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
-}
-
-export function MicButton({
-  onRecorded,
-  onText,
-  onLiveSession,
-  onLiveStart,
-  onLiveText,
-  disabled,
-}: MicButtonProps) {
+export function MicButton({ onRecorded, onText, disabled }: MicButtonProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [seconds, setSeconds] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const recorder = useRef<MediaRecorder | null>(null)
   const stream = useRef<MediaStream | null>(null)
   const chunks = useRef<Blob[]>([])
-  const live = useRef<LiveSpeech | null>(null)
   const ticker = useRef<number | null>(null)
+  // The words land in the box as it is when recording stops, not as it was
+  // when it started: anything typed meanwhile is kept.
+  const textTo = useRef(onText)
+  textTo.current = onText
 
   const stopClock = () => {
     if (ticker.current !== null) window.clearInterval(ticker.current)
@@ -80,22 +64,14 @@ export function MicButton({
     stream.current = null
   }
 
-  // Leaving the page while listening must not leave the microphone on.
-  useEffect(
-    () => () => {
-      releaseRecording()
-      live.current?.cancel()
-    },
-    [],
-  )
+  // Leaving the page while recording must not leave the microphone on.
+  useEffect(() => () => releaseRecording(), [])
 
   useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(null), NOTICE_MS)
     return () => window.clearTimeout(timer)
   }, [notice])
-
-  // ── record, then transcribe (the fallback) ─────────────────────────────────
 
   const finishRecording = async (type: string) => {
     releaseRecording()
@@ -110,7 +86,7 @@ export function MicButton({
     setPhase('idle')
     if (result.ok) {
       const text = result.data.text.trim()
-      if (text) onText(text)
+      if (text) textTo.current(text)
       else setNotice(NOTHING_HEARD)
     } else if (result.status !== 'aborted') {
       setNotice(result.error.message)
@@ -143,67 +119,21 @@ export function MicButton({
     startClock()
   }
 
-  // ── live: words while they speak ───────────────────────────────────────────
-
-  /** True when live listening started; false sends the caller to recording. */
-  const startLive = async (): Promise<boolean> => {
-    if (!onLiveSession || !liveSpeechSupported()) return false
-    const session = await onLiveSession()
-    if (!session.ok) return false
-    onLiveStart?.()
-    try {
-      live.current = await startLiveSpeech(session.data, {
-        onText: (text) => onLiveText?.(text),
-        onFailure: (message) => {
-          live.current = null
-          stopClock()
-          setPhase('idle')
-          setNotice(message)
-        },
-      })
-    } catch (err) {
-      if (microphoneRefused(err)) {
-        setPhase('idle')
-        setNotice(MIC_BLOCKED)
-        return true
-      }
-      return false
-    }
-    setPhase('live')
-    startClock()
-    return true
-  }
-
-  const stopLive = async () => {
-    const listening = live.current
-    live.current = null
-    stopClock()
-    if (!listening) return
-    setPhase('finishing')
-    const text = await listening.stop()
-    onLiveText?.(text)
-    setPhase('idle')
-    if (!text) setNotice(NOTHING_HEARD)
-  }
-
   // ── the button ──────────────────────────────────────────────────────────────
 
-  const start = async () => {
+  const start = () => {
     setNotice(null)
-    setPhase('connecting')
-    if (await startLive()) return
-    await startRecording()
+    void startRecording()
   }
 
   const stop = () => {
-    if (phase === 'live') void stopLive()
-    else if (recorder.current?.state === 'recording') recorder.current.stop()
+    if (recorder.current?.state === 'recording') recorder.current.stop()
   }
 
-  const listening = phase === 'live' || phase === 'recording'
-  const busy = phase === 'connecting' || phase === 'finishing'
+  const listening = phase === 'recording'
+  const busy = phase === 'finishing'
 
-  const label = listening ? 'Stop' : busy ? 'One moment…' : 'Speak your message'
+  const label = listening ? 'Stop' : busy ? 'Writing your words…' : 'Speak your message'
 
   return (
     <div className="relative shrink-0">
@@ -218,12 +148,12 @@ export function MicButton({
       {listening && (
         <div className="absolute bottom-full right-0 mb-2 flex items-center gap-1.5 rounded-full bg-ink px-2.5 py-1 text-[11px] font-medium tabular-nums text-white shadow-card">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose" />
-          {phase === 'live' ? 'Listening' : 'Recording'} {clock(seconds)}
+          Recording {clock(seconds)}
         </div>
       )}
       <button
         type="button"
-        onClick={() => (listening ? stop() : void start())}
+        onClick={() => (listening ? stop() : start())}
         disabled={busy || (disabled && !listening)}
         aria-label={label}
         title={label}

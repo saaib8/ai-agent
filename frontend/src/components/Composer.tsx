@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { Fetched } from '../api/client'
-import type { LiveSpeechSession, SpeechTextResponse } from '../api/types'
+import type { SpeechTextResponse } from '../api/types'
 import { GridIcon, ImageIcon, SendIcon, StopIcon } from './icons'
 import { MicButton } from './MicButton'
 
@@ -23,10 +23,8 @@ interface ComposerProps {
   disabled: boolean
   /** A reply is generating: the send button becomes a Stop button. */
   sending: boolean
-  /** Voice input: a recording becomes words in the box. No mic without it. */
+  /** Voice input: a recording becomes words in the box once it stops. No mic without it. */
   onVoice?: (audio: Blob, filename: string) => Promise<Fetched<SpeechTextResponse>>
-  /** Live voice input: words appear in the box while they speak. */
-  onLiveVoice?: () => Promise<Fetched<LiveSpeechSession>>
 }
 
 export function Composer({
@@ -41,12 +39,9 @@ export function Composer({
   disabled,
   sending,
   onVoice,
-  onLiveVoice,
 }: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  // What was in the box when live listening began; the words follow it.
-  const liveBase = useRef('')
 
   // Grow with content, up to a ceiling.
   useEffect(() => {
@@ -134,18 +129,6 @@ export function Composer({
               onRecorded={onVoice}
               onText={(text) =>
                 onChange((value.trim() ? `${value.trimEnd()} ${text}` : text).slice(0, MAX_CHARS))
-              }
-              onLiveSession={onLiveVoice}
-              onLiveStart={() => {
-                liveBase.current = value.trimEnd()
-              }}
-              onLiveText={(text) =>
-                onChange(
-                  (liveBase.current && text ? `${liveBase.current} ${text}` : liveBase.current || text).slice(
-                    0,
-                    MAX_CHARS,
-                  ),
-                )
               }
               disabled={disabled}
             />

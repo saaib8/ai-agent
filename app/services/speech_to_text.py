@@ -7,10 +7,10 @@ checks it and sends it like anything they typed.
 from __future__ import annotations
 
 from app.core.config import SpeechToTextSettings
-from app.core.exceptions import AudioRejectedError, LiveSpeechOffError
+from app.core.exceptions import AudioRejectedError
 from app.core.logging import get_logger
 from app.integrations.speech_to_text import ElevenLabsTranscriber
-from app.schemas.speech import LiveSpeechSession, SpeechTextResponse
+from app.schemas.speech import SpeechTextResponse
 
 logger = get_logger(__name__)
 
@@ -64,20 +64,3 @@ class SpeechToTextService:
             characters=len(heard.text),
         )
         return SpeechTextResponse(text=heard.text, language=heard.language_code)
-
-    async def live_session(self, *, store_id: int) -> LiveSpeechSession:
-        """How the browser streams the microphone itself; the words then appear
-        as the customer speaks. Off here: the caller records instead."""
-        settings = self._settings
-        if not settings.live_enabled:
-            raise LiveSpeechOffError()
-        token = await self._transcriber.live_token()
-        logger.info("live_speech_started", store_id=store_id, model=settings.live_model_id)
-        return LiveSpeechSession(
-            token=token,
-            url=settings.live_url,
-            model_id=settings.live_model_id,
-            audio_format=f"pcm_{settings.live_sample_rate}",
-            sample_rate=settings.live_sample_rate,
-            commit_strategy=settings.live_commit_strategy,
-        )
