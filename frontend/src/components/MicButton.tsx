@@ -11,6 +11,11 @@ const MIC_BLOCKED = 'Allow microphone access to speak your message.'
 // Safari records mp4. None supported: the browser's own default.
 const RECORDING_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
 
+// Speech is clear at 32 kbps, and the file stays small: about 4 minutes per
+// megabyte, where a browser's default is closer to one. Servers in front of
+// the API may refuse large uploads (stage's refuses over 1 MB).
+const SPEECH_BITS_PER_SECOND = 32_000
+
 /** The whole recording is sent at stop; its words come back at once. */
 type Phase = 'idle' | 'recording' | 'finishing'
 
@@ -107,7 +112,10 @@ export function MicButton({ onRecorded, onText, disabled }: MicButtonProps) {
       return
     }
     const preferred = recordingType()
-    const media = new MediaRecorder(stream.current, preferred ? { mimeType: preferred } : undefined)
+    const media = new MediaRecorder(stream.current, {
+      ...(preferred ? { mimeType: preferred } : {}),
+      audioBitsPerSecond: SPEECH_BITS_PER_SECOND,
+    })
     chunks.current = []
     media.ondataavailable = (event) => {
       if (event.data.size > 0) chunks.current.push(event.data)
