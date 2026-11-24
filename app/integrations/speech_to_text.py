@@ -19,7 +19,6 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 TRANSCRIBE_PATH = "/v1/speech-to-text"
-LIVE_SESSION_PATH = "/v1/single-use-token/realtime_scribe"
 KEY_HEADER = "xi-api-key"
 
 # ElevenLabs answers these when the recording itself is unusable - the
@@ -86,24 +85,6 @@ class ElevenLabsTranscriber:
             logger.warning("speech_to_text_failed", status=response.status_code)
             raise SpeechToTextUnavailableError(status=response.status_code)
         return _heard(_json(response))
-
-    async def live_token(self) -> str:
-        """A single-use token for one live connection from the browser."""
-        try:
-            response = await self._client.post(
-                LIVE_SESSION_PATH,
-                headers={KEY_HEADER: self._settings.api_key.get_secret_value()},
-            )
-        except httpx.HTTPError as exc:
-            logger.warning("live_speech_token_failed", error_type=type(exc).__name__)
-            raise SpeechToTextUnavailableError(error_type=type(exc).__name__) from exc
-        if response.status_code != httpx.codes.OK:
-            logger.warning("live_speech_token_failed", status=response.status_code)
-            raise SpeechToTextUnavailableError(status=response.status_code)
-        token = _json(response).get("token")
-        if not isinstance(token, str) or not token:
-            raise SpeechToTextUnavailableError(reason="no_token")
-        return token
 
 
 def _json(response: httpx.Response) -> dict[str, Any]:

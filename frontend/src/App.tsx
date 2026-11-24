@@ -14,7 +14,7 @@ import type {
   RenderRoomSpec,
   RenderView,
 } from './api/types'
-import { getCompareGroups, postLiveSpeechSession, postTranscription } from './api/client'
+import { getCompareGroups, postTranscription } from './api/client'
 import { CatalogDialog } from './components/catalog/CatalogDialog'
 import type { CatalogStep } from './components/catalog/CatalogDialog'
 import { ChatPanel } from './components/ChatPanel'
@@ -149,10 +149,6 @@ export default function App() {
   const handleVoice = useCallback(
     (audio: Blob, filename: string) =>
       postTranscription(config.config.apiBase, { storeId: config.config.storeId, audio, filename }),
-    [config.config.apiBase, config.config.storeId],
-  )
-  const handleLiveVoice = useCallback(
-    () => postLiveSpeechSession(config.config.apiBase, { storeId: config.config.storeId }),
     [config.config.apiBase, config.config.storeId],
   )
 
@@ -744,7 +740,6 @@ export default function App() {
           onAddRoomToCart={handleAddRoomToCart}
           onOpenCatalog={() => setCatalogStep('browse')}
           onVoice={handleVoice}
-          onLiveVoice={handleLiveVoice}
           onRerenderSelection={handleRerenderSelection}
           onEditSelection={handleEditSelection}
           picks={chat.picks}

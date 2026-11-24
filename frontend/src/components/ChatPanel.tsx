@@ -16,7 +16,6 @@ import type {
   RoomRenderPresentation,
   SearchAction,
   SpeechTextResponse,
-  LiveSpeechSession,
   PhotoPieces,
 } from '../api/types'
 import type { Activity, Turn } from '../hooks/useChat'
@@ -79,8 +78,6 @@ interface ChatPanelProps {
   onOpenCatalog: () => void
   /** Voice input for the composer; no microphone without it. */
   onVoice?: (audio: Blob, filename: string) => Promise<Fetched<SpeechTextResponse>>
-  /** Live voice input: words appear in the box while they speak. */
-  onLiveVoice?: () => Promise<Fetched<LiveSpeechSession>>
   /** Draw a catalogue selection again, from another view. */
   onRerenderSelection: (selection: CatalogSelection, view: RenderView, viewLabel: string) => void
   /** Reopen the catalogue with a selection's pieces and room. */
@@ -169,7 +166,6 @@ export function ChatPanel({
   onAddRoomToCart,
   onOpenCatalog,
   onVoice,
-  onLiveVoice,
   onRerenderSelection,
   onEditSelection,
   picks,
@@ -606,7 +602,6 @@ export function ChatPanel({
         onClearPhoto={onClearPhoto}
         onOpenCatalog={onOpenCatalog}
         onVoice={onVoice}
-        onLiveVoice={onLiveVoice}
         disabled={busy}
         sending={sending || revealing}
       />

@@ -12,12 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, UploadFile
 
 from app.api.dependencies import RetailerContextProviderDep, SpeechToTextServiceDep
-from app.schemas.speech import (
-    LANGUAGE_PATTERN,
-    LiveSpeechRequest,
-    LiveSpeechSession,
-    SpeechTextResponse,
-)
+from app.schemas.speech import LANGUAGE_PATTERN, SpeechTextResponse
 
 router = APIRouter(prefix="/speech", tags=["speech"])
 
@@ -41,15 +36,3 @@ async def transcribe(
         language=language,
         store_id=context.store_id,
     )
-
-
-@router.post("/live-sessions", response_model=LiveSpeechSession)
-async def live_session(
-    request: LiveSpeechRequest,
-    speech: SpeechToTextServiceDep,
-    retailers: RetailerContextProviderDep,
-) -> LiveSpeechSession:
-    """A single-use token and the connection details: the browser streams the
-    microphone to ElevenLabs and shows the words as the customer speaks."""
-    context = await retailers.resolve(request.store_id)
-    return await speech.live_session(store_id=context.store_id)

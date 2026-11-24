@@ -539,14 +539,6 @@ class SpeechToTextUnavailableError(IntegrationUnavailableError):
     public_message = "We couldn't hear that right now. Please try again, or type your message."
 
 
-class LiveSpeechOffError(ZoryError):
-    """Live voice input is switched off here; the microphone records instead."""
-
-    code = "live_speech_off"
-    http_status = HTTPStatus.NOT_FOUND
-    public_message = "Live voice input is not available here."
-
-
 class AudioRejectedError(InvalidRequestError):
     """An upload that is not a usable recording: empty, too large, not audio."""
 

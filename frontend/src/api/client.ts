@@ -14,7 +14,6 @@ import type {
   PicksRequest,
   PicksResponse,
   RoomPhotoResponse,
-  LiveSpeechSession,
   SpeechTextResponse,
   VisualizeRequest,
 } from './types'
@@ -298,19 +297,6 @@ export async function postTranscription(
     root,
     () => fetch(`${root}/v1/speech/transcriptions`, { method: 'POST', body: form, signal }),
     (payload) => typeof payload === 'object' && payload !== null && 'text' in payload,
-  )
-}
-
-/** A single-use token and the stream details for live voice input. */
-export async function postLiveSpeechSession(
-  base: string,
-  fields: { storeId: number },
-): Promise<Fetched<LiveSpeechSession>> {
-  return postJson<LiveSpeechSession>(
-    base,
-    '/v1/speech/live-sessions',
-    { store_id: fields.storeId },
-    (payload) => typeof payload === 'object' && payload !== null && 'token' in payload,
   )
 }
 

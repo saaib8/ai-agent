@@ -1215,18 +1215,6 @@ export interface SpeechTextResponse {
   language: string | null
 }
 
-/** POST /v1/speech/live-sessions: how the browser streams the microphone to
- *  ElevenLabs itself, so words appear while the customer speaks. The token is
- *  single-use; the API key never reaches the browser. */
-export interface LiveSpeechSession {
-  token: string
-  url: string
-  model_id: string
-  audio_format: string
-  sample_rate: number
-  commit_strategy: string
-}
-
 /** The chat's photo as the finder saw it. Outlines are in `width` x `height`,
  *  the same aspect as the customer's own copy, which a client draws them over. */
 export interface PhotoPieces {
