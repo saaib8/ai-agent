@@ -472,3 +472,45 @@ async def test_a_refused_quiet_check_costs_only_the_mention() -> None:
     catalog.execute = refused  # type: ignore[method-assign]
 
     assert await step_up_beside(services, THEIRS, _on_screen(), tool_context(services)) is None
+
+
+def _after(search: ActiveSearchState) -> AgentStateV1:
+    return AgentStateV1(active_search=search)
+
+
+async def test_a_step_up_list_does_not_read_as_their_cheapest_first() -> None:
+    services, _ = _services()
+    step_list = stepped_search(SOFAS, ConstraintSemantics(), THEIRS, PriceStep.HIGHER, SETTINGS)
+    assert step_list is not None and step_list[0].sort is ProductSort.PRICE_ASC
+    after_step_ups = _after(ActiveSearchState(request=step_list[0], revision=1, from_product=True))
+
+    found = await step_up_beside(services, THEIRS, after_step_ups, tool_context(services))
+
+    assert found is not None
+
+
+async def test_no_step_up_after_they_asked_for_one_cheaper() -> None:
+    services, _ = _services()
+    cheaper = stepped_search(SOFAS, ConstraintSemantics(), THEIRS, PriceStep.LOWER, SETTINGS)
+    assert cheaper is not None
+    after_cheaper = _after(ActiveSearchState(request=cheaper[0], revision=1, from_product=True))
+
+    assert await step_up_beside(services, THEIRS, after_cheaper, tool_context(services)) is None
+
+
+async def test_their_own_cheapest_first_still_holds_the_step_up_back() -> None:
+    services, _ = _services()
+    their_cheapest = _after(
+        ActiveSearchState(
+            request=SOFAS.model_copy(update={"sort": ProductSort.PRICE_ASC}), revision=1
+        )
+    )
+
+    assert await step_up_beside(services, THEIRS, their_cheapest, tool_context(services)) is None
+
+
+async def test_a_plain_more_like_this_list_allows_a_step_up() -> None:
+    services, _ = _services()
+    more_like = _after(ActiveSearchState(request=SOFAS, revision=1, from_product=True))
+
+    assert await step_up_beside(services, THEIRS, more_like, tool_context(services)) is not None

@@ -1211,10 +1211,19 @@ STEP_UP_SAY = (
 
 def _upsell_moment(state: AgentStateV1, product_id: int) -> bool:
     """Whether a step up may be mentioned beside this product: never when they
-    asked for the cheapest first, never for a room piece or its options - a
-    room spends leftover budget on better pieces itself (docs/upselling-plan.md)."""
+    asked for the cheapest first or for one like it but cheaper, never for a
+    room piece or its options - a room spends leftover budget on better pieces
+    itself (docs/upselling-plan.md).
+
+    Judged by what they asked for, never by how the list is sorted: a list
+    seeded from a product carries our own sort (a step-up list is nearest
+    price first), so only a sort on a search they asked for is theirs."""
     search = state.active_search
-    if search is not None and search.request.sort is ProductSort.PRICE_ASC:
+    if search is not None and search.from_product:
+        if search.request.price is not None and search.request.step_up is None:
+            # "Like this but cheaper": they are saving, so nothing dearer.
+            return False
+    elif search is not None and search.request.sort is ProductSort.PRICE_ASC:
         return False
     if open_room_options(state) is not None:
         return False
