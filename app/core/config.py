@@ -617,6 +617,33 @@ class VocabularySettings(BaseModel):
     retry_every_s: float = Field(default=5.0, gt=0)
 
 
+class UpsellSettings(BaseModel):
+    """Stepping up from one product to a dearer one in the same look
+    (docs/upselling-plan.md). The same in every store; a store with no listed
+    facts to compare simply has no step-ups."""
+
+    enabled: bool = True
+    """Off: no step-up is looked for beside product details or a comparison.
+    "Something more premium" and "cheaper" still search, as asked."""
+
+    min_step_share: Decimal = Field(default=Decimal("0.10"), gt=0, lt=1)
+    """How much dearer (or cheaper) another product must be to count: 10% - a
+    smaller gap is not a step."""
+
+    max_multiple: Decimal = Field(default=Decimal(2), gt=1, le=10)
+    """The dearest a step-up may be, as a multiple of the product's price."""
+
+    bigger_share: Decimal = Field(default=Decimal("0.10"), gt=0, lt=1)
+    """How much longer a floor side must be to count as bigger."""
+
+    min_reviews: int = Field(default=3, ge=1, le=100)
+    """The reviews a rating must rest on to be a reason."""
+
+    unrated_min_rating: Decimal = Field(default=Decimal(4), gt=0, le=5)
+    """Beside a product with no such rating, the least rating that counts: a
+    good one, never merely any."""
+
+
 class RoomFormSettings(BaseModel):
     """The room form's fixed choices (docs/room-form-plan.md). The same in
     every store - never worked out from its prices or catalog."""
@@ -1097,6 +1124,7 @@ class Settings(BaseSettings):
     speech_to_text: SpeechToTextSettings | None = None
     catalog: CatalogSettings = CatalogSettings()
     room_form: RoomFormSettings = RoomFormSettings()
+    upsell: UpsellSettings = UpsellSettings()
     vocabulary: VocabularySettings = VocabularySettings()
     products: ProductDataSettings = ProductDataSettings()
     salla: SallaSettings = SallaSettings()

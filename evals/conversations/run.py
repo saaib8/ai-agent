@@ -385,6 +385,9 @@ def _check(
             failures.append(f"a combination uses {kind}")
     if (words := checks.get("not_mentions")) and any(w in turn.message.lower() for w in words):
         failures.append(f"reply mentions one of {words}")
+    if (agents := checks.get("answered_by")) and turn.body.get("agent") not in agents:
+        # Who replied: routing by the job asked, never by who spoke last.
+        failures.append(f"answered by {turn.body.get('agent')}, not {agents}")
     failures.extend(_discovery_checks(checks, turn))
     if checks.get("engages"):
         asks = _asks(turn.message)

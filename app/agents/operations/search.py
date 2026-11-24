@@ -160,6 +160,24 @@ class SearchRunner:
             composed = self._with_family(composed)
         return await self.run(_with_avoids(composed, state), state, context)
 
+    async def peek(
+        self, resolved: ResolvedSearch, state: AgentStateV1, context: RetailerContext
+    ) -> SearchExecutionGrounding | None:
+        """The best match of a search, with nothing committed: the screen, the
+        search on record and the seen list stay as they were. For a step up
+        looked for beside a product's details (docs/upselling-plan.md). None
+        when it cannot run now."""
+        try:
+            execution = await self._pipeline.execute(
+                _leaving_out_turned_down(resolved, state),
+                context,
+                presentation_limit=1,
+                explain_empty=False,
+            )
+        except _UNAVAILABLE:
+            return None
+        return execution.grounding
+
     async def run(
         self,
         composed: ComposedSearch,

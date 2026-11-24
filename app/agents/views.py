@@ -306,9 +306,15 @@ def _budgets(state: AgentStateV1) -> tuple[Budget, ...]:
     budget is not the room's."""
     found: list[Budget] = []
     search = state.active_search
-    # The options for one room piece run as a search priced under that piece:
-    # its ceiling is the piece's price, not a budget anyone gave.
-    if search is not None and search.request.price is not None and state.room_swap is None:
+    # The options for one room piece run as a search priced under that piece,
+    # and a search seeded from a product - a step up from it, or cheaper - is
+    # priced from that product: neither price is a budget anyone gave.
+    if (
+        search is not None
+        and search.request.price is not None
+        and state.room_swap is None
+        and not search.from_product
+    ):
         price = search.request.price
         found.append(
             Budget(

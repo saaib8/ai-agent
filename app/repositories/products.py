@@ -24,9 +24,11 @@ from sqlalchemy import (
     Numeric,
     Select,
     Text,
+    and_,
     case,
     func,
     literal,
+    or_,
     select,
     tuple_,
     type_coerce,
@@ -49,6 +51,7 @@ from app.schemas.discovery import (
     PairMatch,
     ProductSearchRequest,
     ProductSort,
+    StepUpBasis,
 )
 from app.schemas.product import (
     STYLE_IGNORED_CHARACTER,
@@ -163,6 +166,38 @@ def _discount_share(max_share: float) -> ColumnElement[Any]:
         ),
         else_=None,
     )
+
+
+def _step_up_clause(basis: StepUpBasis) -> ColumnElement[bool]:
+    """A product that differs upward from the one it steps up from on at least
+    one listed fact (docs/upselling-plan.md). A NULL never matches, so a fact
+    the store did not list is never a reason."""
+    rating = core_product.c.rating
+    reasons: list[ColumnElement[bool]] = [
+        _RATED
+        & (core_product.c.review_count >= basis.min_reviews)
+        & (
+            rating > basis.rated_above
+            if basis.rated_above is not None
+            else rating >= basis.rated_at_least
+        )
+    ]
+    if basis.material_other_than is not None:
+        # Read as the product's own material is read: trimmed, blank is none.
+        material = func.nullif(func.trim(core_product.c.material), "")
+        reasons.append(material.isnot(None) & (material != basis.material_other_than))
+    if basis.longer_side_at_least_cm is not None:
+        # A SQL expression, not a constant: the column side must lead.
+        reasons.append(_LONG_SIDE >= basis.longer_side_at_least_cm)  # noqa: SIM300
+    if basis.seats_more_than is not None:
+        reasons.append(core_product.c.seating_capacity > basis.seats_more_than)
+    if basis.warranty_more_than is not None:
+        reasons.append(core_product.c.warranty_months > basis.warranty_more_than)
+    if basis.longer_side_not_below_cm is None:
+        return or_(*reasons)
+    # A column expression must lead the comparison (see above).
+    not_smaller = _LONG_SIDE.is_(None) | (_LONG_SIDE >= basis.longer_side_not_below_cm)  # noqa: SIM300
+    return and_(or_(*reasons), not_smaller)
 
 
 _LOW_QUARTER = 0.25
@@ -806,6 +841,9 @@ class ProductRepository:
             # A NULL or empty styles column yields no tokens and so matches
             # nothing.
             clauses.append(style_tokens().contains(list(request.styles_all_of)))
+
+        if request.step_up is not None:
+            clauses.append(_step_up_clause(request.step_up))
 
         if request.exclude_product_ids:
             # Part of eligibility, so an excluded product is gone before

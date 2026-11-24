@@ -703,6 +703,25 @@ shown.
 - **"More like this" keeps the look.** The product's own colour and styles are
   requirements of the search (`colors_any_of`, `styles_all_of`), lifted only as
   the last resort of 12.4 and then said plainly.
+- **A step up, or cheaper, from one product** (docs/upselling-plan.md).
+  "Something like this but more premium" is `more_like_this` with price
+  higher: the same type and colour - its styles only order the cards, nearest
+  price first - 10% to 2x dearer (`upsell.*`), never past a
+  budget they locked, and - decided in SQL (`ProductSearchRequest.step_up`) -
+  different upward on at least one listed fact: another main material, a longer
+  side by 10%, more seats, a longer warranty, or a rating from at least three
+  reviews - and never a noticeably smaller piece (its longer side at most 10%
+  shorter). Never on price alone, and material is only ever "another", never
+  "better". "Cheaper" is price lower, a 10% step down. Each card says what it
+  differs on and how much more it costs (`vs_this`, worked out in code); the
+  reply describes the cards in order, each by what it brings with the price
+  last, and lets them judge - never "premium", "better" or "higher-priced".
+  Product details and comparisons look for one quietly
+  (`step_up`, `step_ups`; nothing on screen changes): mentioned once, in one
+  line, shown on their yes. Never beside a cheapest-first search, a room piece
+  or its options, after "too expensive", or on a plain browse. A step up of a
+  cart item, once added, offers to take the old one out (`offer_swap`); only
+  their yes removes it. Sara owns it: it is part of choosing.
 - **Knowing when it has run out.** Every search says whether anything not yet
   seen still matches (`more_after_this_page`). When nothing does, the reply says
   these are all of them and offers the nearest alternative as a question -
@@ -1914,7 +1933,7 @@ A supervisor and four agents, built on LangGraph (`app/agents/`).
 | Supervisor | who handles the turn | `transfer_to_<agent>`, `finish` - it never talks to the customer |
 | Sara | finding, comparing, the cart, a group's seating one piece at a time | `ask_about`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, `product_details`, `compare_products`, `add_to_cart`, `remove_from_cart`, `like_product`, `show_cart`, `remember_taste`, `update_goal`, `note_room`, `visualize_product`, `visualize_room`, `find_in_photo` - the only owner of the cart's adds, of comparisons, of pictures and of photos |
 | Nora | how it looks and whether it works: design, matching, their room, fit and placement, whole rooms | `design_room`, `revise_room_piece`, `measure_fit`, `record_design_notes`, `cross_sell_advice` (pre-search kinds and direction) and a search `direction` (hers alone), `store_shelf`, `room_piece_options`, `swap_room_piece`, `remove_room_piece`, `set_room_piece`, `accept_over_budget`, `decline_over_budget`, `room_could_add`, `add_to_room`, `change_room`, `show_room`, `search_products`, `more_results`, `leave_out_product`, `product_details`, `remember_taste`, `update_goal`, `note_room` |
-| Salman | what goes with a finished choice, finishing a designed room and its styling, rooms into the cart, value | `what_goes_with` and `add_room_to_cart` (his alone), `store_shelf`, `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
+| Salman | what goes with a finished choice, finishing a designed room and its styling, rooms into the cart, budget trade-offs once something is chosen | `what_goes_with` and `add_room_to_cart` (his alone), `store_shelf`, `finish_room`, `search_products`, `more_results`, `leave_out_product`, `more_like_this`, Nora's room-editing tools, `remember_taste`, `product_details`, `update_goal`, `note_room` |
 | Faysal | the store itself | `store_policy`, `contact_store`, `product_details` |
 
 **One owner per job.** Only the owner has a job's tools, so no agent can

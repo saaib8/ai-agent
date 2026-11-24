@@ -120,6 +120,7 @@ class ProductSearchPipeline:
         earlier_sizes_applied: bool = False,
         presentation_limit: int | None = None,
         closest_sizes: bool = False,
+        explain_empty: bool = True,
     ) -> ProductSearchExecutionResult:
         """Run one search and return what may be committed and explained.
 
@@ -135,11 +136,15 @@ class ProductSearchPipeline:
 
         `closest_sizes` is for a customer's own search: sizes nothing met are
         answered with the closest, said as such (CLAUDE.md 13.5).
+
+        `explain_empty` counts what setting each requirement aside would find
+        when nothing matches; off for a quiet check that only asks whether
+        anything does.
         """
         started = time.perf_counter()
 
         searched, ranked = await self._search_and_rank(
-            resolved, context, explain_empty=True, closest_sizes=closest_sizes
+            resolved, context, explain_empty=explain_empty, closest_sizes=closest_sizes
         )
 
         limit = (

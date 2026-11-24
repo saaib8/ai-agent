@@ -156,6 +156,7 @@ class FakePipeline:
         earlier_sizes_applied: bool = False,
         presentation_limit: int | None = None,
         closest_sizes: bool = False,
+        explain_empty: bool = True,
     ) -> ProductSearchExecutionResult:
         self.closest_sizes = closest_sizes
         self.calls.append(resolved)
@@ -216,7 +217,6 @@ class FakeCapabilities:
         from app.schemas.catalog_overview import CatalogOverview
 
         return CatalogOverview(store_id=context.store_id, currency=self.currency)
-
 
     async def capabilities(self, context: Any) -> Any:
         self.calls.append(context)

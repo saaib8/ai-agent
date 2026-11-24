@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from app.agents.operations.cart import CartOperations
 from app.agents.operations.rooms import RoomEngine
 from app.agents.operations.search import SearchRunner
-from app.core.config import RoomFormSettings
+from app.core.config import RoomFormSettings, UpsellSettings
 from app.repositories.cross_sell_plans import CrossSellPlanCache
 from app.services.best_sellers import BestSellerService
 from app.services.cart import CartService
@@ -108,6 +108,7 @@ class AgentServices:
     it with a message, before the turn starts. None where switched off
     (`salla.mirror_store_cart`)."""
     room_form: RoomFormSettings = field(default_factory=RoomFormSettings)
+    upsell: UpsellSettings = field(default_factory=UpsellSettings)
     """The room form's fixed budget amounts and room sizes (`room_form.*`)."""
     shelf_depth: tuple[int, int] = (3, 15)
     """Where a kind's range stops being "few" and "some" on the store shelf -

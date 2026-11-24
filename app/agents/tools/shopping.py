@@ -14,7 +14,14 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    create_model,
+    model_validator,
+)
 
 from app.agents.context import ToolContext
 from app.agents.decided_stock import decided, decided_pool, looks_of, with_kinds_beside
@@ -51,6 +58,7 @@ from app.core.exceptions import (
     RoomPhotoUnavailableError,
     VisualSearchUnavailableError,
 )
+from app.core.logging import get_logger
 from app.schemas.agent_persona import AgentPersona
 from app.schemas.agent_state import (
     AgentStateV1,
@@ -113,8 +121,11 @@ from app.services.product_details import description_for
 from app.services.query_document import ranking_words
 from app.services.room_visualization import cart_room, render_record
 from app.services.shopper_memory import log_shopper_event
+from app.services.step_up import PriceStep, differences, price_gap, step_facts, stepped_search
 from app.taxonomy.attributes import AttributeFamily, CatalogAttributes
 from app.taxonomy.words import customer_words
+
+logger = get_logger(__name__)
 
 SARA = frozenset({AgentPersona.SARA})
 SHOPPERS = frozenset({AgentPersona.SARA, AgentPersona.SALMAN})
@@ -988,8 +999,79 @@ def exclude_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
     )
 
 
-def more_like_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
-    async def more_like(args: ProductRef, context: ToolContext, work: TurnWork) -> ToolOutcome:
+class MoreLikeArgs(ProductRef):
+    price: Literal["higher", "lower"] | None = Field(
+        default=None,
+        description=(
+            "higher: a step up from it - the same look, dearer within reach, each card "
+            "different on a listed fact ('something like this but more premium'). lower: the "
+            "same look, cheaper ('like this but cheaper'). Leave it out for more like it at "
+            "any price."
+        ),
+    )
+
+
+def _like_request(seed: SimilarSearchSeed) -> ProductSearchRequest:
+    """ "More like this" is a look they chose: its colour and styles are kept as
+    requirements, not leanings - only the approved values the seed already
+    checked. Nothing matching lifts them, as for any strict colour, and the
+    facts say so (CLAUDE.md 12.4)."""
+    looks = seed.resolved.semantic_preferences
+    return seed.resolved.request.model_copy(
+        update={
+            "exclude_product_ids": (seed.reference_product_id,),
+            "colors_any_of": tuple(
+                p.canonical_value
+                for p in looks
+                if p.family is AttributeFamily.COLOR and p.canonical_value
+            ),
+            "styles_all_of": tuple(
+                p.canonical_value
+                for p in looks
+                if p.family is AttributeFamily.STYLE and p.canonical_value
+            ),
+        }
+    )
+
+
+def _budget_at_most(state: AgentStateV1, product: ProductCandidate) -> Decimal | None:
+    """The most they said they would spend on this kind - a step up never goes
+    past it. Only a budget for the product's own kind: a rug's budget says
+    nothing about a sofa. Not a ceiling we set: a search seeded from a product
+    carries its own price, which is no budget anyone gave."""
+    search = state.active_search
+    if search is None or search.from_product or search.request.price is None:
+        return None
+    if product.commerce.subcategory not in search.request.subcategories:
+        return None
+    price = search.request.price
+    if (
+        price.currency != product.price_unit
+        or price.max_amount is None
+        or search.semantics.price_max is not ConstraintStrength.LOCKED
+    ):
+        return None
+    return price.max_amount
+
+
+def _seeded_from_product(state: AgentStateV1) -> AgentStateV1:
+    """Marks the search on record as one seeded from a product, so its price is
+    never read as their budget and its pages keep to that product's type."""
+    search = state.active_search
+    if search is None:
+        return state
+    return state.model_copy(
+        update={"active_search": search.model_copy(update={"from_product": True})}
+    )
+
+
+def _cart_place(state: AgentStateV1, product_id: int) -> int | None:
+    selected = state.product_interaction.selected_product_ids
+    return selected.index(product_id) + 1 if product_id in selected else None
+
+
+def more_like_tool(schemas: ToolSchemas) -> ZoryTool[MoreLikeArgs]:
+    async def more_like(args: MoreLikeArgs, context: ToolContext, work: TurnWork) -> ToolOutcome:
         services = context.services
         product_id = await resolve_product(services, args.which, work, context)
         if isinstance(product_id, ToolOutcome):
@@ -997,41 +1079,52 @@ def more_like_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
         found = await hydrated(services, (product_id,), context)
         if not found:
             return UNAVAILABLE
-        seed = services.similar_search.build(found[0])
+        anchor = found[0]
+        seed = services.similar_search.build(anchor)
         if not isinstance(seed, SimilarSearchSeed):
             return ToolOutcome(status=ToolStatus.REFUSED, code=f"similar_{seed.reason}")
-        # "More like this" is a look they chose: its colour and styles are
-        # kept as requirements, not leanings - only the approved values the
-        # seed already checked. Nothing matching lifts them, as for any strict
-        # colour, and the facts say so (CLAUDE.md 12.4).
-        looks = seed.resolved.semantic_preferences
-        request = seed.resolved.request.model_copy(
-            update={
-                "exclude_product_ids": (seed.reference_product_id,),
-                "colors_any_of": tuple(
-                    p.canonical_value
-                    for p in looks
-                    if p.family is AttributeFamily.COLOR and p.canonical_value
-                ),
-                "styles_all_of": tuple(
-                    p.canonical_value
-                    for p in looks
-                    if p.family is AttributeFamily.STYLE and p.canonical_value
-                ),
-            }
-        )
-        resolved = seed.resolved.model_copy(update={"request": request})
+        request, semantics = _like_request(seed), seed.resolved.semantics
+        step = PriceStep(args.price) if args.price else None
+        if step is not None:
+            budget = _budget_at_most(work.staged, anchor) if step is PriceStep.HIGHER else None
+            stepped = stepped_search(
+                request, semantics, anchor, step, services.upsell, budget_at_most=budget
+            )
+            if stepped is None:
+                # Their budget leaves no room above this one: said, never
+                # broken (docs/upselling-plan.md).
+                return ToolOutcome(
+                    status=ToolStatus.REFUSED,
+                    code="budget_leaves_no_step_up",
+                    facts={"their_budget": plain(budget) if budget is not None else None},
+                )
+            request, semantics = stepped
+        resolved = seed.resolved.model_copy(update={"request": request, "semantics": semantics})
         # A similar-product search is ours: it neither restores nor saves sizes.
         run = await services.search.new(
             resolved, work.staged, context.retailer, alongside=False, asked=False
         )
+        run = replace(run, state=_seeded_from_product(run.state))
         asked = searched_for(run.state.active_search) if run.state is not None else {}
-        return search_outcome(run, {"like": product_facts(found[0], None), "searched_for": asked})
+        extra: dict[str, Any] = {"like": product_facts(anchor, None), "searched_for": asked}
+        if step is not None:
+            extra["price_step"] = str(step)
+            if run.grounding is not None and run.grounding.products:
+                # What each card differs on, and by how much it costs more or
+                # less - worked out here, said as differences, never "better".
+                extra["vs_this"] = step_facts(anchor, run.grounding.products, services.upsell)
+            pick = _cart_place(work.staged, product_id)
+            if pick is not None and step is PriceStep.HIGHER:
+                extra["stepping_up_from"] = {"in_cart": True, "pick": pick}
+        return search_outcome(run, extra)
 
     return ZoryTool(
         name="more_like_this",
-        description="Products of the same kind leaning to one product's colour and style.",
-        args=ProductRef,
+        description=(
+            "Products of the same kind in one product's colour and style - at any price, a "
+            "step up from it (price higher), or cheaper (price lower)."
+        ),
+        args=MoreLikeArgs,
         owners=SHOPPERS,
         handler=more_like,
     )
@@ -1108,6 +1201,86 @@ STORE_WORDS_NOTE = (
 )
 
 
+STEP_UP_SAY = (
+    "In the same look there is a step up: after answering, say it in one line - lead with "
+    "what differs, the price last and plain (price_more) - and ask if they want to see it. "
+    "Never 'higher-priced', 'pricier', 'more expensive' or 'premium'. Not if they said it is "
+    "too expensive or their budget is tight."
+)
+
+
+def _upsell_moment(state: AgentStateV1, product_id: int) -> bool:
+    """Whether a step up may be mentioned beside this product: never when they
+    asked for the cheapest first or for one like it but cheaper, never for a
+    room piece or its options - a room spends leftover budget on better pieces
+    itself (docs/upselling-plan.md).
+
+    Judged by what they asked for, never by how the list is sorted: a list
+    seeded from a product carries our own sort (a step-up list is nearest
+    price first), so only a sort on a search they asked for is theirs."""
+    search = state.active_search
+    if search is not None and search.from_product:
+        if search.request.price is not None and search.request.step_up is None:
+            # "Like this but cheaper": they are saving, so nothing dearer.
+            return False
+    elif search is not None and search.request.sort is ProductSort.PRICE_ASC:
+        return False
+    if open_room_options(state) is not None:
+        return False
+    room = state.room_project
+    return room is None or all(item.product_id != product_id for item in room.bundle_items)
+
+
+async def step_up_beside(
+    services: AgentServices, product: ProductCandidate, state: AgentStateV1, context: ToolContext
+) -> dict[str, Any] | None:
+    """The closest step up from `product`, looked for quietly - nothing on
+    screen changes - so the agent can mention it once and show it on their yes
+    (more_like_this, price higher). None when there is none, or it is no moment
+    for one. Only an exact match counts: the same look, never a widened one."""
+    settings = services.upsell
+    if not settings.enabled or not _upsell_moment(state, product.product_id):
+        return None
+    try:
+        return await _nearest_step_up(services, product, state, context)
+    except (InvalidRequestError, ValidationError):
+        # A quiet extra: a store's odd data or a refused search costs the
+        # mention, never the details or the comparison it sits beside.
+        logger.warning("step_up_check_skipped", store_id=context.retailer.store_id)
+        return None
+
+
+async def _nearest_step_up(
+    services: AgentServices, product: ProductCandidate, state: AgentStateV1, context: ToolContext
+) -> dict[str, Any] | None:
+    settings = services.upsell
+    seed = services.similar_search.build(product)
+    if not isinstance(seed, SimilarSearchSeed):
+        return None
+    stepped = stepped_search(
+        _like_request(seed),
+        seed.resolved.semantics,
+        product,
+        PriceStep.HIGHER,
+        settings,
+        budget_at_most=_budget_at_most(state, product),
+    )
+    if stepped is None:
+        return None
+    request, semantics = stepped
+    # Ordered as the step ups are when shown - its styles first, then the
+    # nearest price - so the one mentioned is the one at the top.
+    resolved = seed.resolved.model_copy(update={"request": request, "semantics": semantics})
+    grounding = await services.search.peek(resolved, state, context.retailer)
+    if grounding is None or not grounding.products:
+        return None
+    top = grounding.products[0]
+    differs = differences(product, top, settings)
+    if top.relaxation_depth != 0 or not differs:
+        return None
+    return {**price_gap(product, top), "differs": differs, "say": STEP_UP_SAY}
+
+
 def details_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
     async def details(args: ProductRef, context: ToolContext, work: TurnWork) -> ToolOutcome:
         services = context.services
@@ -1124,6 +1297,11 @@ def details_tool(schemas: ToolSchemas) -> ZoryTool[ProductRef]:
             **_listed_extras(found[0]),
             **await _store_words(services, product_id, context),
         }
+        step_up = await step_up_beside(services, found[0], work.staged, context)
+        if step_up is not None:
+            # Mentioned once, in one line, and shown only on their yes
+            # (docs/upselling-plan.md).
+            facts["step_up"] = step_up
         state = _focused(work.staged, product_id)
         if product_id in state.product_interaction.turned_down_product_ids:
             # Asking to see one they turned down takes the "no" back.
@@ -1670,6 +1848,20 @@ def compare_tool(schemas: ToolSchemas) -> ZoryTool[CompareArgs]:
                 for row in result.rows
             ],
         }
+        step_ups = []
+        compared = {p.product_id: p for p in await hydrated(services, tuple(ids), context) or ()}
+        for column, product_id in enumerate(ids, start=1):
+            candidate = compared.get(product_id)
+            if candidate is None:
+                continue
+            # One at a time: the turn's database session takes one query at once.
+            found = await step_up_beside(services, candidate, work.staged, context)
+            if found is not None:
+                step_ups.append({"card": column, **found})
+        if step_ups:
+            # Comparing is when people weigh quality against price: one step up
+            # may be mentioned, shown on their yes (docs/upselling-plan.md).
+            facts["step_ups"] = step_ups
         return ToolOutcome(facts=facts, state=state, payload=ComparisonShown(comparison=result))
 
     return ZoryTool(
@@ -1704,6 +1896,30 @@ class AddToCartArgs(ToolArgs):
             "Only when they said to put a room piece's option in the cart rather than in the room."
         ),
     )
+
+
+async def _swap_offer(
+    services: AgentServices, before: AgentStateV1, added: Sequence[int], context: ToolContext
+) -> dict[str, Any] | None:
+    """A step up chosen for something already in the cart: the agent asks
+    whether to take that one out - only their yes removes it
+    (docs/upselling-plan.md)."""
+    search = before.active_search
+    basis = search.request.step_up if search is not None else None
+    if basis is None or basis.from_product_id in added:
+        return None
+    pick = _cart_place(before, basis.from_product_id)
+    shown = before.product_interaction.presented_product_ids
+    if pick is None or not any(p in shown for p in added):
+        return None
+    old = await hydrated(services, (basis.from_product_id,), context)
+    if not old:
+        return None
+    return {
+        "take_out": old[0].name_english,
+        "pick": pick,
+        "its_quantity": before.product_interaction.quantity_of(basis.from_product_id),
+    }
 
 
 def add_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[AddToCartArgs]:
@@ -1745,6 +1961,9 @@ def add_to_cart_tool(schemas: ToolSchemas) -> ZoryTool[AddToCartArgs]:
                 change.state,
             ),
         }
+        swap = await _swap_offer(services, work.staged, change.added, context)
+        if swap is not None:
+            facts["offer_swap"] = swap
         code = "cart_full" if change.full and not change.added else None
         return ToolOutcome(code=code, facts=facts, state=change.state)
 

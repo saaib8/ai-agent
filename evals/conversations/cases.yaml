@@ -1748,6 +1748,162 @@ cases:
     turns: [{search: "show me beds, just show me"}, "is the first one popular?"]
     checks: {not_fallback: true, not_mentions: ["not a best seller", "not one of our best", "isn't a best", "is not among", "isn't among", "less popular", "doesn't sell", "sold"]}
 
+  - id: upgrade_like_this_but_better
+    issue: "upselling: 'like the first one but more premium' shows the same look dearer, each card said by what differs"
+    store: 21
+    turns: [{search: "show me sofas, just show me"}, "I like the first one, but show me something like it that is more premium"]
+    checks: {not_fallback: true, min_products: 1, not_mentions: ["better quality", "higher quality", "worth it"]}
+
+  - id: upgrade_keeps_the_colour
+    issue: "upselling: a step up from a black lamp stays black (styles only order), and is said by what it brings, never 'higher-priced'"
+    store: 21
+    turns: [{search: "show me black lamps, just show me"}, "show me a premium one like the first one"]
+    checks: {not_fallback: true, min_products: 1, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "worth it"]}
+
+  - id: upgrade_cheaper_like_this
+    issue: "upselling: 'like the first one but cheaper' shows the same look priced lower"
+    store: 21
+    turns: [{search: "show me sofas, just show me"}, "I like the first one but show me something like it that is cheaper"]
+    checks: {not_fallback: true, min_products: 1}
+
+  - id: upgrade_mentioned_beside_details
+    issue: "upselling: asking about one sofa may bring one line about a step up in the same look, never 'better' or 'premium quality'"
+    store: 21
+    turns: [{search: "show me grey modern sofas, just show me"}, "tell me more about the first one"]
+    checks: {not_fallback: true, not_mentions: ["better quality", "higher quality", "worth it"]}
+
+  - id: upgrade_never_beside_cheapest
+    issue: "upselling: after asking for the cheapest, details never mention a step up"
+    store: 21
+    turns: [{search: "show me the cheapest sofas, just show me"}, "tell me more about the first one"]
+    checks: {not_fallback: true, not_mentions: ["step up", "more premium", "higher-end"]}
+
+  - id: upgrade_beside_comparison
+    issue: "upselling: comparing two sofas may bring one line about a step up, said as differences"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, {compare_cards: [{ordinal: 1}, {ordinal: 2}]}, "which one would you suggest?"]
+    checks: {not_fallback: true, not_mentions: ["better quality", "higher quality", "worth it"]}
+
+  - id: upx_beds_premium
+    issue: "upselling wide test: upx_beds_premium"
+    store: 21
+    turns: [{search: "show me beds, just show me"}, "show me something like the first one but more premium"]
+    checks: {not_fallback: true, min_products: 1, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_rugs_premium
+    issue: "upselling wide test: upx_rugs_premium"
+    store: 21
+    turns: [{search: "show me rugs, just show me"}, "anything like the second one but a step up?"]
+    checks: {not_fallback: true, min_products: 1, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_coffee_tables_premium
+    issue: "upselling wide test: upx_coffee_tables_premium"
+    store: 21
+    turns: [{search: "show me coffee tables, just show me"}, "I like the first one, do you have a more premium version?"]
+    checks: {not_fallback: true, min_products: 1, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_dining_chairs_premium
+    issue: "upselling wide test: upx_dining_chairs_premium"
+    store: 21
+    turns: [{search: "show me dining chairs, just show me"}, "something like the first one but higher end"]
+    checks: {not_fallback: true, min_products: 1, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_coffee_makers_premium
+    issue: "upselling wide test: upx_coffee_makers_premium"
+    store: 21
+    turns: [{search: "show me coffee makers, just show me"}, "a better version of the first one?"]
+    checks: {not_fallback: true, min_products: 1, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_lamps_cheaper
+    issue: "upselling wide test: upx_lamps_cheaper"
+    store: 21
+    turns: [{search: "show me black lamps, just show me"}, "something like the third one but cheaper"]
+    checks: {not_fallback: true, min_products: 1}
+
+  - id: upx_budget_kept
+    issue: "upselling wide test: upx_budget_kept"
+    store: 21
+    turns: [{search: "show me grey sofas under 3000 SAR, just show me"}, "something like the first one but more premium"]
+    checks: {not_fallback: true}
+
+  - id: upx_cart_swap
+    issue: "upselling wide test: upx_cart_swap"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "add the first one to my cart", "show me something more premium than the sofa in my cart", "add the first one to my cart"]
+    checks: {not_fallback: true, mentions: ["take", "remove", "replace", "swap", "keep"]}
+
+  - id: upx_details_lamp
+    issue: "upselling wide test: upx_details_lamp"
+    store: 21
+    turns: [{search: "show me black floor lamps, just show me"}, "tell me more about the first one"]
+    checks: {not_fallback: true, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_quality_question
+    issue: "upselling wide test: upx_quality_question"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "is the second one good quality?"]
+    checks: {not_fallback: true, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_too_expensive_no_mention
+    issue: "upselling wide test: upx_too_expensive_no_mention"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "these are too expensive for me", "tell me more about the first one"]
+    checks: {not_fallback: true, not_mentions: ["step up", "a little more special", "more premium"]}
+
+  - id: upx_store151_premium
+    issue: "upselling wide test: upx_store151_premium"
+    store: 151
+    turns: [{search: "show me sofas, just show me"}, "something like the first one but more premium"]
+    checks: {not_fallback: true, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_store50_premium
+    issue: "upselling wide test: upx_store50_premium"
+    store: 50
+    turns: [{search: "show me sofas, just show me"}, "something like the first one but more premium"]
+    checks: {not_fallback: true, not_mentions: ["higher-priced", "pricier", "more expensive", "better quality", "higher quality", "worth it"]}
+
+  - id: upx_arabic_premium
+    issue: "upselling wide test: upx_arabic_premium"
+    store: 21
+    turns: [{search: "اعرض لي كنب رمادي، فقط اعرضها"}, "أريد شيئاً مثل الأول لكن أفخم"]
+    checks: {not_fallback: true, min_products: 1}
+
+  - id: value_while_choosing_better_value
+    issue: "value routing: 'is there a better value one like the second?' while choosing goes to Sara (finding), never Salman"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "is there a better value option like the second one?"]
+    checks: {not_fallback: true, answered_by: [sara]}
+
+  - id: value_while_choosing_good_value
+    issue: "value routing: 'is the third one good value?' while choosing - Sara or Salman (left as is on 2026-11-24: Salman answers it well)"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "is the third one good value for money?"]
+    checks: {not_fallback: true, answered_by: [sara, salman]}
+
+  - id: value_while_choosing_on_sale
+    issue: "value routing: 'anything on sale like these?' while choosing is a search - Sara"
+    store: 21
+    turns: [{search: "show me coffee makers, just show me"}, "any of these on sale or a better deal?"]
+    checks: {not_fallback: true, answered_by: [sara]}
+
+  - id: value_after_pick_cheaper_version
+    issue: "value routing: after adding a sofa, 'a cheaper version of the sofa in my cart' finds one (Sara or Salman), never a cross-sell grid"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "add the first one to my cart", "is there a better value version of the sofa in my cart?"]
+    checks: {not_fallback: true, answered_by: [sara, salman], min_products: 1}
+
+  - id: value_cross_sell_stays_salman
+    issue: "value routing: after adding a sofa, 'what goes with it?' is still Salman's cross-sell"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "add the first one to my cart", "what goes with it?"]
+    checks: {not_fallback: true, answered_by: [salman]}
+
+  - id: value_room_trade_off_salman
+    issue: "value routing: after adding a sofa, 'how can I keep the whole look within 6000?' is a trade-off once chosen"
+    store: 21
+    turns: [{search: "show me grey sofas, just show me"}, "add the first one to my cart", "I want to keep everything for this living room under 6000 SAR, what should I prioritise?"]
+    checks: {not_fallback: true}
+
   - id: data_discount_on_cards
     issue: "product data: a reduced product's card shows its old price crossed out (the best-rated coffee maker is reduced; few others are)"
     store: 21
