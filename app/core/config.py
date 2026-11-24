@@ -950,9 +950,10 @@ class ProductDataSettings(BaseModel):
     """How the store's product data reaches an agent: descriptions, reviews and
     a reduced price. One set for every store; each store's own data fills it."""
 
-    description_max_chars: int = Field(default=600, ge=100, le=4000)
+    description_max_chars: int = Field(default=1500, ge=100, le=4000)
     """A description is the store's long text, often shared boilerplate: cut at
-    a word to this many characters before an agent reads it."""
+    a word to this many characters before an agent reads it. Long enough for the
+    specifications most stores list after their opening marketing text."""
 
     reviews_max_shown: int = Field(default=3, ge=1, le=10)
     """Reviews with text an agent is given for one product: verified buyers

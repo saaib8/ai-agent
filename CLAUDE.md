@@ -2948,6 +2948,14 @@ Plan and decisions: `docs/product-data-plan.md`.
   never a source of figures (`FREE_TEXT_KEYS`), and a listed fact wins where
   the words disagree. Reviews are cleaned of contact details and links, verified buyers
   first, and **quoted exactly as written - never translated**.
+- **One figure is read from a description: the warranty length.** Most stores
+  leave `warranty_months` empty and write "Warranty: Two years" in the text, so
+  where the field is empty code reads the length standing beside the word
+  warranty (`app/services/listed_warranty.py`; English, else Arabic, never
+  "لضمان" - "to ensure") into `warranty_the_description_states`, a keyed fact
+  said as the store's listing, never as our promise. Two different lengths, or
+  one we cannot read exactly, give none - nothing is guessed. No other figure
+  in the text (a price, a size, a delivery time) ever is.
 - **A rating is said with its review count wherever the store gives one**
   ("4.5 from 2 reviews"), and as "rated 4.5" where it gives none - never with a
   count made up. `rating` and `review_count` are the store's totals, trusted as

@@ -135,7 +135,7 @@ it (comparisons, room options, Browse Catalogue).
 
 1. **Product details** (`product_details`, every agent; it already exists and
    reads through hydration): adds the description in the reply's language
-   (English, else the stored text), cut to `description.max_chars` (600) and
+   (English, else the stored text), cut to `description.max_chars` (1500) and
    marked as the store's own words; rating with its count; the cleaned reviews;
    weight; SKU; warranty in months. Rating and reviews are keys of the details
    facts only - never of `brief_product`.
@@ -255,7 +255,7 @@ typecheck, tests and build.
 | `best_sellers.max_per_kind` | 10 |
 | `reviews.max_shown` | 3 |
 | `reviews.max_chars` | 400 |
-| `description.max_chars` | 600 |
+| `description.max_chars` | 1500 |
 | `discount.max_share` | 0.90 |
 
 ---

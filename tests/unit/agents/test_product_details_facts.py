@@ -208,3 +208,52 @@ def test_a_cart_line_says_the_saving_on_the_whole_line() -> None:
     (line,) = cart_brief([product], state).lines
 
     assert (line.saving, line.line_saving, line.quantity) == ("250", "750", 3)
+
+
+class _UnlistedHydration:
+    """A product whose store left the warranty field empty."""
+
+    async def hydrate_ids(self, product_ids: Any, context: Any) -> tuple[Any, ...]:
+        return tuple(
+            _listed_product(p).model_copy(
+                update={"listing": LISTED.model_copy(update={"warranty_months": None})}
+            )
+            for p in product_ids
+        )
+
+
+class _WarrantyInText:
+    description_max_chars = 600
+
+    async def text_of(self, product_id: int, context: Any) -> ProductDetailsText:
+        return ProductDetailsText(
+            description_english="Material: Linen and MDF wood Warranty: Two years (no misuse)"
+        )
+
+
+async def _details_with(hydration: Any) -> Any:
+    tool = LOOP._registry.get("product_details")
+    assert tool is not None and tool.handler is not None
+    services = agent_services(hydration=hydration, details=_WarrantyInText())  # type: ignore[arg-type]
+    return await tool.handler(
+        tool.args.model_validate({"which": {"kind": "picked_ordinal", "position": 1}}),
+        tool_context(services),
+        TurnWork.starting(_state(selected=(OFF_SCREEN,))),
+    )
+
+
+async def test_a_warranty_written_in_the_description_is_a_figure_to_say() -> None:
+    """The store's field is empty but its text says "Two years": the length is
+    read in code and keyed, so the agent may say it as the store's listing."""
+    facts = (await _details_with(_UnlistedHydration())).facts
+
+    assert facts["warranty_the_description_states"] == {"years": 2, "in_arabic": "سنتين"}
+    assert flatten(facts)["warranty_the_description_states.years"] == Decimal(2)
+    assert "warranty_months" not in facts
+
+
+async def test_the_listed_warranty_field_wins_over_the_description() -> None:
+    facts = (await _details_with(_Hydration())).facts
+
+    assert facts["warranty_months"] == 24
+    assert "warranty_the_description_states" not in facts
