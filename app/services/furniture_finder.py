@@ -257,6 +257,7 @@ class FurnitureFinderService:
             widget_key=self._settings.local_widget_key,
             store_public_id=str(store.uuid),
             anonymous_id=_anonymous_id(context.store_id, session_id),
+            origin=self._settings.local_origin,
         )
         await self._photos.save_visitor(
             context.store_id, session_id, visitor, _token_ttl_s(visitor)

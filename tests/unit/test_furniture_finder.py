@@ -633,19 +633,26 @@ class FakeZory:
         self.recommend_calls: list[dict[str, Any]] = []
 
     async def anonymous_visitor(
-        self, *, widget_key: str, store_public_id: str, anonymous_id: str
+        self,
+        *,
+        widget_key: str,
+        store_public_id: str,
+        anonymous_id: str,
+        origin: str | None = None,
     ) -> ShopperCredentials:
         self.visitor_calls.append(
             {
                 "widget_key": widget_key,
                 "store_public_id": store_public_id,
                 "anonymous_id": anonymous_id,
+                "origin": origin,
             }
         )
         return ShopperCredentials(
             token=SecretStr(self.visitor_access),
             widget_key=widget_key,
             store_public_id=store_public_id,
+            origin=origin,
         )
 
     async def scan(self, shopper: ShopperCredentials, image_jpeg: bytes) -> ZoryScan:

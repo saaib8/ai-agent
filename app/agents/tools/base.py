@@ -51,6 +51,9 @@ class ToolOutcome:
     state: AgentStateV1 | None = None
     """The staged state after the call, when it changed."""
     payload: BaseModel | None = None
+    beside: BaseModel | None = None
+    """Drawn beside whatever owns the screen, never in its place - the
+    outlines of the photo a list of cards was found from."""
 
 
 Handler = Callable[[ArgsT, ToolContext, TurnWork], Awaitable[ToolOutcome]]

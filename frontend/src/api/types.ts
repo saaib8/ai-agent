@@ -454,6 +454,9 @@ export interface ChatPresentation {
   brief?: ProductBrief | null
   /** The room form beneath Nora's reply: budget, size, colours and style. */
   room_form?: RoomForm | null
+  /** The photo sent in the chat with what the finder outlined in it, on a
+   *  turn that looked in it - drawn above the cards; a tap picks a piece. */
+  photo_pieces?: PhotoPieces | null
   /** Every option for the results on screen, opened showing what is used. */
   narrow_down?: ProductBrief | null
   /** What the search on screen is using, each removable. */
@@ -1222,4 +1225,15 @@ export interface LiveSpeechSession {
   audio_format: string
   sample_rate: number
   commit_strategy: string
+}
+
+/** The chat's photo as the finder saw it. Outlines are in `width` x `height`,
+ *  the same aspect as the customer's own copy, which a client draws them over. */
+export interface PhotoPieces {
+  image_id: string
+  width: number
+  height: number
+  objects: FinderObject[]
+  /** The piece this turn found products like, by `object_id`. */
+  looked_for?: number | null
 }

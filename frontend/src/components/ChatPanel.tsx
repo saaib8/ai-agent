@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { Fragment, useEffect, useRef } from 'react'
 import type {
   BriefAnswerAction,
   RoomFormAction,
@@ -17,6 +17,7 @@ import type {
   SearchAction,
   SpeechTextResponse,
   LiveSpeechSession,
+  PhotoPieces,
 } from '../api/types'
 import type { Activity, Turn } from '../hooks/useChat'
 import { CompareBar } from './CompareBar'
@@ -216,6 +217,37 @@ export function ChatPanel({
   // The picker only lives on the most recent assistant turn: older product
   // grids are history and must not sprout "Use this" buttons.
   const lastAssistantId = [...turns].reverse().find((t) => t.kind === 'assistant')?.id
+
+  // The finder looked in the photo sent in the chat: that photo, with what it
+  // outlined, goes above the reply. It is the customer's own copy - the latest
+  // one sent before this reply; the outlines are in the size the finder saw.
+  const outlinedPhoto = (turnId: string, pieces: PhotoPieces | null | undefined, index: number) => {
+    if (!pieces) return null
+    const sent = turns
+      .slice(0, index)
+      .reverse()
+      .find((t) => t.kind === 'user' && t.imageUrl)
+    const url = sent?.kind === 'user' ? sent.imageUrl : undefined
+    if (!url) return null
+    return (
+      <PhotoTurn
+        url={url}
+        photo={{
+          status: 'ready',
+          data: {
+            image_id: pieces.image_id,
+            width: pieces.width,
+            height: pieces.height,
+            objects: pieces.objects,
+            unmatched_count: 0,
+          },
+          picked: pieces.looked_for ? [pieces.looked_for] : [],
+        }}
+        disabled={sending}
+        onPick={(imageId, object) => onPickObject(turnId, imageId, object)}
+      />
+    )
+  }
   // A piece's options stay pickable while it is swapped, even after a
   // comparison of them: the latest reply that showed cards.
   const swapOptionsId = [...turns]
@@ -445,64 +477,67 @@ export function ChatPanel({
                 )
               if (turn.kind === 'assistant')
                 return (
-                  <AssistantBubble
-                    key={turn.id}
-                    data={turn.data}
-                    busy={busy}
-                    revealedLen={turn.id === revealTurnId ? revealedLen : undefined}
-                    revealing={turn.id === revealTurnId && revealing}
-                    onSwapStart={onSwapStart}
-                    onRemovePiece={onRemovePiece}
-                    pick={
-                      swapRole
-                        ? turn.id === swapOptionsId
-                          ? { role: swapRole, onPick: onPickAlternative }
-                          : undefined
-                        : turn.id === lastAssistantId && turn.data.presentation?.room_addition
-                          ? addToRoomPick(turn.data.presentation.room_addition)
-                          : turn.id === lastAssistantId &&
-                              turn.data.presentation?.product_source === 'room_options' &&
-                              turn.data.presentation.options_for_piece
-                            ? {
-                                role: 'room piece',
-                                onPick: (ordinal: number) =>
-                                  onUseRoomOption(
-                                    turn.data.presentation!.options_for_piece!,
-                                    ordinal,
-                                  ),
-                              }
+                  <Fragment key={turn.id}>
+                    {outlinedPhoto(turn.id, turn.data.presentation?.photo_pieces, index)}
+                    <AssistantBubble
+                      key={turn.id}
+                      data={turn.data}
+                      busy={busy}
+                      revealedLen={turn.id === revealTurnId ? revealedLen : undefined}
+                      revealing={turn.id === revealTurnId && revealing}
+                      onSwapStart={onSwapStart}
+                      onRemovePiece={onRemovePiece}
+                      pick={
+                        swapRole
+                          ? turn.id === swapOptionsId
+                            ? { role: swapRole, onPick: onPickAlternative }
                             : undefined
-                    }
-                    refine={
-                      turn.id === lastAssistantId
-                        ? { onShowMore: onShowMoreOptions, onExclude: onExcludeProduct }
-                        : undefined
-                    }
-                    selection={selectionFor(turn.data.presentation?.list_revision)}
-                    compare={compareFor(turn.data.presentation?.list_revision)}
-                    likes={likesFor(turn.data.presentation?.list_revision)}
-                    onMoreLikeThis={moreLikeThisFor(turn.data.presentation?.list_revision)}
-                    onVisualizeProduct={visualizeProductFor(turn.data.presentation?.list_revision)}
-                    {...(turn.data.presentation?.product_source === 'liked'
-                      ? likedCards(turn.data.presentation.products)
-                      : {})}
-                    onBriefSubmit={onBriefSubmit}
-                    onRoomFormSubmit={onRoomFormSubmit}
-                    onDropChip={onDropChip}
-                    onCombination={turn.id === lastAssistantId ? onCombination : undefined}
-                    showBrief={turn.id === briefTurnId}
-                    quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
-                    onQuickReply={onChoice}
-                    latest={turn.id === lastAssistantId}
-                    onAddRoomToCart={turn.id === currentRoomId ? onAddRoomToCart : undefined}
-                    roomInCart={roomIsRecord(index)}
-                    {...visualizeProps(
-                      turn.data.presentation?.room ?? null,
-                      turn.data.presentation?.render ?? null,
-                      turn.id,
-                      turn.selection,
-                    )}
-                  />
+                          : turn.id === lastAssistantId && turn.data.presentation?.room_addition
+                            ? addToRoomPick(turn.data.presentation.room_addition)
+                            : turn.id === lastAssistantId &&
+                                turn.data.presentation?.product_source === 'room_options' &&
+                                turn.data.presentation.options_for_piece
+                              ? {
+                                  role: 'room piece',
+                                  onPick: (ordinal: number) =>
+                                    onUseRoomOption(
+                                      turn.data.presentation!.options_for_piece!,
+                                      ordinal,
+                                    ),
+                                }
+                              : undefined
+                      }
+                      refine={
+                        turn.id === lastAssistantId
+                          ? { onShowMore: onShowMoreOptions, onExclude: onExcludeProduct }
+                          : undefined
+                      }
+                      selection={selectionFor(turn.data.presentation?.list_revision)}
+                      compare={compareFor(turn.data.presentation?.list_revision)}
+                      likes={likesFor(turn.data.presentation?.list_revision)}
+                      onMoreLikeThis={moreLikeThisFor(turn.data.presentation?.list_revision)}
+                      onVisualizeProduct={visualizeProductFor(turn.data.presentation?.list_revision)}
+                      {...(turn.data.presentation?.product_source === 'liked'
+                        ? likedCards(turn.data.presentation.products)
+                        : {})}
+                      onBriefSubmit={onBriefSubmit}
+                      onRoomFormSubmit={onRoomFormSubmit}
+                      onDropChip={onDropChip}
+                      onCombination={turn.id === lastAssistantId ? onCombination : undefined}
+                      showBrief={turn.id === briefTurnId}
+                      quickReplies={turn.id === lastAssistantId ? quickReplies : undefined}
+                      onQuickReply={onChoice}
+                      latest={turn.id === lastAssistantId}
+                      onAddRoomToCart={turn.id === currentRoomId ? onAddRoomToCart : undefined}
+                      roomInCart={roomIsRecord(index)}
+                      {...visualizeProps(
+                        turn.data.presentation?.room ?? null,
+                        turn.data.presentation?.render ?? null,
+                        turn.id,
+                        turn.selection,
+                      )}
+                    />
+                  </Fragment>
                 )
               if (turn.kind === 'photo')
                 return (

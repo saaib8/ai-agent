@@ -189,6 +189,26 @@ class FinderPickRequest(BaseModel):
     drawn from, checked before any provider is paid."""
 
 
+class PhotoPieces(BaseModel):
+    """The photo sent in the chat, as the finder saw it: what a client draws
+    over the customer's own copy of it, beside the reply (CLAUDE.md 25).
+
+    The outlines are in the pixel space of `width` x `height`, the copy the
+    detector saw - the same aspect as the customer's photo, so a client
+    stretches them over it. Only pieces this store can match are outlined;
+    tapping one is a pick (`POST /v1/furniture-finder/picks` with `image_id`).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    image_id: str = Field(pattern=IMAGE_ID_PATTERN)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    objects: tuple[FinderObjectView, ...]
+    looked_for: int | None = Field(default=None, ge=1)
+    """The piece this turn found products like, by `object_id`."""
+
+
 def view_of(detected: DetectedObject) -> FinderObjectView:
     return FinderObjectView(
         object_id=detected.object_id,

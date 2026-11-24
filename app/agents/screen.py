@@ -16,6 +16,7 @@ from app.agents.payloads import (
     GridChip,
     KnowledgeShown,
     OptionsShown,
+    PhotoPiecesShown,
     ProductShown,
     RenderShown,
     RoomFormShown,
@@ -122,6 +123,14 @@ def presentation(
     screen = candidates[-1] if candidates and show != "unchanged" else None
     support = next((p for p in reversed(shown) if isinstance(p, SupportShown)), None)
     form = next((p for p in reversed(shown) if isinstance(p, RoomFormShown)), None)
+    pieces = next(
+        (
+            r.beside
+            for r in reversed(work.records)
+            if r.status is ToolStatus.OK and isinstance(r.beside, PhotoPiecesShown)
+        ),
+        None,
+    )
     fields: dict[str, object] = {}
     beside_grid: tuple[GridChip, ...] = ()
     match screen:
@@ -169,6 +178,8 @@ def presentation(
     if form is not None:
         # The room form is drawn beneath the reply, whatever else it shows.
         fields["room_form"] = form.form
+    if pieces is not None:
+        fields["photo_pieces"] = pieces.photo
     if support is not None:
         offered = support.support
         fields["support"] = channels_for(offered.contacts, language, handover=offered.handover)

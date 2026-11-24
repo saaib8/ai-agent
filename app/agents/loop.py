@@ -393,6 +393,7 @@ class AgentLoop:
             code=outcome.code,
             facts=facts,
             payload=outcome.payload,
+            beside=outcome.beside,
             acted=outcome.payload is not None or outcome.state is not None,
         )
         work.record(record, outcome.state)

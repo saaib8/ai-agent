@@ -93,6 +93,7 @@ class FinderPhotoStore:
                 "token": visitor.token.get_secret_value(),
                 "widget_key": visitor.widget_key,
                 "store_public_id": visitor.store_public_id,
+                "origin": visitor.origin,
             }
         )
         try:

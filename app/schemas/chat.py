@@ -31,6 +31,7 @@ from app.schemas.card_labels import CardLabels
 from app.schemas.cart import MAX_STORE_CART_LINES, CartView, StoreCartLine
 from app.schemas.chat_photo import MAX_CHAT_PHOTO_CHARS
 from app.schemas.comparison import ProductComparisonResult
+from app.schemas.furniture_finder import PhotoPieces
 from app.schemas.grounding import GroundedProduct
 from app.schemas.language import ReplyLanguage
 from app.schemas.picks import LikedView, PickView
@@ -378,6 +379,10 @@ class ChatPresentation(BaseModel):
     look, each with chips and a box to type, and one Design it button. Built by
     code from the store's data in the reply's language (docs/room-form-plan.md)."""
 
+    photo_pieces: PhotoPieces | None = None
+    """The photo they sent with what the finder outlined in it, on a turn that
+    looked in it - drawn above the cards; tapping a piece finds products like it."""
+
     def is_empty(self) -> bool:
         """Whether there is anything to draw.
 
@@ -398,6 +403,7 @@ class ChatPresentation(BaseModel):
             and self.brief is None
             and self.support is None
             and self.room_form is None
+            and self.photo_pieces is None
         )
 
 

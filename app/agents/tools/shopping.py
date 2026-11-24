@@ -29,6 +29,7 @@ from app.agents.operations.cart import CartRefused
 from app.agents.operations.rooms import open_room_options
 from app.agents.payloads import (
     ComparisonShown,
+    PhotoPiecesShown,
     ProductShown,
     RenderShown,
     SearchShown,
@@ -59,7 +60,7 @@ from app.schemas.agent_updates import AgentStateUpdate, ProductInteractionUpdate
 from app.schemas.comparison import MAX_COMPARED_PRODUCTS
 from app.schemas.design import DesignDirection, NextSize
 from app.schemas.discovery import ProductSearchRequest, ProductSort
-from app.schemas.furniture_finder import DetectedObject
+from app.schemas.furniture_finder import DetectedObject, PhotoPieces, view_of
 from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding, SearchOutcome
 from app.schemas.language import ReplyLanguage
 from app.schemas.product import EligibleProduct, ProductCandidate, ProductListing
@@ -1457,9 +1458,19 @@ def find_in_photo_tool() -> ZoryTool[FindInPhotoArgs]:
         found = [
             {"number": n, "piece": o.display_label} for n, o in enumerate(photo.objects, start=1)
         ]
+        # The photo with what was outlined in it, drawn above the cards.
+        outlines = PhotoPieces(
+            image_id=photo.image_id,
+            width=photo.width,
+            height=photo.height,
+            objects=tuple(view_of(o) for o in photo.objects),
+        )
         if not photo.objects:
             return ToolOutcome(
-                code="nothing_found_in_photo", facts={"pieces_found": []}, state=state
+                code="nothing_found_in_photo",
+                facts={"pieces_found": []},
+                state=state,
+                beside=PhotoPiecesShown(photo=outlines),
             )
         detected = _piece_in_photo(photo.objects, args)
         if detected is None:
@@ -1478,7 +1489,12 @@ def find_in_photo_tool() -> ZoryTool[FindInPhotoArgs]:
                 "several could be it; when none is, say what was found and offer to find "
                 "one of those or to search for theirs by words"
             )
-            return ToolOutcome(code="which_piece", facts=facts, state=state)
+            return ToolOutcome(
+                code="which_piece",
+                facts=facts,
+                state=state,
+                beside=PhotoPiecesShown(photo=outlines),
+            )
         try:
             products = await finder.find(photo, detected, retailer, context.shopper)
         except (FinderAccessRefusedError, VisualSearchUnavailableError):
@@ -1525,6 +1541,9 @@ def find_in_photo_tool() -> ZoryTool[FindInPhotoArgs]:
             },
             state=shown or state,
             payload=payload,
+            beside=PhotoPiecesShown(
+                photo=outlines.model_copy(update={"looked_for": detected.object_id})
+            ),
         )
 
     return ZoryTool(
