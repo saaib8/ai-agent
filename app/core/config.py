@@ -432,6 +432,15 @@ class FurnitureFinderSettings(BaseModel):
     """The widget an anonymous local visitor signs in on (Product Discovery,
     `furniture-detection`). Used only when the environment is local."""
 
+    local_origin: str | None = Field(
+        default=None, pattern=r"^https?://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$"
+    )
+    """The website a local visitor's calls name as `Origin`. The platform
+    refuses widget calls from a website it has not approved (strict origins),
+    and a missing one too - so with none, a local run's photos are refused.
+    One of its Zory-hosted pages (e.g. https://stage.zory.ai) is approved for
+    every store's widget. Used only with `local_widget_key`."""
+
     result_limit: int = Field(default=10, gt=0, le=50)
     """How many products one pick presents."""
 

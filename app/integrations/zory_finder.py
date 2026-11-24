@@ -125,14 +125,26 @@ class ZoryFinderClient:
     # ── who the finder runs as ──────────────────────────────────────────────
 
     async def anonymous_visitor(
-        self, *, widget_key: str, store_public_id: str, anonymous_id: str
+        self,
+        *,
+        widget_key: str,
+        store_public_id: str,
+        anonymous_id: str,
+        origin: str | None = None,
     ) -> ShopperCredentials:
-        """Sign in an anonymous visitor on a store's widget, as the widget does."""
+        """Sign in an anonymous visitor on a store's widget, as the widget does.
+
+        `origin` is the website the visitor is on: sent as `Origin`, as a
+        browser would, and kept on the visitor so its later calls send it too.
+        """
+        headers = {WIDGET_KEY_HEADER: widget_key, INTEGRATION_HEADER: store_public_id}
+        if origin:
+            headers[ORIGIN_HEADER] = origin
         response = await self._send(
             "post",
             ANONYMOUS_PATH,
             step="anonymous",
-            headers={WIDGET_KEY_HEADER: widget_key, INTEGRATION_HEADER: store_public_id},
+            headers=headers,
             json={"anonymous_id": anonymous_id},
         )
         body = _json(response, step="anonymous")
@@ -141,7 +153,10 @@ class ZoryFinderClient:
         if not isinstance(access, str) or not access:
             raise FinderAccessRefusedError(reason="no_visitor_token", step="anonymous")
         return ShopperCredentials(
-            token=SecretStr(access), widget_key=widget_key, store_public_id=store_public_id
+            token=SecretStr(access),
+            widget_key=widget_key,
+            store_public_id=store_public_id,
+            origin=origin,
         )
 
     # ── detection ───────────────────────────────────────────────────────────

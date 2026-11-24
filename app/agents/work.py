@@ -40,6 +40,8 @@ class ToolRecord(BaseModel):
     payload: BaseModel | None = None
     """The typed outcome the reply and the screen are built from. Never shown
     to a model."""
+    beside: BaseModel | None = None
+    """Drawn beside the screen (`ToolOutcome.beside`). Never shown to a model."""
     acted: bool = False
     """Whether the call changed the session or put something on screen - not
     only reported facts."""

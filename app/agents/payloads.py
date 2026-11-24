@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.schemas.bundle_presentation import GroundedBundlePresentation
 from app.schemas.comparison import ProductComparisonResult
+from app.schemas.furniture_finder import PhotoPieces
 from app.schemas.grounding import GroundedProduct, SearchExecutionGrounding
 from app.schemas.room_form import RoomForm
 from app.schemas.seating_solution import SeatingSolution
@@ -111,3 +112,10 @@ ScreenPayload = (
     | RenderShown
 )
 """Payloads that replace what the customer is looking at."""
+
+
+class PhotoPiecesShown(_Payload):
+    """The chat's photo with what the finder outlined in it - drawn beside
+    whatever owns the screen, never in its place."""
+
+    photo: PhotoPieces
