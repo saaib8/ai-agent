@@ -55,24 +55,33 @@ class StoreCartMirror:
     ) -> AgentStateV1:
         """`state` with its cart made to match `lines`, the store's cart.
 
-        Unchanged on a store that does not sell on Salla: its products carry
-        no Salla ids, so nothing could match and the cart would be emptied by
-        mistake.
+        On Salla, lines name products by their Salla id. On another store
+        platform (OpenCart, ...) by their platform id ("opencart-50"). A store
+        whose products carry neither is left unchanged: nothing could match,
+        and the cart would be emptied by mistake.
         """
-        if await self._stores.salla_store_id(context.store_id) is None:
-            logger.info("store_cart_ignored", store_id=context.store_id, reason="not_on_salla")
-            return state
-
-        # 1. How many of each Salla product the store's cart holds. One product
-        #    may come as several lines (one per option chosen), so they add up.
-        by_salla_id = quantities_by_salla_id(lines)
-
-        # 2. Which of our products each Salla id is. A product our catalog does
-        #    not know cannot be shown or priced, so it is left out (and counted).
-        ours = await self._products.ids_for_salla_products(tuple(by_salla_id), context)
+        on_salla = await self._stores.salla_store_id(context.store_id) is not None
+        if on_salla:
+            # 1. How many of each Salla product the store's cart holds. One
+            #    product may come as several lines (one per option chosen).
+            by_store_id = quantities_by_salla_id(lines)
+            # 2. Which of our products each Salla id is. A product our catalog
+            #    does not know cannot be shown or priced, so it is left out.
+            ours = await self._products.ids_for_salla_products(tuple(by_store_id), context)
+        else:
+            platform_lines = [line for line in lines if line.external_id]
+            if len(platform_lines) != len(lines) or (
+                not lines and not await self._products.sells_through_platform(context)
+            ):
+                logger.info(
+                    "store_cart_ignored", store_id=context.store_id, reason="no_platform_ids"
+                )
+                return state
+            by_store_id = quantities_by_external_id(platform_lines)
+            ours = await self._products.ids_for_external_products(tuple(by_store_id), context)
         quantities: dict[int, int] = {}
-        for salla_id, quantity in by_salla_id.items():
-            product_id = ours.get(salla_id)
+        for store_id, quantity in by_store_id.items():
+            product_id = ours.get(store_id)
             if product_id is not None:
                 quantities[product_id] = quantities.get(product_id, 0) + quantity
 
@@ -81,8 +90,8 @@ class StoreCartMirror:
         logger.info(
             "store_cart_mirrored",
             store_id=context.store_id,
-            store_lines=len(by_salla_id),
-            unknown_to_catalog=len(by_salla_id) - len(ours),
+            store_lines=len(by_store_id),
+            unknown_to_catalog=len(by_store_id) - len(ours),
             lines_before=len(state.product_interaction.selected_product_ids),
             lines_after=len(cart.selected_product_ids),
         )
@@ -91,11 +100,25 @@ class StoreCartMirror:
 
 def quantities_by_salla_id(lines: Sequence[StoreCartLine]) -> dict[str, int]:
     """How many of each Salla product, keyed by its Salla id as our catalog
-    stores it (a string of digits), in the order the store's cart lists them."""
+    stores it (a string of digits), in the order the store's cart lists them.
+    A line without a Salla id is not a Salla product: left out."""
     totals: dict[str, int] = {}
     for line in lines:
+        if line.salla_id is None:
+            continue
         key = str(line.salla_id)
         totals[key] = totals.get(key, 0) + line.quantity
+    return totals
+
+
+def quantities_by_external_id(lines: Sequence[StoreCartLine]) -> dict[str, int]:
+    """How many of each platform product ("opencart-50"), in the order the
+    store's cart lists them; several lines of one product add up."""
+    totals: dict[str, int] = {}
+    for line in lines:
+        if not line.external_id:
+            continue
+        totals[line.external_id] = totals.get(line.external_id, 0) + line.quantity
     return totals
 
 

@@ -112,6 +112,10 @@ core_product = Table(
     Column("two_d_icon", String(2048), nullable=True),
     Column("three_d_model", String(2048), nullable=True),
     Column("salla_product_id", String(255), nullable=True, index=True),
+    # The platform's own id for a product synced from a store platform other
+    # than Salla, as "<platform>-<id>" ("opencart-50"); read only to match the
+    # store's own cart back into ours (`app/services/store_cart_mirror.py`).
+    Column("external_id", String(255), nullable=True),
     Column("time_created", DateTime(timezone=True), nullable=True),
     Column("time_updated", DateTime(timezone=True), nullable=True),
     # Product data the store's import fills (Salla's pipeline in Django), read
