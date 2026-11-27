@@ -41,6 +41,7 @@ from app.core.config import (
     SizeSettings,
 )
 from app.db.tables import core_product
+from app.schemas.cart import EXTERNAL_ID_PATTERN as PLATFORM_EXTERNAL_ID
 from app.schemas.catalog import CatalogFilter
 from app.schemas.dimensions import CENTIMETRES_PER_UNIT, UNIT_ALIASES, RawDimensions
 from app.schemas.discovery import (
@@ -688,6 +689,42 @@ class ProductRepository:
             )
             for row in result
         ]
+
+    async def ids_for_external_products(
+        self, external_ids: Sequence[str], context: RetailerContext
+    ) -> dict[str, int]:
+        """Our product id for each platform product id ("opencart-50") the
+        active store lists - the store's own cart read back into ours on a
+        platform other than Salla. The oldest row answers a duplicate."""
+        wanted = sorted({external_id for external_id in external_ids if external_id})
+        if not wanted:
+            return {}
+        statement = (
+            select(core_product.c.id, core_product.c.external_id)
+            .where(*self._scope_clauses(context), core_product.c.external_id.in_(wanted))
+            .order_by(core_product.c.id)
+        )
+        result = await self._session.execute(statement)
+        ours: dict[str, int] = {}
+        for row in result:
+            ours.setdefault(str(row.external_id).strip(), int(row.id))
+        return ours
+
+    async def sells_through_platform(self, context: RetailerContext) -> bool:
+        """Whether the store's products come from a store platform other than
+        Salla (an "<platform>-<id>" external id): its widget can read the
+        store's cart, so an empty one reported is really empty."""
+        statement = (
+            select(core_product.c.id)
+            .where(
+                *self._scope_clauses(context),
+                core_product.c.external_id.is_not(None),
+                core_product.c.external_id.op("~")(PLATFORM_EXTERNAL_ID),
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(statement)
+        return result.first() is not None
 
     async def ids_for_salla_products(
         self, salla_product_ids: Sequence[str], context: RetailerContext

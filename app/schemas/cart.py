@@ -23,7 +23,7 @@ from __future__ import annotations
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.agent_state import MAX_CART_QUANTITY
 from app.schemas.card_comparison import CardRef
@@ -213,6 +213,10 @@ class CartQuery(BaseModel):
     store_id: int = Field(ge=1)
 
 
+EXTERNAL_ID_PATTERN = r"^[a-z]+-[A-Za-z0-9._:-]+$"
+"""A product's id on its store platform as our catalog keeps it: the platform,
+a dash and the platform's own id ("opencart-50")."""
+
 MAX_STORE_CART_LINES = 200
 """The most lines a client may report from the store's cart - far more than a
 shopper's cart holds, small enough to bound one request."""
@@ -228,12 +232,25 @@ class StoreCartLine(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    salla_id: int = Field(ge=1)
+    salla_id: int | None = Field(default=None, ge=1)
     """The product's id on Salla - `product_id` in Twilight's cart items."""
+
+    external_id: str | None = Field(
+        default=None, min_length=3, max_length=255, pattern=EXTERNAL_ID_PATTERN
+    )
+    """On another store platform (OpenCart, ...): the product as our catalog
+    names it, "<platform>-<the platform's product id>" ("opencart-50")."""
 
     quantity: int = Field(ge=1)
     """How many the store's cart holds. Not capped here: the store's cart is
     the truth, and the mirror keeps it within what our cart can hold."""
+
+    @model_validator(mode="after")
+    def _one_id(self) -> StoreCartLine:
+        """A line names its product exactly one way."""
+        if (self.salla_id is None) == (self.external_id is None):
+            raise ValueError("a store cart line carries salla_id or external_id, not both")
+        return self
 
 
 class CartSyncRequest(BaseModel):

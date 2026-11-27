@@ -87,6 +87,10 @@ PRODUCT_QUERIES: dict[str, Callable[[ProductRepository], Awaitable[Any]]] = {
     ),
     "store_identities": lambda repo: repo.store_identities([1, 2], CONTEXT),
     "ids_for_salla_products": lambda repo: repo.ids_for_salla_products(["9001", "9002"], CONTEXT),
+    "ids_for_external_products": lambda repo: repo.ids_for_external_products(
+        ["opencart-50", "opencart-51"], CONTEXT
+    ),
+    "sells_through_platform": lambda repo: repo.sells_through_platform(CONTEXT),
     "count_active": lambda repo: repo.count_active(CONTEXT),
     "search": lambda repo: repo.search(
         ProductSearchRequest(commerce_category="seating"), CONTEXT, limit=10

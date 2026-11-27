@@ -45,6 +45,10 @@ SALLA_STORE = 306242292
 CATALOG = {"9001": 101, "9002": 102, "9003": 103, "9004": 104}
 
 
+# Our product id for each OpenCart product the store lists.
+PLATFORM_CATALOG = {"opencart-50": 201, "opencart-51": 202}
+
+
 class FakeStores:
     def __init__(self, salla_store_id: int | None = SALLA_STORE) -> None:
         self._salla_store_id = salla_store_id
@@ -54,8 +58,17 @@ class FakeStores:
 
 
 class FakeProducts:
-    def __init__(self) -> None:
+    def __init__(self, platform: bool = False) -> None:
         self.asked: list[tuple[str, ...]] = []
+        self.platform = platform
+
+    async def ids_for_external_products(
+        self, external_ids: Sequence[str], context: RetailerContext
+    ) -> dict[str, int]:
+        return {e: PLATFORM_CATALOG[e] for e in external_ids if e in PLATFORM_CATALOG}
+
+    async def sells_through_platform(self, context: RetailerContext) -> bool:
+        return self.platform
 
     async def ids_for_salla_products(
         self, salla_product_ids: Sequence[str], context: RetailerContext
@@ -66,10 +79,10 @@ class FakeProducts:
         }
 
 
-def _mirror(*, salla_store_id: int | None = SALLA_STORE) -> StoreCartMirror:
+def _mirror(*, salla_store_id: int | None = SALLA_STORE, platform: bool = False) -> StoreCartMirror:
     return StoreCartMirror(
         cast(StoreRepository, FakeStores(salla_store_id)),
-        cast(ProductRepository, FakeProducts()),
+        cast(ProductRepository, FakeProducts(platform)),
     )
 
 
@@ -401,3 +414,55 @@ async def test_the_sync_route_answers_the_cart() -> None:
     assert ok.status_code == 200
     assert [line["quantity"] for line in ok.json()["cart"]["lines"]] == [3]
     assert broken.status_code == 422
+
+
+# ── another store platform (OpenCart) ──────────────────────────────────────
+
+
+def _platform_cart(*lines: tuple[str, int]) -> tuple[StoreCartLine, ...]:
+    return tuple(StoreCartLine(external_id=e, quantity=q) for e, q in lines)
+
+
+async def test_an_opencart_product_removed_on_the_stores_page_leaves_our_cart() -> None:
+    state = _with_cart((201, 202))
+
+    mirrored = await _mirror(salla_store_id=None, platform=True).mirrored(
+        state, _platform_cart(("opencart-51", 2)), CONTEXT
+    )
+
+    assert _cart_of(mirrored) == [(202, 2)]
+
+
+async def test_an_empty_opencart_cart_empties_ours() -> None:
+    mirrored = await _mirror(salla_store_id=None, platform=True).mirrored(
+        _with_cart((201,)), (), CONTEXT
+    )
+
+    assert _cart_of(mirrored) == []
+
+
+async def test_salla_ids_on_a_store_not_on_salla_are_ignored() -> None:
+    state = _with_cart((201,))
+
+    mirrored = await _mirror(salla_store_id=None, platform=True).mirrored(
+        state, _store_cart((9001, 1)), CONTEXT
+    )
+
+    assert mirrored is state
+
+
+async def test_platform_ids_on_a_salla_store_are_left_out() -> None:
+    mirrored = await _mirror().mirrored(
+        _with_cart((101,)), (*_store_cart((9001, 1)), *_platform_cart(("opencart-50", 1))), CONTEXT
+    )
+
+    assert _cart_of(mirrored) == [(101, 1)]
+
+
+def test_a_line_names_its_product_one_way() -> None:
+    with pytest.raises(ValidationError):
+        StoreCartLine(quantity=1)
+    with pytest.raises(ValidationError):
+        StoreCartLine(salla_id=1, external_id="opencart-1", quantity=1)
+    with pytest.raises(ValidationError):
+        StoreCartLine(external_id="no dash here", quantity=1)
